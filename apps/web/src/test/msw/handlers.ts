@@ -38,6 +38,8 @@ export interface MockState {
   locked: boolean;
 }
 
+export const mockSnippets: { items: Array<{ id: string; name: string; command: string }> } = { items: [] };
+
 export const mockAppearance: { logoUrl: string | null; brandName: string } = {
   logoUrl: null,
   brandName: BRAND_NAME_DEFAULT,
@@ -67,6 +69,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
   seedIncidents();
   seedKnowledge();
   seedAssistant();
+  mockSnippets.items = [];
   Object.assign(mockState, {
     setupRequired: false,
     authenticated: false,
@@ -151,6 +154,16 @@ export const handlers = [
   ...incidentsHandlers,
   ...knowledgeHandlers,
   ...assistantHandlers,
+  http.get('/api/settings/snippets', () => {
+    if (!mockState.authenticated) return problem(401, AUTH_PROBLEM.unauthenticated, 'Требуется вход');
+    return HttpResponse.json(mockSnippets);
+  }),
+  http.put('/api/settings/snippets', async ({ request }) => {
+    if (!mockState.authenticated) return problem(401, AUTH_PROBLEM.unauthenticated, 'Требуется вход');
+    const body = (await request.json()) as typeof mockSnippets;
+    mockSnippets.items = body.items;
+    return HttpResponse.json(mockSnippets);
+  }),
   http.get('/api/settings/appearance', () => HttpResponse.json(mockAppearance)),
   http.put('/api/settings/appearance', async ({ request }) => {
     if (!mockState.authenticated) return problem(401, AUTH_PROBLEM.unauthenticated, 'Требуется вход');

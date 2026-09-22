@@ -3,11 +3,21 @@ import '@xterm/xterm/css/xterm.css';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
-import { MaximizeIcon, MinusIcon, XIcon } from 'lucide-react';
+import { BookmarkIcon, MaximizeIcon, MinusIcon, SettingsIcon, XIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Rnd } from 'react-rnd';
 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { useSnippets } from '@/features/settings/settings-api';
 import { cn } from '@/lib/utils';
+import { SnippetsDialog } from './snippets-dialog';
 import type { TerminalTarget } from './terminal-store';
 import { useTerminalSocket } from './use-terminal-socket';
 
@@ -65,6 +75,17 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
   const [geom, setGeom] = useState<Geom>(() => defaultGeom());
   const [fullscreen, setFullscreen] = useState(false);
   const prevGeom = useRef<Geom | null>(null);
+  const [snippetsOpen, setSnippetsOpen] = useState(false);
+  const snippets = useSnippets();
+
+  /** Вставить команду в строку ввода (без Enter) и вернуть фокус в терминал. */
+  const insertSnippet = useCallback(
+    (command: string) => {
+      sendInput(command);
+      termRef.current?.focus();
+    },
+    [sendInput],
+  );
 
   const connected = status === 'connected';
 
@@ -103,6 +124,8 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
       try {
         fit.fit();
         sendResize(term.cols, term.rows);
+        // После смены размера xterm может остаться прокрученным не до конца — держим последнюю строку видимой.
+        term.scrollToBottom();
       } catch {
         /* размер ещё не готов */
       }
@@ -124,6 +147,7 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
     if (connected) {
       try {
         fitRef.current?.fit();
+        termRef.current?.scrollToBottom();
         termRef.current?.focus();
       } catch {
         /* нет метрик */
@@ -184,6 +208,51 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
             </b>
           </span>
           <div className="flex flex-none gap-[3px]">
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                title="Сниппеты"
+                aria-label="Сниппеты"
+                disabled={!connected}
+                className="grid size-[26px] cursor-pointer place-items-center rounded-[6px] text-text-3 transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-default disabled:opacity-40 aria-expanded:bg-surface-3 aria-expanded:text-foreground"
+              >
+                <BookmarkIcon className="size-3.5" aria-hidden="true" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                sideOffset={6}
+                className="z-[110] w-[300px] rounded-[12px] border border-border-2 p-1.5 shadow-float"
+              >
+                <DropdownMenuLabel className="px-2.5 pt-1.5 pb-1 text-[10.5px] font-semibold tracking-[0.1em] text-text-3 uppercase">
+                  Сниппеты
+                </DropdownMenuLabel>
+                {(snippets.data?.items.length ?? 0) === 0 ? (
+                  <div className="px-2.5 py-2 text-[12.5px] text-text-3">
+                    Пока пусто. Добавьте команды, которые вводите чаще всего.
+                  </div>
+                ) : (
+                  snippets.data?.items.map((sn) => (
+                    <DropdownMenuItem
+                      key={sn.id}
+                      onSelect={() => insertSnippet(sn.command)}
+                      className="flex-col items-start gap-0.5 rounded-[9px] px-2.5 py-2"
+                    >
+                      <span className="text-[13px] font-medium">{sn.name}</span>
+                      <span className="max-w-full truncate font-mono text-[11.5px] text-text-3">
+                        {sn.command}
+                      </span>
+                    </DropdownMenuItem>
+                  ))
+                )}
+                <DropdownMenuSeparator className="my-1" />
+                <DropdownMenuItem
+                  onSelect={() => setSnippetsOpen(true)}
+                  className="gap-2 rounded-[9px] px-2.5 py-2 text-[12.5px] text-text-2 [&_svg]:size-3.5"
+                >
+                  <SettingsIcon aria-hidden="true" />
+                  Настроить сниппеты
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <button
               type="button"
               title="Очистить"
@@ -221,6 +290,7 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
           {(status === 'closed' || status === 'error') && <EndedOverlay error={error} onReopen={reopen} />}
         </div>
       </div>
+      <SnippetsDialog open={snippetsOpen} onOpenChange={setSnippetsOpen} />
     </Rnd>
   );
 }

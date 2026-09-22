@@ -5,6 +5,8 @@ import {
   type AutochecksSettingsUpdate,
   appearanceSettingsSchema,
   autochecksSettingsSchema,
+  type TerminalSnippets,
+  terminalSnippetsSchema,
 } from '@nodeservice/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -20,7 +22,30 @@ export const settingsApi = {
     api.get('/settings/autochecks', autochecksSettingsSchema, signal),
   updateAutochecks: (body: AutochecksSettingsUpdate): Promise<AutochecksSettings> =>
     api.put('/settings/autochecks', body, autochecksSettingsSchema),
+  snippets: (signal?: AbortSignal): Promise<TerminalSnippets> =>
+    api.get('/settings/snippets', terminalSnippetsSchema, signal),
+  updateSnippets: (body: TerminalSnippets): Promise<TerminalSnippets> =>
+    api.put('/settings/snippets', body, terminalSnippetsSchema),
 };
+
+export const snippetsQuery = {
+  queryKey: ['settings', 'snippets'] as const,
+  queryFn: ({ signal }: { signal?: AbortSignal }) => settingsApi.snippets(signal),
+  staleTime: 60_000,
+};
+
+/** Сниппеты веб-терминала — общие для всех серверов. */
+export function useSnippets() {
+  return useQuery(snippetsQuery);
+}
+
+export function useUpdateSnippets() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: settingsApi.updateSnippets,
+    onSuccess: (data) => qc.setQueryData(snippetsQuery.queryKey, data),
+  });
+}
 
 export const autochecksQuery = {
   queryKey: ['settings', 'autochecks'] as const,

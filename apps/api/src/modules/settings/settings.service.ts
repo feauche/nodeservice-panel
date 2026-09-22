@@ -12,6 +12,9 @@ import {
   type AppearanceSettings,
   type AppearanceSettingsUpdate,
   appearanceSettingsSchema,
+  TERMINAL_SNIPPETS_DEFAULTS,
+  type TerminalSnippets,
+  terminalSnippetsSchema,
 } from '@nodeservice/shared';
 import { eq } from 'drizzle-orm';
 
@@ -28,6 +31,7 @@ import { IncidentsSettingsStore } from './incidents-settings.store.js';
  * Пока один раздел — «внешний вид»; следующие этапы добавят свои ключи.
  */
 const KEY_APPEARANCE = 'settings.appearance';
+const KEY_SNIPPETS = 'settings.snippets';
 
 @Injectable()
 export class SettingsService {
@@ -92,6 +96,31 @@ export class SettingsService {
     // В Журнал (запись делает @Audit на контроллере) — только изменённые поля.
     this.audit.extend({ changes: diffChanges(current, next) });
     return next;
+  }
+
+  /** Сниппеты веб-терминала: именованные команды, общие для всех серверов. */
+  async getSnippets(): Promise<TerminalSnippets> {
+    const raw = await this.readJson(KEY_SNIPPETS);
+    const parsed = terminalSnippetsSchema.safeParse(raw ?? TERMINAL_SNIPPETS_DEFAULTS);
+    if (!parsed.success) {
+      this.log.warn('Сниппеты терминала повреждены, использую пустой список');
+      return TERMINAL_SNIPPETS_DEFAULTS;
+    }
+    return parsed.data;
+  }
+
+  /** Список заменяется целиком (порядок = порядок в меню); в Журнал — diff по именам. */
+  async updateSnippets(next: TerminalSnippets): Promise<TerminalSnippets> {
+    const current = await this.getSnippets();
+    const parsed = terminalSnippetsSchema.parse(next);
+    await this.writeJson(KEY_SNIPPETS, parsed);
+    this.audit.extend({
+      changes: diffChanges(
+        { snippets: current.items.map((i) => i.name).join(', ') || '—' },
+        { snippets: parsed.items.map((i) => i.name).join(', ') || '—' },
+      ),
+    });
+    return parsed;
   }
 
   private async readJson(key: string): Promise<unknown> {

@@ -1,9 +1,10 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { resetMockState } from '@/test/msw/handlers';
+import { mockSnippets, resetMockState } from '@/test/msw/handlers';
 import { server } from '@/test/msw/server';
 import { TerminalHost } from './terminal-host';
 import { useTerminalStore } from './terminal-store';
@@ -41,6 +42,16 @@ class MockWebSocket {
 
 const TARGET = { id: 'srv-1', name: 'de-fra-01', host: '203.0.113.7', port: 22, sshUser: 'root' };
 
+/** Окно терминала читает сниппеты через React Query — нужен провайдер. */
+function renderHost() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <TerminalHost />
+    </QueryClientProvider>,
+  );
+}
+
 function preflightOk() {
   server.use(
     http.post('/api/servers/:id/terminal', () =>
@@ -76,7 +87,7 @@ describe('TerminalHost / TerminalWindow', () => {
 
   it('окно скрыто, пока store пуст; открывается с шапкой root@host:port и кнопками', async () => {
     preflightOk();
-    render(<TerminalHost />);
+    renderHost();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     act(() => useTerminalStore.getState().open(TARGET));
     const dialog = await screen.findByRole('dialog', { name: 'Терминал de-fra-01' });
@@ -85,9 +96,27 @@ describe('TerminalHost / TerminalWindow', () => {
     expect(screen.getByRole('button', { name: 'На весь экран' })).toBeInTheDocument();
   });
 
+  it('сниппет из меню вставляет команду в терминал без Enter', async () => {
+    preflightOk();
+    mockSnippets.items = [
+      { id: '11111111-1111-4111-8111-111111111111', name: 'Соединения', command: 'ss -s' },
+    ];
+    renderHost();
+    act(() => useTerminalStore.getState().open(TARGET));
+    await screen.findByRole('dialog', { name: 'Терминал de-fra-01' });
+    await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
+    const ws = MockWebSocket.instances[0] as MockWebSocket;
+    act(() => ws.emit({ t: 'y' }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Сниппеты' }));
+    await user.click(await screen.findByRole('menuitem', { name: /Соединения/ }));
+    await waitFor(() => expect(ws.sent.some((m) => m === JSON.stringify({ t: 'i', d: 'ss -s' }))).toBe(true));
+    expect(ws.sent.some((m) => m.includes('\\n') || m.includes('\\r'))).toBe(false);
+  });
+
   it('happy-path: preflight → ws → готовность по {t:y}, ввод уходит как {t:i}', async () => {
     preflightOk();
-    render(<TerminalHost />);
+    renderHost();
     act(() => useTerminalStore.getState().open(TARGET));
     await screen.findByRole('dialog', { name: 'Терминал de-fra-01' });
 
@@ -107,7 +136,7 @@ describe('TerminalHost / TerminalWindow', () => {
 
   it('обрыв ws → «Сессия завершена» с кнопкой «Открыть заново»', async () => {
     preflightOk();
-    render(<TerminalHost />);
+    renderHost();
     act(() => useTerminalStore.getState().open(TARGET));
     await screen.findByRole('dialog');
     await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
@@ -120,7 +149,7 @@ describe('TerminalHost / TerminalWindow', () => {
 
   it('кнопка «Закрыть» убирает окно (очищает store)', async () => {
     preflightOk();
-    render(<TerminalHost />);
+    renderHost();
     act(() => useTerminalStore.getState().open(TARGET));
     await screen.findByRole('dialog');
     await userEvent.click(screen.getByRole('button', { name: 'Закрыть' }));
@@ -137,7 +166,7 @@ describe('TerminalHost / TerminalWindow', () => {
         ),
       ),
     );
-    render(<TerminalHost />);
+    renderHost();
     act(() => useTerminalStore.getState().open(TARGET));
     expect(await screen.findByText('Терминал не открылся')).toBeInTheDocument();
     expect(screen.getByText('SSH недоступен')).toBeInTheDocument();

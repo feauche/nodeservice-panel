@@ -120,6 +120,7 @@ export const AUDIT_ACTIONS = {
   'settings.autochecks.updated': { category: 'settings', label: 'Автопроверки изменены' },
   'settings.incidents.updated': { category: 'settings', label: 'Настройки инцидентов изменены' },
   'settings.assistant.updated': { category: 'settings', label: 'Настройки AI-ассистента изменены' },
+  'settings.snippets.updated': { category: 'settings', label: 'Сниппеты терминала изменены' },
   'kb.created': { category: 'knowledge', label: 'Статья базы знаний создана' },
   'kb.updated': { category: 'knowledge', label: 'Статья базы знаний изменена' },
   'kb.deleted': { category: 'knowledge', label: 'Статья базы знаний удалена' },

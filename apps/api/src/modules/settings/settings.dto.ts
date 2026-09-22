@@ -7,10 +7,12 @@ import {
   autochecksSettingsUpdateSchema,
   incidentsSettingsSchema,
   incidentsSettingsUpdateSchema,
+  terminalSnippetsSchema,
 } from '@nodeservice/shared';
 import { createZodDto } from 'nestjs-zod';
 
 export class AppearanceSettingsDto extends createZodDto(appearanceSettingsSchema) {}
+export class TerminalSnippetsDto extends createZodDto(terminalSnippetsSchema) {}
 export class AppearanceSettingsUpdateDto extends createZodDto(appearanceSettingsUpdateSchema) {}
 export class AutochecksSettingsDto extends createZodDto(autochecksSettingsSchema) {}
 export class AutochecksSettingsUpdateDto extends createZodDto(autochecksSettingsUpdateSchema) {}

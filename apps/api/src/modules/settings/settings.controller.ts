@@ -12,6 +12,7 @@ import {
   AutochecksSettingsUpdateDto,
   IncidentsSettingsDto,
   IncidentsSettingsUpdateDto,
+  TerminalSnippetsDto,
 } from './settings.dto.js';
 import { SettingsService } from './settings.service.js';
 
@@ -38,6 +39,23 @@ export class SettingsController {
   @ApiOkResponse({ type: AppearanceSettingsDto })
   updateAppearance(@Body() body: AppearanceSettingsUpdateDto): Promise<AppearanceSettingsDto> {
     return this.settings.updateAppearance(body);
+  }
+
+  @Get('snippets')
+  @ApiOperation({ summary: 'Сниппеты веб-терминала: именованные команды' })
+  @ApiOkResponse({ type: TerminalSnippetsDto })
+  getSnippets(): Promise<TerminalSnippetsDto> {
+    return this.settings.getSnippets();
+  }
+
+  @Put('snippets')
+  @Audit('settings.snippets.updated', {
+    target: { type: 'settings', id: 'snippets', display: 'Сниппеты терминала' },
+  })
+  @ApiOperation({ summary: 'Заменить список сниппетов терминала' })
+  @ApiOkResponse({ type: TerminalSnippetsDto })
+  updateSnippets(@Body() body: TerminalSnippetsDto): Promise<TerminalSnippetsDto> {
+    return this.settings.updateSnippets(body);
   }
 
   @Get('autochecks')

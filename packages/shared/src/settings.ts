@@ -72,3 +72,32 @@ export const appearanceSettingsUpdateSchema = z.object({
 export type AppearanceSettingsUpdate = z.infer<typeof appearanceSettingsUpdateSchema>;
 
 export const APPEARANCE_DEFAULTS: AppearanceSettings = { logoUrl: null, brandName: BRAND_NAME_DEFAULT };
+
+/* ---------- сниппеты терминала ---------- */
+export const SNIPPET_NAME_MAX = 40;
+export const SNIPPET_COMMAND_MAX = 500;
+export const SNIPPETS_MAX = 100;
+
+/** Именованная команда для веб-терминала: по клику вставляется в строку ввода, но не отправляется. */
+export const terminalSnippetSchema = z.object({
+  id: z.uuid(),
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Введите название')
+    .max(SNIPPET_NAME_MAX, `Название — до ${SNIPPET_NAME_MAX} символов`),
+  command: z
+    .string()
+    .min(1, 'Введите команду')
+    .max(SNIPPET_COMMAND_MAX, `Команда — до ${SNIPPET_COMMAND_MAX} символов`)
+    .refine((v) => !/[\r\n]/.test(v), 'Команда в одну строку: перевод строки отправил бы её сразу'),
+});
+export type TerminalSnippet = z.infer<typeof terminalSnippetSchema>;
+
+export const terminalSnippetsSchema = z.object({
+  items: z.array(terminalSnippetSchema).max(SNIPPETS_MAX, `Не больше ${SNIPPETS_MAX} сниппетов`),
+});
+export type TerminalSnippets = z.infer<typeof terminalSnippetsSchema>;
+
+/** Список по умолчанию пустой: базовый набор команд для VPN-нод появится отдельным шагом. */
+export const TERMINAL_SNIPPETS_DEFAULTS: TerminalSnippets = { items: [] };
