@@ -40,7 +40,7 @@ export function LockPage() {
   });
 
   return (
-    <AuthShell hideLogo foot={<span>NodeService · панель управления серверами</span>}>
+    <AuthShell hideLogo foot={<span>NodeService. Панель управления серверами</span>}>
       <div className="mb-5 flex min-w-0 items-center gap-3.5">
         <div
           aria-hidden="true"
@@ -76,7 +76,7 @@ export function LockPage() {
         <button type="button" className={linkClass} onClick={() => setLogoutOpen(true)}>
           Выйти из учётной записи
         </button>
-        <span className="text-text-3">заблокировано вручную</span>
+        <span className="text-text-3">Заблокировано вручную</span>
       </AuthLinks>
       <LogoutDialog open={logoutOpen} onOpenChange={setLogoutOpen} />
     </AuthShell>

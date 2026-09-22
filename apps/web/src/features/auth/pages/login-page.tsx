@@ -47,8 +47,10 @@ export function LoginPage() {
   });
 
   return (
-    <AuthShell foot={<span>NodeService · панель управления серверами</span>}>
-      <AuthHeading title="Вход в панель">Управление парком серверов · только для администратора</AuthHeading>
+    <AuthShell foot={<span>NodeService. Панель управления серверами</span>}>
+      <AuthHeading title="Вход в панель">
+        Управление парком серверов. Вход только для администратора.
+      </AuthHeading>
 
       <Fields onSubmit={onSubmit}>
         <Field id="l-user" label="Логин" error={errors.login?.message}>
@@ -89,18 +91,17 @@ export function LoginPage() {
           onClick={() => setForgot((v) => !v)}
           aria-expanded={forgot}
         >
-          Забыл пароль?
+          Забыли пароль?
         </button>
-        <span className="text-text-3">пароль + код 2FA</span>
+        <span className="text-text-3">Пароль и код 2FA</span>
       </AuthLinks>
       {forgot && (
         <InfoBox className="mt-3">
-          Почты для сброса нет — панель твоя. Восстановление — через Rescue CLI на сервере панели:
+          Восстановление доступа выполняется только из консоли сервера панели:
           <br />
-          <code>docker exec -it nodeservice cli</code>
+          <code>nodeservice cli reset-password</code>
           <br />
-          Там: сбросить пароль · отключить 2FA · очистить список IP · завершить все сессии. Работает только из
-          консоли сервера.
+          Там же: отключить 2FA, завершить все сессии. Команды описаны в <code>nodeservice cli --help</code>.
         </InfoBox>
       )}
     </AuthShell>

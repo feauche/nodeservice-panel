@@ -15,11 +15,28 @@ async function fillStep1(user: ReturnType<typeof userEvent.setup>, token: string
   await user.type(await screen.findByLabelText('Токен первого запуска'), token);
   await user.type(screen.getByLabelText('Логин'), MOCK.login);
   await user.type(screen.getByLabelText('Пароль'), PASSWORD);
-  await user.type(screen.getByLabelText('Повтори пароль'), PASSWORD);
-  await user.click(screen.getByRole('button', { name: 'Далее — настроить 2FA' }));
+  await user.type(screen.getByLabelText('Повторите пароль'), PASSWORD);
+  await user.click(screen.getByRole('button', { name: 'Создать учётную запись' }));
 }
 
 describe('SetupPage', () => {
+  it('генератор подставляет один и тот же пароль в оба поля и показывает его', async () => {
+    const user = userEvent.setup();
+    renderPage(SetupPage, '/setup', ['/']);
+    await screen.findByLabelText('Токен первого запуска');
+    await user.click(screen.getByRole('button', { name: 'Сгенерировать надёжный пароль' }));
+    const pass = screen.getByLabelText('Пароль') as HTMLInputElement;
+    const pass2 = screen.getByLabelText('Повторите пароль') as HTMLInputElement;
+    expect(pass.value).toMatch(/^[A-Za-z2-9]{4}(-[A-Za-z2-9]{4}){4}$/);
+    expect(pass2.value).toBe(pass.value);
+    expect(pass).toHaveAttribute('type', 'text');
+    expect(pass2).toHaveAttribute('type', 'text');
+    // глаз общий для обоих полей: скрыли одно — скрылось и второе
+    await user.click(screen.getAllByRole('button', { name: 'Скрыть пароль' })[0] as HTMLElement);
+    expect(pass).toHaveAttribute('type', 'password');
+    expect(pass2).toHaveAttribute('type', 'password');
+  });
+
   beforeEach(() => resetMockState({ setupRequired: true }));
 
   it('счастливый путь: три шага → /', async () => {
@@ -43,7 +60,7 @@ describe('SetupPage', () => {
     expect(screen.getByText('K7QFM-2M9XT')).toBeInTheDocument();
     const done = screen.getByRole('button', { name: 'Завершить и войти' });
     expect(done).toBeDisabled();
-    await user.click(screen.getByLabelText('Я сохранил коды в надёжном месте'));
+    await user.click(screen.getByLabelText('Коды сохранены в надёжном месте'));
     expect(done).toBeEnabled();
     await user.click(done);
     await waitFor(() => expect(router.state.location.pathname).toBe('/'));

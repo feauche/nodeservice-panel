@@ -39,7 +39,7 @@ export function RecoveryPage() {
       if (typeof res.recoveryCodesLeft === 'number') {
         const n = res.recoveryCodesLeft;
         toast.warning(`Осталось ${n} ${plural(n, 'код', 'кода', 'кодов')} восстановления.`, {
-          description: 'Если приложение потеряно — перевыпусти 2FA в настройках безопасности.',
+          description: 'Если приложение потеряно, перевыпустите 2FA в настройках безопасности.',
         });
       }
       await navigate({ to: '/' });
@@ -54,7 +54,7 @@ export function RecoveryPage() {
   });
 
   return (
-    <AuthShell foot={<span>каждый код работает один раз</span>}>
+    <AuthShell foot={<span>Каждый код работает один раз</span>}>
       <AuthHeading title="Код восстановления">
         Один из 10 кодов, выданных при настройке 2FA. Каждый работает один раз. Запомненные устройства после
         входа сбрасываются.
@@ -68,9 +68,9 @@ export function RecoveryPage() {
 
       {none ? (
         <InfoBox>
-          Кодов не осталось. Сброс — через Rescue CLI на сервере панели:
+          Кодов не осталось. Отключите 2FA из консоли сервера панели и настройте заново:
           <br />
-          <code>docker exec -it nodeservice cli</code>
+          <code>nodeservice cli disable-2fa</code>
         </InfoBox>
       ) : (
         <Fields onSubmit={onSubmit}>

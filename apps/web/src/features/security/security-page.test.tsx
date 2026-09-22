@@ -91,7 +91,7 @@ describe('SecurityPage', () => {
     const list = await screen.findByTestId('recovery-codes');
     expect(within(list).getAllByRole('listitem')).toHaveLength(10);
     expect(screen.getByRole('button', { name: 'Готово' })).toBeDisabled();
-    await user.click(screen.getByLabelText('Я сохранил коды в надёжном месте'));
+    await user.click(screen.getByLabelText('Коды сохранены в надёжном месте'));
     await user.click(screen.getByRole('button', { name: 'Готово' }));
     await waitFor(() => expect(screen.queryByTestId('recovery-codes')).not.toBeInTheDocument());
   });

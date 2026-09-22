@@ -32,7 +32,7 @@ export function TotpPage() {
     if (totp.isPending || wait.active) return;
     const parsed = totpCodeSchema.safeParse(value);
     if (!parsed.success) {
-      setError('Введи все 6 цифр кода.');
+      setError('Введите все 6 цифр кода.');
       return;
     }
     setError(null);
@@ -56,9 +56,9 @@ export function TotpPage() {
   };
 
   return (
-    <AuthShell foot={<span>код меняется каждые 30 секунд</span>}>
+    <AuthShell foot={<span>Код меняется каждые 30 секунд</span>}>
       <AuthHeading title="Подтверждение входа">
-        Введи 6-значный код из приложения-аутентификатора. Код меняется каждые 30 секунд.
+        Введите 6-значный код из приложения-аутентификатора. Код меняется каждые 30 секунд.
       </AuthHeading>
 
       <Fields
@@ -106,10 +106,12 @@ export function TotpPage() {
         </Link>
         {recoveryLeft === null || recoveryLeft > 0 ? (
           <Link to="/login/recovery" className={linkClass}>
-            Нет доступа к приложению — код восстановления
+            Нет доступа к приложению? Используйте код восстановления
           </Link>
         ) : (
-          <span className="text-text-3">Кодов восстановления не осталось — сброс через Rescue CLI</span>
+          <span className="text-text-3">
+            Кодов восстановления не осталось. Сброс: nodeservice cli на сервере
+          </span>
         )}
       </AuthLinks>
     </AuthShell>

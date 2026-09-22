@@ -25,7 +25,7 @@ export const authProblems = {
   invalidTotp: () =>
     problem(HttpStatus.UNAUTHORIZED, {
       type: AUTH_PROBLEM.invalidTotp,
-      detail: 'Код не подошёл. Проверь время на телефоне и введи новый код.',
+      detail: 'Код не подошёл. Проверьте время на телефоне и введите новый код.',
     }),
   invalidRecovery: () =>
     problem(HttpStatus.UNAUTHORIZED, {

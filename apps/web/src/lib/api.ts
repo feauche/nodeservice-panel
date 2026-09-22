@@ -89,7 +89,7 @@ function networkError(): ApiError {
     type: 'about:blank',
     title: 'Нет связи с сервером',
     status: 0,
-    detail: 'Нет связи с сервером. Проверь сеть и попробуй ещё раз.',
+    detail: 'Нет связи с сервером. Проверьте сеть и попробуйте ещё раз.',
   });
 }
 
@@ -346,7 +346,7 @@ export function apiErrorMessage(e: unknown): string {
     case AUTH_PROBLEM.totpRequired:
       return 'Сначала подтверди вход кодом из приложения.';
     case AUTH_PROBLEM.invalidTotp:
-      return 'Неверный код. Проверь время на телефоне — коды живут 30 секунд.';
+      return 'Неверный код. Проверьте время на телефоне: коды живут 30 секунд.';
     case AUTH_PROBLEM.invalidRecovery:
       return 'Этот код уже использован или не существует.';
     case AUTH_PROBLEM.setupDone:
@@ -362,7 +362,7 @@ export function apiErrorMessage(e: unknown): string {
     default:
       break;
   }
-  if (e.status === 0) return 'Нет связи с сервером. Проверь сеть и попробуй ещё раз.';
+  if (e.status === 0) return 'Нет связи с сервером. Проверьте сеть и попробуйте ещё раз.';
   if (e.status === 422 && e.errors.length > 0) return e.errors.map((x) => x.message).join(' ');
   if (e.status >= 500) {
     return `${e.detail ?? 'Что-то пошло не так на сервере.'}${e.requestId ? ` Запрос: ${e.requestId}` : ''}`;

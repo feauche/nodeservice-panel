@@ -209,8 +209,8 @@ function RecoveryCodesDialog({
             htmlFor="recovery-saved"
             className="mt-2 flex cursor-pointer items-center gap-2.5 text-[12.5px]"
           >
-            <Checkbox id="recovery-saved" checked={saved} onCheckedChange={(v) => setSaved(v === true)} />Я
-            сохранил коды в надёжном месте
+            <Checkbox id="recovery-saved" checked={saved} onCheckedChange={(v) => setSaved(v === true)} />
+            Коды сохранены в надёжном месте
           </label>
         )}
         <DialogActions>

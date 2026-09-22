@@ -93,8 +93,8 @@ export type SetupConfirmResponse = z.infer<typeof setupConfirmResponseSchema>;
 
 /* ---------- вход ---------- */
 export const loginRequestSchema = z.object({
-  login: z.string().trim().min(1, 'Введи логин').max(LOGIN_MAX),
-  password: z.string().min(1, 'Введи пароль').max(PASSWORD_MAX),
+  login: z.string().trim().min(1, 'Введите логин').max(LOGIN_MAX),
+  password: z.string().min(1, 'Введите пароль').max(PASSWORD_MAX),
 });
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 
@@ -132,7 +132,7 @@ export const recoveryLoginRequestSchema = z.object({
 export type RecoveryLoginRequest = z.infer<typeof recoveryLoginRequestSchema>;
 
 export const unlockRequestSchema = z.object({
-  password: z.string().min(1, 'Введи пароль').max(PASSWORD_MAX),
+  password: z.string().min(1, 'Введите пароль').max(PASSWORD_MAX),
 });
 export type UnlockRequest = z.infer<typeof unlockRequestSchema>;
 

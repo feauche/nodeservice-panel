@@ -80,7 +80,7 @@ export type SecurityOverview = z.infer<typeof securityOverviewSchema>;
 /* ---------- пароль ---------- */
 export const changePasswordRequestSchema = z
   .object({
-    currentPassword: z.string().min(1, 'Введи текущий пароль').max(PASSWORD_MAX),
+    currentPassword: z.string().min(1, 'Введите текущий пароль').max(PASSWORD_MAX),
     newPassword: passwordSchema,
   })
   .refine((v) => v.currentPassword !== v.newPassword, {

@@ -67,7 +67,7 @@ export function ThemeMenu({ className }: { className?: string }) {
       <DropdownMenuContent
         align="end"
         sideOffset={8}
-        className="w-[250px] rounded-[14px] border border-border-2 p-1.5 shadow-float"
+        className="z-[110] w-[250px] rounded-[14px] border border-border-2 p-1.5 shadow-float"
       >
         <DropdownMenuLabel className="px-2.5 pt-2 pb-1 text-[10.5px] font-semibold tracking-[0.1em] text-text-3 uppercase">
           Тема

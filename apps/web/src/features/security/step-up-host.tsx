@@ -34,7 +34,7 @@ export function StepUpHost() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!password) {
-      setError('Введи пароль');
+      setError('Введите пароль');
       return;
     }
     try {

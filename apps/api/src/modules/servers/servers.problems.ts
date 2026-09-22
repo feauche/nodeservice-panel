@@ -7,7 +7,7 @@ export const serverProblems = {
   sshUnreachable: (host: string, detail?: string) =>
     problem(HttpStatus.BAD_GATEWAY, {
       type: SERVER_PROBLEM.sshUnreachable,
-      detail: `Не удалось подключиться к ${host} по SSH${detail ? ` (${detail})` : ''}. Проверь адрес, порт и firewall.`,
+      detail: `Не удалось подключиться к ${host} по SSH${detail ? ` (${detail})` : ''}. Проверьте адрес, порт и firewall.`,
     }),
   sshAuth: (detail = 'Пароль или ключ не подошли.') =>
     problem(HttpStatus.BAD_REQUEST, { type: SERVER_PROBLEM.sshAuth, detail }),

@@ -71,7 +71,7 @@ export const SSH_KEY_MAX = 16_384;
 
 export const sshAuthSchema = z.discriminatedUnion('method', [
   /** Пароль: используется один раз для установки ключа панели, не сохраняется. */
-  z.object({ method: z.literal('password'), password: z.string().min(1, 'Введи пароль').max(256) }),
+  z.object({ method: z.literal('password'), password: z.string().min(1, 'Введите пароль').max(256) }),
   /** Свой приватный ключ (OpenSSH/PEM); хранится зашифрованным. */
   z.object({
     method: z.literal('key'),

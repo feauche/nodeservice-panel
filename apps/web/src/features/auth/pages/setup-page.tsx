@@ -16,9 +16,10 @@ import { ErrorBox } from '../components/error-box';
 import { AuthInput, authCheckboxClass, Field, Fields } from '../components/field';
 import { OtpField } from '../components/otp-field';
 import { PasswordField } from '../components/password-field';
+import { generatePassword } from '../components/password-generator';
 import { PasswordMeter } from '../components/password-meter';
 import { isLeakedPassword } from '../components/password-strength';
-import { Steps } from '../components/steps';
+import { SetupSteps } from '../components/setup-steps';
 import { authKeys, useSetupConfirm, useSetupStart } from '../queries';
 
 /* ---------- шаг 1: учётная запись ---------- */
@@ -27,7 +28,7 @@ const step1Schema = setupStartRequestSchema.extend({ passwordConfirm: z.string()
     ctx.addIssue({
       code: 'custom',
       path: ['password'],
-      message: 'Этот пароль встречается в утечках — подберут за секунды. Возьми другой.',
+      message: 'Этот пароль есть в известных утечках. Выберите другой.',
     });
   }
   if (v.password !== v.passwordConfirm) {
@@ -44,11 +45,23 @@ interface Step1Props {
 function Step1({ initial, onDone }: Step1Props) {
   const start = useSetupStart();
   const [serverError, setServerError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
   const form = useForm<Step1Values>({ resolver: zodResolver(step1Schema), defaultValues: initial });
   const { errors } = form.formState;
   const password = form.watch('password');
   // Первое поле: токен, а если он уже введён (вернулись со шага 2) — логин.
   const firstField = initial.setupToken ? 'login' : 'setupToken';
+
+  // Генератор подставляет пароль в оба поля и показывает его: пользователю нужно его сохранить.
+  const generate = () => {
+    const value = generatePassword();
+    form.setValue('password', value, { shouldDirty: true, shouldValidate: true });
+    form.setValue('passwordConfirm', value, { shouldDirty: true, shouldValidate: true });
+    setShowPassword(true);
+    toast.info('Пароль подставлен в оба поля и показан.', {
+      description: 'Сохраните его в менеджере паролей.',
+    });
+  };
 
   const onSubmit = form.handleSubmit(async (values) => {
     setServerError(null);
@@ -74,9 +87,8 @@ function Step1({ initial, onDone }: Step1Props) {
 
   return (
     <>
-      <Steps current={1} />
-      <AuthHeading title="Первый запуск">
-        Пароля по умолчанию нет — создай учётную запись администратора. Она единственная.
+      <AuthHeading title="Учётная запись администратора">
+        В панели один администратор. Пароля по умолчанию нет: создайте его сейчас.
       </AuthHeading>
       <Fields onSubmit={onSubmit}>
         <Field
@@ -85,8 +97,11 @@ function Step1({ initial, onDone }: Step1Props) {
           error={errors.setupToken?.message}
           hint={
             <>
-              Напечатан установщиком и в <span className="font-mono">docker logs nodeservice</span>. Защищает
-              мастер от того, кто откроет адрес раньше тебя. После создания админа мастер исчезает навсегда.
+              Потеряли токен: выполните на сервере{' '}
+              <code className="rounded-[5px] bg-surface-3 px-1.5 py-px font-mono text-[11px] whitespace-nowrap text-text-2">
+                nodeservice cli setup-token
+              </code>
+              .
             </>
           }
         >
@@ -95,7 +110,8 @@ function Step1({ initial, onDone }: Step1Props) {
             autoFocus={firstField === 'setupToken'}
             autoComplete="off"
             spellCheck={false}
-            className="font-mono"
+            placeholder="Напечатан установщиком в конце установки"
+            className="font-mono placeholder:font-sans"
             aria-invalid={errors.setupToken ? true : undefined}
             aria-describedby={errors.setupToken ? 's-token-error' : 's-token-hint'}
             {...form.register('setupToken')}
@@ -108,35 +124,43 @@ function Step1({ initial, onDone }: Step1Props) {
             autoComplete="username"
             autoCapitalize="none"
             spellCheck={false}
+            placeholder="admin"
             aria-invalid={errors.login ? true : undefined}
             aria-describedby={errors.login ? 's-user-error' : undefined}
             {...form.register('login')}
           />
         </Field>
-        <Field id="s-pass" label="Пароль" error={errors.password?.message}>
-          <PasswordField
-            id="s-pass"
-            placeholder="придумай длинную фразу"
-            autoComplete="new-password"
-            aria-invalid={errors.password ? true : undefined}
-            aria-describedby={errors.password ? 's-pass-error' : 's-meter'}
-            {...form.register('password')}
-          />
-          <PasswordMeter id="s-meter" value={password} />
-        </Field>
-        <Field id="s-pass2" label="Повтори пароль" error={errors.passwordConfirm?.message}>
-          <PasswordField
-            id="s-pass2"
-            placeholder=""
-            autoComplete="new-password"
-            aria-invalid={errors.passwordConfirm ? true : undefined}
-            aria-describedby={errors.passwordConfirm ? 's-pass2-error' : undefined}
-            {...form.register('passwordConfirm')}
-          />
-        </Field>
+        <div className="grid grid-cols-2 gap-3.5 max-[560px]:grid-cols-1">
+          <Field id="s-pass" label="Пароль" error={errors.password?.message}>
+            <PasswordField
+              id="s-pass"
+              placeholder="От 12 символов"
+              autoComplete="new-password"
+              show={showPassword}
+              onShowChange={setShowPassword}
+              onGenerate={generate}
+              aria-invalid={errors.password ? true : undefined}
+              aria-describedby={errors.password ? 's-pass-error' : 's-meter'}
+              {...form.register('password')}
+            />
+          </Field>
+          <Field id="s-pass2" label="Повторите пароль" error={errors.passwordConfirm?.message}>
+            <PasswordField
+              id="s-pass2"
+              placeholder="Ещё раз"
+              autoComplete="new-password"
+              show={showPassword}
+              onShowChange={setShowPassword}
+              aria-invalid={errors.passwordConfirm ? true : undefined}
+              aria-describedby={errors.passwordConfirm ? 's-pass2-error' : undefined}
+              {...form.register('passwordConfirm')}
+            />
+          </Field>
+        </div>
+        <PasswordMeter id="s-meter" value={password} className="-mt-1.5" />
         {serverError && <ErrorBox>{serverError}</ErrorBox>}
-        <CtaButton className="mt-1.5" loading={start.isPending} loadingText="Создаю…">
-          Далее — настроить 2FA
+        <CtaButton className="mt-1" loading={start.isPending} loadingText="Создание…">
+          Создать учётную запись
         </CtaButton>
       </Fields>
     </>
@@ -152,7 +176,7 @@ function useCopy() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1400);
     } catch {
-      toast.error('Не удалось скопировать — выдели и скопируй вручную.');
+      toast.error('Не удалось скопировать. Выделите текст и скопируйте вручную.');
     }
   };
   return { copied, copy };
@@ -177,7 +201,7 @@ function Step2({ enroll, onBack, onDone }: Step2Props) {
     if (confirm.isPending) return;
     const parsed = totpCodeSchema.safeParse(value);
     if (!parsed.success) {
-      setError('Введи 6 цифр из приложения.');
+      setError('Введите 6 цифр из приложения.');
       return;
     }
     setError(null);
@@ -188,7 +212,7 @@ function Step2({ enroll, onBack, onDone }: Step2Props) {
     } catch (e) {
       setError(
         isApiError(e) && e.status === 400 && !e.detail
-          ? 'Код не подошёл. Проверь, что время на телефоне точное.'
+          ? 'Код не подошёл. Проверьте, что время на телефоне точное.'
           : apiErrorMessage(e),
       );
       setInvalid(true);
@@ -201,9 +225,8 @@ function Step2({ enroll, onBack, onDone }: Step2Props) {
 
   return (
     <>
-      <Steps current={2} />
       <AuthHeading title="Двухфакторная защита">
-        Обязательна: панель управляет всеми серверами и хранит доступы к ним — одного пароля мало.
+        Обязательна: панель управляет всеми серверами и хранит доступы к ним, одного пароля недостаточно.
       </AuthHeading>
       <Fields
         onSubmit={(e) => {
@@ -223,10 +246,10 @@ function Step2({ enroll, onBack, onDone }: Step2Props) {
           </div>
           <div className="min-w-0 max-[520px]:w-full">
             <p className="mb-2 text-[11.5px] leading-normal text-text-3">
-              Отсканируй QR в приложении: Google Authenticator, Aegis, 1Password, Яндекс Ключ — подойдёт любое
-              с TOTP.
+              Отсканируйте QR-код в приложении: Google Authenticator, Aegis, 1Password, Яндекс Ключ. Подойдёт
+              любое с поддержкой TOTP.
             </p>
-            <p className="mb-1.5 text-[11.5px] leading-normal text-text-3">Или введи ключ вручную:</p>
+            <p className="mb-1.5 text-[11.5px] leading-normal text-text-3">Или введите ключ вручную:</p>
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-[10px] border border-border bg-surface-2 py-[7px] pr-[7px] pl-[11px] font-mono text-[12.5px] tracking-[0.06em]">
               <span className="min-w-0 leading-normal break-all select-all">{secretPretty}</span>
               <GhostButton
@@ -240,7 +263,7 @@ function Step2({ enroll, onBack, onDone }: Step2Props) {
           </div>
         </div>
 
-        <Field id="s2-otp" label="Код из приложения — подтверждает, что всё связалось">
+        <Field id="s2-otp" label="Код из приложения">
           <OtpField
             id="s2-otp"
             value={code}
@@ -296,19 +319,18 @@ function Step3({ codes, login, onDone }: { codes: string[]; login: string; onDon
       'NodeService — коды восстановления 2FA',
       `Администратор: ${login}`,
       `Выданы: ${new Date().toLocaleString('ru-RU')}`,
-      'Каждый код работает один раз. Храни в менеджере паролей.',
+      'Каждый код работает один раз. Храните их в менеджере паролей.',
       '',
     ].join('\n');
     downloadText('nodeservice-recovery-codes.txt', `${head}${text}\n`);
-    toast.success('nodeservice-recovery-codes.txt — сохранён.');
+    toast.success('Файл nodeservice-recovery-codes.txt сохранён.');
   };
 
   return (
     <>
-      <Steps current={3} />
       <AuthHeading ref={headingRef} tabIndex={-1} title="Коды восстановления">
-        Если потеряешь телефон с приложением — войдёшь одним из этих кодов. Каждый работает один раз. Сохрани
-        их в менеджере паролей: больше они не покажутся.
+        Если телефон с приложением будет недоступен, войти можно одним из этих кодов. Каждый работает один
+        раз. Сохраните их в менеджере паролей: больше они не покажутся.
       </AuthHeading>
       <div className="mt-1 mb-3.5 grid grid-cols-2 gap-2">
         {codes.map((c) => (
@@ -336,7 +358,7 @@ function Step3({ codes, login, onDone }: { codes: string[]; login: string; onDon
           className={authCheckboxClass}
         />
         <Label htmlFor={chkId} className="cursor-pointer text-[13px] font-normal text-text-2">
-          Я сохранил коды в надёжном месте
+          Коды сохранены в надёжном месте
         </Label>
       </div>
       <CtaButton type="button" className="mt-3.5" disabled={!saved} onClick={onDone}>
@@ -369,11 +391,7 @@ export function SetupPage() {
   };
 
   return (
-    <AuthShell
-      wide={step !== 1}
-      animKey={`step-${step}`}
-      foot={<span>мастер первого запуска · шаг {step} из 3</span>}
-    >
+    <AuthShell side={<SetupSteps current={step} />} animKey={`step-${step}`}>
       {step === 1 && (
         <Step1
           initial={values}

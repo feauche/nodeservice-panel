@@ -79,14 +79,14 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     if (exception instanceof ZodError) {
       status = HttpStatus.UNPROCESSABLE_ENTITY;
       errors = zodIssues(exception);
-      detail = 'Проверь выделенные поля.';
+      detail = 'Проверьте выделенные поля.';
       type = AUTH_PROBLEM.validation;
     } else if (exception instanceof ZodValidationException) {
       // Тело запроса не прошло DTO (nestjs-zod): 400, но тот же type и список полей.
       status = exception.getStatus();
       const zodError = exception.getZodError();
       errors = zodError instanceof ZodError ? zodIssues(zodError) : undefined;
-      detail = 'Проверь выделенные поля.';
+      detail = 'Проверьте выделенные поля.';
       type = AUTH_PROBLEM.validation;
     } else if (exception instanceof HttpException) {
       status = exception.getStatus();

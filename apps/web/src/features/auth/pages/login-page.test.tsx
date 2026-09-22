@@ -30,8 +30,8 @@ describe('LoginPage', () => {
     renderPage(LoginPage, '/login');
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: 'Войти' }));
-    expect(await screen.findByText('Введи логин')).toBeInTheDocument();
-    expect(screen.getByText('Введи пароль')).toBeInTheDocument();
+    expect(await screen.findByText('Введите логин')).toBeInTheDocument();
+    expect(screen.getByText('Введите пароль')).toBeInTheDocument();
     expect(called).toBe(false);
   });
 
@@ -66,10 +66,10 @@ describe('LoginPage', () => {
     expect(useAuthStore.getState().pendingTotp).toBe(true);
   });
 
-  it('«Забыл пароль?» раскрывает подсказку про Rescue CLI', async () => {
+  it('«Забыли пароль?» раскрывает подсказку про Rescue CLI', async () => {
     renderPage(LoginPage, '/login');
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: 'Забыл пароль?' }));
-    expect(screen.getByText('docker exec -it nodeservice cli')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Забыли пароль?' }));
+    expect(screen.getByText('nodeservice cli reset-password')).toBeInTheDocument();
   });
 });
