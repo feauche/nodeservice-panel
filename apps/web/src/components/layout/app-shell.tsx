@@ -77,15 +77,15 @@ function NavItem({
         disabled
         title={collapsed ? `${label} — ${LOCKED_HINT}` : LOCKED_HINT}
         className={cn(
-          'relative flex w-full cursor-not-allowed items-center gap-[11px] rounded-[10px] px-3 py-[9px] text-left text-[13.5px] font-medium text-text-3 select-none',
+          'relative flex w-full cursor-not-allowed items-center gap-[11px] rounded-[10px] px-3 py-[9px] text-left text-[13.5px] font-medium text-text-3 select-none max-md:justify-center max-md:px-0',
           collapsed && 'justify-center px-0',
         )}
       >
         <Icon className="size-[17px] flex-none opacity-55" aria-hidden="true" />
-        <span className={cn('flex-1 opacity-55', collapsed && 'sr-only')}>{label}</span>
+        <span className={cn('flex-1 opacity-55 max-md:sr-only', collapsed && 'sr-only')}>{label}</span>
         <LockIcon
           className={cn(
-            'size-[13px] flex-none opacity-70',
+            'size-[13px] flex-none opacity-70 max-md:absolute max-md:top-1 max-md:right-1.5 max-md:size-[11px]',
             collapsed && 'absolute top-1 right-1.5 size-[11px]',
           )}
           aria-hidden="true"
@@ -101,16 +101,18 @@ function NavItem({
         'relative flex items-center gap-[11px] rounded-[10px] px-3 py-[9px] text-[13.5px] font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground',
         'data-[status=active]:bg-brand-soft data-[status=active]:text-brand',
         'data-[status=active]:before:absolute data-[status=active]:before:top-[9px] data-[status=active]:before:bottom-[9px] data-[status=active]:before:-left-3 data-[status=active]:before:w-[3px] data-[status=active]:before:rounded-r-[3px] data-[status=active]:before:bg-brand data-[status=active]:before:content-[""]',
+        'max-md:justify-center max-md:px-0 max-md:data-[status=active]:before:-left-2.5',
         collapsed && 'justify-center px-0 data-[status=active]:before:-left-2.5',
       )}
       activeOptions={{ exact: to === '/' }}
     >
       <Icon className="size-[17px] flex-none" aria-hidden="true" />
-      <span className={cn('flex-1', collapsed && 'sr-only')}>{label}</span>
+      <span className={cn('flex-1 max-md:sr-only', collapsed && 'sr-only')}>{label}</span>
       {badge !== undefined && badge > 0 && (
         <span
           className={cn(
             'inline-flex min-w-[18px] justify-center rounded-full bg-crit px-1.5 py-[1px] text-[10.5px] font-bold text-white tabular-nums',
+            'max-md:absolute max-md:top-1 max-md:right-1 max-md:min-w-[15px] max-md:px-1 max-md:leading-[15px] max-md:shadow-[0_0_0_2px_var(--ns-surface)]',
             collapsed &&
               'absolute top-1 right-1 min-w-[15px] px-1 leading-[15px] shadow-[0_0_0_2px_var(--ns-surface)]',
           )}
@@ -176,13 +178,21 @@ function UserMenu() {
               </div>
             </div>
           </div>
-          <DropdownMenuItem
-            onSelect={() => void navigate({ to: '/settings/security' })}
-            className={itemClass}
-          >
-            <ShieldIcon aria-hidden="true" />
-            Безопасность и сессии
-          </DropdownMenuItem>
+          {isSectionOpen('/settings') ? (
+            <DropdownMenuItem
+              onSelect={() => void navigate({ to: '/settings/security' })}
+              className={itemClass}
+            >
+              <ShieldIcon aria-hidden="true" />
+              Безопасность и сессии
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem disabled title={LOCKED_HINT} className={cn(itemClass, 'text-text-3')}>
+              <ShieldIcon aria-hidden="true" />
+              <span className="flex-1">Безопасность и сессии</span>
+              <LockIcon className="size-[13px]! opacity-70" aria-hidden="true" />
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator className="my-0" />
           <DropdownMenuItem onSelect={doLock} className={itemClass}>
             <LockIcon aria-hidden="true" />
@@ -311,11 +321,11 @@ export function AppShell({ title, subtitle, actions, children }: AppShellProps) 
             type="button"
             disabled
             title="Команды и поиск — этап 6"
-            className="flex h-9 w-full max-w-[260px] items-center gap-2 rounded-[10px] border border-border bg-surface px-3 text-[13px] text-text-3 disabled:cursor-default"
+            className="flex h-9 w-full max-w-[260px] items-center gap-2 rounded-[10px] border border-border bg-surface px-3 text-[13px] text-text-3 disabled:cursor-default max-md:w-9 max-md:justify-center max-md:px-0"
           >
             <SearchIcon className="size-[15px] flex-none" aria-hidden="true" />
-            <span className="min-w-0 flex-1 truncate text-left">Поиск и команды</span>
-            <kbd className="rounded-[5px] border border-border bg-surface-2 px-1.5 font-mono text-[10.5px] leading-[1.5] text-text-3">
+            <span className="min-w-0 flex-1 truncate text-left max-md:sr-only">Поиск и команды</span>
+            <kbd className="rounded-[5px] border border-border bg-surface-2 px-1.5 font-mono text-[10.5px] leading-[1.5] text-text-3 max-md:hidden">
               ⌘K
             </kbd>
           </button>

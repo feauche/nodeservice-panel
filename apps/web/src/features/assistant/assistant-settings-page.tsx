@@ -158,7 +158,7 @@ export function AssistantSettingsPage() {
                   </label>
                   <span className="text-[12px] text-text-3">
                     {enabled
-                      ? 'Ключ уже сохранён. Введи новый, чтобы заменить.'
+                      ? 'Ключ уже сохранён. Введите новый, чтобы заменить.'
                       : 'Ключ из личного кабинета zveno.ai.'}
                   </span>
                   <PasswordField

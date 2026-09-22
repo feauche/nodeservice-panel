@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRouter, RouterProvider } from '@tanstack/react-router';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store';
+import { resetMockState } from '@/test/msw/handlers';
 import { routeTree } from './routeTree.gen';
 
 /**
@@ -25,6 +26,21 @@ function renderAt(path: string) {
   );
   return router;
 }
+
+describe('закрытые по этапам разделы', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    useAuthStore.setState({ me: null, hydrated: false, locked: false });
+    resetMockState({ authenticated: true });
+  });
+
+  it('/settings и / уводят на «Серверы», пока разделы закрыты', async () => {
+    const r1 = renderAt('/settings/security');
+    await waitFor(() => expect(r1.state.location.pathname).toBe('/servers'));
+    const r2 = renderAt('/');
+    await waitFor(() => expect(r2.state.location.pathname).toBe('/servers'));
+  });
+});
 
 describe('маршруты авторизации', () => {
   beforeEach(() => {

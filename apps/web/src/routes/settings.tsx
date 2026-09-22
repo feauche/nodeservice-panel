@@ -3,9 +3,13 @@ import { BookOpenTextIcon, BracesIcon } from 'lucide-react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { requireAuth } from '@/features/auth/guards';
+import { requireSectionOpen } from '@/lib/stages';
 
 export const Route = createFileRoute('/settings')({
-  beforeLoad: ({ context }) => requireAuth(context),
+  beforeLoad: async ({ context }) => {
+    await requireAuth(context);
+    requireSectionOpen('/settings');
+  },
   component: SettingsLayout,
 });
 

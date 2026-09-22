@@ -23,7 +23,7 @@ export function explainError(error: unknown): ErrorExplanation {
         kind: 'network',
         title: 'Нет связи с сервером',
         advice:
-          'Панель не смогла достучаться до своего API. Проверь сеть или что сервис запущен, и обнови страницу.',
+          'Панель не смогла связаться со своим API. Проверьте сеть и что сервис запущен, затем обновите страницу.',
       };
     if (error.status === 401)
       return {

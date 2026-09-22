@@ -194,26 +194,28 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        <div className="ml-auto flex items-center gap-2">
+        {/* На телефоне: «Проверить все» — иконка, «Добавить сервер» — на всю оставшуюся ширину. */}
+        <div className="ml-auto flex items-center gap-2 max-md:ml-0 max-md:w-full">
           {items.length > 0 && (
             <Button
               type="button"
               variant="outline"
               disabled={checkAll.isPending}
               onClick={() => void doCheckAll()}
-              className="h-9 rounded-[10px] border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:bg-surface-3 hover:text-foreground"
+              aria-label="Проверить все"
+              className="h-9 rounded-[10px] border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:bg-surface-3 hover:text-foreground max-md:w-9 max-md:flex-none max-md:px-0"
             >
               <RefreshCwIcon
                 className={cn('size-3.5', checkAll.isPending && 'animate-spin')}
                 aria-hidden="true"
               />
-              Проверить все
+              <span className="max-md:sr-only">Проверить все</span>
             </Button>
           )}
           <Button
             type="button"
             onClick={() => setAddOpen(true)}
-            className="h-9 rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover)"
+            className="h-9 rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover) max-md:flex-1"
           >
             <PlusIcon className="size-4" aria-hidden="true" />
             Добавить сервер
@@ -241,7 +243,7 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
           <ServerIcon className="size-8 text-text-3" aria-hidden="true" />
           <h2 className="mt-3 font-heading text-[16px] font-bold">Серверов пока нет</h2>
           <p className="mt-1 max-w-[380px] text-[13px] text-text-2">
-            Добавь первый: понадобится IP, порт и доступ по SSH. Панель сама поставит свой ключ и подготовит
+            Добавьте первый: понадобятся IP, порт и доступ по SSH. Панель сама поставит свой ключ и подготовит
             сервер к установке агента.
           </p>
           <Button

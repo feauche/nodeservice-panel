@@ -351,6 +351,16 @@
   }
 }
 
+/* iOS Safari приближает страницу при фокусе в поле со шрифтом < 16px — на телефонах держим 16px.
+   Правило вне @layer, поэтому перебивает утилиты text-[…] без !important. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
 @utility num {
   font-variant-numeric: tabular-nums;
 }

@@ -1,13 +1,20 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRouter, RouterProvider } from '@tanstack/react-router';
 import { render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store';
 import { loginMethod } from '@/features/security/security-format';
 import { resetMockState } from '@/test/msw/handlers';
 import { mockSecurity } from '@/test/msw/security-mock';
 import { routeTree } from './routeTree.gen';
+
+// Пока раздел «Настройки» закрыт по этапам — здесь открываем его, чтобы проверять содержимое страниц.
+vi.mock('@/lib/stages', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/stages')>()),
+  isSectionOpen: () => true,
+  requireSectionOpen: () => undefined,
+}));
 
 function renderAt(path: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
