@@ -57,7 +57,7 @@ export function AuthShell({ children, wide, foot, hideLogo, animKey, side }: Aut
         </main>
       )}
 
-      <div className="relative mt-[18px] mb-auto max-w-[420px] text-center text-[11.5px] leading-[1.6] text-text-3">
+      <div className="relative mt-[18px] mb-auto max-w-[420px] text-center text-[12px] leading-[1.6] text-text-3">
         {foot}
       </div>
     </div>
@@ -80,7 +80,7 @@ export function AuthHeading({ title, children, ref, tabIndex }: AuthHeadingProps
         {title}
       </h2>
       {children && (
-        <div className="mb-5 text-[13px] leading-normal text-text-2 [&_b]:font-semibold [&_b]:text-foreground">
+        <div className="mb-5 text-[13.5px] leading-normal text-text-2 [&_b]:font-semibold [&_b]:text-foreground">
           {children}
         </div>
       )}

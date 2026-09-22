@@ -4,8 +4,16 @@ import { passwordStrength } from './password-strength';
 const SEGMENT_COLOR = ['', 'bg-crit', 'bg-warn', 'bg-brand', 'bg-ok'] as const;
 
 /** 4 сегмента + подпись. Цвет сегментов зависит от уровня: crit → warn → accent → ok. */
-export function PasswordMeter({ value, id, className }: { value: string; id?: string; className?: string }) {
-  const { level, label } = passwordStrength(value);
+interface PasswordMeterProps {
+  value: string;
+  id?: string;
+  className?: string;
+  /** Подсказка при пустом поле (например, про кнопку генерации). */
+  emptyHint?: string;
+}
+
+export function PasswordMeter({ value, id, className, emptyHint }: PasswordMeterProps) {
+  const { level, label } = passwordStrength(value, emptyHint);
   const color = SEGMENT_COLOR[level];
   return (
     <div id={id} className={className}>
@@ -19,7 +27,7 @@ export function PasswordMeter({ value, id, className }: { value: string; id?: st
           />
         ))}
       </div>
-      <p className="mt-[5px] text-[11px] leading-[1.4] text-text-3" aria-live="polite">
+      <p className="mt-[5px] text-[11.5px] leading-[1.4] text-text-3" aria-live="polite">
         {label}
       </p>
     </div>

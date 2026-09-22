@@ -18,7 +18,7 @@ export function SetupSteps({ current }: { current: 1 | 2 | 3 }) {
         <BrandName className="text-lg" />
       </div>
       <h2 className="mb-2.5 text-[22px] leading-[1.2] max-md:text-xl">Первый запуск панели</h2>
-      <p className="mb-6 text-[13px] leading-normal text-text-2 max-md:mb-4">
+      <p className="mb-6 text-[13.5px] leading-normal text-text-2 max-md:mb-4">
         Три коротких шага. После них мастер исчезает, и вход возможен только с паролем и кодом 2FA.
       </p>
       <ol className="flex flex-col gap-0.5" aria-label={`Шаг ${current} из ${SETUP_STEPS.length}`}>
@@ -30,7 +30,7 @@ export function SetupSteps({ current }: { current: 1 | 2 | 3 }) {
               key={s.title}
               aria-current={state === 'current' ? 'step' : undefined}
               className={cn(
-                'grid grid-cols-[26px_1fr] items-start gap-3 rounded-[10px] px-2.5 py-2.5 text-[13px] text-text-3',
+                'grid grid-cols-[26px_1fr] items-start gap-3 rounded-[10px] px-2.5 py-2.5 text-[13.5px] text-text-3',
                 state === 'current' && 'bg-brand-soft text-foreground',
                 state === 'done' && 'text-text-2',
               )}
@@ -47,13 +47,13 @@ export function SetupSteps({ current }: { current: 1 | 2 | 3 }) {
               </span>
               <span className="min-w-0">
                 <b className="block font-semibold">{s.title}</b>
-                <small className="mt-px block text-[11.5px] leading-snug max-md:hidden">{s.hint}</small>
+                <small className="mt-px block text-[12px] leading-snug max-md:hidden">{s.hint}</small>
               </span>
             </li>
           );
         })}
       </ol>
-      <p className="mt-auto pt-6 text-[11.5px] leading-normal text-text-3 max-md:hidden">
+      <p className="mt-auto pt-6 text-[12px] leading-normal text-text-3 max-md:hidden">
         Панель управляет всеми вашими серверами и хранит доступы к ним, поэтому 2FA обязательна.
       </p>
     </>

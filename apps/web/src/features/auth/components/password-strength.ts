@@ -19,7 +19,14 @@ export const LEAKED_WORDS = [
   'passw0rd',
 ] as const;
 
-export const STRENGTH_LABELS = ['', 'слабая — подберут быстро', 'средняя', 'хорошая', 'отличная'] as const;
+/** Подписи уровней — как в макете: коротко и по делу, без слова «стойкость». */
+export const STRENGTH_LABELS = [
+  '',
+  'Слабый: подберут за минуты',
+  'Средний: добавьте длины',
+  'Хороший',
+  'Надёжный: подбор займёт годы',
+] as const;
 
 export const PASSWORD_DEFAULT_HINT =
   'От 12 символов. Фраза из 3–4 слов надёжнее набора символов, а запомнить проще.';
@@ -50,12 +57,12 @@ export interface StrengthInfo {
   label: string;
 }
 
-export function passwordStrength(p: string): StrengthInfo {
-  if (!p) return { level: 0, leaked: false, label: PASSWORD_DEFAULT_HINT };
+export function passwordStrength(p: string, emptyHint: string = PASSWORD_DEFAULT_HINT): StrengthInfo {
+  if (!p) return { level: 0, leaked: false, label: emptyHint };
   const leaked = isLeakedPassword(p);
   const score = passwordScore(p);
-  if (leaked) return { level: 1, leaked: true, label: 'Встречается в утечках — не подойдёт' };
+  if (leaked) return { level: 1, leaked: true, label: 'Встречается в утечках: не подойдёт' };
   const left = PASSWORD_MIN - p.length;
   const more = left > 0 ? ` · нужно ещё ${left} ${plural(left, 'символ', 'символа', 'символов')}` : '';
-  return { level: score, leaked: false, label: `Стойкость: ${STRENGTH_LABELS[Math.max(1, score)]}${more}` };
+  return { level: score, leaked: false, label: `${STRENGTH_LABELS[Math.max(1, score)]}${more}` };
 }

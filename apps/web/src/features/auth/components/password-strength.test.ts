@@ -25,16 +25,15 @@ describe('passwordStrength', () => {
     expect(isLeakedPassword('correct horse battery')).toBe(false);
     const s = passwordStrength('MyPassword2026!!');
     expect(s).toMatchObject({ level: 1, leaked: true });
-    expect(s.label).toBe('Встречается в утечках — не подойдёт');
+    expect(s.label).toBe('Встречается в утечках: не подойдёт');
   });
 
   it('подписи и «нужно ещё N символов»', () => {
-    expect(passwordStrength('abcdefgh').label).toBe(
-      'Стойкость: слабая — подберут быстро · нужно ещё 4 символа',
-    );
+    expect(passwordStrength('abcdefgh').label).toBe('Слабый: подберут за минуты · нужно ещё 4 символа');
     expect(passwordStrength('abcdefghijk').label).toContain('нужно ещё 1 символ');
-    expect(passwordStrength('abcdefghijkl').label).toBe('Стойкость: средняя');
-    expect(passwordStrength('Abcdefghijkl').label).toBe('Стойкость: хорошая');
-    expect(passwordStrength('Abcdefghijk1').label).toBe('Стойкость: отличная');
+    expect(passwordStrength('abcdefghijkl').label).toBe('Средний: добавьте длины');
+    expect(passwordStrength('Abcdefghijkl').label).toBe('Хороший');
+    expect(passwordStrength('Abcdefghijk1').label).toBe('Надёжный: подбор займёт годы');
+    expect(passwordStrength('', 'своя подсказка').label).toBe('своя подсказка');
   });
 });

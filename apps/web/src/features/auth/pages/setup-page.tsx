@@ -52,15 +52,40 @@ function Step1({ initial, onDone }: Step1Props) {
   // Первое поле: токен, а если он уже введён (вернулись со шага 2) — логин.
   const firstField = initial.setupToken ? 'login' : 'setupToken';
 
-  // Генератор подставляет пароль в оба поля и показывает его: пользователю нужно его сохранить.
+  // Генератор «печатает» пароль в оба поля и показывает его: пользователю нужно его сохранить.
+  const typingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => clearInterval(typingRef.current ?? undefined), []);
   const generate = () => {
     const value = generatePassword();
-    form.setValue('password', value, { shouldDirty: true, shouldValidate: true });
-    form.setValue('passwordConfirm', value, { shouldDirty: true, shouldValidate: true });
     setShowPassword(true);
-    toast.info('Пароль подставлен в оба поля и показан.', {
-      description: 'Сохраните его в менеджере паролей.',
-    });
+    form.clearErrors(['password', 'passwordConfirm']);
+    const done = () => {
+      form.setValue('password', value, { shouldDirty: true, shouldValidate: true });
+      form.setValue('passwordConfirm', value, { shouldDirty: true, shouldValidate: true });
+      toast.info('Пароль подставлен в оба поля и показан.', {
+        description: 'Сохраните его в менеджере паролей.',
+      });
+    };
+    const reduceMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) {
+      done();
+      return;
+    }
+    if (typingRef.current) clearInterval(typingRef.current);
+    let i = 0;
+    typingRef.current = setInterval(() => {
+      i += 1;
+      const part = value.slice(0, i);
+      form.setValue('password', part, { shouldDirty: true });
+      form.setValue('passwordConfirm', part, { shouldDirty: true });
+      if (i >= value.length) {
+        clearInterval(typingRef.current ?? undefined);
+        typingRef.current = null;
+        done();
+      }
+    }, 14);
   };
 
   const onSubmit = form.handleSubmit(async (values) => {
@@ -98,7 +123,7 @@ function Step1({ initial, onDone }: Step1Props) {
           hint={
             <>
               Потеряли токен: выполните на сервере{' '}
-              <code className="rounded-[5px] bg-surface-3 px-1.5 py-px font-mono text-[11px] whitespace-nowrap text-text-2">
+              <code className="rounded-[5px] bg-surface-3 px-1.5 py-px font-mono text-[11.5px] whitespace-nowrap text-text-2">
                 nodeservice cli setup-token
               </code>
               .
@@ -157,7 +182,12 @@ function Step1({ initial, onDone }: Step1Props) {
             />
           </Field>
         </div>
-        <PasswordMeter id="s-meter" value={password} className="-mt-1.5" />
+        <PasswordMeter
+          id="s-meter"
+          value={password}
+          className="-mt-1.5"
+          emptyHint="Введите пароль или нажмите на звёзды: панель подберёт надёжный."
+        />
         {serverError && <ErrorBox>{serverError}</ErrorBox>}
         <CtaButton className="mt-1" loading={start.isPending} loadingText="Создание…">
           Создать учётную запись
@@ -245,11 +275,11 @@ function Step2({ enroll, onBack, onDone }: Step2Props) {
             />
           </div>
           <div className="min-w-0 max-[520px]:w-full">
-            <p className="mb-2 text-[11.5px] leading-normal text-text-3">
+            <p className="mb-2 text-[12px] leading-normal text-text-3">
               Отсканируйте QR-код в приложении: Google Authenticator, Aegis, 1Password, Яндекс Ключ. Подойдёт
               любое с поддержкой TOTP.
             </p>
-            <p className="mb-1.5 text-[11.5px] leading-normal text-text-3">Или введите ключ вручную:</p>
+            <p className="mb-1.5 text-[12px] leading-normal text-text-3">Или введите ключ вручную:</p>
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-[10px] border border-border bg-surface-2 py-[7px] pr-[7px] pl-[11px] font-mono text-[12.5px] tracking-[0.06em]">
               <span className="min-w-0 leading-normal break-all select-all">{secretPretty}</span>
               <GhostButton

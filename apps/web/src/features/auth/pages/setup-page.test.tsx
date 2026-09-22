@@ -27,7 +27,8 @@ describe('SetupPage', () => {
     await user.click(screen.getByRole('button', { name: 'Сгенерировать надёжный пароль' }));
     const pass = screen.getByLabelText('Пароль') as HTMLInputElement;
     const pass2 = screen.getByLabelText('Повторите пароль') as HTMLInputElement;
-    expect(pass.value).toMatch(/^[A-Za-z2-9]{4}(-[A-Za-z2-9]{4}){4}$/);
+    // пароль «печатается» по символу — ждём, пока наберётся целиком
+    await waitFor(() => expect(pass.value).toMatch(/^[A-Za-z2-9]{4}(-[A-Za-z2-9]{4}){4}$/));
     expect(pass2.value).toBe(pass.value);
     expect(pass).toHaveAttribute('type', 'text');
     expect(pass2).toHaveAttribute('type', 'text');
