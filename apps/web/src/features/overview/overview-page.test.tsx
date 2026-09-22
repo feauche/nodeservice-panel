@@ -25,14 +25,16 @@ describe('OverviewPage (по демо)', () => {
     renderPage(OverviewPage, '/');
     expect(await screen.findByText('Серверов в норме')).toBeInTheDocument();
     expect(screen.getByText('Средний CPU')).toBeInTheDocument();
-    expect(screen.getByText('Трафик суммарно')).toBeInTheDocument();
+    expect(screen.getByText('Трафик сейчас')).toBeInTheDocument();
+    expect(screen.getByText(/приём · отдача/)).toBeInTheDocument();
     expect(screen.getByText('Соединений сейчас')).toBeInTheDocument();
     expect((await screen.findAllByTestId('sparkline')).length).toBeGreaterThanOrEqual(3);
     expect(await screen.findByTestId('areaspark')).toBeInTheDocument();
   });
 
   it('всё спокойно: центрированное пустое состояние, когда проблем нет', async () => {
-    mockServers.items = mockServers.items.map((s) => ({ ...s, sshOk: true }));
+    // Тот же классификатор, что на «Серверах»: спокойно только когда SSH в порядке и агент в сети.
+    mockServers.items = mockServers.items.map((s) => ({ ...s, sshOk: true, agentStatus: 'online' as const }));
     renderPage(OverviewPage, '/');
     expect(await screen.findByText('Всё спокойно')).toBeInTheDocument();
     expect(screen.getByText('Проблем на серверах не найдено.')).toBeInTheDocument();
@@ -67,17 +69,28 @@ describe('OverviewPage (по демо)', () => {
     expect(screen.queryByTestId('areaspark')).not.toBeInTheDocument();
   });
 
-  it('баннер активных инцидентов ведёт на /incidents', async () => {
+  it('баннер активных инцидентов виден, но без ссылки, пока раздел «Инциденты» закрыт', async () => {
     renderPage(OverviewPage, '/');
     const banner = await screen.findByText(/активных/);
     expect(banner).toBeInTheDocument();
-    expect(banner.closest('a')).toHaveAttribute('href', '/incidents');
+    expect(banner.closest('a')).toBeNull();
+    expect(screen.queryByText('Открыть →')).not.toBeInTheDocument();
+  });
+
+  it('«Требует внимания» согласован с карточками: агент не установлен — внимание, не норма', async () => {
+    mockServers.items = mockServers.items.map((s) => ({ ...s, sshOk: true }));
+    renderPage(OverviewPage, '/');
+    const panel = (await screen.findByText('Требует внимания')).closest('section') as HTMLElement;
+    expect(within(panel).getByText('nl-ams-02')).toBeInTheDocument();
+    expect(within(panel).getByText('Агент не установлен')).toBeInTheDocument();
+    expect(within(panel).getByText('внимание')).toBeInTheDocument();
   });
 
   it('форматтеры трафика', () => {
     expect(formatMbps(1_000_000)).toBe('8.0');
     expect(formatTraffic(300_000_000)).toEqual({ value: '2.40', unit: 'Гбит/с' });
-    expect(formatTraffic(2_000_000)).toEqual({ value: '16.0', unit: 'Мбит/с' });
+    expect(formatTraffic(2_000_000)).toEqual({ value: '16', unit: 'Мбит/с' });
+    expect(formatTraffic(500_000)).toEqual({ value: '4.0', unit: 'Мбит/с' });
     expect(formatTraffic(null)).toEqual({ value: '—', unit: '' });
   });
 });

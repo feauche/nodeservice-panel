@@ -74,6 +74,30 @@ describe('audit e2e', () => {
     expect(res.body.type).toBe(AUTH_PROBLEM.unauthenticated);
   });
 
+  it('отказы до обработчика тоже в Журнале: CSRF и запрос без входа; GET без входа — не шумит', async () => {
+    // CSRF: заголовка нет → 403 из middleware, но запись есть.
+    await agent.post('/api/settings/appearance').send({ brandName: 'x' }).expect(403);
+    // Без сессии на изменяющий запрос → 401 из guard-а, запись есть.
+    const anon = request.agent(app.getHttpServer());
+    const anonCsrf = (await anon.get('/api/auth/csrf').expect(200)).body.token as string;
+    await anon
+      .post('/api/servers/00000000-0000-4000-8000-000000000000/check')
+      .set(CSRF_HEADER, anonCsrf)
+      .expect(401);
+    // GET без сессии — 401, но в Журнал не пишем (опросы протухшей вкладки).
+    await anon.get('/api/servers').expect(401);
+    await new Promise((r) => setTimeout(r, 300));
+    const body = auditListResponseSchema.parse(
+      (await agent.get('/api/audit?result=denied').expect(200)).body,
+    );
+    const csrfDenied = body.items.find((e) => e.action === 'auth.csrf.denied');
+    expect(csrfDenied).toMatchObject({ result: 'denied', category: 'auth' });
+    expect(csrfDenied?.metadata).toMatchObject({ method: 'POST', path: '/api/settings/appearance' });
+    const noSession = body.items.filter((e) => e.action === 'auth.request.denied');
+    expect(noSession).toHaveLength(1);
+    expect(noSession[0]?.metadata).toMatchObject({ reason: 'unauthenticated', method: 'POST' });
+  });
+
   it('события входа попадают в Журнал с актором, IP и request id', async () => {
     const res = await agent.get('/api/audit?category=auth').expect(200);
     const body = auditListResponseSchema.parse(res.body);

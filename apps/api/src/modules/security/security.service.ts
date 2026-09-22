@@ -90,7 +90,15 @@ export class SecurityService {
   ): Promise<ChangePasswordResponse> {
     // Текущий пароль — это и есть step-up; подбор через этот эндпоинт тормозим тем же throttle, что и вход.
     const key = { ip: ctx.ip, login: user.login };
-    await this.throttle.assertAllowed(key);
+    await this.throttle.assertAllowed(key).catch(async (e: unknown) => {
+      await this.audit.record({
+        action: 'security.password.changed',
+        result: 'denied',
+        severity: 'warn',
+        metadata: { reason: 'throttled' },
+      });
+      throw e;
+    });
     const full = await this.users.findById(user.id);
     if (!full || !(await this.crypto.verifyPassword(full.passwordHash, body.currentPassword))) {
       await this.audit.record({
@@ -143,6 +151,8 @@ export class SecurityService {
       .del(`${key}:fails`)
       .exec();
     await this.totp.forget(`reissue:${user.id}`);
+    // Старт виден в Журнале сам по себе: до подтверждения ничего не меняется, но попытка есть.
+    await this.audit.record({ action: 'security.totp.reissue_started' });
     return {
       totpSecret: enrollment.secret,
       otpauthUrl: enrollment.otpauthUrl,

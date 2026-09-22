@@ -23,10 +23,12 @@ describe('AppShell · меню пользователя', () => {
     useAuthStore.setState({ me: mockMe, hydrated: true });
   });
 
-  it('в рейле открыт только раздел «Серверы», остальные — под замком без перехода', async () => {
+  it('в рейле открыты «Обзор», «Серверы» и «Журнал», остальные — под замком без перехода', async () => {
     renderPage(Page, '/', ['/login', '/lock', '/servers', '/settings', '/settings/security']);
     expect(await screen.findByRole('link', { name: 'Серверы' })).toHaveAttribute('href', '/servers');
-    for (const name of ['Обзор', 'Инциденты', 'Настройки', 'Ассистент', 'База знаний', 'Журнал']) {
+    expect(screen.getByRole('link', { name: 'Обзор' })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('link', { name: 'Журнал' })).toHaveAttribute('href', '/audit');
+    for (const name of ['Инциденты', 'Настройки', 'Ассистент', 'База знаний']) {
       expect(screen.queryByRole('link', { name })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name })).toBeDisabled();
     }

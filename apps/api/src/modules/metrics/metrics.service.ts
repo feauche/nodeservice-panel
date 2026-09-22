@@ -50,13 +50,17 @@ export class MetricsService {
   async overview(): Promise<OverviewMetricsResponse> {
     const rows = await this.servers.list();
     if (rows.length === 0)
-      return { vmOk: true, servers: [], fleet: { cpuAvgSpark: [], trafficSpark: [], conntrackSpark: [] } };
+      return {
+        vmOk: true,
+        servers: [],
+        fleet: { cpuAvgSpark: [], trafficRxSpark: [], trafficTxSpark: [], conntrackSpark: [] },
+      };
     // Только живые серверы панели: в VM остаются серии удалённых серверов и e2e-тестов.
     const sel = `{server_id=~"${rows.map((r) => r.id).join('|')}"}`;
     const end = Math.floor(Date.now() / 1000);
     const sparkRange = [end - SPARK_SECONDS, end, SPARK_STEP] as const;
-    const [cpu, mem, disk, rx, tx, uptime, spark, fleetCpu, fleetTraffic, fleetConntrack] = await Promise.all(
-      [
+    const [cpu, mem, disk, rx, tx, uptime, spark, fleetCpu, fleetRx, fleetTx, fleetConntrack] =
+      await Promise.all([
         this.vm.query(`${VM_METRIC_NAMES.cpuPct}${sel}`),
         this.vm.query(`100 * ${VM_METRIC_NAMES.memUsedMb}${sel} / (${VM_METRIC_NAMES.memTotalMb}${sel} > 0)`),
         this.vm.query(
@@ -67,13 +71,10 @@ export class MetricsService {
         this.vm.query(`nodeservice_uptime_sec${sel}`),
         this.vm.queryRange(`${VM_METRIC_NAMES.cpuPct}${sel}`, end - SPARK_SECONDS, end, SPARK_STEP),
         this.vm.queryRange(`avg(${VM_METRIC_NAMES.cpuPct}${sel})`, ...sparkRange),
-        this.vm.queryRange(
-          `sum(${VM_METRIC_NAMES.netRxBps}${sel}) + sum(${VM_METRIC_NAMES.netTxBps}${sel})`,
-          ...sparkRange,
-        ),
+        this.vm.queryRange(`sum(${VM_METRIC_NAMES.netRxBps}${sel})`, ...sparkRange),
+        this.vm.queryRange(`sum(${VM_METRIC_NAMES.netTxBps}${sel})`, ...sparkRange),
         this.vm.queryRange(`sum(${VM_METRIC_NAMES.conntrackCount}${sel})`, ...sparkRange),
-      ],
-    );
+      ]);
     const vmOk = [cpu, mem, disk, rx, tx, uptime, spark].every((r) => r !== null);
     const fleetSpark = (res: VmMatrixSeries[] | null): Array<number | null> =>
       res?.[0]?.points.map(([, v]) => (Number.isFinite(v) ? v : null)) ?? [];
@@ -92,7 +93,8 @@ export class MetricsService {
       servers,
       fleet: {
         cpuAvgSpark: fleetSpark(fleetCpu),
-        trafficSpark: fleetSpark(fleetTraffic),
+        trafficRxSpark: fleetSpark(fleetRx),
+        trafficTxSpark: fleetSpark(fleetTx),
         conntrackSpark: fleetSpark(fleetConntrack),
       },
     };

@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AUTH_PROBLEM, CSRF_HEADER } from '@nodeservice/shared';
 import { type DoubleCsrfUtilities, doubleCsrf } from 'csrf-csrf';
 import type { NextFunction, Request, Response } from 'express';
 
 import type { Env } from '../../config/env.schema.js';
+import { AuditService } from '../../modules/audit/audit.service.js';
 import { CookiesService } from './cookies.service.js';
 
 /**
@@ -19,6 +20,8 @@ export class CsrfService {
   constructor(
     config: ConfigService<Env, true>,
     private readonly cookies: CookiesService,
+    /** Журнал глобальный; Optional — чтобы сервис поднимался и без него (юнит-тесты). */
+    @Optional() private readonly audit?: AuditService,
   ) {
     this.utils = doubleCsrf({
       getSecret: () => config.get('APP_SECRET'),
@@ -44,6 +47,18 @@ export class CsrfService {
       this.utils.doubleCsrfProtection(req, res, (err?: unknown) => {
         if (!err) return next();
         const requestId = (req as { id?: string }).id;
+        // Middleware живёт до guard-ов и интерсепторов — в Журнал пишем сами (без ожидания).
+        void this.audit
+          ?.record({
+            action: 'auth.csrf.denied',
+            result: 'denied',
+            severity: 'warn',
+            ip: req.ip ?? '',
+            userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '',
+            ...(requestId ? { requestId } : {}),
+            metadata: { method: req.method, path: req.originalUrl },
+          })
+          .catch(() => undefined);
         res
           .status(403)
           .type('application/problem+json')

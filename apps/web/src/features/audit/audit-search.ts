@@ -26,6 +26,8 @@ export const auditSearchSchema = z.object({
   result: z.array(z.enum(AUDIT_RESULTS)).min(1).optional().catch(undefined),
   source: z.enum(AUDIT_SOURCES).optional().catch(undefined),
   period: z.enum(AUDIT_PERIODS).optional().catch(undefined),
+  /** Только события одного сервера (id) — так из окна сервера открывается «его» Журнал. */
+  target: z.uuid().optional().catch(undefined),
   /** Live-лента включена по умолчанию; в URL попадает только выключение (live=false). */
   live: z.boolean().optional().catch(undefined),
 });
@@ -54,6 +56,7 @@ export function toFilter(search: AuditSearch, now = new Date()): AuditFilter {
   if (search.category) filter.category = search.category;
   if (search.result) filter.result = search.result;
   if (search.source) filter.source = search.source;
+  if (search.target) filter.targetId = search.target;
   const from = periodFrom(search.period, now);
   if (from) filter.from = from;
   return filter;
@@ -70,6 +73,7 @@ export function hasFilters(search: AuditSearch): boolean {
       search.category ||
       search.result ||
       search.source ||
+      search.target ||
       (search.period && search.period !== 'all'),
   );
 }
@@ -79,6 +83,7 @@ export function matchesSearch(entry: AuditEntry, search: AuditSearch): boolean {
   if (search.category && !search.category.includes(entry.category)) return false;
   if (search.result && !search.result.includes(entry.result)) return false;
   if (search.source && entry.source !== search.source) return false;
+  if (search.target && entry.targetId !== search.target) return false;
   if (search.q) {
     const q = search.q.toLowerCase();
     const hay = [

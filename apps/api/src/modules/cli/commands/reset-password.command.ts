@@ -3,9 +3,14 @@ import { passwordSchema } from '@nodeservice/shared';
 import { Command, CommandRunner, Option } from 'nest-commander';
 
 import { CryptoService } from '../../../common/crypto/crypto.service.js';
+import type { AuditActor } from '../../audit/audit.context.js';
+import { AuditService } from '../../audit/audit.service.js';
 import { SessionStore } from '../../auth/session.store.js';
 import { UsersRepository } from '../../auth/users.repository.js';
 import { promptHidden } from '../prompt.js';
+
+/** Команды rescue-CLI идут не от сессии, а от оператора у консоли — так и пишем в Журнал. */
+const CLI_ACTOR: AuditActor = { type: 'system', id: null, display: 'rescue-CLI' };
 
 interface Options {
   passwordFile?: string;
@@ -25,6 +30,7 @@ export class ResetPasswordCommand extends CommandRunner {
     private readonly users: UsersRepository,
     private readonly crypto: CryptoService,
     private readonly sessions: SessionStore,
+    private readonly audit: AuditService,
   ) {
     super();
   }
@@ -57,6 +63,14 @@ export class ResetPasswordCommand extends CommandRunner {
 
     await this.users.setPassword(user.id, await this.crypto.hashPassword(parsed.data));
     const revoked = await this.sessions.destroyAllForUser(user.id);
+    await this.audit.record({
+      action: 'security.cli.password_reset',
+      actor: CLI_ACTOR,
+      source: 'manual',
+      severity: 'warn',
+      target: { type: 'user', id: user.id, display: user.login },
+      metadata: { sessionsRevoked: revoked },
+    });
     console.log(`Пароль для «${user.login}» обновлён. Сессий завершено: ${revoked}.`);
   }
 }

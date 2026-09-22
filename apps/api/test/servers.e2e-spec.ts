@@ -329,6 +329,13 @@ describe('servers e2e', () => {
     await sessions.setStepUp(session.id, new Date(Date.now() - 10 * 60_000));
     const denied = await agent.delete(`/api/servers/${serverId}`).set(CSRF_HEADER, csrf).expect(403);
     expect(denied.body.type).toBe(AUTH_PROBLEM.stepUp);
+    // Отказ guard-а — в Журнале: интерсептор @Audit до него не доходит, пишет сам guard.
+    const deniedLog = auditListResponseSchema.parse(
+      (await agent.get('/api/audit?category=security&result=denied').expect(200)).body,
+    );
+    const stepUp = deniedLog.items.find((e) => e.action === 'security.step_up.denied');
+    expect(stepUp).toMatchObject({ result: 'denied', actorDisplay: LOGIN });
+    expect(stepUp?.metadata).toMatchObject({ method: 'DELETE', path: `/api/servers/${serverId}` });
     await agent.post('/api/auth/unlock').set(CSRF_HEADER, csrf).send({ password: PASSWORD }).expect(200);
     await agent.delete(`/api/servers/${serverId}`).set(CSRF_HEADER, csrf).expect(204);
     await agent.get(`/api/servers/${serverId}`).expect(404);

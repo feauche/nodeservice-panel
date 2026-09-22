@@ -15,6 +15,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 
 import type { ServerRow } from '../../infra/db/schema/index.js';
 import { WsUpgradeService } from '../../infra/ws/ws-upgrade.service.js';
+import { AuditService } from '../audit/audit.service.js';
 import { AgentService } from './agent.service.js';
 
 export const AGENT_WS_PATH = '/api/agent/v1/ws';
@@ -48,6 +49,7 @@ export class AgentGateway implements OnModuleDestroy {
   constructor(
     private readonly agents: AgentService,
     private readonly wsUpgrade: WsUpgradeService,
+    private readonly audit: AuditService,
   ) {}
 
   register(): void {
@@ -116,10 +118,15 @@ export class AgentGateway implements OnModuleDestroy {
       const hello = agentHelloSchema.safeParse(env.payload);
       if (!hello.success) return this.fail(ws, 'bad-envelope', 'Неверный payload hello');
       const server = await this.agents.findServer(hello.data.serverId);
-      if (!server?.agentPubkey) return this.fail(ws, 'unknown-server', 'Сервер не знает такого агента');
+      if (!server?.agentPubkey) {
+        await this.authFailed('unknown-server', hello.data.serverId, server?.name ?? null);
+        return this.fail(ws, 'unknown-server', 'Сервер не знает такого агента');
+      }
       // Пиннинг: ключ зафиксирован при энроллменте, смена — только новым токеном.
-      if (server.agentPubkey !== hello.data.pubkey)
+      if (server.agentPubkey !== hello.data.pubkey) {
+        await this.authFailed('auth-failed', server.id, server.name);
         return this.fail(ws, 'auth-failed', 'Ключ агента не совпадает с запиннённым');
+      }
       state.server = server;
       state.version = hello.data.version;
       state.pubkey = hello.data.pubkey;
@@ -162,6 +169,21 @@ export class AgentGateway implements OnModuleDestroy {
     }
 
     this.sendError(ws, 'protocol', `Сообщение «${env.type}» не ожидается на этой стадии`);
+  }
+
+  /** Кто-то представился агентом, но не прошёл: чужой serverId или другой ключ — это важно видеть в Журнале. */
+  private async authFailed(code: string, serverId: string, serverName: string | null): Promise<void> {
+    await this.audit
+      .record({
+        action: 'server.agent.auth_failed',
+        result: 'denied',
+        severity: 'warn',
+        source: 'auto',
+        actor: { type: 'anonymous', id: null, display: 'агент' },
+        target: { type: 'server', id: serverId, display: serverName ?? serverId },
+        metadata: { code },
+      })
+      .catch(() => undefined);
   }
 
   private fail(ws: WebSocket, code: AgentErrorPayload['code'], message: string): void {

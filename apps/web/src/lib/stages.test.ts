@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { HOME_SECTION, isSectionOpen, requireSectionOpen } from './stages';
 
 describe('stages · поэтапное открытие разделов', () => {
-  it('открыт только домашний раздел', () => {
+  it('открыты Обзор, Серверы и Журнал; остальное под замком', () => {
     expect(isSectionOpen(HOME_SECTION)).toBe(true);
-    for (const to of ['/', '/incidents', '/settings', '/assistant', '/knowledge', '/audit']) {
+    expect(isSectionOpen('/servers')).toBe(true);
+    expect(isSectionOpen('/audit')).toBe(true);
+    for (const to of ['/incidents', '/settings', '/assistant', '/knowledge']) {
       expect(isSectionOpen(to)).toBe(false);
     }
   });

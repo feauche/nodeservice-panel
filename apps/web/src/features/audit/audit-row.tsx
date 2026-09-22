@@ -29,6 +29,8 @@ const RESULT_TONE: Record<AuditResult, string> = {
   denied: 'bg-crit-soft text-crit',
 };
 
+const RESULT_DOT: Record<AuditResult, string> = { ok: 'bg-ok', failed: 'bg-warn', denied: 'bg-crit' };
+
 export function ResultPill({ result }: { result: AuditResult }) {
   return (
     <span
@@ -63,10 +65,12 @@ interface RowProps {
   entry: AuditEntry;
   expanded: boolean;
   fresh: boolean;
+  /** Сколько колонок видно на этой ширине — для строки деталей. */
+  colSpan?: number;
   onToggle: () => void;
 }
 
-export function AuditRow({ entry, expanded, fresh, onToggle }: RowProps) {
+export function AuditRow({ entry, expanded, fresh, colSpan = 6, onToggle }: RowProps) {
   const label = auditActionLabel(entry.action);
   return (
     <>
@@ -80,35 +84,48 @@ export function AuditRow({ entry, expanded, fresh, onToggle }: RowProps) {
         data-seq={entry.seq}
       >
         <td
-          className="w-[128px] px-4 text-text-2 tabular-nums whitespace-nowrap"
+          className="w-[128px] px-4 text-text-2 tabular-nums whitespace-nowrap max-md:w-[96px] max-md:px-3 max-md:text-[12px]"
           title={formatFull(entry.occurredAt)}
         >
           {formatWhen(entry.occurredAt)}
         </td>
         <td className="min-w-0 px-3">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="hidden flex-none rounded-[5px] bg-surface-3 px-1.5 py-[1px] text-[10.5px] font-semibold tracking-[0.04em] text-text-3 uppercase md:inline">
+            <span className="hidden flex-none rounded-[5px] bg-surface-3 px-1.5 py-[1px] text-[10.5px] font-semibold tracking-[0.04em] text-text-3 uppercase xl:inline">
               {AUDIT_CATEGORY_LABELS[entry.category]}
             </span>
             <span className="truncate font-medium">{label}</span>
             {entry.targetDisplay && (
-              <span className="hidden truncate text-text-3 lg:inline">· {entry.targetDisplay}</span>
+              <span className="hidden truncate text-text-3 xl:inline">· {entry.targetDisplay}</span>
             )}
           </div>
+          {/* На планшете и телефоне колонки «Кто» нет — актор второй строкой под событием. */}
+          <div className="hidden truncate text-[11.5px] text-text-3 max-xl:block">
+            {entry.actorDisplay}
+            {entry.targetDisplay ? ` · ${entry.targetDisplay}` : ''}
+          </div>
         </td>
-        <td className="w-[200px] px-3">
+        <td className="w-[200px] px-3 max-xl:hidden">
           <div className="flex min-w-0 flex-col leading-tight">
             <span className="truncate">{entry.actorDisplay}</span>
             {entry.ip && <span className="truncate font-mono text-[11px] text-text-3">{entry.ip}</span>}
           </div>
         </td>
-        <td className="w-[96px] px-3">
+        <td className="w-[96px] px-3 max-xl:hidden">
           <SourceBadge source={entry.source} />
         </td>
-        <td className="w-[120px] px-3">
-          <ResultPill result={entry.result} />
+        <td className="w-[120px] px-3 max-md:w-[44px] max-md:px-2">
+          <span className="max-md:hidden">
+            <ResultPill result={entry.result} />
+          </span>
+          <span
+            role="img"
+            className={cn('hidden size-2.5 rounded-full max-md:inline-block', RESULT_DOT[entry.result])}
+            title={AUDIT_RESULT_LABELS[entry.result]}
+            aria-label={AUDIT_RESULT_LABELS[entry.result]}
+          />
         </td>
-        <td className="w-10 pr-3 text-right">
+        <td className="w-10 pr-3 text-right max-md:hidden">
           <button
             type="button"
             aria-expanded={expanded}
@@ -125,7 +142,7 @@ export function AuditRow({ entry, expanded, fresh, onToggle }: RowProps) {
       </tr>
       {expanded && (
         <tr className="border-t border-border bg-surface-2/40">
-          <td colSpan={6} className="px-4 py-3">
+          <td colSpan={colSpan} className="px-4 py-3 max-md:px-3">
             <AuditDetails entry={entry} />
           </td>
         </tr>

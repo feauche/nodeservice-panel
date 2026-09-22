@@ -34,11 +34,13 @@ describe('закрытые по этапам разделы', () => {
     resetMockState({ authenticated: true });
   });
 
-  it('/settings и / уводят на «Серверы», пока разделы закрыты', async () => {
+  it('/settings и /incidents уводят на «Обзор», пока разделы закрыты; /servers и /audit открыты', async () => {
     const r1 = renderAt('/settings/security');
-    await waitFor(() => expect(r1.state.location.pathname).toBe('/servers'));
-    const r2 = renderAt('/');
-    await waitFor(() => expect(r2.state.location.pathname).toBe('/servers'));
+    await waitFor(() => expect(r1.state.location.pathname).toBe('/'));
+    const r2 = renderAt('/incidents');
+    await waitFor(() => expect(r2.state.location.pathname).toBe('/'));
+    const r3 = renderAt('/audit');
+    await waitFor(() => expect(r3.state.location.pathname).toBe('/audit'));
   });
 });
 

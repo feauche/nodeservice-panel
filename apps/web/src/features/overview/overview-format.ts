@@ -29,6 +29,8 @@ export function formatTraffic(bytesPerSec: number | null): { value: string; unit
   if (bytesPerSec === null) return { value: '—', unit: '' };
   const bits = bytesPerSec * 8;
   if (bits >= 1e9) return { value: (bits / 1e9).toFixed(2), unit: 'Гбит/с' };
+  // Как на карточках серверов: от 10 Мбит/с дробная часть только мешает.
+  if (bits >= 1e7) return { value: Math.round(bits / 1e6).toString(), unit: 'Мбит/с' };
   if (bits >= 1e6) return { value: (bits / 1e6).toFixed(1), unit: 'Мбит/с' };
   return { value: Math.round(bits / 1e3).toString(), unit: 'Кбит/с' };
 }

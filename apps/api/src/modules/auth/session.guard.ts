@@ -39,10 +39,31 @@ export class SessionGuard implements CanActivate {
     const req = ctx.switchToHttp().getRequest<AuthenticatedRequest>();
     const attached = await this.attach(req);
     if (isPublic) return true;
-    if (!attached) throw authProblems.unauthenticated();
+    if (!attached) {
+      await this.denied(req, 'unauthenticated');
+      throw authProblems.unauthenticated();
+    }
     // Заблокированная сессия: разрешён только /api/auth/* (status, me, unlock, logout) — остальное ждёт пароля.
-    if (req.session?.lockedAt && !req.path.startsWith('/api/auth/')) throw authProblems.locked();
+    if (req.session?.lockedAt && !req.path.startsWith('/api/auth/')) {
+      await this.denied(req, 'locked');
+      throw authProblems.locked();
+    }
     return true;
+  }
+
+  /**
+   * Guard срабатывает раньше интерсептора @Audit, поэтому отказ пишем отсюда. Только для
+   * изменяющих запросов: GET-опросы протухшей вкладки (/auth/me и т.п.) Журналу не нужны.
+   */
+  private async denied(req: AuthenticatedRequest, reason: 'unauthenticated' | 'locked'): Promise<void> {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return;
+    await this.audit.record({
+      action: 'auth.request.denied',
+      result: 'denied',
+      severity: 'warn',
+      ...(req.user ? { actor: { type: 'admin', id: req.user.id, display: req.user.login } } : {}),
+      metadata: { reason, method: req.method, path: req.path },
+    });
   }
 
   /** Пытается привязать сессию к запросу; true — есть валидная сессия. */

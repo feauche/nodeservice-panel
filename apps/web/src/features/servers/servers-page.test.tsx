@@ -83,7 +83,10 @@ describe('ServersPage', () => {
     expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeInTheDocument();
     // журнал сервера
     await user.click(within(dialog).getByRole('button', { name: 'Журнал' }));
-    expect(await within(dialog).findByText('Открыть весь Журнал')).toBeInTheDocument();
+    expect(await within(dialog).findByText('Открыть в Журнале')).toHaveAttribute(
+      'href',
+      expect.stringContaining('/audit?target='),
+    );
     // История терминала: список сессий и запись вывода без ANSI-кодов
     await user.click(within(dialog).getByRole('button', { name: 'Терминал' }));
     expect(await within(dialog).findByText(/закрыт пользователем/)).toBeInTheDocument();

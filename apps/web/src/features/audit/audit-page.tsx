@@ -9,6 +9,7 @@ import {
   type AuditListResponse,
   type AuditResult,
   type AuditSource,
+  type Server,
 } from '@nodeservice/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -18,6 +19,7 @@ import {
   DownloadIcon,
   RadioIcon,
   SearchIcon,
+  ServerIcon,
   XIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -36,7 +38,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useServers } from '@/features/servers/servers-api';
 import { apiErrorMessage } from '@/lib/api';
+import { useMediaQuery } from '@/lib/use-media';
 import { cn } from '@/lib/utils';
 import { auditExportUrl, auditListQuery, useAuditList, useAuditStream } from './audit-api';
 import { AuditRow } from './audit-row';
@@ -72,6 +76,11 @@ export function AuditPage({ search, onSearch }: AuditPageProps) {
   const [missed, setMissed] = useState(0);
   const page = search.page ?? 1;
   const live = search.live !== false;
+  // Колонки «Кто»/«Источник» есть только от xl, стрелка — от md: colSpan деталей должен совпадать,
+  // иначе браузер дорисует пустые колонки и сожмёт «Событие».
+  const xl = useMediaQuery('(min-width: 1280px)');
+  const md = useMediaQuery('(min-width: 768px)');
+  const cols = xl ? 6 : md ? 4 : 3;
 
   const streamStatus = useAuditStream(live, (entry: AuditEntry) => {
     if (!matchesSearch(entry, search)) return;
@@ -139,12 +148,14 @@ export function AuditPage({ search, onSearch }: AuditPageProps) {
         <table className="w-full table-fixed border-collapse">
           <thead>
             <tr className="h-10 border-b border-border text-left text-[11px] font-semibold tracking-[0.08em] text-text-3 uppercase">
-              <th className="w-[128px] px-4 font-semibold">Время</th>
+              <th className="w-[128px] px-4 font-semibold max-md:w-[96px]">Время</th>
               <th className="px-3 font-semibold">Событие</th>
-              <th className="w-[200px] px-3 font-semibold">Кто</th>
-              <th className="w-[96px] px-3 font-semibold">Источник</th>
-              <th className="w-[120px] px-3 font-semibold">Результат</th>
-              <th className="w-10" />
+              <th className="w-[200px] px-3 font-semibold max-xl:hidden">Кто</th>
+              <th className="w-[96px] px-3 font-semibold max-xl:hidden">Источник</th>
+              <th className="w-[120px] px-3 font-semibold max-md:w-[44px]">
+                <span className="max-md:sr-only">Результат</span>
+              </th>
+              <th className="w-10 max-md:hidden" />
             </tr>
           </thead>
           <tbody>
@@ -158,21 +169,21 @@ export function AuditPage({ search, onSearch }: AuditPageProps) {
                   <td className="px-3">
                     <Skeleton className="h-3.5 w-[60%]" />
                   </td>
-                  <td className="px-3">
+                  <td className="px-3 max-xl:hidden">
                     <Skeleton className="h-3.5 w-20" />
                   </td>
-                  <td className="px-3">
+                  <td className="px-3 max-xl:hidden">
                     <Skeleton className="h-3.5 w-12" />
                   </td>
                   <td className="px-3">
                     <Skeleton className="h-3.5 w-16" />
                   </td>
-                  <td />
+                  <td className="max-md:hidden" />
                 </tr>
               ))}
             {list.isError && (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-[13px] text-crit">
+                <td colSpan={cols} className="px-4 py-10 text-center text-[13px] text-crit">
                   {apiErrorMessage(list.error)}{' '}
                   <button
                     type="button"
@@ -186,7 +197,7 @@ export function AuditPage({ search, onSearch }: AuditPageProps) {
             )}
             {data && data.items.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-12 text-center text-[13px] text-text-3">
+                <td colSpan={cols} className="px-4 py-12 text-center text-[13px] text-text-3">
                   {filtered ? (
                     <>
                       По этим фильтрам записей нет.{' '}
@@ -218,6 +229,7 @@ export function AuditPage({ search, onSearch }: AuditPageProps) {
                 key={entry.id}
                 entry={entry}
                 expanded={expanded === entry.id}
+                colSpan={cols}
                 fresh={fresh.has(entry.seq)}
                 onToggle={() => setExpanded((cur) => (cur === entry.id ? null : entry.id))}
               />
@@ -252,7 +264,32 @@ interface ToolbarProps {
   exportFilter: ReturnType<typeof toFilter>;
 }
 
+/** Фильтр «только этот сервер» — приходит из окна сервера ссылкой, снимается крестиком. */
+function ServerChip({ id, servers, onClear }: { id: string; servers: Server[]; onClear: () => void }) {
+  const server = servers.find((s) => s.id === id);
+  return (
+    <span
+      data-testid="audit-target-chip"
+      className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-brand/40 bg-surface-2 pr-1.5 pl-3 text-[12.5px] font-medium"
+    >
+      <ServerIcon className="size-3.5 text-text-3" aria-hidden="true" />
+      <span className="max-w-[220px] truncate">
+        Сервер: {server?.name ?? (servers.length ? 'удалён' : '…')}
+      </span>
+      <button
+        type="button"
+        aria-label="Снять фильтр по серверу"
+        onClick={onClear}
+        className="grid size-6 cursor-pointer place-items-center rounded-[6px] text-text-3 hover:bg-surface-3 hover:text-foreground"
+      >
+        <XIcon className="size-3.5" aria-hidden="true" />
+      </button>
+    </span>
+  );
+}
+
 function Toolbar({ search, onSearch, live, streamStatus, exportFilter }: ToolbarProps) {
+  const servers = useServers();
   const [q, setQ] = useState(search.q ?? '');
   useEffect(() => setQ(search.q ?? ''), [search.q]);
   useEffect(() => {
@@ -384,6 +421,14 @@ function Toolbar({ search, onSearch, live, streamStatus, exportFilter }: Toolbar
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {search.target && (
+        <ServerChip
+          id={search.target}
+          servers={servers.data?.items ?? []}
+          onClear={() => onSearch({ target: undefined, page: undefined })}
+        />
+      )}
+
       {hasFilters(search) && (
         <button
           type="button"
@@ -395,6 +440,7 @@ function Toolbar({ search, onSearch, live, streamStatus, exportFilter }: Toolbar
               result: undefined,
               source: undefined,
               period: undefined,
+              target: undefined,
               page: undefined,
             })
           }

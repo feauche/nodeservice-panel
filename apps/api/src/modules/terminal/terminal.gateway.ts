@@ -6,6 +6,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { CookiesService } from '../../common/http/cookies.service.js';
 import { WsUpgradeService } from '../../infra/ws/ws-upgrade.service.js';
 import type { AuditActor } from '../audit/audit.context.js';
+import { AuditService } from '../audit/audit.service.js';
 import { SessionStore } from '../auth/session.store.js';
 import { UsersRepository } from '../auth/users.repository.js';
 import { TerminalService, type TerminalSession } from './terminal.service.js';
@@ -35,6 +36,7 @@ export class TerminalGateway {
     private readonly users: UsersRepository,
     private readonly cookies: CookiesService,
     private readonly wsUpgrade: WsUpgradeService,
+    private readonly audit: AuditService,
   ) {}
 
   register(): void {
@@ -53,8 +55,9 @@ export class TerminalGateway {
     // Аутентификация: session-cookie → запись сессии → не заблокирована. Step-up не требуем.
     const sid = readCookie(req.headers.cookie, this.cookies.names.session);
     const record = sid ? await this.sessions.get(sid) : null;
-    if (!record) return this.reject(ws, 4401, 'Требуется вход');
-    if (record.lockedAt) return this.reject(ws, 4403, 'Экран заблокирован');
+    if (!record) return this.reject(ws, 4401, 'Требуется вход', { serverId });
+    if (record.lockedAt)
+      return this.reject(ws, 4403, 'Экран заблокирован', { serverId, userId: record.userId });
     if (!UUID_RE.test(serverId)) return this.reject(ws, 4400, 'Не указан сервер');
 
     const login = (await this.users.findById(record.userId))?.login;
@@ -99,9 +102,27 @@ export class TerminalGateway {
     ws.on('error', () => session.close());
   }
 
-  private reject(ws: WebSocket, code: number, message: string): void {
+  private reject(
+    ws: WebSocket,
+    code: number,
+    message: string,
+    denied?: { serverId: string; userId?: string },
+  ): void {
     this.send(ws, { t: 'e', m: message });
     ws.close(code, message);
+    // Отказ по входу/блокировке — в Журнал: терминал даёт root на сервере.
+    if (denied) {
+      void this.audit
+        .record({
+          action: 'server.terminal.denied',
+          result: 'denied',
+          severity: 'warn',
+          ...(denied.userId ? { actor: { type: 'admin', id: denied.userId, display: 'Администратор' } } : {}),
+          ...(UUID_RE.test(denied.serverId) ? { target: { type: 'server', id: denied.serverId } } : {}),
+          metadata: { code, reason: message },
+        })
+        .catch(() => undefined);
+    }
   }
 
   private send(ws: WebSocket, msg: TerminalServerMsg): void {

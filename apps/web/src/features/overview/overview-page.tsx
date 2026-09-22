@@ -22,30 +22,46 @@ import { useAuditList } from '@/features/audit/audit-api';
 import { formatWhen } from '@/features/audit/audit-format';
 import { ResultPill } from '@/features/audit/audit-row';
 import { useIncidents } from '@/features/incidents/incidents-api';
+import {
+  CPU_WARN_PCT,
+  MEM_WARN_PCT,
+  type ServerHealth,
+  serverHealth,
+} from '@/features/servers/server-health';
 import { useServers } from '@/features/servers/servers-api';
 import { apiErrorMessage } from '@/lib/api';
+import { isSectionOpen } from '@/lib/stages';
 import { cn } from '@/lib/utils';
 import { useOverviewMetrics } from './overview-api';
 import { avg, formatPct, formatTraffic, sum } from './overview-format';
 import { AreaSpark, Sparkline } from './primitives';
 
-/** Состояние сервера для «Обзора»: как в демо — в норме / внимание / офлайн. */
-type Health = 'ok' | 'warn' | 'offline';
+/**
+ * Состояние сервера — тот же классификатор, что на «Серверах» (server-health.ts): Обзор и карточки
+ * не должны спорить друг с другом. Здесь добавляется только причина словами.
+ */
+type Health = ServerHealth;
 
 function healthOf(s: Server, m: OverviewServerMetrics | undefined): { health: Health; reason: string } {
-  if (s.sshOk === false) return { health: 'offline', reason: 'SSH недоступен' };
-  if (s.agentStatus === 'offline') return { health: 'offline', reason: 'Агент не в сети' };
-  if ((m?.cpuPct ?? 0) > 85) return { health: 'warn', reason: `CPU ${Math.round(m?.cpuPct ?? 0)}%` };
-  if ((m?.memPct ?? 0) > 90) return { health: 'warn', reason: `Память ${Math.round(m?.memPct ?? 0)}%` };
-  if ((m?.diskPct ?? 0) > 90) return { health: 'warn', reason: `Диск ${Math.round(m?.diskPct ?? 0)}%` };
-  if (s.sshOk === null) return { health: 'warn', reason: 'SSH ещё не проверялся' };
-  return { health: 'ok', reason: '' };
+  const health = serverHealth(s, m ?? null);
+  if (health === 'crit') {
+    return { health, reason: s.sshOk === false ? 'SSH недоступен' : 'Агент пропал со связи' };
+  }
+  if (health === 'warn') {
+    if (s.agentStatus === 'not_installed') return { health, reason: 'Агент не установлен' };
+    if (s.agentStatus === 'pending') return { health, reason: 'Ожидает агента' };
+    if (s.sshOk === null) return { health, reason: 'SSH ещё не проверялся' };
+    if ((m?.cpuPct ?? 0) >= CPU_WARN_PCT) return { health, reason: `CPU ${Math.round(m?.cpuPct ?? 0)}%` };
+    if ((m?.memPct ?? 0) >= MEM_WARN_PCT) return { health, reason: `Память ${Math.round(m?.memPct ?? 0)}%` };
+    return { health, reason: `Диск ${Math.round(m?.diskPct ?? 0)}%` };
+  }
+  return { health, reason: '' };
 }
 
 const HEALTH_DOT: Record<Health | 'muted', string> = {
   ok: 'bg-ok',
   warn: 'bg-warn',
-  offline: 'bg-crit',
+  crit: 'bg-crit',
   muted: 'bg-text-3',
 };
 
@@ -80,7 +96,12 @@ function Kpi({
   return (
     <div className="flex flex-col gap-1.5 rounded-2xl border border-border bg-surface p-4">
       <Caps>{caps}</Caps>
-      <div className="font-heading text-[30px] leading-none font-bold tracking-[-0.02em] tabular-nums">
+      <div
+        className={cn(
+          'font-heading leading-none font-bold tracking-[-0.02em] whitespace-nowrap tabular-nums',
+          value.length > 9 ? 'text-[24px]' : 'text-[30px]',
+        )}
+      >
         {value}
         {unit && <span className="ml-1.5 text-[13px] font-medium text-text-3">{unit}</span>}
       </div>
@@ -114,6 +135,28 @@ function Panel({
       </div>
       <div className="p-4">{children}</div>
     </section>
+  );
+}
+
+/** Баннер инцидентов: ссылка в раздел, пока он закрыт — просто заметная строка без ссылки. */
+function IncidentsBanner({ open, crit }: { open: number; crit: number }) {
+  const cls =
+    'flex items-center gap-3 rounded-[12px] border border-crit/30 bg-crit-soft/60 px-4 py-3 transition-colors';
+  const body = (
+    <>
+      <AlertTriangleIcon className="size-5 flex-none text-crit" aria-hidden="true" />
+      <span className="min-w-0 flex-1 text-[13px]">
+        <b className="font-semibold text-crit">{open}</b> активных {open === 1 ? 'инцидент' : 'инцидентов'}
+        {crit > 0 && <span className="text-text-2"> · {crit} критично</span>}
+      </span>
+    </>
+  );
+  if (!isSectionOpen('/incidents')) return <div className={cls}>{body}</div>;
+  return (
+    <Link to="/incidents" className={cn(cls, 'hover:bg-crit-soft')}>
+      {body}
+      <span className="flex-none text-[12.5px] font-medium text-crit">Открыть →</span>
+    </Link>
   );
 }
 
@@ -152,38 +195,24 @@ export function OverviewPage() {
   const judged = items.map((s) => ({ server: s, ...healthOf(s, byId.get(s.id)) }));
   const okCount = judged.filter((j) => j.health === 'ok').length;
   const warnCount = judged.filter((j) => j.health === 'warn').length;
-  const offlineCount = judged.filter((j) => j.health === 'offline').length;
+  const offlineCount = judged.filter((j) => j.health === 'crit').length;
   const healthPct = items.length ? Math.round((okCount / items.length) * 100) : 100;
   const attention = judged.filter((j) => j.health !== 'ok');
 
   const noMetricsAtAll = items.length > 0 && items.every((s) => (byId.get(s.id)?.cpuPct ?? null) === null);
   const cpuAvg = avg(items.map((s) => byId.get(s.id)?.cpuPct ?? null));
   const memAvg = avg(items.map((s) => byId.get(s.id)?.memPct ?? null));
-  const trafficNow =
-    sum(items.map((s) => byId.get(s.id)?.netRxBps ?? null)) !== null
-      ? (sum(items.map((s) => byId.get(s.id)?.netRxBps ?? null)) ?? 0) +
-        (sum(items.map((s) => byId.get(s.id)?.netTxBps ?? null)) ?? 0)
-      : null;
-  const traffic = formatTraffic(trafficNow);
+  const rxNow = sum(items.map((s) => byId.get(s.id)?.netRxBps ?? null));
+  const txNow = sum(items.map((s) => byId.get(s.id)?.netTxBps ?? null));
+  const trafficNow = rxNow === null && txNow === null ? null : (rxNow ?? 0) + (txNow ?? 0);
+  const rx = formatTraffic(rxNow);
+  const tx = formatTraffic(txNow);
   const conntrackNow = fleet?.conntrackSpark.filter((v): v is number => v !== null).at(-1) ?? null;
 
   const incCounts = openIncidents.data?.counts;
   return (
     <div className="flex flex-col gap-4">
-      {incCounts && incCounts.open > 0 && (
-        <Link
-          to="/incidents"
-          className="flex items-center gap-3 rounded-[12px] border border-crit/30 bg-crit-soft/60 px-4 py-3 transition-colors hover:bg-crit-soft"
-        >
-          <AlertTriangleIcon className="size-5 flex-none text-crit" aria-hidden="true" />
-          <span className="min-w-0 flex-1 text-[13px]">
-            <b className="font-semibold text-crit">{incCounts.open}</b> активных{' '}
-            {incCounts.open === 1 ? 'инцидент' : 'инцидентов'}
-            {incCounts.crit > 0 && <span className="text-text-2"> · {incCounts.crit} критично</span>}
-          </span>
-          <span className="flex-none text-[12.5px] font-medium text-crit">Открыть →</span>
-        </Link>
-      )}
+      {incCounts && incCounts.open > 0 && <IncidentsBanner open={incCounts.open} crit={incCounts.crit} />}
       {metrics.data?.vmOk === false && (
         <p className="rounded-[10px] border border-warn/30 bg-warn-soft/50 px-3.5 py-2 text-[12.5px] text-text-2">
           Хранилище метрик недоступно — показываю без графиков.
@@ -202,17 +231,17 @@ export function OverviewPage() {
               <div className="bg-crit" style={{ width: `${(offlineCount / items.length) * 100}%` }} />
             )}
           </div>
-          <div className="flex items-center gap-3.5 text-[12.5px] text-text-2">
-            <span className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[12.5px] text-text-2">
+            <span className="flex items-center gap-1.5 whitespace-nowrap">
               <span className="size-1.5 rounded-full bg-ok" /> {okCount} в норме
             </span>
-            <span className="flex items-center gap-1.5">
+            <span className="flex items-center gap-1.5 whitespace-nowrap">
               <span className="size-1.5 rounded-full bg-warn" /> {warnCount} внимание
             </span>
-            <span className="flex items-center gap-1.5">
+            <span className="flex items-center gap-1.5 whitespace-nowrap">
               <span className="size-1.5 rounded-full bg-crit" /> {offlineCount} офлайн
             </span>
-            <span className="text-text-3">
+            <span className="whitespace-nowrap text-text-3">
               здоровье парка <b className="text-foreground tabular-nums">{healthPct}%</b>
             </span>
           </div>
@@ -230,7 +259,7 @@ export function OverviewPage() {
           value={`${okCount}`}
           unit={`/ ${items.length}`}
           status={offlineCount > 0 ? 'есть офлайн' : 'стабильно'}
-          tone={offlineCount > 0 ? 'offline' : 'ok'}
+          tone={offlineCount > 0 ? 'crit' : 'ok'}
           spark={fleet?.cpuAvgSpark ?? []}
         />
         <Kpi
@@ -242,18 +271,18 @@ export function OverviewPage() {
           spark={fleet?.cpuAvgSpark ?? []}
         />
         <Kpi
-          caps="Трафик суммарно"
-          value={traffic.value}
-          unit={traffic.unit || undefined}
-          status={trafficNow === null ? 'ждёт агента' : 'приём и отдача'}
+          caps="Трафик сейчас"
+          value={trafficNow === null ? '—' : `↓ ${rx.value} · ↑ ${tx.value}`}
+          unit={trafficNow === null ? undefined : rx.unit === tx.unit ? rx.unit : `${rx.unit} / ${tx.unit}`}
+          status={trafficNow === null ? 'ждёт агента' : 'приём · отдача'}
           tone={trafficNow === null ? 'muted' : 'ok'}
-          spark={fleet?.trafficSpark ?? []}
+          spark={fleet?.trafficRxSpark ?? []}
         />
         <Kpi
           caps="Соединений сейчас"
           value={conntrackNow === null ? '—' : Math.round(conntrackNow).toLocaleString('ru-RU')}
           unit={conntrackNow === null ? undefined : 'conntrack'}
-          status={conntrackNow === null ? 'ждёт агента' : 'по всем серверам'}
+          status={conntrackNow === null ? 'ждёт агента' : 'весь парк'}
           tone={conntrackNow === null ? 'muted' : 'ok'}
           spark={fleet?.conntrackSpark ?? []}
         />
@@ -304,10 +333,10 @@ export function OverviewPage() {
                     <span
                       className={cn(
                         'rounded-full px-2 py-0.5 text-[11.5px] font-semibold whitespace-nowrap',
-                        health === 'offline' ? 'bg-crit-soft text-crit' : 'bg-warn-soft text-warn',
+                        health === 'crit' ? 'bg-crit-soft text-crit' : 'bg-warn-soft text-warn',
                       )}
                     >
-                      {health === 'offline' ? 'офлайн' : 'внимание'}
+                      {health === 'crit' ? 'офлайн' : 'внимание'}
                     </span>
                     <ChevronRightIcon className="size-4 flex-none text-text-3" aria-hidden="true" />
                   </Link>
@@ -337,11 +366,21 @@ export function OverviewPage() {
             </div>
           ) : (
             <>
-              <div className="font-heading text-[26px] leading-none font-bold tracking-[-0.02em] tabular-nums">
-                {traffic.value}
-                <span className="ml-1.5 text-[13px] font-medium text-text-3">{traffic.unit} суммарно</span>
+              <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+                <div className="font-heading text-[26px] leading-none font-bold tracking-[-0.02em] tabular-nums">
+                  ↓ {rx.value}
+                  <span className="ml-1.5 text-[13px] font-medium text-text-3">{rx.unit} приём</span>
+                </div>
+                <div className="font-heading text-[26px] leading-none font-bold tracking-[-0.02em] text-teal tabular-nums">
+                  ↑ {tx.value}
+                  <span className="ml-1.5 text-[13px] font-medium text-text-3">{tx.unit} отдача</span>
+                </div>
               </div>
-              <AreaSpark values={fleet?.trafficSpark ?? []} className="mt-3 h-[150px] w-full" />
+              <AreaSpark
+                values={fleet?.trafficRxSpark ?? []}
+                values2={fleet?.trafficTxSpark ?? []}
+                className="mt-3 h-[150px] w-full"
+              />
             </>
           )}
         </Panel>

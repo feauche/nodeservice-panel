@@ -90,10 +90,8 @@ export const metricsHandlers = [
       servers,
       fleet: {
         cpuAvgSpark: fleetSpark('cpuPct', mockServers.items.length ? 1 / mockServers.items.length : 1),
-        trafficSpark: fleetSpark('netRxBps').map((v, i) => {
-          const tx = fleetSpark('netTxBps')[i];
-          return v === null || tx === null || tx === undefined ? null : v + tx;
-        }),
+        trafficRxSpark: fleetSpark('netRxBps'),
+        trafficTxSpark: fleetSpark('netTxBps'),
         conntrackSpark: fleetSpark('conntrackCount'),
       },
     });

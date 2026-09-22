@@ -59,8 +59,9 @@ export type OverviewServerMetrics = z.infer<typeof overviewServerMetricsSchema>;
 /** Серии по парку целиком — для спарклайнов KPI и графика «Трафик парка» (15 минут, шаг 30 с). */
 export const overviewFleetSchema = z.object({
   cpuAvgSpark: z.array(z.number().nullable()),
-  /** Суммарный трафик rx+tx, байт/с. */
-  trafficSpark: z.array(z.number().nullable()),
+  /** Приём и отдача по всему парку раздельно, байт/с (сумма по серверам). */
+  trafficRxSpark: z.array(z.number().nullable()),
+  trafficTxSpark: z.array(z.number().nullable()),
   conntrackSpark: z.array(z.number().nullable()),
 });
 export type OverviewFleet = z.infer<typeof overviewFleetSchema>;

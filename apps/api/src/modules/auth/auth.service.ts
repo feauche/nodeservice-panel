@@ -378,7 +378,15 @@ export class AuthService {
     ctx: RequestContext,
   ): Promise<SessionResponse> {
     const key = { ip: ctx.ip, login: user.login };
-    await this.throttle.assertAllowed(key);
+    await this.throttle.assertAllowed(key).catch(async (e: unknown) => {
+      await this.events.record('auth.login.throttled', {
+        ...ctx,
+        userId: user.id,
+        login: user.login,
+        meta: { reason: 'unlock' },
+      });
+      throw e;
+    });
     const full = await this.users.findById(user.id);
     if (!full || !(await this.crypto.verifyPassword(full.passwordHash, password))) {
       await this.events.record('auth.login.failed', {

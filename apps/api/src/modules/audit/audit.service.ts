@@ -7,6 +7,7 @@ import {
   type AuditResult,
   type AuditSeverity,
   type AuditSource,
+  auditCategoryOfPrefix,
 } from '@nodeservice/shared';
 import { ClsService } from 'nestjs-cls';
 
@@ -222,9 +223,9 @@ export class AuditService implements OnModuleDestroy {
   }
 }
 
+/** Незарегистрированное действие: категория по префиксу, как в shared (kb → knowledge и т.д.). */
 function categoryFromAction(action: string): AuditCategory {
-  const prefix = action.split('.')[0];
-  return prefix === 'auth' || prefix === 'settings' || prefix === 'security' ? prefix : 'system';
+  return auditCategoryOfPrefix(action) ?? 'system';
 }
 
 function clip(s: string, max: number): string {

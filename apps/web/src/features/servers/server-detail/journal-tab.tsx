@@ -93,8 +93,12 @@ export function JournalTab({ serverId }: { serverId: string }) {
         </ul>
       )}
       <div className="border-t border-border px-4 py-2.5">
-        <Link to="/audit" className="text-[12.5px] font-medium text-brand underline-offset-2 hover:underline">
-          Открыть весь Журнал
+        <Link
+          to="/audit"
+          search={{ target: serverId }}
+          className="text-[12.5px] font-medium text-brand underline-offset-2 hover:underline"
+        >
+          Открыть в Журнале
         </Link>
       </div>
     </section>

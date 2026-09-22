@@ -5,14 +5,15 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { mockAudit, seedAudit } from '@/test/msw/audit-mock';
 import { resetMockState } from '@/test/msw/handlers';
+import { mockServers, seedServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
 import { AuditPage } from './audit-page';
 import { type AuditSearch, matchesSearch, periodFrom } from './audit-search';
 import { pageItems } from './pagination';
 
 /** Обёртка вместо роутера: параметры страницы живут в состоянии. */
-function Harness() {
-  const [search, setSearch] = useState<AuditSearch>({});
+function Harness({ initial = {} }: { initial?: AuditSearch }) {
+  const [search, setSearch] = useState<AuditSearch>(initial);
   return (
     <AuditPage
       search={search}
@@ -124,6 +125,27 @@ describe('AuditPage', () => {
     await user.click(screen.getByRole('button', { name: /Экспорт/ }));
     const csv = await screen.findByRole('menuitem', { name: /CSV/ });
     expect(csv).toHaveAttribute('href', '/api/audit/export?format=csv');
+  });
+
+  it('фильтр по серверу из окна сервера: чип с именем, список только его событий, крестик снимает', async () => {
+    seedServers();
+    const server = mockServers.items[0] as NonNullable<(typeof mockServers.items)[0]>;
+    seedAudit(20);
+    for (const [i, e] of mockAudit.entries.entries()) {
+      if (i % 4 === 0)
+        Object.assign(e, { targetType: 'server', targetId: server.id, targetDisplay: server.name });
+    }
+    const ServerHarness = () => <Harness initial={{ target: server.id }} />;
+    renderPage(ServerHarness, '/audit');
+    const chip = await screen.findByTestId('audit-target-chip');
+    await waitFor(() => expect(chip).toHaveTextContent(`Сервер: ${server.name}`));
+    await waitFor(() => expect(rows().length).toBe(5));
+    for (const r of rows())
+      expect(within(r as HTMLElement).getByText(`· ${server.name}`)).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(within(chip).getByRole('button', { name: 'Снять фильтр по серверу' }));
+    await waitFor(() => expect(screen.queryByTestId('audit-target-chip')).not.toBeInTheDocument());
+    await waitFor(() => expect(rows().length).toBe(20));
   });
 
   it('утилиты: номера страниц с многоточием, период, совпадение live-записи с фильтрами', () => {

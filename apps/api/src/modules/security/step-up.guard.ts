@@ -1,6 +1,7 @@
 import { type CanActivate, type ExecutionContext, Injectable } from '@nestjs/common';
 import { STEP_UP_MINUTES } from '@nodeservice/shared';
 
+import { AuditService } from '../audit/audit.service.js';
 import { authProblems } from '../auth/auth.problems.js';
 import type { AuthenticatedRequest } from '../auth/request-context.js';
 
@@ -11,10 +12,21 @@ import type { AuthenticatedRequest } from '../auth/request-context.js';
  */
 @Injectable()
 export class StepUpGuard implements CanActivate {
-  canActivate(ctx: ExecutionContext): boolean {
+  constructor(private readonly audit: AuditService) {}
+
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const req = ctx.switchToHttp().getRequest<AuthenticatedRequest>();
     const at = req.session?.stepUpAt ? Date.parse(req.session.stepUpAt) : Number.NaN;
-    if (!Number.isFinite(at) || Date.now() - at > STEP_UP_MINUTES * 60_000) throw authProblems.stepUp();
+    if (!Number.isFinite(at) || Date.now() - at > STEP_UP_MINUTES * 60_000) {
+      // Guard срабатывает раньше интерсептора @Audit — отказ пишем здесь. Это штатный шаг
+      // (фронт спросит пароль и повторит), поэтому severity info, но в Журнале он виден.
+      await this.audit.record({
+        action: 'security.step_up.denied',
+        result: 'denied',
+        metadata: { method: req.method, path: req.path },
+      });
+      throw authProblems.stepUp();
+    }
     return true;
   }
 }
