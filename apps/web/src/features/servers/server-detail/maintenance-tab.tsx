@@ -96,6 +96,13 @@ const CONFIRM: Record<
   },
 };
 
+/** Легенда уровней под чек-листом: три коротких элемента, переносятся целиком, а не по словам. */
+const LEGEND: Array<[MaintenanceTier, string]> = [
+  ['T1', 'панель делает сама, с проверкой после'],
+  ['T2', 'с вашим подтверждением'],
+  ['T3', 'только вручную в терминале, как перезагрузка'],
+];
+
 function TierChip({ tier }: { tier: MaintenanceTier }) {
   return (
     <span
@@ -622,10 +629,17 @@ export function MaintenanceTab({ server }: { server: Server }) {
 
       {shown && <RunCard key={shown.id} run={shown} live={running !== null} />}
 
-      <p className="text-[11.5px] text-text-3">
-        <TierChip tier="T1" /> панель делает сама, обратимо и с проверкой после · <TierChip tier="T2" /> с
-        вашим подтверждением · <TierChip tier="T3" /> только вручную в терминале. Перезагрузка всегда T3.
-      </p>
+      <ul
+        className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[11.5px] text-text-3"
+        aria-label="Уровни действий"
+      >
+        {LEGEND.map(([tier, text]) => (
+          <li key={tier} className="inline-flex items-center gap-2 whitespace-nowrap">
+            <TierChip tier={tier} />
+            <span>{text}</span>
+          </li>
+        ))}
+      </ul>
 
       {confirm && (
         <ConfirmDialog
