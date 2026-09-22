@@ -18,9 +18,20 @@ export interface SshTarget {
   expectedHostKeyFp?: string;
 }
 
+export interface SshExecStreamOptions {
+  /** Свой таймаут: длинные команды (apt upgrade) живут дольше обычных 20 с. */
+  timeoutMs?: number;
+  /** Вывод по мере появления (stdout и stderr вперемешку, как в терминале). */
+  onData?: (chunk: string) => void;
+  /** Внешняя отмена: команда обрывается закрытием соединения. */
+  signal?: AbortSignal;
+}
+
 export interface SshSession {
   hostKeyFp: string;
   exec(command: string): Promise<{ code: number; stdout: string; stderr: string }>;
+  /** Долгая команда с живым выводом; сам вывод не копится — только код завершения. */
+  execStream(command: string, opts?: SshExecStreamOptions): Promise<{ code: number }>;
   end(): void;
 }
 
@@ -100,6 +111,47 @@ export class SshService {
     return {
       hostKeyFp,
       end: () => client.end(),
+      execStream: (command, opts = {}) =>
+        new Promise((resolve, reject) => {
+          const timeoutMs = opts.timeoutMs ?? EXEC_TIMEOUT_MS;
+          let settled = false;
+          const finish = (fn: () => void) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            opts.signal?.removeEventListener('abort', onAbort);
+            fn();
+          };
+          const timer = setTimeout(() => {
+            client.end();
+            finish(() =>
+              reject(
+                serverProblems.sshCommand(command.slice(0, 60), `таймаут ${Math.round(timeoutMs / 1000)} с`),
+              ),
+            );
+          }, timeoutMs);
+          const onAbort = () => {
+            client.end();
+            finish(() => reject(serverProblems.sshCommand(command.slice(0, 60), 'отменено')));
+          };
+          if (opts.signal?.aborted) {
+            onAbort();
+            return;
+          }
+          opts.signal?.addEventListener('abort', onAbort, { once: true });
+          client.exec(command, (err, stream) => {
+            if (err) {
+              finish(() => reject(serverProblems.sshCommand(command.slice(0, 60), err.message)));
+              return;
+            }
+            // UTF-8 может разрываться между чанками — декодеры копят «хвост» до полного символа.
+            const out = new StringDecoder('utf8');
+            const errDec = new StringDecoder('utf8');
+            stream.on('data', (d: Buffer) => opts.onData?.(out.write(d)));
+            stream.stderr.on('data', (d: Buffer) => opts.onData?.(errDec.write(d)));
+            stream.on('close', (code: number | null) => finish(() => resolve({ code: code ?? -1 })));
+          });
+        }),
       exec: (command) =>
         new Promise((resolve, reject) => {
           const timer = setTimeout(() => {

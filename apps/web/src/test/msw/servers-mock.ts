@@ -8,6 +8,9 @@ import {
 } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
 
+import { stripAnsi } from '@/lib/strip-ansi';
+import { seedMaintenance } from './maintenance-mock';
+
 /** Мок /api/servers: состояние в памяти, SSH имитируется флагами. */
 export const MOCK_SSH = {
   password: 'root-password',
@@ -122,6 +125,7 @@ export function seedServers(): void {
     }),
   ];
   seedTerminalSessions(mockServers.items[0]?.id ?? '');
+  seedMaintenance(mockServers.items[0]?.id ?? '');
 }
 seedServers();
 
@@ -320,9 +324,25 @@ export const serversHandlers = [
 ];
 
 export const terminalHistoryHandlers = [
-  http.get('/api/servers/:id/terminal/sessions', ({ params }) =>
-    HttpResponse.json({ items: mockTerminalSessions.items.filter((s) => s.serverId === params.id) }),
-  ),
+  http.get('/api/servers/:id/terminal/sessions', ({ params, request }) => {
+    const url = new URL(request.url);
+    const q = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+    const since = url.searchParams.get('since');
+    let items = mockTerminalSessions.items.filter((s) => s.serverId === params.id);
+    if (since) items = items.filter((s) => s.startedAt >= since);
+    if (q) {
+      items = items
+        .map((s) => ({
+          ...s,
+          matches:
+            stripAnsi(mockTerminalSessions.transcripts[s.id] ?? '')
+              .toLowerCase()
+              .split(q).length - 1,
+        }))
+        .filter((s) => s.matches > 0);
+    }
+    return HttpResponse.json({ items });
+  }),
   http.get('/api/servers/:id/terminal/sessions/:sid', ({ params, request }) => {
     const s = mockTerminalSessions.items.find((x) => x.id === params.sid && x.serverId === params.id);
     if (!s) return problem(404, 'about:blank', 'Сессия терминала не найдена');

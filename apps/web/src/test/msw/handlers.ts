@@ -5,6 +5,7 @@ import { auditHandlers, mockAudit, seedAudit } from './audit-mock';
 import { autochecksHandlers, seedAutochecks } from './autochecks-mock';
 import { incidentsHandlers, seedIncidents } from './incidents-mock';
 import { knowledgeHandlers, seedKnowledge } from './knowledge-mock';
+import { maintenanceHandlers } from './maintenance-mock';
 import { metricsHandlers, seedMetrics } from './metrics-mock';
 import { mockSecurity, securityHandlers, seedSecurity } from './security-mock';
 import { seedServers, serversHandlers, terminalHistoryHandlers } from './servers-mock';
@@ -151,6 +152,7 @@ export const handlers = [
   ...securityHandlers,
   ...serversHandlers,
   ...terminalHistoryHandlers,
+  ...maintenanceHandlers,
   ...metricsHandlers,
   ...incidentsHandlers,
   ...knowledgeHandlers,

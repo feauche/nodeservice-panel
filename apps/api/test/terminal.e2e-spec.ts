@@ -212,6 +212,29 @@ describe('terminal e2e', () => {
     ).body as { transcript: string; offset: number; length: number };
     expect(tail).toMatchObject({ offset: full - 5, length: full });
     expect(tail.transcript).toBe(detail.transcript.slice(full - 5));
+
+    // Поиск по записям: без регистра, по тексту без ANSI-кодов, с числом совпадений; чужое — пусто.
+    const found = (await agent.get(`/api/servers/${serverId}/terminal/sessions?q=WHOAMI`).expect(200))
+      .body as {
+      items: Array<{ id: string; matches: number }>;
+    };
+    expect(found.items.map((s) => s.id)).toContain(last.id);
+    const hit = found.items.find((s) => s.id === last.id)!;
+    expect(hit.matches).toBeGreaterThanOrEqual(1);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: это ANSI-последовательности
+    const plain = detail.transcript.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').toLowerCase();
+    expect(hit.matches).toBe(plain.split('whoami').length - 1);
+    const none = (
+      await agent.get(`/api/servers/${serverId}/terminal/sessions?q=нет-такой-строки-точно`).expect(200)
+    ).body as { items: unknown[] };
+    expect(none.items).toHaveLength(0);
+    // период: сессии будущего не бывает
+    const future = new Date(Date.now() + 3_600_000).toISOString();
+    const later = (await agent.get(`/api/servers/${serverId}/terminal/sessions?since=${future}`).expect(200))
+      .body as { items: unknown[] };
+    expect(later.items).toHaveLength(0);
+    await agent.get(`/api/servers/${serverId}/terminal/sessions?since=abc`).expect(400);
+    await agent.get(`/api/servers/${serverId}/terminal/sessions?q=${'x'.repeat(201)}`).expect(400);
   }, 20_000);
 
   it('WebSocket без cookie — закрывается кодом 4401', async () => {

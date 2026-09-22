@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetMockState } from '@/test/msw/handlers';
+import { makeCheck, mockMaintenance, seedMaintenance } from '@/test/msw/maintenance-mock';
 import { MOCK_SECURITY, mockSecurity } from '@/test/msw/security-mock';
 import { MOCK_SSH, mockServers, seedServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
@@ -90,6 +91,135 @@ describe('ServersPage', () => {
     expect(transcript).toHaveTextContent('nodectl status');
     expect(transcript).toHaveTextContent('Fail2Ban: active');
     expect(transcript.textContent).not.toContain('[32m');
+  });
+
+  it('история терминала: поиск по записям считает совпадения, подсвечивает и листает их', async () => {
+    renderPage(Harness, '/servers');
+    const user = userEvent.setup();
+    await user.click(await screen.findByText('de-fra-01'));
+    const dialog = await screen.findByRole('dialog', { name: 'de-fra-01' });
+    await user.click(within(dialog).getByRole('button', { name: 'Терминал' }));
+    await within(dialog).findByTestId('terminal-transcript');
+    const search = within(dialog).getByLabelText('Поиск по истории терминала');
+    await user.type(search, 'ACTIVE');
+    // без регистра: «UFW: active» и «Fail2Ban: active» → 2 совпадения в 1 сессии
+    expect(await within(dialog).findByText(/Найдено 2 совпадения в 1 сессии/)).toBeInTheDocument();
+    expect(within(dialog).getByText('2 совпадения')).toBeInTheDocument();
+    const marks = within(dialog).getByTestId('terminal-transcript').querySelectorAll('mark');
+    expect(marks).toHaveLength(2);
+    expect(within(dialog).getByText('1 из 2')).toBeInTheDocument();
+    await user.keyboard('{Enter}');
+    expect(within(dialog).getByText('2 из 2')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Следующее совпадение' }));
+    expect(within(dialog).getByText('1 из 2')).toBeInTheDocument();
+    // ничего не найдено — пустое состояние, а не пустой список
+    await user.clear(search);
+    await user.type(search, 'нет-такого');
+    expect(await within(dialog).findByText('Совпадений нет')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Очистить поиск' }));
+    expect(await within(dialog).findByText(/закрыт пользователем/)).toBeInTheDocument();
+  });
+
+  describe('вкладка «Обслуживание»', () => {
+    const openTab = async () => {
+      renderPage(Harness, '/servers');
+      const user = userEvent.setup();
+      await user.click(await screen.findByText('de-fra-01'));
+      const dialog = await screen.findByRole('dialog', { name: 'de-fra-01' });
+      await user.click(within(dialog).getByRole('button', { name: 'Обслуживание' }));
+      return { user, dialog };
+    };
+
+    it('чек-лист: строки с уровнями, кнопки только у проблем, перезагрузка — только вручную', async () => {
+      const { dialog } = await openTab();
+      const list = await within(dialog).findByRole('list', { name: 'Чек-лист сервера' });
+      expect(within(list).getByText('65 обновлений, из них 1 безопасности')).toBeInTheDocument();
+      expect(within(list).getByText('Перезагрузка не требуется')).toBeInTheDocument();
+      expect(within(list).getByText('Агент v0.5.4, доступна v0.6.0')).toBeInTheDocument();
+      expect(within(list).getByText('Диск: 16% занято')).toBeInTheDocument();
+      expect(within(list).getByText('Автообновления безопасности выключены')).toBeInTheDocument();
+      expect(within(list).getAllByRole('button', { name: 'Обновить' })).toHaveLength(2);
+      expect(within(list).getByRole('button', { name: 'Очистить' })).toBeInTheDocument();
+      expect(within(list).getByRole('button', { name: 'Включить' })).toBeInTheDocument();
+      expect(within(list).getAllByText('T2')).toHaveLength(3);
+      expect(within(list).getByText('T1')).toBeInTheDocument();
+      expect(within(dialog).getByText(/Проверено 10 мин назад · следующая через/)).toBeInTheDocument();
+    });
+
+    it('T2: обновление системы через подтверждение, шаги идут по очереди, чек-лист меняется', async () => {
+      const { user, dialog } = await openTab();
+      const list = await within(dialog).findByRole('list', { name: 'Чек-лист сервера' });
+      await user.click(within(list).getAllByRole('button', { name: 'Обновить' })[0] as HTMLElement);
+      const confirm = await screen.findByRole('alertdialog', { name: 'Обновить систему на «de-fra-01»?' });
+      expect(within(confirm).getByText(/65 пакетов/)).toBeInTheDocument();
+      await user.click(within(confirm).getByRole('button', { name: 'Да, обновить' }));
+      const run = await within(dialog).findByTestId('maintenance-run');
+      expect(within(run).getByRole('button', { name: /Обновление системы/ })).toBeInTheDocument();
+      expect(within(run).getByText('Установка обновлений', { exact: false })).toBeInTheDocument();
+      // пока идёт — кнопки чек-листа заблокированы
+      expect(within(list).getByRole('button', { name: 'Очистить' })).toBeDisabled();
+      expect(await within(run).findByText(/успешно за/, {}, { timeout: 4000 })).toBeInTheDocument();
+      expect(within(run).getByTestId('maintenance-log')).toHaveTextContent('Setting up openssl');
+      // после действия: обновлений нет, нужна перезагрузка (T3, без кнопки)
+      await waitFor(() => expect(within(list).getByText('Обновлений нет')).toBeInTheDocument());
+      expect(within(list).getByText('Требуется перезагрузка')).toBeInTheDocument();
+      expect(within(list).getByText('T3')).toBeInTheDocument();
+      expect(within(list).getByText(/только вручную: reboot/)).toBeInTheDocument();
+      expect(within(list).queryByRole('button', { name: 'Перезагрузить' })).not.toBeInTheDocument();
+    });
+
+    it('T1: агент обновляется без подтверждения; ошибка шага — карточка с логом и пропущенными шагами', async () => {
+      const { user, dialog } = await openTab();
+      const list = await within(dialog).findByRole('list', { name: 'Чек-лист сервера' });
+      await user.click(within(list).getAllByRole('button', { name: 'Обновить' })[1] as HTMLElement);
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+      const run = await within(dialog).findByTestId('maintenance-run');
+      expect(await within(run).findByText(/успешно за/, {}, { timeout: 4000 })).toBeInTheDocument();
+      await waitFor(() => expect(within(list).getByText('Агент v0.6.0')).toBeInTheDocument());
+
+      mockMaintenance.failStep = 'clean';
+      await user.click(within(list).getByRole('button', { name: 'Очистить' }));
+      await user.click(
+        within(await screen.findByRole('alertdialog', { name: 'Очистить диск на «de-fra-01»?' })).getByRole(
+          'button',
+          {
+            name: 'Да, очистить',
+          },
+        ),
+      );
+      const failed = await within(dialog).findByText(
+        /ошибка: команда завершилась с кодом 100/,
+        {},
+        { timeout: 4000 },
+      );
+      const card = failed.closest('[data-testid="maintenance-run"]') as HTMLElement;
+      expect(within(card).getByText(/Системный журнал до 200 МБ/)).toBeInTheDocument();
+      expect(within(card).getAllByText('пропущен')).toHaveLength(2);
+      expect(within(card).getByTestId('maintenance-log')).toHaveTextContent('сломан для теста');
+    });
+
+    it('сервер ещё не проверяли: пустое состояние с кнопкой, после проверки — чек-лист', async () => {
+      seedMaintenance(mockServers.items[0]?.id ?? '', null);
+      const { user, dialog } = await openTab();
+      expect(await within(dialog).findByText('Сервер ещё не проверяли')).toBeInTheDocument();
+      await user.click(within(dialog).getByRole('button', { name: 'Проверить сейчас' }));
+      expect(await within(dialog).findByText('Проверяем сервер…')).toBeInTheDocument();
+      expect(
+        await within(dialog).findByRole('list', { name: 'Чек-лист сервера' }, { timeout: 4000 }),
+      ).toBeInTheDocument();
+    });
+
+    it('не Debian/Ubuntu: обновления недоступны, строки без кнопок', async () => {
+      seedMaintenance(
+        mockServers.items[0]?.id ?? '',
+        makeCheck({ supported: false, updates: null, unattended: null, warnings: ['нет apt'] }),
+      );
+      const { dialog } = await openTab();
+      const list = await within(dialog).findByRole('list', { name: 'Чек-лист сервера' });
+      expect(within(list).getByText('Обновления через apt недоступны')).toBeInTheDocument();
+      expect(within(list).queryByRole('button', { name: 'Очистить' })).not.toBeInTheDocument();
+      expect(within(list).queryByRole('button', { name: 'Включить' })).not.toBeInTheDocument();
+    });
   });
 
   it('меню «Изменить» открывает модалку сразу на «Подключении», удаление изнутри работает', async () => {

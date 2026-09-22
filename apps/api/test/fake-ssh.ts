@@ -15,6 +15,8 @@ export class FakeSsh {
   /** Строки, «дописанные» в authorized_keys. */
   installedKeys: string[] = [];
   execLog: string[] = [];
+  /** Обслуживание: сколько обновлений «видит» apt и падает ли шаг с этим маркером. */
+  maintenance = { updates: 3, security: 1, reboot: false, failStep: '' as string };
 
   async start(port = 0): Promise<void> {
     this.hostKey ??= toOpenSshPrivate(generateKeyPairSync('ed25519').privateKey, 'fake-host');
@@ -53,6 +55,42 @@ export class FakeSsh {
                   '@@hostname=test-node\n@@arch=x86_64\n@@kernel=6.8.0\n@@cores=4\n@@memkb=8192000\n@@os=Ubuntu\n@@osver=24.04\n',
                 );
                 stream.exit(0);
+              } else if (info.command.startsWith('# ns-maint:check')) {
+                const m = this.maintenance;
+                stream.write(
+                  [
+                    '@@apt=1',
+                    '@@apt_update=ok',
+                    `@@updates=${m.updates}`,
+                    `@@security=${m.security}`,
+                    '@@dpkg_broken=0',
+                    '@@unattended=0',
+                    `@@reboot=${m.reboot ? 1 : 0}`,
+                    '@@kernel_running=6.8.0-84-generic',
+                    '@@kernel_installed=6.8.0-85-generic',
+                    '@@agent_version=v0.5.4',
+                    '@@agent_service=active',
+                    '@@disk_pct=16',
+                    '@@disk_free_mb=66000',
+                    '@@done=1',
+                    '',
+                  ].join('\n'),
+                );
+                stream.exit(0);
+              } else if (info.command.startsWith('# ns-maint:')) {
+                const marker = info.command.split('\n')[0]?.replace('# ns-maint:', '') ?? '';
+                if (this.maintenance.failStep && marker === this.maintenance.failStep) {
+                  stream.stderr.write(`E: шаг ${marker} сломан для теста\n`);
+                  stream.exit(100);
+                } else {
+                  stream.write(`ok: ${marker}\n`);
+                  if (marker === 'apt_upgrade:upgrade') {
+                    this.maintenance.updates = 0;
+                    this.maintenance.security = 0;
+                    this.maintenance.reboot = true;
+                  }
+                  stream.exit(0);
+                }
               } else if (info.command.includes('authorized_keys')) {
                 const m = info.command.match(/echo '([^']+)'/);
                 if (m?.[1] && !this.installedKeys.includes(m[1])) this.installedKeys.push(m[1]);

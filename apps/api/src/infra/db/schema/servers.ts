@@ -1,5 +1,17 @@
+import type { MaintenanceCheck, MaintenanceKind, MaintenanceStep } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  bigint,
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 /**
  * Этап 4: инвентарь серверов. Пароли SSH не хранятся никогда;
@@ -91,3 +103,42 @@ export const terminalSessions = pgTable(
   (t) => [index('terminal_sessions_server_idx').on(t.serverId, t.startedAt)],
 );
 export type TerminalSessionRow = typeof terminalSessions.$inferSelect;
+
+/**
+ * Обслуживание сервера (R1.8): результат суточной проверки и запуски действий с пошаговым логом.
+ * Миграция 0018. Форматы `check` и `steps` — packages/shared/src/maintenance.ts.
+ */
+export const maintenanceState = pgTable('maintenance_state', {
+  serverId: uuid('server_id')
+    .primaryKey()
+    .references(() => servers.id, { onDelete: 'cascade' }),
+  checkedAt: timestamp('checked_at', { withTimezone: true }),
+  check: jsonb('check').$type<MaintenanceCheck>(),
+  checkError: text('check_error'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type MaintenanceStateRow = typeof maintenanceState.$inferSelect;
+
+export const maintenanceRuns = pgTable(
+  'maintenance_runs',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    serverId: uuid('server_id')
+      .notNull()
+      .references(() => servers.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<MaintenanceKind>().notNull(),
+    status: text('status').$type<'running' | 'ok' | 'failed'>().notNull().default('running'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    actorId: uuid('actor_id'),
+    actorDisplay: text('actor_display'),
+    steps: jsonb('steps').$type<MaintenanceStep[]>().notNull().default([]),
+    log: text('log').notNull().default(''),
+    error: text('error'),
+  },
+  (t) => [
+    index('maintenance_runs_server_idx').on(t.serverId, t.startedAt),
+    uniqueIndex('maintenance_runs_one_running').on(t.serverId).where(sql`${t.status} = 'running'`),
+  ],
+);
+export type MaintenanceRunRow = typeof maintenanceRuns.$inferSelect;

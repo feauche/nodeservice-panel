@@ -11,6 +11,7 @@ export * from './auth.js';
 export * from './autochecks.js';
 export * from './incidents.js';
 export * from './knowledge.js';
+export * from './maintenance.js';
 export * from './metrics.js';
 export * from './security.js';
 export * from './servers.js';

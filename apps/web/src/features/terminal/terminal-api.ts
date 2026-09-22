@@ -8,16 +8,27 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 export const terminalKeys = {
-  sessions: (serverId: string) => ['terminal', 'sessions', serverId] as const,
+  sessions: (serverId: string, q = '', since = '') => ['terminal', 'sessions', serverId, q, since] as const,
   session: (serverId: string, id: string) => ['terminal', 'session', serverId, id] as const,
 };
 
-/** Последние сессии терминала сервера (без записи вывода). */
-export function useTerminalSessions(serverId: string) {
+/**
+ * Последние сессии терминала сервера (без записи вывода). С `q` — только сессии, где строка
+ * встречается в записи, у каждой `matches`; `since` — не раньше этой даты (ISO).
+ */
+export function useTerminalSessions(serverId: string, opts: { q?: string; since?: string } = {}) {
+  const q = opts.q?.trim() ?? '';
+  const since = opts.since ?? '';
   return useQuery({
-    queryKey: terminalKeys.sessions(serverId),
-    queryFn: ({ signal }) =>
-      api.get(`/servers/${serverId}/terminal/sessions?limit=50`, terminalSessionsResponseSchema, signal),
+    queryKey: terminalKeys.sessions(serverId, q, since),
+    queryFn: ({ signal }) => {
+      const p = new URLSearchParams({ limit: '50' });
+      if (q) p.set('q', q);
+      if (since) p.set('since', since);
+      return api.get(`/servers/${serverId}/terminal/sessions?${p}`, terminalSessionsResponseSchema, signal);
+    },
+    // Пока пользователь печатает, старый список не мигает скелетоном.
+    placeholderData: (prev) => prev,
     refetchInterval: 15_000,
   });
 }

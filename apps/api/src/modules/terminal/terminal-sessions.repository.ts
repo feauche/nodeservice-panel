@@ -5,10 +5,26 @@ import {
   type TerminalSessionDetail,
   type TerminalSessionInfo,
 } from '@nodeservice/shared';
-import { and, desc, eq, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, lt, type SQL, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { type TerminalSessionRow, terminalSessions } from '../../infra/db/schema/index.js';
+
+/**
+ * Те же правила очистки, что в apps/web/src/lib/strip-ansi.ts, но для Postgres: сначала убираются
+ * управляющие последовательности (CSI, OSC, одиночные ESC-команды, BEL), затем «\r без \n»
+ * схлопывается до последнего кадра строки. Управляющие символы переданы как есть, а не как
+ * \x-экранирование, чтобы не зависеть от диалекта регулярок.
+ */
+const PG_ANSI_RE =
+  '\u001b\\[[0-?]*[ -/]*[@-~]|\u001b\\][^\u0007\u001b]*(?:\u0007|\u001b\\\\)|\u001b[ -/]*[0-~]|\u0007';
+const PG_CR_FRAME_RE = '[^\r\n]*\r(?=[^\n])';
+const PG_CR_TAIL_RE = '\r(?=\n|$)';
+
+/** SQL-выражение: запись сессии как видит её человек, в нижнем регистре — для подсчёта совпадений. */
+function plainTranscript(): SQL<string> {
+  return sql<string>`lower(regexp_replace(regexp_replace(regexp_replace("transcript", ${PG_ANSI_RE}, '', 'g'), ${PG_CR_FRAME_RE}, '', 'g'), ${PG_CR_TAIL_RE}, '', 'g'))`;
+}
 
 function toInfo(r: TerminalSessionRow): TerminalSessionInfo {
   return {
@@ -80,14 +96,51 @@ export class TerminalSessionsRepository {
     await this.db.update(terminalSessions).set({ cols, rows }).where(eq(terminalSessions.id, id));
   }
 
-  async list(serverId: string, limit: number): Promise<TerminalSessionInfo[]> {
+  /**
+   * Сессии сервера, свежие первыми. С `since` — только начатые не раньше этой даты. С `q` — только
+   * те, где строка встречается в очищенной записи, и у каждой `matches` — сколько раз (без регистра,
+   * непересекающиеся вхождения: как считает и клиент при подсветке).
+   */
+  async list(
+    serverId: string,
+    limit: number,
+    opts: { q?: string; since?: Date } = {},
+  ): Promise<TerminalSessionInfo[]> {
+    const conds = [eq(terminalSessions.serverId, serverId)];
+    if (opts.since) conds.push(gte(terminalSessions.startedAt, opts.since));
+    const q = opts.q?.toLowerCase() ?? '';
+    if (q === '') {
+      const rows = await this.db
+        .select()
+        .from(terminalSessions)
+        .where(and(...conds))
+        .orderBy(desc(terminalSessions.startedAt))
+        .limit(limit);
+      return rows.map(toInfo);
+    }
+    const plain = plainTranscript();
+    const matches = sql<number>`(length(${plain}) - length(replace(${plain}, ${q}, ''))) / ${q.length}`;
     const rows = await this.db
-      .select()
+      .select({
+        id: terminalSessions.id,
+        serverId: terminalSessions.serverId,
+        actorId: terminalSessions.actorId,
+        actorDisplay: terminalSessions.actorDisplay,
+        startedAt: terminalSessions.startedAt,
+        endedAt: terminalSessions.endedAt,
+        cols: terminalSessions.cols,
+        rows: terminalSessions.rows,
+        bytesOut: terminalSessions.bytesOut,
+        truncated: terminalSessions.truncated,
+        exitCode: terminalSessions.exitCode,
+        endReason: terminalSessions.endReason,
+        matches,
+      })
       .from(terminalSessions)
-      .where(eq(terminalSessions.serverId, serverId))
+      .where(and(...conds, sql`position(${q} in ${plain}) > 0`))
       .orderBy(desc(terminalSessions.startedAt))
       .limit(limit);
-    return rows.map(toInfo);
+    return rows.map(({ matches: m, ...r }) => ({ ...toInfo({ ...r, transcript: '' }), matches: Number(m) }));
   }
 
   /** Запись начиная с offset (в символах): живая сессия догружается дельтами. */

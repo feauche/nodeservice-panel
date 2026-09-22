@@ -36,17 +36,19 @@ import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
 import { HealthDot, osLine, SshPill } from './server-card';
 import { JournalTab } from './server-detail/journal-tab';
+import { MaintenanceTab } from './server-detail/maintenance-tab';
 import { MetricsTab } from './server-detail/metrics-tab';
 import { TerminalHistoryTab } from './server-detail/terminal-history-tab';
 import { serverHealth } from './server-health';
 import { useCheckServer, useDeleteServer, useDuplicateServer, useUpdateServer } from './servers-api';
 
-export type ServerModalTab = 'metrics' | 'journal' | 'terminal' | 'connection';
+export type ServerModalTab = 'metrics' | 'journal' | 'terminal' | 'maintenance' | 'connection';
 
 const TABS: Array<{ key: ServerModalTab; label: string }> = [
   { key: 'metrics', label: 'Метрики' },
   { key: 'journal', label: 'Журнал' },
   { key: 'terminal', label: 'Терминал' },
+  { key: 'maintenance', label: 'Обслуживание' },
   { key: 'connection', label: 'Подключение' },
 ];
 
@@ -308,6 +310,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
             {tab === 'metrics' && <MetricsTab serverId={s.id} range={range} onRange={setRange} />}
             {tab === 'journal' && <JournalTab serverId={s.id} />}
             {tab === 'terminal' && <TerminalHistoryTab serverId={s.id} />}
+            {tab === 'maintenance' && <MaintenanceTab server={s} />}
             {tab === 'connection' && <ConnectionTab server={s} />}
           </div>
         </div>

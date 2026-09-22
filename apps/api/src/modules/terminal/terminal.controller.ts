@@ -1,8 +1,9 @@
 import { Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import {
   TERMINAL_HISTORY_LIMIT,
+  TERMINAL_SEARCH_MAX,
   TERMINAL_WS_PATH,
   type TerminalOpenResponse,
   type TerminalSessionDetail,
@@ -48,16 +49,34 @@ export class TerminalController {
   }
 
   @Get('sessions')
-  @ApiOperation({ summary: 'История терминала: последние сессии сервера' })
+  @ApiOperation({ summary: 'История терминала: последние сессии сервера, поиск по записям' })
+  @ApiQuery({ name: 'q', required: false, description: 'Строка поиска по записям (без регистра)' })
+  @ApiQuery({ name: 'since', required: false, description: 'Только сессии, начатые не раньше (ISO 8601)' })
   @ApiOkResponse({ type: TerminalSessionsResponseDto })
   async sessions(
     @Param('id', ParseUUIDPipe) id: string,
     @Query('limit') limitRaw?: string,
+    @Query('q') qRaw?: string,
+    @Query('since') sinceRaw?: string,
   ): Promise<TerminalSessionsResponse> {
     await this.servers.get(id);
     const n = Number(limitRaw);
     const limit = Number.isInteger(n) && n > 0 ? Math.min(n, TERMINAL_HISTORY_LIMIT) : 50;
-    return { items: await this.history.list(id, limit) };
+    const q = (qRaw ?? '').trim();
+    if (q.length > TERMINAL_SEARCH_MAX) {
+      throw problem(HttpStatus.BAD_REQUEST, {
+        detail: `Строка поиска не длиннее ${TERMINAL_SEARCH_MAX} символов`,
+      });
+    }
+    let since: Date | undefined;
+    if (sinceRaw) {
+      since = new Date(sinceRaw);
+      if (Number.isNaN(since.getTime()))
+        throw problem(HttpStatus.BAD_REQUEST, { detail: 'Неверная дата since' });
+    }
+    return {
+      items: await this.history.list(id, limit, { ...(q ? { q } : {}), ...(since ? { since } : {}) }),
+    };
   }
 
   @Get('sessions/:sid')

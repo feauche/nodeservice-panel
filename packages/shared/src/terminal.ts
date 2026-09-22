@@ -43,6 +43,12 @@ export const TERMINAL_TRANSCRIPT_MAX = 2_000_000;
 /** Сколько дней хранить историю сессий. */
 export const TERMINAL_HISTORY_DAYS = 30;
 export const TERMINAL_HISTORY_LIMIT = 100;
+/** Максимальная длина строки поиска по истории (символов). */
+export const TERMINAL_SEARCH_MAX = 200;
+
+/** Период истории для списка и поиска: сегодня, 7 дней или всё, что хранится (30 дней). */
+export const TERMINAL_PERIODS = ['all', 'today', '7d'] as const;
+export type TerminalPeriod = (typeof TERMINAL_PERIODS)[number];
 
 export const terminalSessionSchema = z.object({
   id: z.uuid(),
@@ -57,6 +63,11 @@ export const terminalSessionSchema = z.object({
   truncated: z.boolean(),
   exitCode: z.number().int().nullable(),
   endReason: z.string().nullable(),
+  /**
+   * Сколько раз строка поиска встречается в записи (без регистра, по тексту без ANSI-кодов).
+   * Есть только в ответе на запрос с `q`; сессии без совпадений в такой ответ не попадают.
+   */
+  matches: z.number().int().min(0).optional(),
 });
 export type TerminalSessionInfo = z.infer<typeof terminalSessionSchema>;
 
