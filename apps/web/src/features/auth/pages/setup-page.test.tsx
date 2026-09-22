@@ -67,11 +67,11 @@ describe('SetupPage', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/'));
   });
 
-  it('«← Назад» со шага 2 возвращает заполненную форму и фокусирует логин', async () => {
+  it('«Назад» со шага 2 возвращает заполненную форму и фокусирует логин', async () => {
     renderPage(SetupPage, '/setup', ['/']);
     const user = userEvent.setup();
     await fillStep1(user);
-    await user.click(await screen.findByRole('button', { name: '← Назад' }));
+    await user.click(await screen.findByRole('button', { name: 'Назад' }));
     expect(await screen.findByLabelText('Токен первого запуска')).toHaveValue(MOCK.setupToken);
     expect(screen.getByLabelText('Логин')).toHaveFocus();
   });

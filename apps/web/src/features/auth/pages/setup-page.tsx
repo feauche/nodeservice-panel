@@ -2,6 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { type SetupStartResponse, setupStartRequestSchema, totpCodeSchema } from '@nodeservice/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
+import { CheckIcon, CopyIcon } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -256,7 +257,7 @@ function Step2({ enroll, onBack, onDone }: Step2Props) {
   return (
     <>
       <AuthHeading title="Двухфакторная защита">
-        Обязательна: панель управляет всеми серверами и хранит доступы к ним, одного пароля недостаточно.
+        Отсканируйте QR-код в приложении-аутентификаторе и введите код из него.
       </AuthHeading>
       <Fields
         onSubmit={(e) => {
@@ -264,33 +265,35 @@ function Step2({ enroll, onBack, onDone }: Step2Props) {
           void submit(code);
         }}
       >
-        <div className="grid grid-cols-[150px_minmax(0,1fr)] items-center gap-[18px] max-[520px]:grid-cols-1 max-[520px]:justify-items-center">
-          <div className="size-[150px] flex-none rounded-xl border border-border bg-white p-2.5">
+        <div className="grid grid-cols-[116px_minmax(0,1fr)] items-center gap-4 max-[520px]:grid-cols-1 max-[520px]:justify-items-center">
+          <div className="size-[116px] flex-none rounded-xl border border-border bg-white p-1.5">
             <img
               src={enroll.qrDataUrl}
               alt="QR-код для приложения-аутентификатора"
-              width={128}
-              height={128}
+              width={104}
+              height={104}
               className="block size-full"
             />
           </div>
-          <div className="min-w-0 max-[520px]:w-full">
-            <p className="mb-2 text-[12px] leading-normal text-text-3">
-              Отсканируйте QR-код в приложении: Google Authenticator, Aegis, 1Password, Яндекс Ключ. Подойдёт
-              любое с поддержкой TOTP.
-            </p>
-            <p className="mb-1.5 text-[12px] leading-normal text-text-3">Или введите ключ вручную:</p>
-            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-[10px] border border-border bg-surface-2 py-[7px] pr-[7px] pl-[11px] font-mono text-[12.5px] tracking-[0.06em]">
-              <span className="min-w-0 leading-normal break-all select-all">{secretPretty}</span>
-              <GhostButton
-                size="sm"
-                className="px-[11px] py-1.5 text-xs"
-                onClick={() => void copy(enroll.totpSecret)}
-              >
-                {copied ? 'Скопировано' : 'Копировать'}
-              </GhostButton>
-            </div>
-          </div>
+          <p className="text-[12.5px] leading-normal text-text-2 max-[520px]:text-center">
+            Подойдёт Google Authenticator, Aegis, 1Password, Яндекс Ключ или любое другое приложение с TOTP.
+            Если камеры нет, введите ключ вручную.
+          </p>
+        </div>
+        <div className="flex min-w-0 items-center gap-2 rounded-[10px] border border-border bg-surface-2 py-1.5 pr-1.5 pl-3">
+          <span className="flex-none text-[12px] text-text-3 max-[520px]:hidden">Ключ</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] tracking-[0.04em] select-all max-[520px]:overflow-visible max-[520px]:leading-normal max-[520px]:break-all max-[520px]:whitespace-normal">
+            {secretPretty}
+          </span>
+          <button
+            type="button"
+            onClick={() => void copy(enroll.totpSecret)}
+            aria-label={copied ? 'Ключ скопирован' : 'Скопировать ключ'}
+            title={copied ? 'Скопировано' : 'Скопировать ключ'}
+            className="grid size-[30px] flex-none cursor-pointer place-items-center rounded-[8px] text-text-3 transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand focus-visible:-outline-offset-2 [&_svg]:size-4"
+          >
+            {copied ? <CheckIcon className="text-ok" aria-hidden="true" /> : <CopyIcon aria-hidden="true" />}
+          </button>
         </div>
 
         <Field id="s2-otp" label="Код из приложения">
@@ -310,8 +313,10 @@ function Step2({ enroll, onBack, onDone }: Step2Props) {
             <ErrorBox>{error}</ErrorBox>
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-2.5">
-          <GhostButton onClick={onBack}>← Назад</GhostButton>
+        <div className="mt-1 flex items-stretch gap-2.5">
+          <GhostButton className="py-[11px] text-[13.5px]" onClick={onBack}>
+            Назад
+          </GhostButton>
           <CtaButton className="w-auto flex-1" loading={confirm.isPending}>
             Подтвердить и продолжить
           </CtaButton>
