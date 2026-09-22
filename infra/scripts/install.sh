@@ -16,6 +16,7 @@ APP_DIR="${NODESERVICE_DIR:-/opt/nodeservice}"
 export NODESERVICE_DIR="$APP_DIR"
 DEPLOY_KEY="/root/.ssh/nodeservice_deploy"
 ENV_FILE="$APP_DIR/infra/.env"
+export GIT_TERMINAL_PROMPT=0
 COMPOSE=(docker compose -f "$APP_DIR/infra/compose.yaml" --env-file "$ENV_FILE")
 
 C='\033[0;36m'; G='\033[0;32m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
@@ -109,6 +110,15 @@ if [[ ! -d "$APP_DIR/.git" ]]; then
         ssh-keyscan -t ed25519 github.com >> /root/.ssh/known_hosts 2>/dev/null || true
         export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
         git clone --branch "$BRANCH" --depth 1 "$REPO_SSH" "$APP_DIR" || die "Клонирование не удалось: проверь, что ключ добавлен."
+    fi
+else
+    # Повторный запуск (например, после неудачной сборки): подтягиваем свежий код ветки.
+    [[ -f "$DEPLOY_KEY" ]] && export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+    if git -C "$APP_DIR" fetch --quiet --depth 1 origin "$BRANCH" && git -C "$APP_DIR" checkout --quiet --detach FETCH_HEAD; then
+        info "Код обновлён до последнего коммита ветки $BRANCH."
+        [[ -f "$ENV_FILE" ]] && sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$(git -C "$APP_DIR" rev-parse --short HEAD)/" "$ENV_FILE"
+    else
+        warn "Не удалось обновить код — продолжаю с тем, что есть в $APP_DIR."
     fi
 fi
 ok "Код в $APP_DIR ($(git -C "$APP_DIR" rev-parse --short HEAD))"

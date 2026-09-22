@@ -16,7 +16,8 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 FROM deps AS build
 COPY . .
-RUN pnpm --filter web build && pnpm --filter api build \
+# Сначала общий пакет: web и api импортируют его из dist (в git и в контекст сборки dist не попадает).
+RUN pnpm --filter @nodeservice/shared build && pnpm --filter web build && pnpm --filter api build \
  && pnpm --filter api deploy --legacy --prod /out/api \
  && cp -r apps/api/dist /out/api/dist \
  && cp -r apps/api/drizzle /out/api/drizzle \
