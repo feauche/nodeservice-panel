@@ -159,7 +159,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
           aria-label="Закрыть"
           tabIndex={-1}
           onClick={onClose}
-          className="fixed inset-0 z-40 cursor-default bg-black/35 supports-backdrop-filter:backdrop-blur-md"
+          className="fixed inset-0 z-40 cursor-default bg-black/10 supports-backdrop-filter:backdrop-blur-xs"
         />,
         document.body,
       )}
@@ -167,7 +167,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
         showCloseButton={false}
         onPointerDownOutside={(e) => e.preventDefault()}
         onInteractOutside={(e) => e.preventDefault()}
-        className="grid h-[min(780px,calc(100vh-56px))] w-[min(1120px,calc(100vw-40px))] grid-cols-[260px_minmax(0,1fr)] gap-0 overflow-hidden rounded-2xl border-border bg-surface p-0 max-md:h-[calc(100vh-24px)] max-md:w-[calc(100vw-24px)] max-md:grid-cols-1 max-md:grid-rows-[auto_minmax(0,1fr)] sm:max-w-[1120px]"
+        className="grid h-[min(780px,calc(100vh-56px))] w-[min(1120px,calc(100vw-40px))] grid-cols-[260px_minmax(0,1fr)] gap-0 overflow-hidden rounded-2xl border-border-2 bg-surface p-0 shadow-float ring-1 ring-(--ns-hairline) max-md:h-[calc(100vh-24px)] max-md:w-[calc(100vw-24px)] max-md:grid-cols-1 max-md:grid-rows-[auto_minmax(0,1fr)] sm:max-w-[1120px]"
       >
         {/* Левая панель: состояние, факты, действия */}
         <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-r border-border bg-bg-2 p-5 max-md:border-r-0 max-md:border-b max-md:p-4">
@@ -448,6 +448,7 @@ function ConnectionTab({ server }: { server: Server }) {
           <Field id="sm-notes" label="Заметка" error={errors.notes || undefined}>
             <Input
               id="sm-notes"
+              placeholder="Необязательно: провайдер, срок оплаты, для чего сервер"
               aria-invalid={errors.notes ? true : undefined}
               aria-describedby={errors.notes ? 'sm-notes-error' : undefined}
               value={form.notes}
@@ -588,7 +589,11 @@ function ConnectionTab({ server }: { server: Server }) {
               ? 'Новые доступы проверяются настоящим подключением. Пароль не сохраняется.'
               : 'Название, теги и заметка на связь не влияют.'}
         </p>
-        <DialogPrimaryButton type="submit" disabled={busy} className="max-sm:max-w-none sm:max-w-[200px]">
+        <DialogPrimaryButton
+          type="submit"
+          disabled={busy}
+          className="h-10 rounded-[10px] px-5 max-sm:max-w-none sm:max-w-[180px]"
+        >
           {update.isPending && <Loader2Icon className="animate-spin" aria-hidden="true" />}
           Сохранить
         </DialogPrimaryButton>
