@@ -4,6 +4,7 @@ import {
   AUDIT_ACTIONS,
   AUDIT_CATEGORIES,
   auditActionLabel,
+  auditCategoryOfPrefix,
   auditEntrySchema,
   auditListQuerySchema,
 } from './audit.js';
@@ -13,7 +14,8 @@ describe('audit contract', () => {
     for (const [key, def] of Object.entries(AUDIT_ACTIONS)) {
       expect(AUDIT_CATEGORIES).toContain(def.category);
       expect(def.label.length).toBeGreaterThan(3);
-      expect(key.startsWith(`${def.category}.`)).toBe(true);
+      // Категория следует из префикса ключа (с явными исключениями kb.* и incident.*).
+      expect(auditCategoryOfPrefix(key), `ключ ${key}`).toBe(def.category);
     }
     expect(auditActionLabel('auth.login.success')).toBe('Вход в панель');
     expect(auditActionLabel('unknown.action')).toBe('unknown.action');
