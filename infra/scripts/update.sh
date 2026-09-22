@@ -12,7 +12,26 @@ die() { echo -e "${R}[-] $1${N}" >&2; exit 1; }
 [[ -d "$APP_DIR/.git" ]] || die "Нет git-репозитория в $APP_DIR."
 
 DEPLOY_KEY="/root/.ssh/nodeservice_deploy"
-[[ -f "$DEPLOY_KEY" ]] && export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes"
+REPO_SSH="${NODESERVICE_REPO_SSH:-git@github.com:feauche/nodeservice-panel.git}"
+export GIT_TERMINAL_PROMPT=0
+[[ -f "$DEPLOY_KEY" ]] && export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+
+# Репозиторий клонировали по HTTPS (был публичным), а теперь он приватный: переводим origin на
+# SSH с deploy-ключом, как это делает install.sh.
+switch_to_deploy_key() {
+    mkdir -p -m 700 /root/.ssh
+    [[ -f "$DEPLOY_KEY" ]] || ssh-keygen -t ed25519 -N '' -C "nodeservice-deploy@$(hostname)" -f "$DEPLOY_KEY" >/dev/null
+    echo ""
+    echo -e "${Y}Похоже, репозиторий стал приватным. Добавь этот ключ как Deploy key (только чтение):${N}"
+    echo -e "   ${C}https://github.com/feauche/nodeservice-panel/settings/keys/new${N}"
+    echo ""
+    cat "${DEPLOY_KEY}.pub"
+    echo ""
+    read -rp "Добавил ключ — нажми Enter, чтобы продолжить... " _ </dev/tty
+    ssh-keyscan -t ed25519 github.com >> /root/.ssh/known_hosts 2>/dev/null || true
+    export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+    git remote set-url origin "$REPO_SSH"
+}
 
 cd "$APP_DIR"
 # Текущий образ запоминаем ДО смены кода и версии — он и есть точка отката.
@@ -28,7 +47,14 @@ fi
 
 before=$(git rev-parse --short HEAD)
 echo -e "${C}==> Код: $before → $REF${N}"
-git fetch --all --tags --prune --quiet || die "git fetch не удался — проверь сеть и deploy-ключ."
+if ! git fetch --all --tags --prune --quiet; then
+    if [[ "$(git remote get-url origin)" == https://* ]]; then
+        switch_to_deploy_key
+        git fetch --all --tags --prune --quiet || die "git fetch не удался и по deploy-ключу — проверь, что ключ добавлен."
+    else
+        die "git fetch не удался — проверь сеть и deploy-ключ."
+    fi
+fi
 # Сначала ветка на origin (локальная могла устареть), потом тег/commit.
 if git rev-parse --verify --quiet "origin/$REF" >/dev/null; then
     git checkout --quiet --detach "origin/$REF"

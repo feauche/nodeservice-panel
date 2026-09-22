@@ -82,9 +82,13 @@ MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
 SWAP_MB=$(awk '/SwapTotal/ {print int($2/1024)}' /proc/meminfo)
 if (( MEM_MB + SWAP_MB < 3500 )) && [[ ! -f /swapfile ]]; then
     info "RAM ${MEM_MB} МБ — добавляю swap 2 ГБ для сборки..."
-    fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
-    grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
-    ok "Swap включён."
+    if fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile; then
+        grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        ok "Swap включён."
+    else
+        rm -f /swapfile
+        warn "Swap создать не удалось — сборка образа может упасть по нехватке памяти."
+    fi
 fi
 
 # --- 2. Исходники (приватный репозиторий → deploy-ключ) -------------------------------------
@@ -102,8 +106,8 @@ if [[ ! -d "$APP_DIR/.git" ]]; then
         cat "${DEPLOY_KEY}.pub"
         echo ""
         read -rp "Добавил ключ — нажми Enter, чтобы продолжить... " _ </dev/tty
-        ssh-keyscan -t ed25519 github.com >> /root/.ssh/known_hosts 2>/dev/null
-        export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes"
+        ssh-keyscan -t ed25519 github.com >> /root/.ssh/known_hosts 2>/dev/null || true
+        export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
         git clone --branch "$BRANCH" --depth 1 "$REPO_SSH" "$APP_DIR" || die "Клонирование не удалось: проверь, что ключ добавлен."
     fi
 fi
@@ -154,7 +158,7 @@ install -m 0755 "$APP_DIR/infra/scripts/nodeservice" /usr/local/bin/nodeservice
 mkdir -p -m 700 "$APP_DIR/backups"
 cat > /etc/cron.d/nodeservice-backup <<CRON
 # Ежедневный бэкап БД NodeService (хранится 14 дней) — infra/scripts/backup.sh
-17 3 * * * root NODESERVICE_DIR=$APP_DIR /usr/local/bin/nodeservice backup >> /var/log/nodeservice-backup.log 2>&1
+17 3 * * * root NODESERVICE_DIR="$APP_DIR" /usr/local/bin/nodeservice backup >> /var/log/nodeservice-backup.log 2>&1
 CRON
 ok "Команда nodeservice установлена; бэкап БД ежедневно в 03:17 → $APP_DIR/backups"
 

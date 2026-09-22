@@ -18,7 +18,12 @@ keep="nodeservice_pre_restore_$(date -u +%Y%m%d_%H%M%S)"
 "${COMPOSE[@]}" stop api
 # Что бы дальше ни случилось, api поднимаем обратно.
 trap '"${COMPOSE[@]}" up -d api >/dev/null 2>&1 || true' EXIT
-psql -c "ALTER DATABASE nodeservice RENAME TO $keep;" -c "CREATE DATABASE nodeservice OWNER nodeservice;"
+psql -c "ALTER DATABASE nodeservice RENAME TO $keep;"
+if ! psql -c "CREATE DATABASE nodeservice OWNER nodeservice;"; then
+    psql -c "ALTER DATABASE $keep RENAME TO nodeservice;" || true
+    echo -e "${R}Не удалось создать пустую БД — прежняя возвращена на место, api запускается.${N}" >&2
+    exit 1
+fi
 if "${COMPOSE[@]}" exec -T postgres pg_restore -U nodeservice -d nodeservice --no-owner --no-privileges < "$f"; then
     echo -e "${G}Восстановлено из $f.${N} Старая БД сохранена как $keep — удали, когда убедишься, что всё в порядке:"
     echo "  nodeservice cli --help  # проверить вход;  затем: docker compose ... exec postgres psql -U nodeservice -d postgres -c 'DROP DATABASE $keep'"

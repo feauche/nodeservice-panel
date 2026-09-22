@@ -46,7 +46,8 @@ case "$cmd" in
         docker image inspect nodeservice-api:prev >/dev/null 2>&1 || die "Предыдущего образа нет."
         cur=$("${COMPOSE[@]}" config --images | grep nodeservice-api)
         docker tag nodeservice-api:prev "$cur"
-        "${COMPOSE[@]}" up -d api || true
+        # Тег в конфиге не изменился — без --force-recreate compose оставит старый контейнер.
+        "${COMPOSE[@]}" up -d --force-recreate api || true
         wait_api_healthy || die "Откатный образ тоже не поднялся — смотри лог выше."
         echo -e "${G}Откат выполнен.${N} Код в git остался новым — следующий update пересоберёт его." ;;
     backup) exec bash "$APP_DIR/infra/scripts/backup.sh" ;;
