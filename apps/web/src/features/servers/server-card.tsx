@@ -84,26 +84,26 @@ function Gauges({
   metrics: OverviewServerMetrics | null | undefined;
   offline: boolean;
 }) {
-  const netBps =
-    metrics && (metrics.netRxBps !== null || metrics.netTxBps !== null)
-      ? (metrics.netRxBps ?? 0) + (metrics.netTxBps ?? 0)
-      : null;
+  // Порт дуплексный: в лимит упирается более загруженное направление, его и показываем крупно.
+  // Сумма rx+tx у VPN-ноды выглядит вдвое больше реальной нагрузки, поэтому её не используем.
+  const rx = metrics?.netRxBps ?? null;
+  const tx = metrics?.netTxBps ?? null;
+  const netBps = rx === null && tx === null ? null : Math.max(rx ?? 0, tx ?? 0);
   // От 10 Мбит/с дробная часть не нужна — иначе значение не влезает в ячейку.
-  const net =
-    netBps === null
-      ? null
-      : netBps * 8 >= 10_000_000
-        ? String(Math.round((netBps * 8) / 1_000_000))
-        : formatMbps(netBps);
-  const cells: Array<{ label: string; value: string; unit?: string }> = [
+  const mbit = (bps: number) =>
+    bps * 8 >= 10_000_000 ? String(Math.round((bps * 8) / 1_000_000)) : formatMbps(bps);
+  const net = netBps === null ? null : mbit(netBps);
+  const netTitle =
+    netBps === null ? undefined : `Входящий ↓ ${mbit(rx ?? 0)} · исходящий ↑ ${mbit(tx ?? 0)} Мбит/с`;
+  const cells: Array<{ label: string; value: string; unit?: string; title?: string }> = [
     { label: 'CPU', value: offline ? '—' : formatPct(metrics?.cpuPct), unit: '%' },
     { label: 'RAM', value: offline ? '—' : formatPct(metrics?.memPct), unit: '%' },
-    { label: 'Сеть', value: offline || net === null ? '—' : net, unit: ' Мбит/с' },
+    { label: 'Сеть', value: offline || net === null ? '—' : net, unit: ' Мбит/с', title: netTitle },
   ];
   return (
     <div className="grid grid-cols-3 gap-2">
       {cells.map((c) => (
-        <div key={c.label} className="min-w-0 rounded-[9px] bg-surface-2 px-2.5 py-[7px]">
+        <div key={c.label} title={c.title} className="min-w-0 rounded-[9px] bg-surface-2 px-2.5 py-[7px]">
           <div className="text-[10.5px] leading-none text-text-3">{c.label}</div>
           <div className="mt-1 truncate font-heading text-[14px] leading-none font-semibold tracking-[-0.02em] tabular-nums">
             {c.value}

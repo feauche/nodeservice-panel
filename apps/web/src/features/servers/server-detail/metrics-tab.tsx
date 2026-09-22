@@ -30,6 +30,11 @@ const fmtAxisTime = (range: MetricRange) => (ms: number) =>
 
 const fmtPct = (v: number) => `${Math.round(v)}%`;
 const fmtMbit = (v: number) => `${((v * 8) / 1_000_000).toFixed(1)} Мбит/с`;
+/** Число без единицы — для сводки «↓ x · ↑ y Мбит/с»; от 10 Мбит/с без дробной части. */
+const fmtMbitShort = (v: number) => {
+  const m = (v * 8) / 1_000_000;
+  return m >= 10 ? String(Math.round(m)) : m.toFixed(1);
+};
 const fmtInt = (v: number) => String(Math.round(v));
 
 function lastValue(points: MetricPoint[]): number | null {
@@ -128,7 +133,11 @@ export function MetricsTab({
         </MetricPanel>
         <MetricPanel
           title="Сеть"
-          current={fmtOrDash(lastValue(series?.netRxBps ?? []), fmtMbit)}
+          current={
+            series && (lastValue(series.netRxBps) !== null || lastValue(series.netTxBps) !== null)
+              ? `↓ ${fmtOrDash(lastValue(series.netRxBps), fmtMbitShort)} · ↑ ${fmtOrDash(lastValue(series.netTxBps), fmtMbitShort)} Мбит/с`
+              : '—'
+          }
           empty={!net || net.length === 0}
         >
           <ResponsiveContainer width="100%" height="100%">
