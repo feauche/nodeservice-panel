@@ -1,0 +1,15 @@
+# Контекст сборки образа api (docker build -f apps/api/Dockerfile .)
+.git
+.github
+.turbo
+**/node_modules
+**/dist
+**/coverage
+**/playwright-report
+**/test-results
+_dev
+infra
+*.md
+.env
+.env.*
+!.env.example

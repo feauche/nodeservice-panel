@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# nodeservice — обслуживание установленной панели (ставится install.sh в /usr/local/bin).
+set -euo pipefail
+APP_DIR="${NODESERVICE_DIR:-/opt/nodeservice}"
+export NODESERVICE_DIR="$APP_DIR"
+ENV_FILE="$APP_DIR/infra/.env"
+COMPOSE=(docker compose -f "$APP_DIR/infra/compose.yaml" --env-file "$ENV_FILE")
+G='\033[0;32m'; R='\033[1;31m'; N='\033[0m'
+die() { echo -e "${R}[-] $1${N}" >&2; exit 1; }
+[[ $EUID -eq 0 ]] || die "Запусти от root."
+[[ -f "$ENV_FILE" ]] || die "Панель не установлена в $APP_DIR (нет infra/.env)."
+
+wait_api_healthy() {
+    local st=starting
+    for _ in $(seq 1 60); do
+        st=$(docker inspect -f '{{.State.Health.Status}}' nodeservice-api-1 2>/dev/null || echo starting)
+        [[ "$st" == "healthy" ]] && return 0
+        sleep 3
+    done
+    "${COMPOSE[@]}" logs --tail=80 api || true
+    return 1
+}
+
+usage() {
+    cat <<U
+nodeservice — обслуживание панели NodeService
+  status            состояние контейнеров и версия кода
+  logs [сервис]     логи (по умолчанию api), Ctrl+C — выход
+  update [ref]      бэкап → git fetch (ветка/тег/commit, по умолчанию main) → сборка → перезапуск
+  rollback          вернуть предыдущий образ api (после неудачного update)
+  backup            бэкап БД + .env в $APP_DIR/backups (хранится 14 дней)
+  restore <файл>    восстановить БД из бэкапа (api останавливается на время восстановления)
+  cli <команда>     rescue CLI: setup-token | list-users | reset-password | disable-2fa | revoke-sessions
+  restart | stop | start
+U
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+    status)
+        "${COMPOSE[@]}" ps
+        echo "код: $(git -C "$APP_DIR" log -1 --format='%h %ci %s' 2>/dev/null)" ;;
+    logs)   "${COMPOSE[@]}" logs -f --tail=200 "${1:-api}" ;;
+    update) exec bash "$APP_DIR/infra/scripts/update.sh" "$@" ;;
+    rollback)
+        docker image inspect nodeservice-api:prev >/dev/null 2>&1 || die "Предыдущего образа нет."
+        cur=$("${COMPOSE[@]}" config --images | grep nodeservice-api)
+        docker tag nodeservice-api:prev "$cur"
+        "${COMPOSE[@]}" up -d api || true
+        wait_api_healthy || die "Откатный образ тоже не поднялся — смотри лог выше."
+        echo -e "${G}Откат выполнен.${N} Код в git остался новым — следующий update пересоберёт его." ;;
+    backup) exec bash "$APP_DIR/infra/scripts/backup.sh" ;;
+    restore) exec bash "$APP_DIR/infra/scripts/restore.sh" "$@" ;;
+    cli)    [[ $# -ge 1 ]] || die "Укажи команду: nodeservice cli setup-token"; "${COMPOSE[@]}" exec api node dist/cli.js "$@" ;;
+    restart) "${COMPOSE[@]}" restart "${@:-api}" ;;
+    stop)   "${COMPOSE[@]}" stop ;;
+    start)  "${COMPOSE[@]}" up -d ;;
+    -h|--help|"") usage ;;
+    *) usage; exit 1 ;;
+esac

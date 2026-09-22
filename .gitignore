@@ -48,3 +48,6 @@ apps/api/.env.local
 infra/.env
 
 packages/shared/dist
+
+# Артефакты разработки (планы, требования, макет, скриншоты, dev-скрипты) — только локально
+/_dev/

@@ -21,7 +21,8 @@ services:
       - "443:443/udp"
     environment:
       PANEL_DOMAIN: ${PANEL_DOMAIN:?PANEL_DOMAIN не задан}
-      ACME_EMAIL: ${ACME_EMAIL:-}
+      # Caddy: `email` без значения — ошибка парсинга Caddyfile, поэтому переменная обязательна.
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL не задан}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -32,7 +33,7 @@ services:
     <<: *logging
 
   api:
-    image: ghcr.io/lumaxdev/nodeservice-api:${NODESERVICE_VERSION:-latest}
+    image: ghcr.io/feauche/nodeservice-api:${NODESERVICE_VERSION:-latest}
     build:
       context: ..
       dockerfile: apps/api/Dockerfile
@@ -43,6 +44,8 @@ services:
       PORT: "3000"
       DATABASE_URL: postgres://nodeservice:${POSTGRES_PASSWORD}@postgres:5432/nodeservice
       VALKEY_URL: redis://valkey:6379
+      # Код читает VM_URL (см. apps/api/src/config/env.schema.ts); VICTORIA_URL оставлен для совместимости.
+      VM_URL: http://victoriametrics:8428
       VICTORIA_URL: http://victoriametrics:8428
       PUBLIC_URL: https://${PANEL_DOMAIN}
     expose:
