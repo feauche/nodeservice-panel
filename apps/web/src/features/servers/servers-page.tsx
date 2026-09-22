@@ -22,6 +22,7 @@ import { ChevronDownIcon, PlusIcon, RefreshCwIcon, SearchIcon, ServerIcon, TagIc
 import { useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -33,10 +34,13 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useOverviewMetrics } from '@/features/overview/overview-api';
 import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { AddServerDialog } from './add-server-dialog';
 import { ServerCard, ServerCardGhost } from './server-card';
+import { HEALTH_LABELS, type ServerHealth, serverHealth } from './server-health';
 import { ServerModal, type ServerModalTab } from './server-modal';
 import { serversKeys, useCheckAllServers, useReorderServers, useServers } from './servers-api';
 
@@ -49,10 +53,21 @@ export interface ServersPageProps {
   onOpen: (id: string | undefined) => void;
 }
 
+type HealthFilter = 'all' | ServerHealth;
+const HEALTH_FILTERS: Array<{ key: HealthFilter; label: string }> = [
+  { key: 'all', label: 'Все' },
+  { key: 'ok', label: HEALTH_LABELS.ok },
+  { key: 'warn', label: 'Внимание' },
+  { key: 'crit', label: HEALTH_LABELS.crit },
+];
+
 export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
   const servers = useServers();
+  const overview = useOverviewMetrics();
   const [q, setQ] = useState('');
+  const [health, setHealth] = useState<HealthFilter>('all');
   const [addOpen, setAddOpen] = useState(false);
+  const [checkAllOpen, setCheckAllOpen] = useState(false);
   const [modalTab, setModalTab] = useState<ServerModalTab>('metrics');
   const checkAll = useCheckAllServers();
   const reorder = useReorderServers();
@@ -79,7 +94,18 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
     ? (dragOrder.map((id) => items.find((s) => s.id === id)).filter(Boolean) as Server[])
     : items;
   const allTags = useMemo(() => [...new Set(items.flatMap((s) => s.tags))].sort(), [items]);
+  const metricsById = useMemo(
+    () => new Map((overview.data?.servers ?? []).map((m) => [m.serverId, m])),
+    [overview.data],
+  );
+  const healthOf = (s: Server) => serverHealth(s, metricsById.get(s.id));
+  const counts = useMemo(() => {
+    const c: Record<HealthFilter, number> = { all: items.length, ok: 0, warn: 0, crit: 0 };
+    for (const s of items) c[serverHealth(s, metricsById.get(s.id))] += 1;
+    return c;
+  }, [items, metricsById]);
   const filtered = visual.filter((s) => {
+    if (health !== 'all' && healthOf(s) !== health) return false;
     if (tag && !s.tags.includes(tag)) return false;
     if (q) {
       const needle = q.toLowerCase();
@@ -90,6 +116,7 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
   });
 
   const doCheckAll = async () => {
+    setCheckAllOpen(false);
     const res = await checkAll.mutateAsync(items.map((s) => s.id));
     if (res.failed === 0) toast.success(`Проверено серверов: ${res.ok}. Все на связи.`);
     else
@@ -150,8 +177,30 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Тулбар: фильтр по состоянию · поиск на всю свободную ширину · теги · проверить все · добавить */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[220px] flex-1 basis-[240px]">
+        <fieldset
+          className="m-0 flex h-9 items-center gap-[3px] rounded-[10px] border border-border bg-surface-2 p-[3px] max-md:w-full"
+          aria-label="Фильтр по состоянию"
+        >
+          <legend className="sr-only">Состояние</legend>
+          {HEALTH_FILTERS.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              aria-pressed={health === f.key}
+              onClick={() => setHealth(f.key)}
+              className={cn(
+                'flex h-full cursor-pointer items-center gap-1.5 rounded-[7px] px-2.5 text-[12.5px] font-medium text-text-2 transition-colors hover:text-foreground max-md:flex-1 max-md:justify-center max-md:px-1.5',
+                health === f.key && 'bg-surface text-foreground shadow-[0_0_0_1px_var(--ns-border-2)]',
+              )}
+            >
+              {f.label}
+              <span className="text-[11px] text-text-3 tabular-nums">{counts[f.key]}</span>
+            </button>
+          ))}
+        </fieldset>
+        <div className="relative min-w-[200px] flex-1 basis-[220px] max-md:basis-full">
           <SearchIcon
             className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-text-3"
             aria-hidden="true"
@@ -194,34 +243,44 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        {/* На телефоне: «Проверить все» — иконка, «Добавить сервер» — на всю оставшуюся ширину. */}
-        <div className="ml-auto flex items-center gap-2 max-md:ml-0 max-md:w-full">
-          {items.length > 0 && (
-            <Button
-              type="button"
-              variant="outline"
-              disabled={checkAll.isPending}
-              onClick={() => void doCheckAll()}
-              aria-label="Проверить все"
-              className="h-9 rounded-[10px] border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:bg-surface-3 hover:text-foreground max-md:w-9 max-md:flex-none max-md:px-0"
-            >
-              <RefreshCwIcon
-                className={cn('size-3.5', checkAll.isPending && 'animate-spin')}
-                aria-hidden="true"
-              />
-              <span className="max-md:sr-only">Проверить все</span>
-            </Button>
-          )}
-          <Button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            className="h-9 rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover) max-md:flex-1"
-          >
-            <PlusIcon className="size-4" aria-hidden="true" />
-            Добавить сервер
-          </Button>
-        </div>
+        {items.length > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={checkAll.isPending}
+                onClick={() => setCheckAllOpen(true)}
+                aria-label="Проверить все"
+                className="size-9 rounded-[10px] border-border bg-surface-2 p-0 text-text-2 hover:bg-surface-3 hover:text-foreground"
+              >
+                <RefreshCwIcon
+                  className={cn('size-4', checkAll.isPending && 'animate-spin')}
+                  aria-hidden="true"
+                />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Проверить связь со всеми серверами</TooltipContent>
+          </Tooltip>
+        )}
+        <Button
+          type="button"
+          onClick={() => setAddOpen(true)}
+          className="h-9 rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover) max-md:flex-1"
+        >
+          <PlusIcon className="size-4" aria-hidden="true" />
+          Добавить сервер
+        </Button>
       </div>
+
+      <ConfirmDialog
+        open={checkAllOpen}
+        onOpenChange={setCheckAllOpen}
+        title="Проверить все серверы?"
+        description={`Панель по очереди подключится по SSH к каждому серверу (${items.length}) и обновит данные о системе. Обычно это занимает до минуты.`}
+        yesLabel="Да, проверить"
+        onConfirm={doCheckAll}
+      />
 
       {servers.isPending && (
         <div className="flex flex-col gap-3">
@@ -264,6 +323,7 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
             className="cursor-pointer text-brand underline-offset-2 hover:underline"
             onClick={() => {
               setQ('');
+              setHealth('all');
               onTag(undefined);
             }}
           >
@@ -281,9 +341,18 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
         onDragEnd={onDragEnd}
       >
         <SortableContext items={filtered.map((s) => s.id)} strategy={rectSortingStrategy}>
-          <div ref={gridRef} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div
+            ref={gridRef}
+            className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))] max-md:[grid-template-columns:1fr] 2xl:[grid-template-columns:repeat(4,minmax(0,1fr))]"
+          >
             {filtered.map((s) => (
-              <ServerCard key={s.id} server={s} onOpen={openDetail} onEdit={openEdit} />
+              <ServerCard
+                key={s.id}
+                server={s}
+                metrics={metricsById.get(s.id) ?? null}
+                onOpen={openDetail}
+                onEdit={openEdit}
+              />
             ))}
           </div>
         </SortableContext>
@@ -291,7 +360,9 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
           {activeId
             ? (() => {
                 const active = items.find((s) => s.id === activeId);
-                return active ? <ServerCardGhost server={active} /> : null;
+                return active ? (
+                  <ServerCardGhost server={active} metrics={metricsById.get(active.id) ?? null} />
+                ) : null;
               })()
             : null}
         </DragOverlay>

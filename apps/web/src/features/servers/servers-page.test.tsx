@@ -105,6 +105,8 @@ describe('ServersPage', () => {
     expect(screen.getByText('SSH недоступен')).toBeInTheDocument();
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Проверить все' }));
+    // массовая проверка — с подтверждением
+    await user.click(await screen.findByRole('button', { name: 'Да, проверить' }));
     await waitFor(() => expect(screen.getAllByText('SSH в порядке')).toHaveLength(2));
   });
 
@@ -132,12 +134,12 @@ describe('ServersPage', () => {
     await user.type(within(dialog).getByLabelText('Название'), 'fi-hel-03');
     await user.type(within(dialog).getByLabelText('IP или домен'), '198.51.100.99');
     await user.type(within(dialog).getByLabelText('Пароль'), MOCK_SSH.password);
-    await user.click(within(dialog).getByRole('button', { name: 'Проверить подключение' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Проверить и добавить' }));
+    // ход проверки виден прямо в диалоге: факты и отпечаток
     const result = await within(dialog).findByTestId('test-result');
-    expect(within(result).getByText(/node-1 · Ubuntu · 24.04/)).toBeInTheDocument();
+    expect(await within(result).findByText(/node-1 · Ubuntu · 24.04/)).toBeInTheDocument();
     expect(within(result).getByText(MOCK_SSH.fingerprint)).toBeInTheDocument();
-    await user.click(within(dialog).getByRole('button', { name: 'Добавить сервер' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), { timeout: 3000 });
     expect(await screen.findByText('fi-hel-03')).toBeInTheDocument();
     expect(mockServers.items).toHaveLength(3);
   });
@@ -165,7 +167,7 @@ describe('ServersPage', () => {
     await user.type(within(dialog).getByLabelText('Название'), 'fi-hel-04');
     await user.type(within(dialog).getByLabelText('IP или домен'), '198.51.100.77');
     await user.click(within(dialog).getByRole('button', { name: 'Ключ панели' }));
-    await user.click(within(dialog).getByRole('button', { name: 'Добавить сервер' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Добавить без проверки' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(await screen.findByText('fi-hel-04')).toBeInTheDocument();
     expect(mockServers.items.find((s) => s.name === 'fi-hel-04')?.sshOk).toBeNull();
@@ -181,11 +183,11 @@ describe('ServersPage', () => {
     await user.type(within(dialog).getByLabelText('Название'), 'de-fra-01');
     await user.type(within(dialog).getByLabelText('IP или домен'), '198.51.100.98');
     await user.type(within(dialog).getByLabelText('Пароль'), 'wrong');
-    await user.click(within(dialog).getByRole('button', { name: 'Проверить подключение' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Проверить и добавить' }));
     expect(await within(dialog).findByText('Пароль или ключ не подошли.')).toBeInTheDocument();
     await user.clear(within(dialog).getByLabelText('Пароль'));
     await user.type(within(dialog).getByLabelText('Пароль'), MOCK_SSH.password);
-    await user.click(within(dialog).getByRole('button', { name: 'Добавить сервер' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Проверить и добавить' }));
     expect(await within(dialog).findByText('Название уже занято')).toBeInTheDocument();
   });
 
@@ -194,7 +196,8 @@ describe('ServersPage', () => {
     renderPage(Harness, '/servers');
     await screen.findByText('de-fra-01');
     const user = userEvent.setup();
-    await user.click(screen.getAllByRole('button', { name: 'Проверить связь' })[0] as HTMLElement);
+    await user.click(screen.getByRole('button', { name: 'Действия с de-fra-01' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Проверить связь по SSH' }));
     const dialog = await screen.findByRole('dialog', { name: 'Отпечаток сервера изменился' });
     expect(within(dialog).getByText(MOCK_SSH.fingerprint)).toBeInTheDocument();
     expect(within(dialog).getByText(MOCK_SSH.newFingerprint)).toBeInTheDocument();

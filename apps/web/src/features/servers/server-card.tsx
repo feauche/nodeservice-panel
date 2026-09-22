@@ -1,12 +1,19 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { AGENT_STATUS_LABELS, SERVER_PROBLEM, type Server } from '@nodeservice/shared';
+import {
+  AGENT_STATUS_LABELS,
+  type OverviewServerMetrics,
+  SERVER_PROBLEM,
+  type Server,
+} from '@nodeservice/shared';
 import {
   CopyPlusIcon,
+  GripVerticalIcon,
   KeyRoundIcon,
   MoreVerticalIcon,
   PencilIcon,
   RefreshCwIcon,
+  TerminalIcon,
   Trash2Icon,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -24,12 +31,16 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { formatMbps, formatPct } from '@/features/overview/overview-format';
+import { Sparkline } from '@/features/overview/primitives';
 import { formatAgo } from '@/features/security/security-format';
 import { StepUpCancelledError } from '@/features/security/step-up';
 import { Pill } from '@/features/settings/settings-ui';
+import { useTerminalStore } from '@/features/terminal/terminal-store';
 import { apiErrorMessage, isApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
+import { HEALTH_COLORS, HEALTH_LABELS, type ServerHealth, serverHealth } from './server-health';
 import { useCheckServer, useDeleteServer, useDuplicateServer, useTrustHostKey } from './servers-api';
 
 /** ОС + версия + архитектура одной строкой (требование 3.10). */
@@ -38,7 +49,7 @@ export function osLine(server: Server): string {
   return [os || null, server.facts.arch].filter(Boolean).join(' · ') || 'ОС неизвестна';
 }
 
-/** Пилюля состояния SSH: одна строка, время проверки — в подсказке и в строке ресурсов. */
+/** Пилюля состояния SSH: одна строка, время проверки — в подсказке. */
 export function SshPill({ server }: { server: Server }) {
   const tone = server.sshOk === true ? 'ok' : server.sshOk === false ? 'crit' : 'muted';
   const label =
@@ -50,85 +61,135 @@ export function SshPill({ server }: { server: Server }) {
   );
 }
 
-/** «Призрак» для DragOverlay: летит за курсором при перетаскивании и плавно «долетает» в слот. */
-export function ServerCardGhost({ server }: { server: Server }) {
-  const resources = [
-    server.facts.cpuCores ? `${server.facts.cpuCores} CPU` : null,
-    server.facts.memoryMb ? `${Math.round(server.facts.memoryMb / 1024)} ГБ RAM` : null,
-    server.lastSshCheckAt ? `проверено ${formatAgo(server.lastSshCheckAt)}` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+/** Точка состояния сервера: цвет = здоровье, подпись — в подсказке и для скринридера. */
+export function HealthDot({ health, className }: { health: ServerHealth; className?: string }) {
   return (
-    <div className="relative flex rotate-1 cursor-grabbing flex-col gap-2.5 rounded-2xl border border-border-2 bg-surface p-4 shadow-float">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+    <span
+      role="img"
+      aria-label={HEALTH_LABELS[health]}
+      title={HEALTH_LABELS[health]}
+      className={cn('inline-block size-2 flex-none rounded-full', className)}
+      style={{
+        background: HEALTH_COLORS[health],
+        boxShadow: `0 0 0 3px color-mix(in srgb, ${HEALTH_COLORS[health]} 18%, transparent)`,
+      }}
+    />
+  );
+}
+
+const ACTION_BTN =
+  'size-8 rounded-[9px] border-border bg-surface-2 p-0 text-text-2 hover:bg-surface-3 hover:text-foreground';
+
+function Gauges({
+  metrics,
+  offline,
+}: {
+  metrics: OverviewServerMetrics | null | undefined;
+  offline: boolean;
+}) {
+  const netBps =
+    metrics && (metrics.netRxBps !== null || metrics.netTxBps !== null)
+      ? (metrics.netRxBps ?? 0) + (metrics.netTxBps ?? 0)
+      : null;
+  // От 10 Мбит/с дробная часть не нужна — иначе значение не влезает в ячейку.
+  const net =
+    netBps === null
+      ? null
+      : netBps * 8 >= 10_000_000
+        ? String(Math.round((netBps * 8) / 1_000_000))
+        : formatMbps(netBps);
+  const cells: Array<{ label: string; value: string; unit?: string }> = [
+    { label: 'CPU', value: offline ? '—' : formatPct(metrics?.cpuPct), unit: '%' },
+    { label: 'RAM', value: offline ? '—' : formatPct(metrics?.memPct), unit: '%' },
+    { label: 'Сеть', value: offline || net === null ? '—' : net, unit: ' Мбит/с' },
+  ];
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {cells.map((c) => (
+        <div key={c.label} className="min-w-0 rounded-[9px] bg-surface-2 px-2.5 py-[7px]">
+          <div className="text-[10.5px] leading-none text-text-3">{c.label}</div>
+          <div className="mt-1 truncate font-heading text-[14px] leading-none font-semibold tracking-[-0.02em] tabular-nums">
+            {c.value}
+            {c.value !== '—' && <span className="text-[11px] font-medium text-text-3">{c.unit}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CardSpark({
+  metrics,
+  health,
+}: {
+  metrics: OverviewServerMetrics | null | undefined;
+  health: ServerHealth;
+}) {
+  const values = metrics?.cpuSpark ?? [];
+  const enough = values.filter((v) => v !== null).length >= 2;
+  return (
+    <div className="h-7">
+      {enough ? (
+        <Sparkline values={values} stroke={HEALTH_COLORS[health]} stretch className="h-full w-full" />
+      ) : (
+        <div className="grid h-full place-items-center text-[11px] text-text-3">Метрик пока нет</div>
+      )}
+    </div>
+  );
+}
+
+/** «Призрак» для DragOverlay: летит за курсором при перетаскивании и плавно «долетает» в слот. */
+export function ServerCardGhost({
+  server,
+  metrics,
+}: {
+  server: Server;
+  metrics?: OverviewServerMetrics | null;
+}) {
+  const health = serverHealth(server, metrics);
+  return (
+    <div className="relative flex rotate-1 cursor-grabbing flex-col gap-3 rounded-2xl border border-border-2 bg-surface p-4 shadow-float">
+      <div className="flex items-start gap-2.5">
+        <HealthDot health={health} className="mt-[7px]" />
+        <div className="min-w-0 flex-1">
           <h2 className="truncate font-heading text-[15px] font-bold tracking-[-0.01em]">{server.name}</h2>
           <p className="mt-0.5 truncate font-mono text-[11.5px] text-text-3">
             {server.sshUser}@{server.host}:{server.port}
           </p>
         </div>
-        <div aria-hidden="true" className="flex flex-none items-center gap-1">
-          <span className="grid size-8 place-items-center rounded-[9px] border border-border bg-surface-2 text-text-2">
-            <RefreshCwIcon className="size-4" />
-          </span>
-          <span className="grid size-8 place-items-center rounded-[9px] border border-border bg-surface-2 text-text-2">
-            <MoreVerticalIcon className="size-4" />
-          </span>
-        </div>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Pill
-          tone={server.agentStatus === 'online' ? 'ok' : server.agentStatus === 'offline' ? 'crit' : 'muted'}
-        >
-          {AGENT_STATUS_LABELS[server.agentStatus]}
-        </Pill>
-        <SshPill server={server} />
-      </div>
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="truncate text-[12.5px] text-text-2">{osLine(server)}</span>
-        {resources && <span className="truncate text-[12px] text-text-3">{resources}</span>}
-      </div>
-      {server.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {server.tags.map((t) => (
-            <span
-              key={t}
-              className="rounded-[8px] border border-border bg-surface-2 px-2.5 py-1 text-[11.5px] font-medium text-text-2"
-            >
-              {t}
-            </span>
-          ))}
-        </div>
-      )}
-      <span
-        aria-hidden="true"
-        className="absolute right-2 bottom-1.5 p-1.5 text-[19px] leading-none text-text-2"
-      >
-        ⠿
-      </span>
+      <Gauges metrics={metrics} offline={health === 'crit'} />
+      <CardSpark metrics={metrics} health={health} />
+      <div className="truncate text-[12px] text-text-3">{osLine(server)}</div>
     </div>
   );
 }
 
 interface Props {
   server: Server;
+  /** Последние значения и спарклайн CPU из /metrics/overview; null — метрик нет. */
+  metrics?: OverviewServerMetrics | null;
   /** Клик по карточке: страница сервера (метрики, журнал). */
   onOpen: (server: Server) => void;
   /** Меню «Изменить»: модалка настроек. */
   onEdit: (server: Server) => void;
 }
 
-/** Компактная карточка для сетки (4 в ряд на широких экранах). */
-export function ServerCard({ server, onOpen, onEdit }: Props) {
+/**
+ * Карточка сервера: точка состояния, имя и адрес, действия; пилюли агента и SSH;
+ * CPU / RAM / сеть; спарклайн CPU в цвет состояния; система и теги.
+ */
+export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
   const check = useCheckServer();
   const duplicate = useDuplicateServer();
   const sortable = useSortable({ id: server.id });
   const remove = useDeleteServer();
   const trust = useTrustHostKey();
+  const openTerminal = useTerminalStore((st) => st.open);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [mismatch, setMismatch] = useState<{ offered: string } | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
+  const health = serverHealth(server, metrics);
 
   const doCheck = async () => {
     try {
@@ -180,15 +241,14 @@ export function ServerCard({ server, onOpen, onEdit }: Props) {
 
   const resources = [
     server.facts.cpuCores ? `${server.facts.cpuCores} CPU` : null,
-    server.facts.memoryMb ? `${Math.round(server.facts.memoryMb / 1024)} ГБ RAM` : null,
-    server.lastSshCheckAt ? `проверено ${formatAgo(server.lastSshCheckAt)}` : null,
+    server.facts.memoryMb ? `${Math.round(server.facts.memoryMb / 1024)} ГБ` : null,
   ]
     .filter(Boolean)
     .join(' · ');
 
   return (
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: клик по карточке — ярлык, доступный путь есть в меню «Изменить»
-    // biome-ignore lint/a11y/useKeyWithClickEvents: с клавиатуры настройки открываются через меню карточки, ручка ⠿ фокусируема
+    // biome-ignore lint/a11y/useKeyWithClickEvents: с клавиатуры настройки открываются через меню карточки, ручка перетаскивания фокусируема
     <article
       ref={sortable.setNodeRef}
       style={{
@@ -201,38 +261,55 @@ export function ServerCard({ server, onOpen, onEdit }: Props) {
         if (e.target instanceof Node && e.currentTarget.contains(e.target)) onOpen(server);
       }}
       className={cn(
-        'relative flex cursor-pointer flex-col gap-2.5 rounded-2xl border border-border bg-surface p-4 transition-[border-color,box-shadow] duration-200 hover:border-border-2 hover:shadow-[0_2px_10px_-4px_rgb(0_0_0/0.35)]',
+        'group relative flex cursor-pointer flex-col gap-3 rounded-2xl border border-border bg-surface p-4 transition-[border-color,box-shadow] duration-200 hover:border-border-2 hover:shadow-[0_2px_10px_-4px_rgb(0_0_0/0.35)]',
         sortable.isDragging && 'opacity-0',
       )}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+      {/* Шапка: состояние, имя, адрес, действия */}
+      <div className="flex items-start gap-2.5">
+        <HealthDot health={health} className="mt-[7px]" />
+        <div className="min-w-0 flex-1">
           <h2 className="truncate font-heading text-[15px] font-bold tracking-[-0.01em]">{server.name}</h2>
           <p className="mt-0.5 truncate font-mono text-[11.5px] text-text-3">
             {server.sshUser}@{server.host}:{server.port}
           </p>
         </div>
         <div className="flex flex-none items-center gap-1">
+          {/* Ручка перетаскивания: порядок карточек можно менять, сетка сохраняется */}
+          <button
+            type="button"
+            ref={sortable.setActivatorNodeRef}
+            {...sortable.attributes}
+            {...sortable.listeners}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`Перетащить «${server.name}»`}
+            title="Перетащить"
+            className="grid size-8 cursor-grab touch-none place-items-center rounded-[9px] text-text-3 opacity-0 transition-[opacity,color] group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-1 active:cursor-grabbing"
+          >
+            <GripVerticalIcon className="size-4" aria-hidden="true" />
+          </button>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 type="button"
                 variant="outline"
-                aria-label="Проверить связь"
-                disabled={check.isPending}
+                aria-label={`Терминал ${server.name}`}
                 onClick={(e) => {
                   e.stopPropagation();
-                  void doCheck();
+                  openTerminal({
+                    id: server.id,
+                    name: server.name,
+                    host: server.host,
+                    port: server.port,
+                    sshUser: server.sshUser,
+                  });
                 }}
-                className="size-8 rounded-[9px] border-border bg-surface-2 p-0 text-text-2 hover:bg-surface-3 hover:text-foreground"
+                className={ACTION_BTN}
               >
-                <RefreshCwIcon
-                  className={cn('size-4', check.isPending && 'animate-spin')}
-                  aria-hidden="true"
-                />
+                <TerminalIcon className="size-4" aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Проверить связь по SSH</TooltipContent>
+            <TooltipContent side="bottom">SSH-терминал</TooltipContent>
           </Tooltip>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -241,12 +318,19 @@ export function ServerCard({ server, onOpen, onEdit }: Props) {
                 type="button"
                 variant="outline"
                 aria-label={`Действия с ${server.name}`}
-                className="size-8 rounded-[9px] border-border bg-surface-2 p-0 text-text-2 hover:bg-surface-3 hover:text-foreground"
+                className={ACTION_BTN}
               >
                 <MoreVerticalIcon className="size-4" aria-hidden="true" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[220px]">
+              <DropdownMenuItem disabled={check.isPending} onSelect={() => void doCheck()}>
+                <RefreshCwIcon
+                  className={cn('size-4', check.isPending && 'animate-spin')}
+                  aria-hidden="true"
+                />
+                Проверить связь по SSH
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => onEdit(server)}>
                 <PencilIcon className="size-4" aria-hidden="true" />
                 Изменить
@@ -278,23 +362,27 @@ export function ServerCard({ server, onOpen, onEdit }: Props) {
         <SshPill server={server} />
       </div>
 
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="truncate text-[12.5px] text-text-2">{osLine(server)}</span>
-        {resources && <span className="truncate text-[12px] text-text-3">{resources}</span>}
-      </div>
+      <Gauges metrics={metrics} offline={health === 'crit'} />
+      <CardSpark metrics={metrics} health={health} />
 
-      {server.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {server.tags.map((t) => (
-            <span
-              key={t}
-              className="rounded-[8px] border border-border bg-surface-2 px-2.5 py-1 text-[11.5px] font-medium text-text-2"
-            >
-              {t}
-            </span>
-          ))}
-        </div>
-      )}
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-[12px] text-text-3" title={resources || undefined}>
+          {osLine(server)}
+          {resources && <span className="text-text-3"> · {resources}</span>}
+        </span>
+        {server.tags.length > 0 && (
+          <span className="flex flex-none flex-wrap justify-end gap-1">
+            {server.tags.map((t) => (
+              <span
+                key={t}
+                className="rounded-[6px] border border-border bg-surface-2 px-2 py-[2px] text-[11px] font-medium text-text-2"
+              >
+                {t}
+              </span>
+            ))}
+          </span>
+        )}
+      </div>
 
       <ConfirmDialog
         open={deleteOpen}
@@ -307,27 +395,13 @@ export function ServerCard({ server, onOpen, onEdit }: Props) {
         onConfirm={doDelete}
       />
 
-      {/* Ручка перетаскивания: порядок карточек можно менять, сетка сохраняется */}
-      <button
-        type="button"
-        ref={sortable.setActivatorNodeRef}
-        {...sortable.attributes}
-        {...sortable.listeners}
-        onClick={(e) => e.stopPropagation()}
-        aria-label={`Перетащить «${server.name}»`}
-        title="Перетащить"
-        className="absolute right-2 bottom-1.5 cursor-grab touch-none select-none rounded-[8px] p-1.5 text-[19px] leading-none text-text-3 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-1 active:cursor-grabbing"
-      >
-        ⠿
-      </button>
-
       {/* Смена отпечатка сервера: сравнение и явное доверие */}
       <Dialog open={mismatch !== null} onOpenChange={(o) => !o && setMismatch(null)}>
         <DialogContent className="sm:max-w-[500px] rounded-2xl border-border bg-surface p-6">
           <DialogHeader>
             <DialogTitle className="font-heading text-[17px]">Отпечаток сервера изменился</DialogTitle>
             <DialogDescription className="text-[12.5px] text-text-2">
-              Так бывает после переустановки системы. Если ты сервер не переустанавливал — не доверяй:
+              Так бывает после переустановки системы. Если вы сервер не переустанавливали, не доверяйте:
               возможно, кто-то подменяет его собой.
             </DialogDescription>
           </DialogHeader>

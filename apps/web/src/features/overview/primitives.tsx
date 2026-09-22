@@ -21,18 +21,34 @@ export function Sparkline({
   values,
   className,
   stroke = 'var(--ns-text-3)',
+  stretch = false,
 }: {
   values: Array<number | null>;
   className?: string;
   stroke?: string;
+  /** Растянуть на всю ширину контейнера (толщина линии при этом не искажается). */
+  stretch?: boolean;
 }) {
   const w = 120;
   const h = 36;
   const d = toPath(values, w, h);
   if (!d) return null;
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className={className} aria-hidden="true" data-testid="sparkline">
-      <path d={d} fill="none" stroke={stroke} strokeWidth="1.6" strokeLinejoin="round" />
+    <svg
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio={stretch ? 'none' : undefined}
+      className={className}
+      aria-hidden="true"
+      data-testid="sparkline"
+    >
+      <path
+        d={d}
+        fill="none"
+        stroke={stroke}
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+        vectorEffect={stretch ? 'non-scaling-stroke' : undefined}
+      />
     </svg>
   );
 }
