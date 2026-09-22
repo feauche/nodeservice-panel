@@ -178,9 +178,11 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
   return (
     <div className="flex flex-col gap-3">
       {/* Тулбар: фильтр по состоянию · поиск на всю свободную ширину · теги · проверить все · добавить */}
-      <div className="flex flex-wrap items-center gap-2">
+      {/* На средней ширине (планшет, узкое окно) сегменты уходят на свою строку целиком,
+          а не роняют кнопку «Добавить» вниз в одиночестве. */}
+      <div className="@container flex flex-wrap items-center gap-2">
         <fieldset
-          className="m-0 flex h-9 items-center gap-[3px] rounded-[10px] border border-border bg-surface-2 p-[3px] max-md:w-full"
+          className="m-0 flex h-9 items-center gap-[3px] rounded-[10px] border border-border bg-surface-2 p-[3px] @max-[900px]:w-full"
           aria-label="Фильтр по состоянию"
         >
           <legend className="sr-only">Состояние</legend>
@@ -191,7 +193,7 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
               aria-pressed={health === f.key}
               onClick={() => setHealth(f.key)}
               className={cn(
-                'flex h-full cursor-pointer items-center gap-1.5 rounded-[7px] px-2.5 text-[12.5px] font-medium text-text-2 transition-colors hover:text-foreground max-md:flex-1 max-md:justify-center max-md:px-1.5',
+                'flex h-full cursor-pointer items-center gap-1.5 rounded-[7px] px-2.5 text-[12.5px] font-medium text-text-2 transition-colors hover:text-foreground @max-[900px]:flex-1 @max-[900px]:justify-center max-md:px-1.5',
                 health === f.key && 'bg-surface text-foreground shadow-[0_0_0_1px_var(--ns-border-2)]',
               )}
             >

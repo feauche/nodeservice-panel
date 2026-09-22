@@ -32,7 +32,30 @@ nodeservice — обслуживание панели NodeService
   restore <файл>    восстановить БД из бэкапа (api останавливается на время восстановления)
   cli <команда>     rescue CLI: setup-token | list-users | reset-password | disable-2fa | revoke-sessions
   restart | stop | start
+  uninstall         снять панель: контейнеры, образы, тома с БД, код, cron, эта команда (бэкап делается перед удалением)
 U
+}
+
+uninstall() {
+    echo "Будут удалены: контейнеры и образы панели, тома Docker с базой и метриками,"
+    echo "код в $APP_DIR (вместе с infra/.env и бэкапами), cron бэкапа, /usr/local/bin/nodeservice."
+    echo "Docker и deploy-ключ /root/.ssh/nodeservice_deploy остаются."
+    read -r -p "Напишите 'удалить' для подтверждения: " ans
+    [[ "$ans" == "удалить" ]] || die "Отменено."
+    local keep="/root/nodeservice-last-backup"
+    if bash "$APP_DIR/infra/scripts/backup.sh" >/dev/null 2>&1; then
+        mkdir -p "$keep"
+        cp "$(ls -t "$APP_DIR"/backups/nodeservice-*.dump 2>/dev/null | head -1)" "$keep"/ 2>/dev/null || true
+        cp "$ENV_FILE" "$keep/.env" 2>/dev/null || true
+        echo "Последний бэкап БД и .env сохранены в $keep — их можно удалить руками, когда точно не понадобятся."
+    else
+        echo "Бэкап перед удалением не удался (панель не запущена?), продолжаю."
+    fi
+    "${COMPOSE[@]}" down --volumes --remove-orphans --rmi local 2>/dev/null || true
+    rm -f /etc/cron.d/nodeservice-backup
+    rm -rf "$APP_DIR"
+    rm -f /usr/local/bin/nodeservice
+    echo -e "${G}Панель удалена.${N}"
 }
 
 cmd="${1:-}"; shift || true
@@ -56,6 +79,7 @@ case "$cmd" in
     restart) "${COMPOSE[@]}" restart "${@:-api}" ;;
     stop)   "${COMPOSE[@]}" stop ;;
     start)  "${COMPOSE[@]}" up -d ;;
+    uninstall) uninstall ;;
     -h|--help|"") usage ;;
     *) usage; exit 1 ;;
 esac

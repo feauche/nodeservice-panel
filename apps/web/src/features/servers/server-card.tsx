@@ -372,7 +372,7 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
             onClick={(e) => e.stopPropagation()}
             aria-label={`Перетащить «${server.name}»`}
             title="Перетащить"
-            className="grid size-6 flex-none cursor-grab touch-none place-items-center rounded-[7px] text-text-3 opacity-0 transition-[opacity,color] group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-1 active:cursor-grabbing"
+            className="grid size-6 flex-none cursor-grab touch-none place-items-center rounded-[7px] text-text-3 opacity-0 transition-[opacity,color] group-hover:opacity-100 hover:text-foreground [@media(hover:none)]:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-1 active:cursor-grabbing"
           >
             <GripVerticalIcon className="size-4" aria-hidden="true" />
           </button>
