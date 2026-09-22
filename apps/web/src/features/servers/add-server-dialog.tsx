@@ -31,7 +31,7 @@ interface Props {
 /* ---------- живой ход проверки ---------- */
 type StepState = 'wait' | 'run' | 'ok' | 'fail';
 interface Step {
-  key: 'ssh' | 'hostkey' | 'facts' | 'create';
+  key: 'ssh' | 'hostkey' | 'facts' | 'create' | 'agent';
   label: string;
   state: StepState;
   detail?: string;
@@ -41,6 +41,7 @@ const INITIAL_STEPS: Step[] = [
   { key: 'hostkey', label: 'Отпечаток сервера', state: 'wait' },
   { key: 'facts', label: 'Факты о системе', state: 'wait' },
   { key: 'create', label: 'Добавление в панель', state: 'wait' },
+  { key: 'agent', label: 'Агент', state: 'wait' },
 ];
 
 function factsLine(t: TestConnectionResponse): string {
@@ -223,6 +224,10 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
     try {
       const server = await create.mutateAsync({ ...req, verify: true });
       patchStep('create', { state: 'ok', detail: `«${server.name}» в списке серверов` });
+      patchStep('agent', {
+        state: 'ok',
+        detail: 'Устанавливается в фоне по SSH; статус «Агент в сети» появится на карточке через минуту',
+      });
       // Даём увидеть завершённый ход проверки, потом закрываем; форма на это время заморожена.
       setFinishing(true);
       await new Promise((r) => setTimeout(r, 700));
@@ -274,8 +279,9 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
         <DialogHeader className="flex-none gap-1 px-6 pt-5 pb-1 sm:px-7">
           <DialogTitle className="font-heading text-[18px]">Добавить сервер</DialogTitle>
           <DialogDescription className="text-[13px] text-text-2">
-            Понадобятся адрес и доступ по SSH. Панель проверит связь, запомнит отпечаток сервера и подготовит
-            его к установке агента.
+            Понадобятся адрес и доступ по SSH. Панель проверит связь, запомнит отпечаток сервера и сразу
+            поставит на него агента: это systemd-служба без входящих портов, она сама подключается к панели.
+            Без агента метрик не будет.
           </DialogDescription>
         </DialogHeader>
 

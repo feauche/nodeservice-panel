@@ -139,7 +139,12 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
     ['Ресурсы', resources || '—'],
     ['Аптайм', formatUptime(metrics?.uptimeSec)],
     ['Проверка SSH', s.lastSshCheckAt ? formatAgo(s.lastSshCheckAt) : 'ещё не было'],
-    ['Агент', s.agentVersion ? `v${s.agentVersion}` : AGENT_STATUS_LABELS[s.agentStatus]],
+    [
+      'Агент',
+      s.agentVersion
+        ? `${AGENT_STATUS_LABELS[s.agentStatus]} · ${s.agentVersion.startsWith('v') ? s.agentVersion : `v${s.agentVersion}`}`
+        : AGENT_STATUS_LABELS[s.agentStatus],
+    ],
   ];
 
   return (
@@ -154,7 +159,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
           aria-label="Закрыть"
           tabIndex={-1}
           onClick={onClose}
-          className="fixed inset-0 z-40 cursor-default bg-black/10 supports-backdrop-filter:backdrop-blur-xs"
+          className="fixed inset-0 z-40 cursor-default bg-black/35 supports-backdrop-filter:backdrop-blur-md"
         />,
         document.body,
       )}

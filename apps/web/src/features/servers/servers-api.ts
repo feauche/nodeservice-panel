@@ -52,6 +52,8 @@ export const serversListQuery = queryOptions({
   queryFn: ({ signal }) => serversApi.list(signal),
   staleTime: 15_000,
   refetchOnMount: 'always',
+  // Агент ставится и подключается в фоне после добавления — статусы должны доезжать без действий пользователя.
+  refetchInterval: 15_000,
 });
 
 export function useServers() {

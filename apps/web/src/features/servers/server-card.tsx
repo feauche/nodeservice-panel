@@ -13,10 +13,9 @@ import {
   MoreVerticalIcon,
   PencilIcon,
   RefreshCwIcon,
-  TerminalIcon,
   Trash2Icon,
 } from 'lucide-react';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { toast } from 'sonner';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -30,13 +29,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatMbps, formatPct } from '@/features/overview/overview-format';
 import { Sparkline } from '@/features/overview/primitives';
 import { formatAgo } from '@/features/security/security-format';
 import { StepUpCancelledError } from '@/features/security/step-up';
 import { Pill } from '@/features/settings/settings-ui';
-import { useTerminalStore } from '@/features/terminal/terminal-store';
 import { apiErrorMessage, isApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
@@ -138,6 +135,52 @@ function CardSpark({
   );
 }
 
+function StatusPills({ server }: { server: Server }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Pill
+        tone={server.agentStatus === 'online' ? 'ok' : server.agentStatus === 'offline' ? 'crit' : 'muted'}
+      >
+        {AGENT_STATUS_LABELS[server.agentStatus]}
+      </Pill>
+      <SshPill server={server} />
+    </div>
+  );
+}
+
+/** Система и ресурсы одной строкой, ниже — теги (и место под ручку перетаскивания справа). */
+function CardFooter({ server, handle }: { server: Server; handle?: ReactNode }) {
+  const resources = [
+    server.facts.cpuCores ? `${server.facts.cpuCores} CPU` : null,
+    server.facts.memoryMb ? `${Math.round(server.facts.memoryMb / 1024)} ГБ` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const line = resources ? `${osLine(server)} · ${resources}` : osLine(server);
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="truncate text-[12px] text-text-3" title={line}>
+        {line}
+      </div>
+      {(server.tags.length > 0 || handle) && (
+        <div className="flex min-h-6 items-center gap-1.5">
+          <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+            {server.tags.map((t) => (
+              <span
+                key={t}
+                className="rounded-[6px] border border-border bg-surface-2 px-2 py-[2px] text-[11px] font-medium text-text-2"
+              >
+                {t}
+              </span>
+            ))}
+          </div>
+          {handle}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** «Призрак» для DragOverlay: летит за курсором при перетаскивании и плавно «долетает» в слот. */
 export function ServerCardGhost({
   server,
@@ -148,19 +191,22 @@ export function ServerCardGhost({
 }) {
   const health = serverHealth(server, metrics);
   return (
-    <div className="relative flex rotate-1 cursor-grabbing flex-col gap-3 rounded-2xl border border-border-2 bg-surface p-4 shadow-float">
+    <div className="relative flex cursor-grabbing flex-col gap-3 rounded-2xl border border-border-2 bg-surface p-4 shadow-float">
       <div className="flex items-start gap-2.5">
         <HealthDot health={health} className="mt-[7px]" />
         <div className="min-w-0 flex-1">
-          <h2 className="truncate font-heading text-[15px] font-bold tracking-[-0.01em]">{server.name}</h2>
+          <h2 className="line-clamp-2 font-heading text-[15px] leading-[1.25] font-bold tracking-[-0.01em]">
+            {server.name}
+          </h2>
           <p className="mt-0.5 truncate font-mono text-[11.5px] text-text-3">
             {server.sshUser}@{server.host}:{server.port}
           </p>
         </div>
       </div>
+      <StatusPills server={server} />
       <Gauges metrics={metrics} offline={health === 'crit'} />
       <CardSpark metrics={metrics} health={health} />
-      <div className="truncate text-[12px] text-text-3">{osLine(server)}</div>
+      <CardFooter server={server} />
     </div>
   );
 }
@@ -185,7 +231,6 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
   const sortable = useSortable({ id: server.id });
   const remove = useDeleteServer();
   const trust = useTrustHostKey();
-  const openTerminal = useTerminalStore((st) => st.open);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [mismatch, setMismatch] = useState<{ offered: string } | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
@@ -239,13 +284,6 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
     }
   };
 
-  const resources = [
-    server.facts.cpuCores ? `${server.facts.cpuCores} CPU` : null,
-    server.facts.memoryMb ? `${Math.round(server.facts.memoryMb / 1024)} ГБ` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
-
   return (
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: клик по карточке — ярлык, доступный путь есть в меню «Изменить»
     // biome-ignore lint/a11y/useKeyWithClickEvents: с клавиатуры настройки открываются через меню карточки, ручка перетаскивания фокусируема
@@ -269,48 +307,14 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
       <div className="flex items-start gap-2.5">
         <HealthDot health={health} className="mt-[7px]" />
         <div className="min-w-0 flex-1">
-          <h2 className="truncate font-heading text-[15px] font-bold tracking-[-0.01em]">{server.name}</h2>
+          <h2 className="line-clamp-2 font-heading text-[15px] leading-[1.25] font-bold tracking-[-0.01em]">
+            {server.name}
+          </h2>
           <p className="mt-0.5 truncate font-mono text-[11.5px] text-text-3">
             {server.sshUser}@{server.host}:{server.port}
           </p>
         </div>
         <div className="flex flex-none items-center gap-1">
-          {/* Ручка перетаскивания: порядок карточек можно менять, сетка сохраняется */}
-          <button
-            type="button"
-            ref={sortable.setActivatorNodeRef}
-            {...sortable.attributes}
-            {...sortable.listeners}
-            onClick={(e) => e.stopPropagation()}
-            aria-label={`Перетащить «${server.name}»`}
-            title="Перетащить"
-            className="grid size-8 cursor-grab touch-none place-items-center rounded-[9px] text-text-3 opacity-0 transition-[opacity,color] group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-1 active:cursor-grabbing"
-          >
-            <GripVerticalIcon className="size-4" aria-hidden="true" />
-          </button>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                aria-label={`Терминал ${server.name}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openTerminal({
-                    id: server.id,
-                    name: server.name,
-                    host: server.host,
-                    port: server.port,
-                    sshUser: server.sshUser,
-                  });
-                }}
-                className={ACTION_BTN}
-              >
-                <TerminalIcon className="size-4" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">SSH-терминал</TooltipContent>
-          </Tooltip>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -353,36 +357,27 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Pill
-          tone={server.agentStatus === 'online' ? 'ok' : server.agentStatus === 'offline' ? 'crit' : 'muted'}
-        >
-          {AGENT_STATUS_LABELS[server.agentStatus]}
-        </Pill>
-        <SshPill server={server} />
-      </div>
-
+      <StatusPills server={server} />
       <Gauges metrics={metrics} offline={health === 'crit'} />
       <CardSpark metrics={metrics} health={health} />
-
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-[12px] text-text-3" title={resources || undefined}>
-          {osLine(server)}
-          {resources && <span className="text-text-3"> · {resources}</span>}
-        </span>
-        {server.tags.length > 0 && (
-          <span className="flex flex-none flex-wrap justify-end gap-1">
-            {server.tags.map((t) => (
-              <span
-                key={t}
-                className="rounded-[6px] border border-border bg-surface-2 px-2 py-[2px] text-[11px] font-medium text-text-2"
-              >
-                {t}
-              </span>
-            ))}
-          </span>
-        )}
-      </div>
+      <CardFooter
+        server={server}
+        handle={
+          // Ручка перетаскивания в правом нижнем углу: порядок карточек можно менять, сетка сохраняется
+          <button
+            type="button"
+            ref={sortable.setActivatorNodeRef}
+            {...sortable.attributes}
+            {...sortable.listeners}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`Перетащить «${server.name}»`}
+            title="Перетащить"
+            className="grid size-6 flex-none cursor-grab touch-none place-items-center rounded-[7px] text-text-3 opacity-0 transition-[opacity,color] group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-1 active:cursor-grabbing"
+          >
+            <GripVerticalIcon className="size-4" aria-hidden="true" />
+          </button>
+        }
+      />
 
       <ConfirmDialog
         open={deleteOpen}

@@ -28,8 +28,8 @@ describe('ServersPage', () => {
     await screen.findByText('de-fra-01');
     expect(cards()).toHaveLength(2);
     expect(screen.getByText('root@203.0.113.7:22')).toBeInTheDocument();
-    expect(screen.getByText('Ubuntu 24.04 · x86_64')).toBeInTheDocument();
-    expect(screen.getByText('Debian 13 · aarch64')).toBeInTheDocument();
+    expect(screen.getByText(/Ubuntu 24.04 · x86_64/)).toBeInTheDocument();
+    expect(screen.getByText(/Debian 13 · aarch64/)).toBeInTheDocument();
     expect(screen.getByText('Агент в сети')).toBeInTheDocument();
     expect(screen.getByText('Агент не установлен')).toBeInTheDocument();
     expect(screen.getByText(/SSH недоступен/)).toBeInTheDocument();
@@ -82,7 +82,7 @@ describe('ServersPage', () => {
     expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeInTheDocument();
     // журнал сервера
     await user.click(within(dialog).getByRole('button', { name: 'Журнал' }));
-    expect(await within(dialog).findByText('Открыть весь Журнал →')).toBeInTheDocument();
+    expect(await within(dialog).findByText('Открыть весь Журнал')).toBeInTheDocument();
   });
 
   it('меню «Изменить» открывает модалку сразу на «Подключении», удаление изнутри работает', async () => {
