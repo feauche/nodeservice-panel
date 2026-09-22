@@ -1,0 +1,68 @@
+# NodeService — скелет стека панели (ПЛАН, ещё не рабочий).
+# Реальные образы panel/web появятся на этапе реализации Фазы 1.
+# Установочный скрипт сгенерирует .env (секреты через `openssl rand`).
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - panel
+
+  panel:
+    # build: ../panel        # NestJS backend (появится позже)
+    image: nodeservice/panel:dev
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://nodeservice:${POSTGRES_PASSWORD}@postgres:5432/nodeservice
+      - REDIS_URL=redis://redis:6379
+      - VICTORIA_URL=http://victoriametrics:8428
+      - APP_SECRET=${APP_SECRET}                 # openssl rand -hex 64
+      - CREDENTIALS_MASTER_KEY=${CREDENTIALS_MASTER_KEY}   # envelope encryption доступов
+    expose:
+      - "3000"
+    depends_on:
+      - postgres
+      - redis
+      - victoriametrics
+
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=nodeservice
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=nodeservice
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - redis_data:/data
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:latest
+    restart: always
+    command:
+      - "--retentionPeriod=90d"
+      - "--storageDataPath=/vmdata"
+    volumes:
+      - vm_data:/vmdata
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pg_data:
+  redis_data:
+  vm_data:

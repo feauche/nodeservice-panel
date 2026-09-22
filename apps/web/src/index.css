@@ -1,0 +1,500 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/golos-text";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/600.css";
+
+/*
+  Темы NodeService: графит (по умолчанию, без атрибута), светлая, чёрная.
+  Атрибут data-ns-theme на <html>. Токены ns-* — эталон из design/preview.html;
+  ниже они отображаются в переменные shadcn/ui, чтобы готовые компоненты
+  автоматически выглядели «по-нашему».
+*/
+@custom-variant phone (@media (max-width: 480px));
+@custom-variant dark (
+  &:is([data-ns-theme="dark"] *, [data-ns-theme="black"] *, :root:not([data-ns-theme="light"]) *)
+);
+
+@theme inline {
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --font-heading: "Golos Text Variable", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* семантика NodeService */
+  --color-surface: var(--ns-surface);
+  --color-surface-2: var(--ns-surface-2);
+  --color-surface-3: var(--ns-surface-3);
+  --color-bg-2: var(--ns-bg-2);
+  --color-canvas: var(--ns-canvas);
+  --color-border-2: var(--ns-border-2);
+  --color-text-2: var(--ns-text-2);
+  --color-text-3: var(--ns-text-3);
+  --color-brand: var(--ns-accent);
+  --color-brand-soft: var(--ns-accent-soft);
+  --color-teal: var(--ns-teal);
+  --color-ok: var(--ns-ok);
+  --color-ok-soft: var(--ns-ok-soft);
+  --color-warn: var(--ns-warn);
+  --color-warn-soft: var(--ns-warn-soft);
+  --color-crit: var(--ns-crit);
+  --color-crit-soft: var(--ns-crit-soft);
+  --color-cta: var(--ns-cta);
+  --color-cta-foreground: var(--ns-cta-fg);
+  --color-chart-base: var(--ns-chart-base);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 20px;
+
+  --shadow-pop: var(--ns-shadow-pop);
+  --shadow-float: var(--ns-shadow-float);
+  --ease-ns: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* анимации из демо */
+  --animate-modin: ns-modin 0.32s var(--ease-ns);
+  --animate-shake: ns-shake 0.36s var(--ease-ns);
+  --animate-fade: ns-fade 0.25s var(--ease-ns);
+
+  @keyframes ns-modin {
+    from {
+      opacity: 0;
+      transform: translateY(14px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes ns-shake {
+    0%,
+    100% {
+      transform: none;
+    }
+    20% {
+      transform: translateX(-4px);
+    }
+    60% {
+      transform: translateX(4px);
+    }
+  }
+  /* Журнал: подсветка строки, пришедшей по live-ленте */
+  @keyframes ns-flash {
+    from {
+      background-color: var(--ns-accent-soft);
+    }
+    to {
+      background-color: transparent;
+    }
+  }
+  @keyframes ns-fade {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  /* Веб-терминал: появление окна, спиннер, мерцание skeleton-полос */
+  @keyframes ns-term-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.99);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes ns-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes ns-shimmer {
+    to {
+      background-position: -200% 0;
+    }
+  }
+}
+
+/* ---------- Графит (по умолчанию) ---------- */
+:root {
+  --ns-bg: #10141b;
+  --ns-bg-2: #0d1117;
+  --ns-canvas: #090c11;
+  --ns-surface: #171c25;
+  --ns-surface-2: #1d232e;
+  --ns-surface-3: #242b38;
+  --ns-border: #2a3140;
+  --ns-border-2: #373f51;
+  --ns-text: #e9edf4;
+  --ns-text-2: #aab3c2;
+  --ns-text-3: #737d8f;
+  --ns-accent: #6ea8fe;
+  --ns-accent-soft: rgba(110, 168, 254, 0.15);
+  --ns-teal: #56c7b8;
+  --ns-on-accent: #0b1220;
+  --ns-ok: #46cf8b;
+  --ns-warn: #e6b552;
+  --ns-crit: #f0616d;
+  --ns-ok-soft: rgba(70, 207, 139, 0.14);
+  --ns-warn-soft: rgba(230, 181, 82, 0.14);
+  --ns-crit-soft: rgba(240, 97, 109, 0.15);
+  /* главная кнопка — синяя, с синим свечением */
+  --ns-cta: #6ea8fe;
+  --ns-cta-fg: #0b1220;
+  --ns-cta-hover: #86b7ff;
+  --ns-cta-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 6px 18px -8px rgba(110, 168, 254, 0.55);
+  --ns-cta-glow: 0 1px 0 rgba(255, 255, 255, 0.16) inset, 0 10px 28px -8px rgba(110, 168, 254, 0.75);
+  --ns-chart-base: #7d8797;
+  --ns-hairline: rgba(150, 175, 220, 0.09);
+  --ns-inset-hi: rgba(255, 255, 255, 0.035);
+  --ns-shadow-pop: 0 0 0 1px var(--ns-hairline), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  --ns-shadow-float:
+    0 0 0 1px var(--ns-hairline), 0 1px 2px rgba(0, 0, 0, 0.4), 0 24px 48px -16px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+
+/* ---------- Светлая ---------- */
+:root[data-ns-theme="light"] {
+  --ns-bg: #eef1f6;
+  --ns-bg-2: #e8ecf2;
+  --ns-canvas: #dde2ea;
+  --ns-surface: #ffffff;
+  --ns-surface-2: #f6f8fb;
+  --ns-surface-3: #eef2f8;
+  --ns-border: #dfe4ec;
+  --ns-border-2: #ccd4e0;
+  --ns-text: #1a2130;
+  --ns-text-2: #586274;
+  --ns-text-3: #8b95a7;
+  --ns-accent: #2f6fe0;
+  --ns-accent-soft: rgba(47, 111, 224, 0.1);
+  --ns-teal: #178f82;
+  --ns-on-accent: #ffffff;
+  --ns-ok: #1fae6b;
+  --ns-warn: #c78a1a;
+  --ns-crit: #dc4756;
+  --ns-ok-soft: rgba(31, 174, 107, 0.12);
+  --ns-warn-soft: rgba(199, 138, 26, 0.12);
+  --ns-crit-soft: rgba(220, 71, 86, 0.12);
+  --ns-cta: #111419;
+  --ns-cta-fg: #ffffff;
+  --ns-cta-hover: #2a2f38;
+  --ns-cta-shadow: 0 4px 14px -8px rgba(17, 20, 25, 0.45);
+  --ns-cta-glow: 0 8px 22px -8px rgba(17, 20, 25, 0.55);
+  --ns-chart-base: #8a93a3;
+  --ns-hairline: rgba(9, 12, 20, 0.09);
+  --ns-inset-hi: rgba(255, 255, 255, 0.7);
+  --ns-shadow-pop: 0 0 0 1px var(--ns-hairline), 0 4px 12px -4px rgba(30, 45, 80, 0.18);
+  --ns-shadow-float:
+    0 0 0 1px var(--ns-hairline), 0 1px 2px rgba(30, 45, 80, 0.12), 0 24px 48px -16px rgba(30, 45, 80, 0.25);
+  color-scheme: light;
+}
+
+/* ---------- Чёрная (OLED) ---------- */
+:root[data-ns-theme="black"] {
+  --ns-bg: #08080a;
+  --ns-bg-2: #0a0a0d;
+  --ns-canvas: #000000;
+  --ns-surface: #0f0f12;
+  --ns-surface-2: #151518;
+  --ns-surface-3: #1c1c20;
+  --ns-border: #202024;
+  --ns-border-2: #2d2d33;
+  --ns-text: #f2f2f3;
+  --ns-text-2: #a8a8b0;
+  --ns-text-3: #6e6e78;
+  /* акцент — мятный: OLED-характер, ни с чем не спутать */
+  --ns-accent: #5fe3cf;
+  --ns-accent-soft: rgba(95, 227, 207, 0.13);
+  --ns-teal: #5fe3cf;
+  --ns-on-accent: #04110e;
+  --ns-ok: #3fcf87;
+  --ns-warn: #e6b552;
+  --ns-crit: #f0616d;
+  --ns-ok-soft: rgba(63, 207, 135, 0.13);
+  --ns-warn-soft: rgba(230, 181, 82, 0.13);
+  --ns-crit-soft: rgba(240, 97, 109, 0.14);
+  /* главная кнопка — белая, с мятным свечением */
+  --ns-cta: #ffffff;
+  --ns-cta-fg: #000000;
+  --ns-cta-hover: #f1fbf9;
+  --ns-cta-shadow: 0 6px 18px -8px rgba(95, 227, 207, 0.35);
+  --ns-cta-glow: 0 0 0 1px rgba(95, 227, 207, 0.35), 0 10px 30px -8px rgba(95, 227, 207, 0.6);
+  --ns-chart-base: #6c7280;
+  --ns-hairline: rgba(255, 255, 255, 0.08);
+  --ns-inset-hi: rgba(255, 255, 255, 0.04);
+  --ns-shadow-pop: 0 0 0 1px var(--ns-hairline), 0 6px 16px -6px rgba(0, 0, 0, 0.85);
+  --ns-shadow-float:
+    0 0 0 1px var(--ns-hairline), 0 1px 2px rgba(0, 0, 0, 0.6), 0 28px 56px -18px rgba(0, 0, 0, 0.9);
+  color-scheme: dark;
+}
+
+/* ---------- отображение в переменные shadcn/ui ---------- */
+:root,
+:root[data-ns-theme="light"],
+:root[data-ns-theme="black"] {
+  --background: var(--ns-bg);
+  --foreground: var(--ns-text);
+  --card: var(--ns-surface);
+  --card-foreground: var(--ns-text);
+  --popover: var(--ns-surface);
+  --popover-foreground: var(--ns-text);
+  --primary: var(--ns-cta);
+  --primary-foreground: var(--ns-cta-fg);
+  --secondary: var(--ns-surface-2);
+  --secondary-foreground: var(--ns-text);
+  --muted: var(--ns-surface-2);
+  --muted-foreground: var(--ns-text-3);
+  --accent: var(--ns-surface-3);
+  --accent-foreground: var(--ns-text);
+  --destructive: var(--ns-crit);
+  --border: var(--ns-border);
+  --input: var(--ns-border);
+  --ring: var(--ns-accent);
+  --chart-1: var(--ns-accent);
+  --chart-2: var(--ns-teal);
+  --chart-3: var(--ns-warn);
+  --chart-4: var(--ns-crit);
+  --chart-5: var(--ns-chart-base);
+  --sidebar: var(--ns-bg-2);
+  --sidebar-foreground: var(--ns-text-2);
+  --sidebar-primary: var(--ns-accent);
+  --sidebar-primary-foreground: var(--ns-on-accent);
+  --sidebar-accent: var(--ns-accent-soft);
+  --sidebar-accent-foreground: var(--ns-accent);
+  --sidebar-border: var(--ns-border);
+  --sidebar-ring: var(--ns-accent);
+  --radius: 10px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-heading);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  ::selection {
+    background: var(--ns-accent-soft);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ns-accent);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+@utility num {
+  font-variant-numeric: tabular-nums;
+}
+@utility font-heading {
+  font-family: var(--font-heading);
+}
+
+/* ---------- свечение за карточками входа (.auth-bg из демо) ---------- */
+.auth-bg {
+  background:
+    radial-gradient(760px 460px at 50% -12%, var(--ns-accent-soft), transparent 70%),
+    radial-gradient(
+      520px 380px at 88% 104%,
+      color-mix(in srgb, var(--ns-teal) 9%, transparent),
+      transparent 70%
+    );
+}
+:root[data-ns-theme="black"] .auth-bg {
+  background: radial-gradient(760px 460px at 50% -12%, rgba(95, 227, 207, 0.1), transparent 70%);
+}
+
+/* Уведомления (sonner richColors): успех — зелёный, предупреждение — жёлтый, ошибка — красный, инфо — акцент */
+[data-sonner-toaster] {
+  --success-bg: color-mix(in oklab, var(--ns-ok) 16%, var(--ns-surface));
+  --success-border: color-mix(in oklab, var(--ns-ok) 45%, var(--ns-border));
+  --success-text: var(--ns-ok);
+  --warning-bg: color-mix(in oklab, var(--ns-warn) 16%, var(--ns-surface));
+  --warning-border: color-mix(in oklab, var(--ns-warn) 45%, var(--ns-border));
+  --warning-text: var(--ns-warn);
+  --error-bg: color-mix(in oklab, var(--ns-crit) 16%, var(--ns-surface));
+  --error-border: color-mix(in oklab, var(--ns-crit) 45%, var(--ns-border));
+  --error-text: var(--ns-crit);
+  --info-bg: color-mix(in oklab, var(--ns-accent) 16%, var(--ns-surface));
+  --info-border: color-mix(in oklab, var(--ns-accent) 45%, var(--ns-border));
+  --info-text: var(--ns-accent);
+}
+
+@keyframes ns-typing {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/* Подсветка синтаксиса в блоках кода базы знаний (highlight.js, scoped .ns-code).
+   Палитра под тёмный фон #0a0c10 — спокойная, «редакторная» (One Dark-семейство). */
+.ns-code .hljs {
+  color: #c9d1d9;
+  background: transparent;
+}
+.ns-code .hljs-comment,
+.ns-code .hljs-quote {
+  color: #6b7482;
+  font-style: italic;
+}
+.ns-code .hljs-keyword,
+.ns-code .hljs-selector-tag,
+.ns-code .hljs-literal,
+.ns-code .hljs-section,
+.ns-code .hljs-doctag,
+.ns-code .hljs-name {
+  color: #c792ea;
+}
+.ns-code .hljs-string,
+.ns-code .hljs-regexp,
+.ns-code .hljs-addition,
+.ns-code .hljs-meta-string {
+  color: #9ece6a;
+}
+.ns-code .hljs-number,
+.ns-code .hljs-symbol,
+.ns-code .hljs-bullet {
+  color: #f0a875;
+}
+.ns-code .hljs-title,
+.ns-code .hljs-title.function_,
+.ns-code .hljs-built_in {
+  color: #7aa2f7;
+}
+.ns-code .hljs-attr,
+.ns-code .hljs-attribute,
+.ns-code .hljs-variable,
+.ns-code .hljs-template-variable,
+.ns-code .hljs-property {
+  color: #e0708a;
+}
+.ns-code .hljs-type,
+.ns-code .hljs-class .hljs-title,
+.ns-code .hljs-params {
+  color: #e5c07b;
+}
+.ns-code .hljs-meta,
+.ns-code .hljs-selector-id,
+.ns-code .hljs-selector-class,
+.ns-code .hljs-selector-attr,
+.ns-code .hljs-selector-pseudo {
+  color: #56b6c2;
+}
+.ns-code .hljs-deletion {
+  color: #ff6b7f;
+}
+.ns-code .hljs-emphasis {
+  font-style: italic;
+}
+.ns-code .hljs-strong {
+  font-weight: 600;
+}
+
+/* Бейджи источника статьи в базе знаний (откуда взята информация).
+   self — вручную (акцент), web — веб (зелёный), tg — Telegram (жёлтый), ai — ассистент (бирюзовый). */
+.kb-src {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 9999px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.kb-src-compact {
+  gap: 0;
+  padding: 4px;
+}
+.kb-src-self {
+  color: var(--ns-accent);
+  background: var(--ns-accent-soft);
+}
+.kb-src-web {
+  color: var(--ns-ok);
+  background: var(--ns-ok-soft);
+}
+.kb-src-tg {
+  color: var(--ns-warn);
+  background: var(--ns-warn-soft);
+}
+.kb-src-ai {
+  color: var(--ns-teal);
+  background: color-mix(in oklab, var(--ns-teal) 15%, var(--ns-surface));
+}

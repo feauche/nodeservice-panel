@@ -1,0 +1,31 @@
+{
+  "name": "nodeservice-panel",
+  "private": true,
+  "version": "0.9.1",
+  "description": "NodeService — self-hosted control room for a fleet of VPN/proxy servers",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=11"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "hooks:install": "lefthook install"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.11",
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
+    "@playwright/test": "^1.62.1",
+    "lefthook": "^2.1.12",
+    "turbo": "^2.10.12",
+    "typescript": "^6.0.3"
+  }
+}

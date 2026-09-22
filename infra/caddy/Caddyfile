@@ -1,0 +1,35 @@
+{
+	email {$ACME_EMAIL}
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+{$PANEL_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# API, WebSocket (агенты, терминал) и SSE (live-лента журнала) — всё в api.
+	# flush_interval -1 отключает буферизацию, иначе SSE «слипается».
+	handle /api/* {
+		reverse_proxy api:3000 {
+			flush_interval -1
+			header_up X-Real-IP {remote_host}
+		}
+	}
+	handle /ws/* {
+		reverse_proxy api:3000
+	}
+
+	# Статика SPA отдаётся тем же образом api (dist/public), fallback на index.html внутри.
+	handle {
+		reverse_proxy api:3000
+	}
+}

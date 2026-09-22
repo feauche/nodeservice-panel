@@ -1,0 +1,526 @@
+import {
+  ASSISTANT_MODE_LABELS,
+  ASSISTANT_MODES,
+  ASSISTANT_SUGGESTIONS,
+  type AssistantCitation,
+  type AssistantMessage,
+  type AssistantMode,
+  type AssistantProposal,
+  type AutofixPresetKey,
+  assistantMessageMax,
+} from '@nodeservice/shared';
+import { Link } from '@tanstack/react-router';
+import {
+  AlertTriangleIcon,
+  BookOpenIcon,
+  FileClockIcon,
+  Loader2Icon,
+  MessageSquarePlusIcon,
+  SendIcon,
+  ServerIcon,
+  SparklesIcon,
+  WandSparklesIcon,
+} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { useRunAutofix } from '@/features/incidents/incidents-api';
+import { Markdown } from '@/features/knowledge/markdown';
+import { StepUpCancelledError } from '@/features/security/step-up';
+import { apiErrorMessage } from '@/lib/api';
+import { cn } from '@/lib/utils';
+import {
+  useAssistantStatus,
+  useConversationHistory,
+  useConversations,
+  useSendMessage,
+} from './assistant-api';
+
+// Помним последнюю открытую беседу, чтобы вернуться и продолжить после ухода со страницы.
+const LAST_CONV_KEY = 'ns.assistant.conversation';
+
+export function AssistantPage() {
+  const status = useAssistantStatus();
+
+  if (status.isPending)
+    return <div className="grid h-full place-items-center text-[13px] text-text-3">Загрузка…</div>;
+
+  if (!status.data?.enabled) return <AssistantDisabled />;
+
+  return <AssistantChat />;
+}
+
+function AssistantDisabled() {
+  return (
+    <div className="grid min-h-[420px] place-items-center rounded-2xl border border-dashed border-border">
+      <div className="flex max-w-[420px] flex-col items-center gap-3 text-center">
+        <span className="grid size-12 place-items-center rounded-2xl bg-brand-soft text-brand">
+          <SparklesIcon className="size-6" aria-hidden="true" />
+        </span>
+        <h2 className="font-heading text-[17px] font-bold">AI-ассистент выключен</h2>
+        <p className="text-[13px] text-text-2">
+          Добавь ключ модели в Настройках, чтобы задавать вопросы о парке — ассистент видит метрики, Журнал и
+          базу знаний.
+        </p>
+        <Link
+          to="/settings/assistant"
+          className="mt-1 inline-flex h-9 items-center gap-1.5 rounded-[10px] bg-cta px-4 text-[13px] font-semibold text-cta-foreground hover:bg-(--ns-cta-hover)"
+        >
+          Настройки → Ассистент
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function AssistantChat() {
+  const [conversationId, setConversationId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(LAST_CONV_KEY);
+    } catch {
+      return null;
+    }
+  });
+  const conversations = useConversations();
+  const history = useConversationHistory(conversationId);
+  const send = useSendMessage();
+  const [input, setInput] = useState('');
+  // Режим для НОВОГО чата. В существующей беседе режим закреплён и не меняется.
+  const [newChatMode, setNewChatMode] = useState<AssistantMode>('agent');
+  const chatRef = useRef<HTMLDivElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  const messages = history.data?.items ?? [];
+  const busy = send.isPending;
+  const isNewChat = conversationId === null;
+  const activeConv = conversations.data?.items.find((c) => c.id === conversationId);
+  const mode: AssistantMode = isNewChat ? newChatMode : (activeConv?.mode ?? 'agent');
+
+  // Лимит длины зависит от режима: в «Анализ» вставляют целый мануал. Считаем по обрезанной длине —
+  // ровно как проверит сервер, — и не даём отправить переполненное поле (мгновенная обратная связь).
+  const trimmedLen = input.trim().length;
+  const maxLen = assistantMessageMax(mode);
+  const overLimit = trimmedLen > maxLen;
+  // Счётчик показываем только когда текст уже длинный, чтобы не мозолил глаза при обычном вопросе.
+  const showCounter = trimmedLen > maxLen * 0.7;
+
+  // Оптимистично показываем своё сообщение сразу, до ответа модели.
+  const [pendingUser, setPendingUser] = useState<string | null>(null);
+  // Сколько сообщений было в истории на момент отправки. Снимаем пузырь не по совпадению
+  // текста (быстрый вопрос может дословно повторять прошлый — тогда он гас сразу),
+  // а когда в истории реально прибавились сообщения — ответ пришёл.
+  const pendingBaseCount = useRef(0);
+  useEffect(() => {
+    if (pendingUser !== null && messages.length > pendingBaseCount.current) setPendingUser(null);
+  }, [messages.length, pendingUser]);
+
+  // Помним выбранную беседу между заходами: ушёл со страницы и вернулся — продолжаешь с того же места.
+  useEffect(() => {
+    try {
+      if (conversationId) localStorage.setItem(LAST_CONV_KEY, conversationId);
+      else localStorage.removeItem(LAST_CONV_KEY);
+    } catch {
+      // приватный режим браузера — просто не помним
+    }
+  }, [conversationId]);
+  // Восстановленной беседы могло уже не быть (удалили) — тогда откатываемся на новый чат.
+  useEffect(() => {
+    if (conversationId && history.isError && (history.error as { status?: number } | null)?.status === 404)
+      setConversationId(null);
+  }, [conversationId, history.isError, history.error]);
+
+  // Автоскролл вниз при новых сообщениях / индикаторе набора.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: скроллим на изменение длины и busy
+  useEffect(() => {
+    const el = chatRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length, busy]);
+
+  // Поле ввода растёт под текст (до предела), потом прокрутка.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: высота пересчитывается при смене текста
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [input]);
+
+  const submit = async (text: string) => {
+    const message = text.trim();
+    if (!message || busy) return;
+    if (message.length > assistantMessageMax(mode)) return; // защита: кнопка уже заблокирована
+    setInput('');
+    pendingBaseCount.current = messages.length;
+    setPendingUser(message);
+    try {
+      const res = await send.mutateAsync({ message, mode, ...(conversationId ? { conversationId } : {}) });
+      setConversationId(res.conversationId);
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+      setInput(message);
+      setPendingUser(null);
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      void submit(input);
+    }
+  };
+
+  return (
+    <div className="grid h-[calc(100dvh-150px)] min-h-[440px] gap-4 lg:grid-cols-[236px_minmax(0,1fr)]">
+      {/* История бесед */}
+      <aside className="hidden min-h-0 flex-col gap-3 rounded-2xl border border-border bg-surface p-3.5 lg:flex">
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate text-[13px] font-bold">AI-ассистент</span>
+          <span className="inline-flex flex-none items-center gap-1.5 rounded-full bg-ok-soft px-2 py-0.5 text-[10px] font-semibold text-ok">
+            <span className="size-1.5 rounded-full bg-ok" aria-hidden="true" />
+            доступ
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setConversationId(null)}
+          className="inline-flex items-center justify-center gap-1.5 rounded-[10px] bg-brand-soft px-3 py-2 text-[12.5px] font-semibold text-brand transition-[filter] hover:brightness-105"
+        >
+          <MessageSquarePlusIcon className="size-4" aria-hidden="true" />
+          Новый чат
+        </button>
+        <div className="px-1 text-[10.5px] font-semibold tracking-[0.05em] text-text-3 uppercase">
+          История
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <ul className="flex flex-col gap-0.5">
+            {(conversations.data?.items ?? []).map((c) => (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  onClick={() => setConversationId(c.id)}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-left text-[12.5px] transition-colors',
+                    conversationId === c.id
+                      ? 'bg-brand-soft text-brand'
+                      : 'text-text-2 hover:bg-surface-2 hover:text-foreground',
+                  )}
+                >
+                  {c.mode === 'analysis' ? (
+                    <WandSparklesIcon className="size-3.5 flex-none text-text-3" aria-hidden="true" />
+                  ) : (
+                    <FileClockIcon className="size-3.5 flex-none text-text-3" aria-hidden="true" />
+                  )}
+                  <span className="truncate">{c.title}</span>
+                </button>
+              </li>
+            ))}
+            {(conversations.data?.items.length ?? 0) === 0 && (
+              <li className="px-2 py-3 text-[12px] text-text-3">Бесед пока нет.</li>
+            )}
+          </ul>
+        </div>
+      </aside>
+
+      {/* Диалог */}
+      <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-surface">
+        <div
+          ref={chatRef}
+          data-testid="assistant-messages"
+          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-5 sm:p-6"
+        >
+          {messages.length === 0 && !busy && !pendingUser && <EmptyChat />}
+          {messages.map((m) => (
+            <MessageRow key={m.id} message={m} />
+          ))}
+          {pendingUser && (
+            <MessageRow
+              message={{
+                id: 'pending-user',
+                role: 'user',
+                content: pendingUser,
+                citations: [],
+                proposals: [],
+                createdAt: '',
+              }}
+            />
+          )}
+          {busy && <TypingRow />}
+        </div>
+
+        {/* Композер: одно поле ввода; режим — тумблер (новый чат) или бейдж (беседа закреплена) */}
+        <div className="flex-none border-t border-border p-3 sm:p-3.5">
+          {isNewChat && mode === 'agent' && messages.length === 0 && !pendingUser && (
+            <div className="mb-2.5 flex flex-wrap gap-1.5">
+              {ASSISTANT_SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void submit(s)}
+                  className="rounded-full border border-border bg-surface-2 px-3 py-1 text-[12px] text-text-2 transition-colors hover:border-brand/40 hover:bg-surface-3 hover:text-foreground disabled:opacity-50"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="flex flex-col gap-2 rounded-[16px] border border-border bg-surface-2 p-2 transition-colors focus-within:border-brand/50">
+            <textarea
+              ref={taRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+              disabled={busy}
+              rows={1}
+              aria-label={mode === 'analysis' ? 'Текст для анализа' : 'Сообщение ассистенту'}
+              placeholder={
+                mode === 'analysis'
+                  ? 'Вставь текст или скопированную страницу — соберу инструкцию…'
+                  : 'Спроси о парке, метриках или как что-то починить…'
+              }
+              className="max-h-[200px] w-full resize-none bg-transparent px-2 py-1 text-[13.5px] leading-relaxed outline-none placeholder:text-text-3"
+            />
+            <div className="flex items-center justify-between gap-2">
+              {isNewChat ? (
+                <ModeToggle value={newChatMode} onChange={setNewChatMode} disabled={busy} />
+              ) : (
+                <ModeBadge mode={mode} />
+              )}
+              <div className="flex items-center gap-2.5">
+                {showCounter && (
+                  <span
+                    className={cn(
+                      'text-[11px] tabular-nums transition-colors',
+                      overLimit ? 'font-medium text-destructive' : 'text-text-3',
+                    )}
+                  >
+                    {trimmedLen.toLocaleString('ru-RU')} / {maxLen.toLocaleString('ru-RU')}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void submit(input)}
+                  disabled={busy || trimmedLen === 0 || overLimit}
+                  aria-label={mode === 'analysis' ? 'Собрать статью' : 'Отправить'}
+                  className={cn(
+                    'inline-flex h-9 flex-none items-center justify-center gap-1.5 rounded-[10px] bg-cta text-[13px] font-semibold text-cta-foreground transition-[filter,opacity] hover:brightness-105 disabled:opacity-40',
+                    mode === 'analysis' ? 'px-3.5' : 'size-9',
+                  )}
+                >
+                  {busy ? (
+                    <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+                  ) : mode === 'analysis' ? (
+                    <>
+                      <WandSparklesIcon className="size-4" aria-hidden="true" />
+                      Собрать
+                    </>
+                  ) : (
+                    <SendIcon className="size-4" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+          <p className="mt-1.5 px-1 text-[11px] text-text-3">
+            {overLimit
+              ? mode === 'analysis'
+                ? 'Текст длиннее предела — разбей мануал на части и собери их по очереди.'
+                : 'Сообщение длиннее предела — сократи его.'
+              : mode === 'analysis'
+                ? 'Соберу инструкцию по шагам и, если нужно, сохраню статью (с меткой AI).'
+                : 'Enter — отправить, Shift+Enter — перенос строки.'}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Тумблер режима: плавно скользящая подсветка между «Агент» и «Анализ». */
+function ModeToggle({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: AssistantMode;
+  onChange: (m: AssistantMode) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="relative inline-flex rounded-[9px] bg-surface-3 p-[3px]">
+      <span
+        className="pointer-events-none absolute inset-y-[3px] left-[3px] w-[72px] rounded-[7px] bg-surface shadow-sm transition-transform duration-200 ease-out"
+        style={{ transform: value === 'analysis' ? 'translateX(72px)' : 'translateX(0)' }}
+        aria-hidden="true"
+      />
+      {ASSISTANT_MODES.map((m) => (
+        <button
+          key={m}
+          type="button"
+          disabled={disabled}
+          aria-pressed={value === m}
+          onClick={() => onChange(m)}
+          className={cn(
+            'relative z-10 w-[72px] cursor-pointer rounded-[7px] py-1 text-center text-[12px] font-medium transition-colors disabled:cursor-not-allowed',
+            value === m ? 'text-foreground' : 'text-text-3 hover:text-text-2',
+          )}
+        >
+          {ASSISTANT_MODE_LABELS[m]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Бейдж режима в закреплённой беседе — сменить нельзя. */
+function ModeBadge({ mode }: { mode: AssistantMode }) {
+  const Icon = mode === 'analysis' ? WandSparklesIcon : SparklesIcon;
+  return (
+    <span
+      title="Режим беседы задан при её создании"
+      className="inline-flex items-center gap-1.5 rounded-full bg-surface-3 px-2.5 py-1 text-[11.5px] font-medium text-text-3"
+    >
+      <Icon className="size-3" aria-hidden="true" />
+      {ASSISTANT_MODE_LABELS[mode]}
+    </span>
+  );
+}
+
+function EmptyChat() {
+  return (
+    <div className="grid flex-1 place-items-center text-center">
+      <div className="flex flex-col items-center gap-2">
+        <span className="grid size-11 place-items-center rounded-2xl bg-brand-soft text-brand">
+          <SparklesIcon className="size-5" aria-hidden="true" />
+        </span>
+        <p className="text-[14px] font-semibold">Спроси об инцидентах, серверах или как что-то починить</p>
+        <p className="max-w-[380px] text-[12.5px] text-text-3">
+          Ассистент смотрит метрики, Журнал и базу знаний. Действия он только предлагает — запускаешь ты.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function TypingRow() {
+  return (
+    <div className="flex max-w-[84%] gap-2.5 animate-in fade-in-0 duration-200">
+      <Avatar />
+      <div className="flex items-center gap-1 rounded-[14px] border border-border bg-surface-2 px-3.5 py-3">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="size-1.5 animate-[ns-typing_1.2s_ease-in-out_infinite] rounded-full bg-text-3"
+            style={{ animationDelay: `${i * 0.18}s` }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Avatar() {
+  return (
+    <span className="grid size-8 flex-none place-items-center rounded-[10px] bg-brand-soft text-brand">
+      <SparklesIcon className="size-4" aria-hidden="true" />
+    </span>
+  );
+}
+
+function MessageRow({ message }: { message: AssistantMessage }) {
+  if (message.role === 'user')
+    return (
+      <div className="flex max-w-[80%] flex-row-reverse gap-2.5 self-end animate-in fade-in-0 slide-in-from-bottom-1 duration-200">
+        <div className="rounded-[14px] bg-brand px-3.5 py-2.5 text-[13px] leading-relaxed text-(--ns-on-accent)">
+          {message.content}
+        </div>
+      </div>
+    );
+
+  return (
+    <div className="flex max-w-[86%] gap-2.5 animate-in fade-in-0 slide-in-from-bottom-1 duration-200">
+      <Avatar />
+      <div className="min-w-0">
+        <div className="rounded-[14px] border border-border bg-surface-2 px-3.5 py-2.5">
+          <Markdown content={message.content} className="text-[13px]" />
+        </div>
+        {message.citations.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {message.citations.map((c) => (
+              <Citation key={`${c.type}:${c.id}`} citation={c} />
+            ))}
+          </div>
+        )}
+        {message.proposals.map((p) => (
+          <ProposalCard key={`${p.incidentId}:${p.preset}`} proposal={p} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const CITE_META: Record<AssistantCitation['type'], { label: string; icon: typeof BookOpenIcon }> = {
+  kb: { label: 'база знаний', icon: BookOpenIcon },
+  incident: { label: 'инцидент', icon: AlertTriangleIcon },
+  audit: { label: 'журнал', icon: FileClockIcon },
+  server: { label: 'сервер', icon: ServerIcon },
+  metric: { label: 'метрика', icon: SparklesIcon },
+};
+
+function Citation({ citation }: { citation: AssistantCitation }) {
+  const meta = CITE_META[citation.type];
+  const Icon = meta.icon;
+  const cls =
+    'inline-flex items-center gap-1.5 rounded-[8px] border border-border-2 bg-surface px-2.5 py-1 text-[11.5px] font-semibold text-brand transition-colors hover:border-brand';
+  const inner = (
+    <>
+      <Icon className="size-3.5" aria-hidden="true" />
+      <span className="max-w-[220px] truncate">{citation.label}</span>
+    </>
+  );
+  if (citation.type === 'kb')
+    return (
+      <Link to="/knowledge" search={{ open: citation.id }} className={cls}>
+        {inner}
+      </Link>
+    );
+  if (citation.type === 'incident')
+    return (
+      <Link to="/incidents" className={cls}>
+        {inner}
+      </Link>
+    );
+  return <span className={cn(cls, 'cursor-default hover:border-border-2')}>{inner}</span>;
+}
+
+function ProposalCard({ proposal }: { proposal: AssistantProposal }) {
+  const autofix = useRunAutofix();
+  const apply = async () => {
+    try {
+      await autofix.mutateAsync({ id: proposal.incidentId, preset: proposal.preset as AutofixPresetKey });
+      toast.success('Готово: автопочинка запущена.');
+    } catch (err) {
+      if (!(err instanceof StepUpCancelledError)) toast.error(apiErrorMessage(err));
+    }
+  };
+  return (
+    <div className="mt-2.5 flex items-start gap-3 rounded-[12px] border border-border-2 bg-[linear-gradient(180deg,var(--ns-brand-soft),transparent)] p-3.5">
+      <span className="grid size-9 flex-none place-items-center rounded-[10px] bg-brand-soft text-brand">
+        <WandSparklesIcon className="size-4.5" aria-hidden="true" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="font-heading text-[13.5px] font-semibold">{proposal.title}</div>
+        <div className="mt-0.5 text-[12px] leading-normal text-text-2">{proposal.description}</div>
+        <button
+          type="button"
+          disabled={autofix.isPending}
+          onClick={() => void apply()}
+          className="mt-2.5 inline-flex h-8 items-center gap-1.5 rounded-[9px] bg-cta px-3.5 text-[12.5px] font-semibold text-cta-foreground hover:bg-(--ns-cta-hover) disabled:opacity-50"
+        >
+          <WandSparklesIcon className="size-3.5" aria-hidden="true" />
+          Применить
+        </button>
+      </div>
+    </div>
+  );
+}

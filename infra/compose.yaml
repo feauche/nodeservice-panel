@@ -1,0 +1,114 @@
+# NodeService — production stack. Запуск: `docker compose -f infra/compose.yaml up -d`
+# (install.sh делает это за тебя и генерирует .env с секретами).
+# Внутренние сервисы не публикуют порты наружу — всё идёт через Caddy (авто-HTTPS).
+
+name: nodeservice
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  caddy:
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      PANEL_DOMAIN: ${PANEL_DOMAIN:?PANEL_DOMAIN не задан}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    <<: *logging
+
+  api:
+    image: ghcr.io/lumaxdev/nodeservice-api:${NODESERVICE_VERSION:-latest}
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: postgres://nodeservice:${POSTGRES_PASSWORD}@postgres:5432/nodeservice
+      VALKEY_URL: redis://valkey:6379
+      VICTORIA_URL: http://victoriametrics:8428
+      PUBLIC_URL: https://${PANEL_DOMAIN}
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      victoriametrics:
+        condition: service_started
+    mem_limit: 768m
+    <<: *logging
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nodeservice
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан}
+      POSTGRES_DB: nodeservice
+    volumes:
+      - pg_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nodeservice -d nodeservice"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    mem_limit: 512m
+    <<: *logging
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "60", "1", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    mem_limit: 192m
+    <<: *logging
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.146.0
+    restart: unless-stopped
+    command:
+      - "--retentionPeriod=90d"
+      - "--storageDataPath=/vmdata"
+      - "--httpListenAddr=:8428"
+    volumes:
+      - vm_data:/vmdata
+    mem_limit: 512m
+    <<: *logging
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pg_data:
+  valkey_data:
+  vm_data:

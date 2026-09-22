@@ -1,0 +1,34 @@
+{
+  "name": "@nodeservice/shared",
+  "version": "0.9.1",
+  "private": true,
+  "description": "Общие контракты: zod-схемы API, enum-ы аудита, протокол панель↔агент",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "biome check .",
+    "test": "vitest run --passWithNoTests"
+  },
+  "peerDependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3",
+    "vitest": "^4.0.0",
+    "zod": "^4.5.4"
+  },
+  "files": [
+    "dist"
+  ]
+}

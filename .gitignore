@@ -1,0 +1,50 @@
+# Секреты и окружение
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Node
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Go
+/agent/bin/
+*.exe
+*.test
+*.out
+
+# Данные и тома
+data/
+volumes/
+*.sqlite
+*.db
+
+# Редакторы/ОС
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Turbo / tooling
+.turbo/
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
+
+# generated
+src/routeTree.gen.ts
+
+# локальные env
+apps/api/.env
+apps/api/.env.local
+infra/.env
+
+packages/shared/dist

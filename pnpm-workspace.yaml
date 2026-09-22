@@ -1,0 +1,20 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 11: postinstall-скрипты запускаются только у явно разрешённых пакетов
+allowBuilds:
+  lefthook: true
+  '@biomejs/biome': true
+  esbuild: true
+  argon2: true
+  '@node-rs/argon2': true
+  '@swc/core': true
+  '@nestjs/core': true
+  msw: true
+  sharp: true
+  msgpackr-extract: true
+  '@scarf/scarf': false
+  # нативные ускорители ssh2 необязательны — чистый JS-фолбэк
+  cpu-features: false
+  ssh2: false
