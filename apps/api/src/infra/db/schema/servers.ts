@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 /**
  * Этап 4: инвентарь серверов. Пароли SSH не хранятся никогда;
@@ -64,3 +64,30 @@ export const enrollmentTokens = pgTable(
 );
 
 export type EnrollmentTokenRow = typeof enrollmentTokens.$inferSelect;
+
+/**
+ * История веб-терминала (этап R1.7): запись вывода каждой PTY-сессии — то, что видел оператор.
+ * Ввод не пишется (пароли с выключенным эхом никогда не попадают в запись). Миграция 0017.
+ */
+export const terminalSessions = pgTable(
+  'terminal_sessions',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    serverId: uuid('server_id')
+      .notNull()
+      .references(() => servers.id, { onDelete: 'cascade' }),
+    actorId: uuid('actor_id'),
+    actorDisplay: text('actor_display'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    cols: integer('cols').notNull().default(80),
+    rows: integer('rows').notNull().default(24),
+    transcript: text('transcript').notNull().default(''),
+    bytesOut: bigint('bytes_out', { mode: 'number' }).notNull().default(0),
+    truncated: boolean('truncated').notNull().default(false),
+    exitCode: integer('exit_code'),
+    endReason: text('end_reason'),
+  },
+  (t) => [index('terminal_sessions_server_idx').on(t.serverId, t.startedAt)],
+);
+export type TerminalSessionRow = typeof terminalSessions.$inferSelect;

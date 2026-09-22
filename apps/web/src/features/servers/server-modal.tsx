@@ -37,14 +37,16 @@ import { AgentInstallDialog } from './agent-install-dialog';
 import { HealthDot, osLine, SshPill } from './server-card';
 import { JournalTab } from './server-detail/journal-tab';
 import { MetricsTab } from './server-detail/metrics-tab';
+import { TerminalHistoryTab } from './server-detail/terminal-history-tab';
 import { serverHealth } from './server-health';
 import { useCheckServer, useDeleteServer, useDuplicateServer, useUpdateServer } from './servers-api';
 
-export type ServerModalTab = 'metrics' | 'journal' | 'connection';
+export type ServerModalTab = 'metrics' | 'journal' | 'terminal' | 'connection';
 
 const TABS: Array<{ key: ServerModalTab; label: string }> = [
   { key: 'metrics', label: 'Метрики' },
   { key: 'journal', label: 'Журнал' },
+  { key: 'terminal', label: 'Терминал' },
   { key: 'connection', label: 'Подключение' },
 ];
 
@@ -305,6 +307,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 max-md:px-4">
             {tab === 'metrics' && <MetricsTab serverId={s.id} range={range} onRange={setRange} />}
             {tab === 'journal' && <JournalTab serverId={s.id} />}
+            {tab === 'terminal' && <TerminalHistoryTab serverId={s.id} />}
             {tab === 'connection' && <ConnectionTab server={s} />}
           </div>
         </div>

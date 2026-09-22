@@ -7,6 +7,11 @@ import { AuditService } from '../audit/audit.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import type { SshShell } from '../servers/ssh.service.js';
 import { SshService } from '../servers/ssh.service.js';
+import { TerminalSessionsRepository } from './terminal-sessions.repository.js';
+
+/** Запись вывода: копим в памяти и дописываем в БД пачками, чтобы не бить базу на каждый байт. */
+const RECORD_FLUSH_MS = 1500;
+const RECORD_FLUSH_BYTES = 32 * 1024;
 
 /** Пара функций для общения шлюза с сессией. */
 export interface TerminalHooks {
@@ -22,7 +27,8 @@ export interface TerminalSession {
 
 /**
  * Веб-терминал: открывает PTY по SSH, следит за лимитом одновременных сессий и простоем,
- * пишет в Журнал факт открытия/закрытия (без содержимого).
+ * пишет в Журнал факт открытия/закрытия, а вывод сессии сохраняет в историю терминала
+ * (ввод не пишется — пароли с выключенным эхом в запись не попадают).
  */
 @Injectable()
 export class TerminalService {
@@ -33,6 +39,7 @@ export class TerminalService {
     private readonly servers: ServersService,
     private readonly ssh: SshService,
     private readonly audit: AuditService,
+    private readonly history: TerminalSessionsRepository,
   ) {}
 
   async open(
@@ -55,6 +62,49 @@ export class TerminalService {
     }
     this.active += 1;
     const openedAt = Date.now();
+
+    // Запись сессии: провал записи не должен ронять сам терминал.
+    let recordId: string | null = null;
+    try {
+      await this.history.prune();
+      recordId = await this.history.start({
+        serverId,
+        actorId: actor.type === 'admin' ? (actor.id ?? null) : null,
+        actorDisplay: actor.display ?? null,
+        cols: size.cols,
+        rows: size.rows,
+      });
+    } catch (err) {
+      this.log.warn(`История терминала недоступна: ${(err as Error).message}`);
+    }
+    let pending = '';
+    let pendingBytes = 0;
+    let flushTimer: NodeJS.Timeout | null = null;
+    let flushing: Promise<void> = Promise.resolve();
+    const flush = () => {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      if (!recordId || pending.length === 0) return flushing;
+      const chunk = pending;
+      const bytes = pendingBytes;
+      pending = '';
+      pendingBytes = 0;
+      const id = recordId;
+      flushing = flushing
+        .then(() => this.history.append(id, chunk, bytes))
+        .catch((err) => this.log.warn(`История терминала: не записан кусок: ${(err as Error).message}`));
+      return flushing;
+    };
+    const record = (chunk: string) => {
+      if (!recordId) return;
+      pending += chunk;
+      pendingBytes += Buffer.byteLength(chunk);
+      if (pendingBytes >= RECORD_FLUSH_BYTES) void flush();
+      else if (!flushTimer) flushTimer = setTimeout(() => void flush(), RECORD_FLUSH_MS);
+    };
+
     await this.audit.record({
       action: 'server.terminal.open',
       actor,
@@ -75,6 +125,12 @@ export class TerminalService {
       this.active -= 1;
       shell.close();
       hooks.onExit(code);
+      if (recordId) {
+        const id = recordId;
+        void flush()
+          .then(() => this.history.finish(id, code, reason ?? null))
+          .catch((err) => this.log.warn(`История терминала: сессия не закрыта: ${(err as Error).message}`));
+      }
       void this.audit.record({
         action: 'server.terminal.close',
         actor,
@@ -86,7 +142,10 @@ export class TerminalService {
       });
     };
 
-    shell.onData((chunk) => hooks.onOutput(chunk));
+    shell.onData((chunk) => {
+      hooks.onOutput(chunk);
+      record(chunk);
+    });
     shell.onClose((code) => finish(code));
     resetIdle();
 
@@ -95,7 +154,10 @@ export class TerminalService {
         resetIdle();
         shell.write(data);
       },
-      resize: (cols, rows) => shell.resize(cols, rows),
+      resize: (cols, rows) => {
+        shell.resize(cols, rows);
+        if (recordId) void this.history.resize(recordId, cols, rows).catch(() => undefined);
+      },
       close: () => finish(null, 'закрыт пользователем'),
     };
   }

@@ -120,6 +120,13 @@
       "when": 1788800000000,
       "tag": "0016_kb_versions",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1788900000000,
+      "tag": "0017_terminal_sessions",
+      "breakpoints": true
     }
   ]
 }

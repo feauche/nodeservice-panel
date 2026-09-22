@@ -83,6 +83,13 @@ describe('ServersPage', () => {
     // журнал сервера
     await user.click(within(dialog).getByRole('button', { name: 'Журнал' }));
     expect(await within(dialog).findByText('Открыть весь Журнал')).toBeInTheDocument();
+    // История терминала: список сессий и запись вывода без ANSI-кодов
+    await user.click(within(dialog).getByRole('button', { name: 'Терминал' }));
+    expect(await within(dialog).findByText(/закрыт пользователем/)).toBeInTheDocument();
+    const transcript = await within(dialog).findByTestId('terminal-transcript');
+    expect(transcript).toHaveTextContent('nodectl status');
+    expect(transcript).toHaveTextContent('Fail2Ban: active');
+    expect(transcript.textContent).not.toContain('[32m');
   });
 
   it('меню «Изменить» открывает модалку сразу на «Подключении», удаление изнутри работает', async () => {
@@ -149,7 +156,8 @@ describe('ServersPage', () => {
     await screen.findByText('de-fra-01');
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Действия с de-fra-01' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'Установить агента' }));
+    // у ноды с агентом в сети пункт называется «Переустановить агента»
+    await user.click(await screen.findByRole('menuitem', { name: /становить агента/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Установка агента' });
     expect(within(dialog).getByText(/github\.com\/feauche\/nodeservice-agent/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: 'Установить по SSH' }));

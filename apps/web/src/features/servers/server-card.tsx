@@ -345,7 +345,7 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setInstallOpen(true)}>
                 <KeyRoundIcon className="size-4" aria-hidden="true" />
-                Установить агента
+                {server.agentStatus === 'online' ? 'Переустановить агента' : 'Установить агента'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>

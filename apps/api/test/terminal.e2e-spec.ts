@@ -190,6 +190,28 @@ describe('terminal e2e', () => {
     };
     expect(audit.items.some((e) => e.action === 'server.terminal.open')).toBe(true);
     expect(audit.items.some((e) => e.action === 'server.terminal.close')).toBe(true);
+
+    // История терминала: сессия записана вместе с выводом (эхо whoami), завершена, без ввода как такового.
+    await new Promise((r) => setTimeout(r, 1800));
+    const list = (await agent.get(`/api/servers/${serverId}/terminal/sessions`).expect(200)).body as {
+      items: Array<{ id: string; endedAt: string | null; bytesOut: number; cols: number }>;
+    };
+    expect(list.items.length).toBeGreaterThanOrEqual(1);
+    const last = list.items[0]!;
+    expect(last.cols).toBe(100);
+    expect(last.endedAt).not.toBeNull();
+    expect(last.bytesOut).toBeGreaterThan(0);
+    const detail = (await agent.get(`/api/servers/${serverId}/terminal/sessions/${last.id}`).expect(200))
+      .body as { transcript: string };
+    expect(detail.transcript).toContain('100 cols');
+    expect(detail.transcript).toContain('whoami');
+    // догрузка по смещению: хвост записи и полная длина
+    const full = detail.transcript.length;
+    const tail = (
+      await agent.get(`/api/servers/${serverId}/terminal/sessions/${last.id}?offset=${full - 5}`).expect(200)
+    ).body as { transcript: string; offset: number; length: number };
+    expect(tail).toMatchObject({ offset: full - 5, length: full });
+    expect(tail.transcript).toBe(detail.transcript.slice(full - 5));
   }, 20_000);
 
   it('WebSocket без cookie — закрывается кодом 4401', async () => {

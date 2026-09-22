@@ -7,7 +7,7 @@ import { incidentsHandlers, seedIncidents } from './incidents-mock';
 import { knowledgeHandlers, seedKnowledge } from './knowledge-mock';
 import { metricsHandlers, seedMetrics } from './metrics-mock';
 import { mockSecurity, securityHandlers, seedSecurity } from './security-mock';
-import { seedServers, serversHandlers } from './servers-mock';
+import { seedServers, serversHandlers, terminalHistoryHandlers } from './servers-mock';
 
 /**
  * Мок /api/auth по контракту packages/shared/src/auth.ts.
@@ -150,6 +150,7 @@ export const handlers = [
   ...autochecksHandlers,
   ...securityHandlers,
   ...serversHandlers,
+  ...terminalHistoryHandlers,
   ...metricsHandlers,
   ...incidentsHandlers,
   ...knowledgeHandlers,

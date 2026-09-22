@@ -61,6 +61,46 @@ function makeServer(patch: Partial<Server>): Server {
   };
 }
 
+/* ---------- история терминала ---------- */
+export const mockTerminalSessions: {
+  items: Array<{
+    id: string;
+    serverId: string;
+    actorDisplay: string | null;
+    startedAt: string;
+    endedAt: string | null;
+    cols: number;
+    rows: number;
+    bytesOut: number;
+    truncated: boolean;
+    exitCode: number | null;
+    endReason: string | null;
+  }>;
+  transcripts: Record<string, string>;
+} = { items: [], transcripts: {} };
+
+export function seedTerminalSessions(serverId: string): void {
+  const id = '22222222-2222-4222-8222-222222222222';
+  mockTerminalSessions.items = [
+    {
+      id,
+      serverId,
+      actorDisplay: 'admin',
+      startedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+      endedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
+      cols: 120,
+      rows: 30,
+      bytesOut: 1840,
+      truncated: false,
+      exitCode: 0,
+      endReason: 'закрыт пользователем',
+    },
+  ];
+  mockTerminalSessions.transcripts = {
+    [id]: '\u001b[32mroot@de-fra-01\u001b[0m:~# nodectl status\r\nUFW: active\r\nFail2Ban: active\r\nroot@de-fra-01:~# ',
+  };
+}
+
 export function seedServers(): void {
   seq = 0;
   mockServers.hostKeyChanged = false;
@@ -81,6 +121,7 @@ export function seedServers(): void {
       facts: { ...FACTS, hostname: 'node-2', os: 'Debian', osVersion: '13', arch: 'aarch64' },
     }),
   ];
+  seedTerminalSessions(mockServers.items[0]?.id ?? '');
 }
 seedServers();
 
@@ -275,5 +316,18 @@ export const serversHandlers = [
       installCommand:
         'curl -fsSL https://github.com/feauche/nodeservice-agent/releases/latest/download/install.sh | sh -s -- --token nse_mock-token --panel http://localhost:5173',
     });
+  }),
+];
+
+export const terminalHistoryHandlers = [
+  http.get('/api/servers/:id/terminal/sessions', ({ params }) =>
+    HttpResponse.json({ items: mockTerminalSessions.items.filter((s) => s.serverId === params.id) }),
+  ),
+  http.get('/api/servers/:id/terminal/sessions/:sid', ({ params, request }) => {
+    const s = mockTerminalSessions.items.find((x) => x.id === params.sid && x.serverId === params.id);
+    if (!s) return problem(404, 'about:blank', 'Сессия терминала не найдена');
+    const full = mockTerminalSessions.transcripts[s.id] ?? '';
+    const offset = Number(new URL(request.url).searchParams.get('offset') ?? 0) || 0;
+    return HttpResponse.json({ ...s, transcript: full.slice(offset), offset, length: full.length });
   }),
 ];
