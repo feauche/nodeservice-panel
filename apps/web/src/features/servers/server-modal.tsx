@@ -9,6 +9,7 @@ import {
 import {
   ChevronDownIcon,
   CopyPlusIcon,
+  ExternalLinkIcon,
   KeyRoundIcon,
   Loader2Icon,
   MoreHorizontalIcon,
@@ -36,6 +37,9 @@ import { Input } from '@/components/ui/input';
 import { Field } from '@/features/auth/components/field';
 import { PasswordField } from '@/features/auth/components/password-field';
 import { useOverviewMetrics } from '@/features/overview/overview-api';
+import { ProviderIcon } from '@/features/providers/provider-icon';
+import { ProviderSelect } from '@/features/providers/provider-select';
+import { useProviders } from '@/features/providers/providers-api';
 import { formatAgo } from '@/features/security/security-format';
 import { StepUpCancelledError } from '@/features/security/step-up';
 import { Pill } from '@/features/settings/settings-ui';
@@ -99,6 +103,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
   // Телефон — своя раскладка (вариант 1 витрины): шапка + вкладки сверху, факты свёрнуты,
   // действия в нижней панели. В jsdom matchMedia нет — считаем, что не телефон.
   const phone = useMediaQuery('(max-width: 767px)', false);
+  const providers = useProviders();
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: вкладка выставляется при каждом открытии
   useEffect(() => {
@@ -144,6 +149,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
     }
   };
 
+  const provider = s.providerId ? (providers.data?.items.find((p) => p.id === s.providerId) ?? null) : null;
   const facts: Array<[string, ReactNode]> = [
     [
       'Адрес',
@@ -153,6 +159,17 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
       >{`${s.sshUser}@${s.host}:${s.port}`}</span>,
     ],
     ['Система', osLine(s)],
+    ...(provider
+      ? ([
+          [
+            'Провайдер',
+            <span key="p" className="flex items-center gap-1.5">
+              <ProviderIcon provider={provider} size="sm" />
+              <span className="truncate">{provider.name}</span>
+            </span>,
+          ],
+        ] as Array<[string, ReactNode]>)
+      : []),
     ['Ресурсы', resources || '—'],
     ['Аптайм', formatUptime(metrics?.uptimeSec)],
     ['Проверка SSH', s.lastSshCheckAt ? formatAgo(s.lastSshCheckAt) : 'ещё не было'],
@@ -510,7 +527,9 @@ const AUTH_TABS = [
 /** «Подключение»: общее и доступы SSH одним экраном; действия с сервером — в левой панели окна. */
 function ConnectionTab({ server }: { server: Server }) {
   const update = useUpdateServer();
+  const providers = useProviders();
   const [form, setForm] = useState({ name: '', host: '', port: '22', sshUser: '', tags: '', notes: '' });
+  const [providerId, setProviderId] = useState<string | null>(null);
   const [authTab, setAuthTab] = useState<(typeof AUTH_TABS)[number]['key']>('keep');
   const [password, setPassword] = useState('');
   const [privateKey, setPrivateKey] = useState('');
@@ -527,6 +546,7 @@ function ConnectionTab({ server }: { server: Server }) {
       tags: server.tags.join(', '),
       notes: server.notes ?? '',
     });
+    setProviderId(server.providerId);
     setAuthTab('keep');
     setPassword('');
     setPrivateKey('');
@@ -557,6 +577,7 @@ function ConnectionTab({ server }: { server: Server }) {
         .map((t) => t.trim())
         .filter(Boolean),
       notes: form.notes.trim() ? form.notes.trim() : null,
+      providerId,
       ...(auth ? { auth } : {}),
     });
     if (!parsed.success) {
@@ -584,6 +605,7 @@ function ConnectionTab({ server }: { server: Server }) {
   };
 
   const busy = update.isPending;
+  const chosenProvider = providerId ? (providers.data?.items.find((p) => p.id === providerId) ?? null) : null;
 
   return (
     <form
@@ -619,11 +641,52 @@ function ConnectionTab({ server }: { server: Server }) {
             />
           </Field>
         </div>
+      </section>
+
+      {/* Хостинг: у кого куплен сервер и что важно помнить об оплате */}
+      <section className="rounded-2xl border border-border bg-surface-2/40 p-4">
+        <div className="mb-3 flex items-baseline justify-between gap-3">
+          <h3 className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">Хостинг</h3>
+          <span className="text-[12px] text-text-3">справочник — в меню «Серверы»</span>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field id="sm-provider" label="Провайдер" error={errors.providerId || undefined}>
+            <ProviderSelect
+              id="sm-provider"
+              value={providerId}
+              disabled={busy}
+              onChange={(id) => {
+                setProviderId(id);
+                setErrors((p) => ({ ...p, providerId: '', form: '' }));
+              }}
+              className="bg-surface-2"
+            />
+          </Field>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[12.5px] font-medium text-text-2">Сайт провайдера</span>
+            {chosenProvider ? (
+              <a
+                href={chosenProvider.siteUrl}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="inline-flex h-10 items-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-3 text-[13px] text-brand underline-offset-2 hover:underline"
+              >
+                <ProviderIcon provider={chosenProvider} size="sm" />
+                <span className="truncate">{chosenProvider.siteHost}</span>
+                <ExternalLinkIcon className="size-3.5 flex-none" aria-hidden="true" />
+              </a>
+            ) : (
+              <span className="inline-flex h-10 items-center rounded-[10px] border border-dashed border-border px-3 text-[12.5px] text-text-3">
+                появится после выбора провайдера
+              </span>
+            )}
+          </div>
+        </div>
         <div className="mt-4">
           <Field id="sm-notes" label="Заметка" error={errors.notes || undefined}>
             <Input
               id="sm-notes"
-              placeholder="Необязательно: провайдер, срок оплаты, для чего сервер"
+              placeholder="Необязательно: срок оплаты, тариф, для чего сервер"
               aria-invalid={errors.notes ? true : undefined}
               aria-describedby={errors.notes ? 'sm-notes-error' : undefined}
               value={form.notes}

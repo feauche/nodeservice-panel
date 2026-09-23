@@ -51,6 +51,7 @@ export class ServersService {
       authMethod: row.authMethod as Server['authMethod'],
       tags: row.tags ?? [],
       notes: row.notes,
+      providerId: row.providerId ?? null,
       facts: {
         hostname: row.hostname,
         os: row.os,
@@ -129,6 +130,7 @@ export class ServersService {
         sshPrivateKeyEnc: req.auth.method === 'key' ? this.crypto.encrypt(req.auth.privateKey) : null,
         tags: req.tags,
         notes: req.notes?.trim() ? req.notes.trim() : null,
+        providerId: await this.resolveProvider(req.providerId),
         agentStatus: 'not_installed',
         sshOk: null,
       });
@@ -187,6 +189,7 @@ export class ServersService {
         !installPanelKey && req.auth.method === 'key' ? this.crypto.encrypt(req.auth.privateKey) : null,
       tags: req.tags,
       notes: req.notes?.trim() ? req.notes.trim() : null,
+      providerId: await this.resolveProvider(req.providerId),
       ...facts,
       hostKeyFp,
       agentStatus: 'not_installed',
@@ -339,6 +342,7 @@ export class ServersService {
       ...(patch.sshUser !== undefined ? { sshUser: patch.sshUser } : {}),
       ...(patch.tags !== undefined ? { tags: patch.tags } : {}),
       ...(patch.notes !== undefined ? { notes: patch.notes?.trim() ? patch.notes.trim() : null } : {}),
+      ...(patch.providerId !== undefined ? { providerId: await this.resolveProvider(patch.providerId) } : {}),
       ...(endpointChanged && !patch.auth
         ? { hostKeyFp: null, sshOk: null, lastSshCheckAt: null, lastSshOkAt: null }
         : {}),
@@ -511,6 +515,13 @@ export class ServersService {
   }
 
   /* ---------- токен агента (этап 5 подключит установку) ---------- */
+
+  /** Провайдер должен существовать в справочнике; null — «без провайдера». */
+  private async resolveProvider(id: string | null | undefined): Promise<string | null> {
+    if (!id) return null;
+    if (!(await this.repo.providerExists(id))) throw serverProblems.providerNotFound();
+    return id;
+  }
 
   /** Фоновая автоустановка после добавления: не блокирует ответ, причины неудач уже пишет installAgent. */
   private autoInstallAgent(id: string): void {

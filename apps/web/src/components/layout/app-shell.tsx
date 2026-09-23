@@ -1,7 +1,8 @@
-import { Link } from '@tanstack/react-router';
+import { Link, useRouterState } from '@tanstack/react-router';
 import {
   AlertTriangleIcon,
   BookOpenIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   LayoutGridIcon,
   ListIcon,
@@ -18,6 +19,14 @@ import { type ReactNode, useEffect, useState } from 'react';
 
 import { BrandLogo, BrandName } from '@/components/brand-logo';
 import { ThemeMenu } from '@/components/theme-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useOpenIncidentsCount } from '@/features/incidents/incidents-api';
 import { useSecurityOverview } from '@/features/security/security-api';
 import { StepUpHost } from '@/features/security/step-up-host';
@@ -44,6 +53,16 @@ const NAV = [
   { to: '/incidents', label: 'Инциденты', icon: AlertTriangleIcon },
   { to: '/settings', label: 'Настройки', icon: SettingsIcon },
 ] as const;
+/** «Серверы» раскрываются в подпункты: список серверов и справочник провайдеров. */
+const SERVERS_GROUP = {
+  to: '/servers',
+  label: 'Серверы',
+  icon: ServerIcon,
+  items: [
+    { to: '/servers', label: 'Все серверы' },
+    { to: '/servers/providers', label: 'Провайдеры' },
+  ],
+} as const;
 /** Раздел «Автоматизация» — AI-ассистент и база знаний. */
 const NAV_AUTOMATION = [
   { to: '/assistant', label: 'Ассистент', icon: SparklesIcon },
@@ -148,6 +167,153 @@ function GroupLabel({ children, hidden }: { children: ReactNode; hidden?: boolea
   );
 }
 
+/**
+ * Группа «Серверы» с подпунктами. Подпункты раскрываются плавно (grid-rows 0fr→1fr + прозрачность),
+ * без прыжков высоты; при `prefers-reduced-motion` — мгновенно. В свёрнутом рейле группа
+ * становится всплывающим меню справа от иконки.
+ */
+function NavGroup({
+  collapsed,
+  mode = 'rail',
+  onNavigate,
+}: {
+  collapsed: boolean;
+  mode?: 'rail' | 'drawer';
+  onNavigate?: () => void;
+}) {
+  const { to, label, icon: Icon, items } = SERVERS_GROUP;
+  const pathname = useRouterState({ select: (st) => st.location.pathname });
+  const inSection = pathname === to || pathname.startsWith(`${to}/`);
+  const [open, setOpen] = useState(inSection);
+  // Пришли в раздел (по ссылке или из меню) — подпункты показываем сразу.
+  useEffect(() => {
+    if (inSection) setOpen(true);
+  }, [inSection]);
+  const iconOnly = mode === 'rail' && collapsed;
+  const isItemActive = (item: (typeof items)[number]) =>
+    item.to === to ? pathname === to : pathname === item.to || pathname.startsWith(`${item.to}/`);
+
+  if (iconOnly) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          title={label}
+          aria-label={label}
+          className={cn(
+            'relative flex w-full cursor-pointer items-center justify-center rounded-[10px] px-0 py-[9px] text-text-2 transition-colors outline-none hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand data-open:bg-surface-2 data-open:text-foreground',
+            inSection &&
+              'bg-brand-soft text-brand before:absolute before:top-[9px] before:bottom-[9px] before:-left-2.5 before:w-[3px] before:rounded-r-[3px] before:bg-brand before:content-[""]',
+          )}
+        >
+          <Icon className="size-[17px] flex-none" aria-hidden="true" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="right" align="start" sideOffset={10} className="w-auto min-w-[176px]">
+          <DropdownMenuLabel className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
+            {label}
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          {items.map((item) => (
+            <DropdownMenuItem key={item.to} asChild>
+              <Link
+                to={item.to}
+                onClick={onNavigate}
+                className={cn('cursor-pointer text-[13px]', isItemActive(item) && 'font-semibold text-brand')}
+              >
+                {item.label}
+              </Link>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
+  const railOnPhone = mode === 'rail';
+  // Когда подпункты раскрыты, подсветка живёт на подпункте, а не на родителе.
+  const parentActive = inSection && !open;
+  return (
+    <div className="flex flex-col">
+      <div
+        className={cn(
+          'relative flex items-center rounded-[10px] text-[13.5px] font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground',
+          inSection && 'text-foreground',
+          parentActive && 'bg-brand-soft text-brand',
+          parentActive &&
+            mode !== 'drawer' &&
+            'before:absolute before:top-[9px] before:bottom-[9px] before:-left-3 before:w-[3px] before:rounded-r-[3px] before:bg-brand before:content-[""]',
+          railOnPhone && 'max-md:justify-center',
+        )}
+      >
+        <Link
+          to={to}
+          onClick={() => {
+            setOpen(true);
+            onNavigate?.();
+          }}
+          className={cn(
+            'flex min-w-0 flex-1 items-center gap-[11px] rounded-[10px] px-3 py-[9px] outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
+            railOnPhone && 'max-md:flex-none max-md:justify-center max-md:px-0',
+          )}
+        >
+          <Icon className="size-[17px] flex-none" aria-hidden="true" />
+          <span className={cn('flex-1 truncate', railOnPhone && 'max-md:sr-only')}>{label}</span>
+        </Link>
+        <button
+          type="button"
+          aria-label={open ? 'Скрыть подпункты «Серверы»' : 'Показать подпункты «Серверы»'}
+          aria-expanded={open}
+          aria-controls="nav-servers-items"
+          onClick={() => setOpen((v) => !v)}
+          className={cn(
+            'mr-1 grid size-7 flex-none cursor-pointer place-items-center rounded-[8px] text-text-3 transition-colors outline-none hover:bg-surface-3 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
+            railOnPhone && 'max-md:hidden',
+          )}
+        >
+          <ChevronDownIcon
+            className={cn(
+              'size-4 transition-transform duration-200 ease-out motion-reduce:transition-none',
+              !open && '-rotate-90',
+            )}
+            aria-hidden="true"
+          />
+        </button>
+      </div>
+      <div
+        id="nav-servers-items"
+        className={cn(
+          'grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none',
+          open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
+          railOnPhone && 'max-md:hidden',
+        )}
+      >
+        <ul className="flex min-h-0 flex-col gap-[2px] overflow-hidden" inert={!open}>
+          {items.map((item) => {
+            const active = isItemActive(item);
+            return (
+              <li
+                key={item.to}
+                className="relative ml-[21px] border-l border-border pl-[9px] first:mt-[3px] last:mb-[2px]"
+              >
+                <Link
+                  to={item.to}
+                  onClick={onNavigate}
+                  aria-current={active ? 'page' : undefined}
+                  className={cn(
+                    'flex items-center rounded-[8px] px-2.5 py-[7px] text-[13px] font-medium text-text-2 transition-colors outline-none hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
+                    active && 'bg-brand-soft text-brand hover:bg-brand-soft hover:text-brand',
+                  )}
+                >
+                  {item.label}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 /** Список разделов — один и тот же в боковой колонке и в выезжающем меню на телефоне. */
 function NavList({
   collapsed,
@@ -167,16 +333,20 @@ function NavList({
       <GroupLabel hidden={hideLabels}>
         <span className={labelClass}>Управление</span>
       </GroupLabel>
-      {NAV.map((n) => (
-        <NavItem
-          key={n.to}
-          {...n}
-          collapsed={collapsed}
-          mode={mode}
-          onNavigate={onNavigate}
-          badge={n.to === '/incidents' ? openIncidents : undefined}
-        />
-      ))}
+      {NAV.map((n) =>
+        n.to === SERVERS_GROUP.to ? (
+          <NavGroup key={n.to} collapsed={collapsed} mode={mode} onNavigate={onNavigate} />
+        ) : (
+          <NavItem
+            key={n.to}
+            {...n}
+            collapsed={collapsed}
+            mode={mode}
+            onNavigate={onNavigate}
+            badge={n.to === '/incidents' ? openIncidents : undefined}
+          />
+        ),
+      )}
       <GroupLabel hidden={hideLabels}>
         <span className={labelClass}>Автоматизация</span>
       </GroupLabel>

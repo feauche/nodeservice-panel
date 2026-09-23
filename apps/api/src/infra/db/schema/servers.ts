@@ -18,6 +18,23 @@ import {
  * свой приватный ключ — только зашифрованным (AES-256-GCM, см. CryptoService).
  * Таблицы созданы raw-миграцией 0004_servers.sql (уникальности и CHECK — там).
  */
+/**
+ * Провайдеры (хостеры): общий справочник, иконка с сайта хранится прямо в строке (≤64 КБ, base64).
+ * Миграция 0019.
+ */
+export const providers = pgTable('providers', {
+  id: uuid('id').primaryKey().default(sql`uuidv7()`),
+  name: text('name').notNull().unique(),
+  siteUrl: text('site_url').notNull(),
+  note: text('note'),
+  iconType: text('icon_type'),
+  iconData: text('icon_data'),
+  iconVersion: integer('icon_version').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export type ProviderRow = typeof providers.$inferSelect;
+
 export const servers = pgTable('servers', {
   id: uuid('id').primaryKey().default(sql`uuidv7()`),
   name: text('name').notNull().unique(),
@@ -29,6 +46,8 @@ export const servers = pgTable('servers', {
   sshPrivateKeyEnc: text('ssh_private_key_enc'),
   tags: jsonb('tags').$type<string[]>().notNull().default([]),
   notes: text('notes'),
+  /** Хостер из справочника providers; при удалении провайдера сбрасывается в NULL (миграция 0019). */
+  providerId: uuid('provider_id').references(() => providers.id, { onDelete: 'set null' }),
   /* факты (обновляются при каждой успешной проверке SSH) */
   hostname: text('hostname'),
   os: text('os'),

@@ -34,6 +34,38 @@ describe('AppShell · меню пользователя', () => {
     }
   });
 
+  it('«Серверы» раскрываются в «Все серверы» и «Провайдеры»; шеврон сворачивает подпункты', async () => {
+    const { router } = renderPage(Page, '/', ['/login', '/lock', '/servers', '/servers/providers']);
+    const toggle = await screen.findByRole('button', { name: 'Показать подпункты «Серверы»' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    // вне раздела подпункты скрыты (inert) и не в фокусе
+    expect(screen.getByRole('link', { name: 'Серверы' })).toHaveAttribute('href', '/servers');
+    const user = userEvent.setup();
+    await user.click(toggle);
+    expect(screen.getByRole('button', { name: 'Скрыть подпункты «Серверы»' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(screen.getByRole('link', { name: 'Все серверы' })).toHaveAttribute('href', '/servers');
+    expect(screen.getByRole('link', { name: 'Провайдеры' })).toHaveAttribute('href', '/servers/providers');
+    await user.click(screen.getByRole('link', { name: 'Провайдеры' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/servers/providers'));
+  });
+
+  it('в свёрнутом рейле «Серверы» — всплывающее меню с подпунктами', async () => {
+    renderPage(Page, '/', ['/login', '/lock', '/servers', '/servers/providers']);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Свернуть меню' }));
+    await user.click(screen.getByRole('button', { name: 'Серверы' }));
+    expect(await screen.findByRole('menuitem', { name: 'Все серверы' })).toHaveAttribute('href', '/servers');
+    expect(screen.getByRole('menuitem', { name: 'Провайдеры' })).toHaveAttribute(
+      'href',
+      '/servers/providers',
+    );
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Развернуть меню' }));
+  });
+
   it('«Выйти» сначала спрашивает; logout не вызывается до «Да»', async () => {
     const logoutCalls = vi.fn();
     server.use(

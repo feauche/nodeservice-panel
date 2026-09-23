@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetMockState } from '@/test/msw/handlers';
 import { makeCheck, mockMaintenance, seedMaintenance } from '@/test/msw/maintenance-mock';
+import { mockProviders } from '@/test/msw/providers-mock';
 import { MOCK_SECURITY, mockSecurity } from '@/test/msw/security-mock';
 import { MOCK_SSH, mockServers, seedServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
@@ -282,6 +283,79 @@ describe('ServersPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), { timeout: 3000 });
     expect(await screen.findByText('fi-hel-03')).toBeInTheDocument();
     expect(mockServers.items).toHaveLength(3);
+  });
+
+  it('провайдер: выбор в «Подключении» (блок «Хостинг»), значок на карточке и строка в фактах', async () => {
+    renderPage(Harness, '/servers');
+    const user = userEvent.setup();
+    await user.click(await screen.findByText('de-fra-01'));
+    const dialog = await screen.findByRole('dialog', { name: 'de-fra-01' });
+    await user.click(within(dialog).getByRole('button', { name: 'Подключение' }));
+    expect(within(dialog).getByText('Хостинг')).toBeInTheDocument();
+    expect(within(dialog).getByText('появится после выбора провайдера')).toBeInTheDocument();
+    // блоки смены пароля/ключа на месте
+    expect(within(dialog).getByText('Доступ по SSH')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Не менять' })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('combobox', { name: 'Провайдер' }));
+    await user.click(await screen.findByRole('option', { name: /Hetzner/ }));
+    expect(within(dialog).getByRole('link', { name: /hetzner\.com/ })).toHaveAttribute(
+      'href',
+      'https://hetzner.com',
+    );
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
+    const hetzner = mockProviders.items.find((p) => p.name === 'Hetzner');
+    await waitFor(() => expect(mockServers.items[0]?.providerId).toBe(hetzner?.id));
+    // факты слева: строка «Провайдер»
+    expect(await within(dialog).findByText('Провайдер', { selector: 'dt' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    // на карточке — значок провайдера
+    const card = cards().find((c) => within(c).queryByText('de-fra-01'));
+    if (!card) throw new Error('card');
+    expect(await within(card).findByTestId('provider-icon')).toBeInTheDocument();
+  });
+
+  it('добавление: обязательные поля со звёздочкой, провайдер выбирается и «+ Добавить провайдера…» открывает форму', async () => {
+    renderPage(Harness, '/servers');
+    await screen.findByText('de-fra-01');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Добавить сервер' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Добавить сервер' });
+    // звёздочка рисуется через CSS, но лежит рядом с подписью обязательного поля
+    for (const name of ['Название', 'IP или домен', 'Пользователь', 'Пароль']) {
+      const input = within(dialog).getByLabelText(name);
+      const label = dialog.querySelector(`label[for="${input.id}"]`);
+      expect(label?.querySelector('.text-crit'), name).not.toBeNull();
+    }
+    for (const name of ['Теги', 'Порт', 'Заметка']) {
+      const input = within(dialog).getByLabelText(name);
+      expect(dialog.querySelector(`label[for="${input.id}"] .text-crit`), name).toBeNull();
+    }
+    await user.click(within(dialog).getByRole('button', { name: 'Свой ключ' }));
+    expect(dialog.querySelector('label[for="srv-key"] .text-crit')).not.toBeNull();
+    await user.click(within(dialog).getByRole('button', { name: 'Пароль' }));
+
+    await user.click(within(dialog).getByRole('combobox', { name: 'Провайдер' }));
+    await user.click(await screen.findByRole('option', { name: 'Добавить провайдера…' }));
+    const provDialog = await screen.findByRole('dialog', { name: 'Новый провайдер' });
+    await user.type(within(provDialog).getByLabelText('Название'), 'Contabo');
+    await user.type(within(provDialog).getByLabelText('Сайт'), 'contabo.com');
+    await user.click(within(provDialog).getByRole('button', { name: 'Добавить' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Новый провайдер' })).not.toBeInTheDocument(),
+    );
+    // новый провайдер сразу выбран в форме сервера
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Провайдер' })).toHaveTextContent('Contabo'),
+    );
+
+    await user.type(within(dialog).getByLabelText('Название'), 'fi-hel-03');
+    await user.type(within(dialog).getByLabelText('IP или домен'), '198.51.100.99');
+    await user.type(within(dialog).getByLabelText('Пароль'), MOCK_SSH.password);
+    await user.click(within(dialog).getByRole('button', { name: 'Проверить и добавить' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), { timeout: 3000 });
+    const contabo = mockProviders.items.find((p) => p.name === 'Contabo');
+    expect(mockServers.items.find((s) => s.name === 'fi-hel-03')?.providerId).toBe(contabo?.id);
   });
 
   it('установка агента по SSH из диалога: статус становится «Ожидает агента»', async () => {

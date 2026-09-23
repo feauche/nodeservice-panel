@@ -119,6 +119,8 @@ export const serverSchema = z.object({
   authMethod: z.enum(['panel-key', 'key']),
   tags: z.array(z.string()),
   notes: z.string().nullable(),
+  /** Хостер из справочника провайдеров; null — не указан. */
+  providerId: z.uuid().nullable(),
   facts: serverFactsSchema,
   /** SHA256-отпечаток host key (формат OpenSSH: «SHA256:…»). */
   hostKeyFingerprint: z.string().nullable(),
@@ -160,6 +162,7 @@ export const createServerRequestSchema = z.object({
   auth: sshAuthSchema,
   tags: tagsSchema,
   notes: z.string().trim().max(SERVER_NOTES_MAX).optional(),
+  providerId: z.uuid().nullable().optional(),
   /**
    * Поставить ключ панели в authorized_keys и дальше ходить только по нему (по умолчанию).
    * false — остаться на своём ключе (для пароля всегда true: пароль не сохраняется).
@@ -181,6 +184,7 @@ export const updateServerRequestSchema = z.object({
   sshUser: sshUserSchema.optional(),
   tags: z.array(tagSchema).max(SERVER_TAGS_MAX, `До ${SERVER_TAGS_MAX} тегов`).optional(),
   notes: z.string().trim().max(SERVER_NOTES_MAX).nullable().optional(),
+  providerId: z.uuid().nullable().optional(),
   /** Новые доступы SSH: панель проверит их реальным подключением (пароль, как и при добавлении, не сохраняется). */
   auth: sshAuthSchema.optional(),
 });

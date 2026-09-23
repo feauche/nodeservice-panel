@@ -5,6 +5,7 @@ import { DB, type Db } from '../../infra/db/db.module.js';
 import {
   type EnrollmentTokenRow,
   enrollmentTokens,
+  providers,
   type ServerRow,
   servers,
 } from '../../infra/db/schema/index.js';
@@ -53,6 +54,14 @@ export class ServersRepository {
         i += 1;
       }
     });
+  }
+
+  async providerExists(id: string): Promise<boolean> {
+    const row = await this.db.query.providers.findFirst({
+      where: eq(providers.id, id),
+      columns: { id: true },
+    });
+    return Boolean(row);
   }
 
   async insert(values: typeof servers.$inferInsert): Promise<ServerRow> {

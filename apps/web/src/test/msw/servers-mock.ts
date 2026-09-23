@@ -50,6 +50,7 @@ function makeServer(patch: Partial<Server>): Server {
     authMethod: 'panel-key',
     tags: [],
     notes: null,
+    providerId: null,
     facts: { ...FACTS },
     hostKeyFingerprint: MOCK_SSH.fingerprint,
     agentStatus: 'not_installed',
@@ -195,6 +196,7 @@ export const serversHandlers = [
       port: req.port,
       sshUser: req.sshUser,
       tags: req.tags,
+      providerId: req.providerId ?? null,
       ...(req.verify
         ? {}
         : {

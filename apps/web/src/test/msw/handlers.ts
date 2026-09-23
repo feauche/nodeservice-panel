@@ -7,6 +7,7 @@ import { incidentsHandlers, seedIncidents } from './incidents-mock';
 import { knowledgeHandlers, seedKnowledge } from './knowledge-mock';
 import { maintenanceHandlers } from './maintenance-mock';
 import { metricsHandlers, seedMetrics } from './metrics-mock';
+import { providersHandlers, seedProviders } from './providers-mock';
 import { mockSecurity, securityHandlers, seedSecurity } from './security-mock';
 import { seedServers, serversHandlers, terminalHistoryHandlers } from './servers-mock';
 
@@ -66,6 +67,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
   seedAutochecks();
   seedSecurity();
   seedServers();
+  seedProviders();
   seedMetrics();
   seedIncidents();
   seedKnowledge();
@@ -153,6 +155,7 @@ export const handlers = [
   ...serversHandlers,
   ...terminalHistoryHandlers,
   ...maintenanceHandlers,
+  ...providersHandlers,
   ...metricsHandlers,
   ...incidentsHandlers,
   ...knowledgeHandlers,

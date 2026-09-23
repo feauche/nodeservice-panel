@@ -21,6 +21,7 @@ import { Route as SettingsRouteImport } from './routes/settings';
 import { Route as SetupRouteImport } from './routes/setup';
 import { Route as Login2faRouteImport } from './routes/login_.2fa';
 import { Route as LoginRecoveryRouteImport } from './routes/login_.recovery';
+import { Route as ServersProvidersRouteImport } from './routes/servers_.providers';
 import { Route as SettingsIndexRouteImport } from './routes/settings.index';
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance';
 import { Route as SettingsAssistantRouteImport } from './routes/settings.assistant';
@@ -88,6 +89,11 @@ const LoginRecoveryRoute = LoginRecoveryRouteImport.update({
   path: '/login/recovery',
   getParentRoute: () => rootRouteImport,
 } as any);
+const ServersProvidersRoute = ServersProvidersRouteImport.update({
+  id: '/servers_/providers',
+  path: '/servers/providers',
+  getParentRoute: () => rootRouteImport,
+} as any);
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -132,6 +138,7 @@ export interface FileRoutesByFullPath {
   '/setup': typeof SetupRoute;
   '/login/2fa': typeof Login2faRoute;
   '/login/recovery': typeof LoginRecoveryRoute;
+  '/servers/providers': typeof ServersProvidersRoute;
   '/settings/appearance': typeof SettingsAppearanceRoute;
   '/settings/assistant': typeof SettingsAssistantRoute;
   '/settings/autochecks': typeof SettingsAutochecksRoute;
@@ -151,6 +158,7 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupRoute;
   '/login/2fa': typeof Login2faRoute;
   '/login/recovery': typeof LoginRecoveryRoute;
+  '/servers/providers': typeof ServersProvidersRoute;
   '/settings/appearance': typeof SettingsAppearanceRoute;
   '/settings/assistant': typeof SettingsAssistantRoute;
   '/settings/autochecks': typeof SettingsAutochecksRoute;
@@ -172,6 +180,7 @@ export interface FileRoutesById {
   '/setup': typeof SetupRoute;
   '/login_/2fa': typeof Login2faRoute;
   '/login_/recovery': typeof LoginRecoveryRoute;
+  '/servers_/providers': typeof ServersProvidersRoute;
   '/settings/appearance': typeof SettingsAppearanceRoute;
   '/settings/assistant': typeof SettingsAssistantRoute;
   '/settings/autochecks': typeof SettingsAutochecksRoute;
@@ -194,6 +203,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/login/2fa'
     | '/login/recovery'
+    | '/servers/providers'
     | '/settings/appearance'
     | '/settings/assistant'
     | '/settings/autochecks'
@@ -213,6 +223,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/login/2fa'
     | '/login/recovery'
+    | '/servers/providers'
     | '/settings/appearance'
     | '/settings/assistant'
     | '/settings/autochecks'
@@ -233,6 +244,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/login_/2fa'
     | '/login_/recovery'
+    | '/servers_/providers'
     | '/settings/appearance'
     | '/settings/assistant'
     | '/settings/autochecks'
@@ -254,6 +266,7 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRoute;
   Login2faRoute: typeof Login2faRoute;
   LoginRecoveryRoute: typeof LoginRecoveryRoute;
+  ServersProvidersRoute: typeof ServersProvidersRoute;
 }
 
 declare module '@tanstack/react-router' {
@@ -342,6 +355,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRecoveryRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    '/servers_/providers': {
+      id: '/servers_/providers';
+      path: '/servers/providers';
+      fullPath: '/servers/providers';
+      preLoaderRoute: typeof ServersProvidersRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     '/settings/': {
       id: '/settings/';
       path: '/';
@@ -422,6 +442,7 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRoute,
   Login2faRoute: Login2faRoute,
   LoginRecoveryRoute: LoginRecoveryRoute,
+  ServersProvidersRoute: ServersProvidersRoute,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

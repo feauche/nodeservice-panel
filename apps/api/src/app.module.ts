@@ -24,6 +24,7 @@ import { IncidentsModule } from './modules/incidents/incidents.module.js';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module.js';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module.js';
 import { MetricsModule } from './modules/metrics/metrics.module.js';
+import { ProvidersModule } from './modules/providers/providers.module.js';
 import { SecurityModule } from './modules/security/security.module.js';
 import { ServersModule } from './modules/servers/servers.module.js';
 import { SettingsModule } from './modules/settings/settings.module.js';
@@ -84,6 +85,7 @@ import { TerminalModule } from './modules/terminal/terminal.module.js';
     AuthModule,
     SecurityModule,
     ServersModule,
+    ProvidersModule,
     AgentModule,
     MetricsModule,
     TerminalModule,

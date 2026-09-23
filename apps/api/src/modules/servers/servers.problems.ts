@@ -36,4 +36,9 @@ export const serverProblems = {
       errors: [{ path: 'password', message: 'С паролем подключение обязательно' }],
     }),
   notFound: () => problem(HttpStatus.NOT_FOUND, { detail: 'Сервер не найден — возможно, уже удалён.' }),
+  providerNotFound: () =>
+    problem(HttpStatus.UNPROCESSABLE_ENTITY, {
+      detail: 'Такого провайдера нет в справочнике — возможно, его удалили.',
+      errors: [{ path: 'providerId', message: 'Провайдер не найден' }],
+    }),
 };

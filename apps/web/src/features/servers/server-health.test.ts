@@ -12,6 +12,7 @@ const base: Server = {
   authMethod: 'panel-key',
   tags: [],
   notes: null,
+  providerId: null,
   facts: EMPTY_FACTS,
   hostKeyFingerprint: null,
   agentStatus: 'online',

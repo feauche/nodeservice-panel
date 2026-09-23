@@ -31,6 +31,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { formatMbps, formatPct } from '@/features/overview/overview-format';
 import { Sparkline } from '@/features/overview/primitives';
+import { ProviderIcon } from '@/features/providers/provider-icon';
+import { useProviders } from '@/features/providers/providers-api';
 import { formatAgo } from '@/features/security/security-format';
 import { StepUpCancelledError } from '@/features/security/step-up';
 import { Pill } from '@/features/settings/settings-ui';
@@ -231,6 +233,10 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
   const sortable = useSortable({ id: server.id });
   const remove = useDeleteServer();
   const trust = useTrustHostKey();
+  const providers = useProviders();
+  const provider = server.providerId
+    ? (providers.data?.items.find((p) => p.id === server.providerId) ?? null)
+    : null;
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [mismatch, setMismatch] = useState<{ offered: string } | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
@@ -310,8 +316,11 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
           <h2 className="line-clamp-2 font-heading text-[15px] leading-[1.25] font-bold tracking-[-0.01em]">
             {server.name}
           </h2>
-          <p className="mt-0.5 truncate font-mono text-[11.5px] text-text-3">
-            {server.sshUser}@{server.host}:{server.port}
+          <p className="mt-0.5 flex min-w-0 items-center gap-1.5 font-mono text-[11.5px] text-text-3">
+            {provider && <ProviderIcon provider={provider} size="sm" className="flex-none" />}
+            <span className="truncate">
+              {server.sshUser}@{server.host}:{server.port}
+            </span>
           </p>
         </div>
         <div className="flex flex-none items-center gap-1">

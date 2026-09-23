@@ -31,6 +31,7 @@ export type AuditCategory = (typeof AUDIT_CATEGORIES)[number];
 export const AUDIT_PREFIX_CATEGORY: Readonly<Record<string, AuditCategory>> = {
   kb: 'knowledge',
   incident: 'server',
+  provider: 'server',
 };
 
 export function auditCategoryOfPrefix(action: string): AuditCategory | undefined {
@@ -130,6 +131,9 @@ export const AUDIT_ACTIONS = {
   'server.terminal.open': { category: 'server', label: 'Открыт веб-терминал' },
   'server.terminal.close': { category: 'server', label: 'Веб-терминал закрыт' },
   'server.terminal.denied': { category: 'server', label: 'Веб-терминал отклонён: нет входа' },
+  'provider.created': { category: 'server', label: 'Провайдер добавлен' },
+  'provider.updated': { category: 'server', label: 'Провайдер изменён' },
+  'provider.deleted': { category: 'server', label: 'Провайдер удалён' },
   'server.maintenance.check': { category: 'server', label: 'Проверка обслуживания сервера' },
   'server.maintenance.apt_upgrade': { category: 'server', label: 'Обновление системы' },
   'server.maintenance.agent_update': { category: 'server', label: 'Обновление агента' },

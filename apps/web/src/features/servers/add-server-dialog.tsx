@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input';
 import { Field, Fields } from '@/features/auth/components/field';
 import { PasswordField } from '@/features/auth/components/password-field';
+import { ProviderSelect } from '@/features/providers/provider-select';
 import { apiErrorMessage, isApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useCreateServer, useTestConnection } from './servers-api';
@@ -125,10 +126,21 @@ function StepLog({ steps }: { steps: Step[] }) {
  * диалоге по шагам (подключение, отпечаток, факты, добавление). Пароль используется один раз для
  * установки ключа панели и не сохраняется. Для ключей можно добавить и без проверки.
  */
+/** Подпись обязательного поля: красная звёздочка через CSS, чтобы имя поля для читалок и тестов не менялось. */
+function Req({ children }: { children: string }) {
+  return (
+    <>
+      {children}
+      <span className="ml-0.5 text-crit after:content-['*']" aria-hidden="true" />
+    </>
+  );
+}
+
 export function AddServerDialog({ open, onOpenChange }: Props) {
   const test = useTestConnection();
   const create = useCreateServer();
   const [form, setForm] = useState({ name: '', host: '', port: '22', sshUser: 'root', tags: '', notes: '' });
+  const [providerId, setProviderId] = useState<string | null>(null);
   const [authTab, setAuthTab] = useState<(typeof AUTH_TABS)[number]['key']>('password');
   const [password, setPassword] = useState('');
   const [privateKey, setPrivateKey] = useState('');
@@ -142,6 +154,7 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
   useEffect(() => {
     if (!open) {
       setForm({ name: '', host: '', port: '22', sshUser: 'root', tags: '', notes: '' });
+      setProviderId(null);
       setAuthTab('password');
       setPassword('');
       setPrivateKey('');
@@ -172,6 +185,7 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
       sshUser: form.sshUser,
       auth,
       tags,
+      providerId,
       ...(form.notes.trim() ? { notes: form.notes } : {}),
     });
     if (!parsed.success) {
@@ -291,7 +305,7 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
           onSubmit={doVerifyAndCreate}
         >
           <div className="grid gap-3.5 sm:grid-cols-2">
-            <Field id="srv-name" label="Название" error={errors.name || undefined}>
+            <Field id="srv-name" label={<Req>Название</Req>} error={errors.name || undefined}>
               <Input
                 id="srv-name"
                 disabled={busy}
@@ -316,8 +330,20 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
               />
             </Field>
           </div>
+          <Field id="srv-provider" label="Провайдер" error={errors.providerId || undefined}>
+            <ProviderSelect
+              id="srv-provider"
+              value={providerId}
+              disabled={busy}
+              onChange={(id) => {
+                setProviderId(id);
+                setErrors((p) => ({ ...p, providerId: '', form: '' }));
+              }}
+              className="bg-surface-2"
+            />
+          </Field>
           <div className="grid gap-3.5 sm:grid-cols-[minmax(0,1fr)_100px_150px]">
-            <Field id="srv-host" label="IP или домен" error={errors.host || undefined}>
+            <Field id="srv-host" label={<Req>IP или домен</Req>} error={errors.host || undefined}>
               <Input
                 id="srv-host"
                 disabled={busy}
@@ -341,7 +367,7 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
                 className={monoClass}
               />
             </Field>
-            <Field id="srv-user" label="Пользователь" error={errors.sshUser || undefined}>
+            <Field id="srv-user" label={<Req>Пользователь</Req>} error={errors.sshUser || undefined}>
               <Input
                 id="srv-user"
                 disabled={busy}
@@ -383,7 +409,7 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
             {authTab === 'password' && (
               <Field
                 id="srv-password"
-                label="Пароль"
+                label={<Req>Пароль</Req>}
                 hint="Нужен один раз: панель поставит свой ключ и дальше будет ходить только по нему."
                 error={errors.password || undefined}
               >
@@ -406,7 +432,7 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
               <>
                 <Field
                   id="srv-key"
-                  label="Приватный ключ (OpenSSH/PEM)"
+                  label={<Req>Приватный ключ (OpenSSH/PEM)</Req>}
                   error={errors.privateKey || undefined}
                 >
                   <textarea
@@ -447,7 +473,7 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
               disabled={busy}
               aria-invalid={errors.notes ? true : undefined}
               aria-describedby={errors.notes ? 'srv-notes-error' : undefined}
-              placeholder="Необязательно: провайдер, срок оплаты, для чего сервер"
+              placeholder="Необязательно: срок оплаты, тариф, для чего сервер"
               value={form.notes}
               onChange={set('notes')}
               className={inputClass}
