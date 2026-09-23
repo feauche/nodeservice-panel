@@ -15,7 +15,14 @@ export const INCIDENT_STATUSES = ['open', 'acknowledged', 'resolved'] as const;
 export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
 
 /** Виды инцидентов, которые панель умеет замечать. */
-export const INCIDENT_KINDS = ['agent_offline', 'ssh_down', 'cpu_high', 'mem_high', 'disk_high'] as const;
+export const INCIDENT_KINDS = [
+  'agent_offline',
+  'ssh_down',
+  'xray_down',
+  'cpu_high',
+  'mem_high',
+  'disk_high',
+] as const;
 export type IncidentKind = (typeof INCIDENT_KINDS)[number];
 
 export const INCIDENT_KIND_META: Record<
@@ -24,6 +31,7 @@ export const INCIDENT_KIND_META: Record<
 > = {
   agent_offline: { label: 'Агент не в сети', component: 'Связь', severity: 'crit' },
   ssh_down: { label: 'SSH недоступен', component: 'Связь', severity: 'crit' },
+  xray_down: { label: 'Xray не запущен', component: 'Нода', severity: 'crit' },
   cpu_high: { label: 'Высокая нагрузка на CPU', component: 'CPU', severity: 'warn' },
   mem_high: { label: 'Память на пределе', component: 'Память', severity: 'warn' },
   disk_high: { label: 'Диск заполняется', component: 'Диск', severity: 'warn' },
@@ -78,11 +86,11 @@ export const INCIDENT_ACTIONS = [
     key: 'restart_xray',
     title: 'Перезапустить Xray',
     level: 'T1',
-    kinds: ['cpu_high'] as IncidentKind[],
+    kinds: ['xray_down', 'cpu_high'] as IncidentKind[],
     summary: 'systemctl restart xray (иначе docker restart remnanode)',
     consequence: 'соединения пользователей оборвутся на 1–2 с',
     preconditions: ['агент в сети', 'на ноде не идёт другое действие'],
-    postcheck: 'CPU ниже порога − 10 % три замера подряд (60 с)',
+    postcheck: 'CPU ниже порога − 10 % три замера подряд (60 с); для «Xray не запущен» — процесс появился',
     rollbackNote: 'не нужен: перезапуск обратим сам по себе',
     terminal: false,
   },
@@ -90,7 +98,7 @@ export const INCIDENT_ACTIONS = [
     key: 'restart_node',
     title: 'Перезапустить контейнер ноды',
     level: 'T2',
-    kinds: ['cpu_high', 'mem_high'] as IncidentKind[],
+    kinds: ['xray_down', 'cpu_high', 'mem_high'] as IncidentKind[],
     summary: 'docker restart remnanode',
     consequence: 'соединения пользователей оборвутся на ~5 с и восстановятся сами',
     preconditions: ['агент в сети', 'на ноде не идёт другое действие'],
@@ -126,7 +134,7 @@ export const INCIDENT_ACTIONS = [
     key: 'reboot',
     title: 'Перезагрузить сервер',
     level: 'T3',
-    kinds: ['cpu_high', 'mem_high'] as IncidentKind[],
+    kinds: ['xray_down', 'cpu_high', 'mem_high'] as IncidentKind[],
     summary: 'reboot',
     consequence: 'нода недоступна 1–3 минуты',
     preconditions: [],
@@ -155,6 +163,7 @@ export const actionByKey = (key: ActionKey): IncidentAction =>
 
 /** Цепочка шагов по виду инцидента: следующий шаг предлагается, когда предыдущий не помог. */
 export const INCIDENT_CHAINS: Record<IncidentKind, ActionKey[]> = {
+  xray_down: ['restart_xray', 'restart_node', 'reboot'],
   disk_high: ['free_disk', 'apt_clean', 'disk_inspect'],
   cpu_high: ['restart_xray', 'restart_node', 'reboot'],
   mem_high: ['restart_node', 'reboot'],

@@ -3,9 +3,8 @@ import { AUTH_PROBLEM, type RecoveryLoginRequest, recoveryLoginRequestSchema } f
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { toast } from 'sonner';
-
 import { apiErrorMessage, isApiError } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { plural } from '@/lib/plural';
 import { AuthHeading, AuthLinks, AuthShell, linkClass } from '../components/auth-shell';
 import { CtaButton } from '../components/cta-button';

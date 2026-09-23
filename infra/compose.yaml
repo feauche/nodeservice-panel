@@ -40,6 +40,8 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      # Сервер живёт в UTC независимо от часового пояса машины; браузер показывает своё время.
+      TZ: UTC
       NODE_ENV: production
       PORT: "3000"
       DATABASE_URL: postgres://nodeservice:${POSTGRES_PASSWORD}@postgres:5432/nodeservice
@@ -70,6 +72,8 @@ services:
     image: postgres:18-alpine
     restart: unless-stopped
     environment:
+      TZ: UTC
+      PGTZ: UTC
       POSTGRES_USER: nodeservice
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан}
       POSTGRES_DB: nodeservice

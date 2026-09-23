@@ -12,8 +12,6 @@ import {
   type AssistantProvider,
 } from '@nodeservice/shared';
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
-
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,6 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { PasswordField } from '@/features/auth/components/password-field';
 import { Pill, SettingsCard, SettingsRow, Toggle } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { useAssistantSettings, useUpdateAssistantSettings } from './assistant-settings-api';
 
 const PERMS_DEFAULT: AssistantPermissions = { kbWrite: true, glossary: true, kbReview: true };

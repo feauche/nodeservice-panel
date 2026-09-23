@@ -1,14 +1,13 @@
 import { SECURITY_PROBLEM } from '@nodeservice/shared';
 import { CopyIcon, RefreshCwIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
-
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { GhostButton } from '@/features/auth/components/cta-button';
 import { OtpField } from '@/features/auth/components/otp-field';
 import { Pill, SettingsCard, SettingsRow } from '@/features/settings/settings-ui';
 import { apiErrorMessage, isApiError } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { RecoveryRows } from './recovery-card';
 import { useSecurityOverview, useTotpConfirm, useTotpReissue } from './security-api';
 import { formatDate, plural } from './security-format';

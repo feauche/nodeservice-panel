@@ -20,8 +20,6 @@ import type { Server, ServersResponse } from '@nodeservice/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDownIcon, PlusIcon, RefreshCwIcon, SearchIcon, ServerIcon, TagIcon } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
-import { toast } from 'sonner';
-
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -37,6 +35,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useOverviewMetrics } from '@/features/overview/overview-api';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { AddServerDialog } from './add-server-dialog';
 import { ServerCard, ServerCardGhost } from './server-card';

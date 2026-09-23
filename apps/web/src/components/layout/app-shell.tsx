@@ -28,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useOpenIncidentsCount } from '@/features/incidents/incidents-api';
+import { NotificationBell } from '@/features/notifications/notification-bell';
 import { useSecurityOverview } from '@/features/security/security-api';
 import { StepUpHost } from '@/features/security/step-up-host';
 import { useIdleLock } from '@/features/security/use-idle-lock';
@@ -490,6 +491,7 @@ export function AppShell({ title, subtitle, actions, children }: AppShellProps) 
             </kbd>
           </button>
           <div className="flex-1" />
+          <NotificationBell />
           <ThemeMenu />
           <UserMenu />
         </header>

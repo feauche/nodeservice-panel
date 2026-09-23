@@ -1,13 +1,12 @@
 import { changePasswordRequestSchema } from '@nodeservice/shared';
 import { type FormEvent, useState } from 'react';
-import { toast } from 'sonner';
-
 import { Button } from '@/components/ui/button';
 import { Field } from '@/features/auth/components/field';
 import { PasswordField } from '@/features/auth/components/password-field';
 import { PasswordMeter } from '@/features/auth/components/password-meter';
 import { SettingsCard } from '@/features/settings/settings-ui';
 import { apiErrorMessage, isApiError } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { useChangePassword, useSecurityOverview } from './security-api';
 import { formatDate, plural } from './security-format';
 

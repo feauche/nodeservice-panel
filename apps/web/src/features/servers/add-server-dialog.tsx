@@ -6,8 +6,6 @@ import {
 } from '@nodeservice/shared';
 import { CheckIcon, CircleAlertIcon, ClockIcon, Loader2Icon } from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
-import { toast } from 'sonner';
-
 import { DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -15,6 +13,7 @@ import { Field, Fields } from '@/features/auth/components/field';
 import { PasswordField } from '@/features/auth/components/password-field';
 import { ProviderSelect } from '@/features/providers/provider-select';
 import { apiErrorMessage, isApiError } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useCreateServer, useTestConnection } from './servers-api';
 

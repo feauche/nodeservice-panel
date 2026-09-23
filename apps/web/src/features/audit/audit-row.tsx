@@ -10,7 +10,7 @@ import {
 import { CheckIcon, ChevronDownIcon, CopyIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/notify';
 
 import { cn } from '@/lib/utils';
 import {

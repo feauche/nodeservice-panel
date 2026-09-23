@@ -20,6 +20,7 @@ import type { MaintenanceRunRow } from '../../infra/db/schema/index.js';
 import { type AuditActor, SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CLS_USER } from '../auth/cls-keys.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { ServersRepository } from '../servers/servers.repository.js';
 import { ServersService } from '../servers/servers.service.js';
 import { SshService, type SshSession } from '../servers/ssh.service.js';
@@ -63,6 +64,7 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
     private readonly releases: AgentReleasesService,
     private readonly config: ConfigService<Env, true>,
     private readonly cls: ClsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -295,6 +297,8 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
         });
         if (collected.check) {
           await this.repo.saveCheck(row.serverId, collected.check);
+          // Суточная проверка (без администратора) нашла, чем заняться — в центр уведомлений.
+          if (!row.actorId) await this.notifyCheck(row.serverId, collected.check);
           summary = {
             updates: collected.check.updates?.total ?? null,
             rebootRequired: collected.check.rebootRequired,
@@ -366,6 +370,27 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
         ...summary,
         ...(error ? { error: error.slice(0, 300) } : {}),
       },
+    });
+  }
+
+  /** Что нашла суточная проверка: перезагрузка, обновления безопасности, диск, старый агент. */
+  private async notifyCheck(serverId: string, check: MaintenanceCheck): Promise<void> {
+    const found: string[] = [];
+    if (check.rebootRequired) found.push('требуется перезагрузка');
+    if (check.updates && check.updates.security > 0)
+      found.push(`обновлений безопасности: ${check.updates.security}`);
+    else if (check.updates && check.updates.total > 0) found.push(`обновлений: ${check.updates.total}`);
+    if (check.disk.usedPct !== null && check.disk.usedPct >= 85)
+      found.push(`диск ${Math.round(check.disk.usedPct)} %`);
+    if (check.agent.installed && check.agent.latest && check.agent.installed !== check.agent.latest)
+      found.push(`агент ${check.agent.installed} → ${check.agent.latest}`);
+    if (found.length === 0) return;
+    const server = await this.serversRepo.findById(serverId);
+    await this.notifications.push({
+      severity: check.rebootRequired || (check.updates?.security ?? 0) > 0 ? 'warn' : 'info',
+      title: `Обслуживание: ${server?.name ?? 'сервер'}`,
+      body: found.join(' · '),
+      link: { to: `/servers?open=${serverId}`, label: 'Открыть сервер' },
     });
   }
 }

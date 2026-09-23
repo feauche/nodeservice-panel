@@ -22,11 +22,11 @@ import {
   WandSparklesIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
 import { useRunAction } from '@/features/incidents/incidents-api';
 import { Markdown } from '@/features/knowledge/markdown';
 import { StepUpCancelledError } from '@/features/security/step-up';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import {
   useAssistantStatus,

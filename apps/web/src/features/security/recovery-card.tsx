@@ -1,7 +1,5 @@
 import { CopyIcon, DownloadIcon, EyeIcon, KeyRoundIcon } from 'lucide-react';
 import { useState } from 'react';
-import { toast } from 'sonner';
-
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { DialogActions, DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
 import { Button } from '@/components/ui/button';
@@ -10,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { GhostButton } from '@/features/auth/components/cta-button';
 import { Pill, SettingsRow } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useRegenerateRecoveryCodes, useSecurityOverview, useViewRecoveryCodes } from './security-api';
 import { formatDate } from './security-format';

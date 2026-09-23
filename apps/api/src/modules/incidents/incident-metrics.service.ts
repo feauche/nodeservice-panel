@@ -7,11 +7,14 @@ export interface LatestMetrics {
   cpu: Map<string, number>;
   mem: Map<string, number>;
   disk: Map<string, number>;
+  /** 1 — процесс xray есть, 0 — нет; нет значения — агент старый. */
+  xray: Map<string, number>;
 }
 export interface ServerMetrics {
   cpu?: number | undefined;
   mem?: number | undefined;
   disk?: number | undefined;
+  xray?: number | undefined;
   at: number;
 }
 
@@ -26,14 +29,20 @@ export class IncidentMetricsService {
   constructor(private readonly vm: VmReaderService) {}
 
   async latest(serverIds: string[]): Promise<LatestMetrics> {
-    if (serverIds.length === 0) return { cpu: new Map(), mem: new Map(), disk: new Map() };
+    if (serverIds.length === 0) return { cpu: new Map(), mem: new Map(), disk: new Map(), xray: new Map() };
     const sel = `{server_id=~"${serverIds.join('|')}"}`;
-    const [cpu, mem, disk] = await Promise.all([
+    const [cpu, mem, disk, xray] = await Promise.all([
       this.vm.query(`${VM_METRIC_NAMES.cpuPct}${sel}`),
       this.vm.query(`100 * ${VM_METRIC_NAMES.memUsedMb}${sel} / (${VM_METRIC_NAMES.memTotalMb}${sel} > 0)`),
       this.vm.query(`100 * ${VM_METRIC_NAMES.diskUsedMb}${sel} / (${VM_METRIC_NAMES.diskTotalMb}${sel} > 0)`),
+      this.vm.query(`${VM_METRIC_NAMES.xrayRunning}${sel}`),
     ]);
-    const out = { cpu: this.byServer(cpu), mem: this.byServer(mem), disk: this.byServer(disk) };
+    const out = {
+      cpu: this.byServer(cpu),
+      mem: this.byServer(mem),
+      disk: this.byServer(disk),
+      xray: this.byServer(xray),
+    };
     this.remember(out);
     return out;
   }
@@ -46,17 +55,19 @@ export class IncidentMetricsService {
       cpu: m.cpu.get(serverId),
       mem: m.mem.get(serverId),
       disk: m.disk.get(serverId),
+      xray: m.xray.get(serverId),
       at: Date.now(),
     };
   }
 
   remember(m: LatestMetrics): void {
-    const ids = new Set([...m.cpu.keys(), ...m.mem.keys(), ...m.disk.keys()]);
+    const ids = new Set([...m.cpu.keys(), ...m.mem.keys(), ...m.disk.keys(), ...m.xray.keys()]);
     for (const id of ids)
       this.lastKnown.set(id, {
         cpu: m.cpu.get(id),
         mem: m.mem.get(id),
         disk: m.disk.get(id),
+        xray: m.xray.get(id),
         at: Date.now(),
       });
   }

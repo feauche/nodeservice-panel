@@ -307,6 +307,34 @@ describe('incidents e2e', () => {
       .expect(200);
   });
 
+  it('xray_down: процесс пропал → инцидент; «Перезапустить Xray» помог — процесс вернулся', async () => {
+    const db = app.get<Db>(DB);
+    await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
+    const svc = app.get(IncidentsService);
+    await svc.evaluate({ ...noMetrics, xray: new Map([[serverId, 0]]) });
+    const list = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=open').expect(200)).body,
+    );
+    const inc = list.items.find((i) => i.kind === 'xray_down');
+    expect(inc?.severity).toBe('crit');
+    // авто выключено → предложение первого шага цепочки (T1 restart_xray)
+    expect(inc?.proposal).toMatchObject({ action: 'restart_xray', level: 'T1' });
+    const metrics = app.get(IncidentMetricsService);
+    const p = agent.post(`/api/incidents/${inc?.id}/actions/restart_xray/run`).set(CSRF_HEADER, csrf);
+    metrics.setForTest(serverId, { xray: 1 });
+    await p.expect(202);
+    const done = await settled(inc?.id ?? '');
+    expect(done.attempts[0]?.status).toBe('helped');
+    expect(done.attempts[0]?.steps[2]?.note).toContain('xray запущен');
+    expect(done.status).toBe('resolved');
+    // старый агент без метрики — не судим: инцидент не заводится
+    await svc.evaluate(noMetrics);
+    const after = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=open').expect(200)).body,
+    );
+    expect(after.items.some((i) => i.kind === 'xray_down')).toBe(false);
+  });
+
   it('ручное закрытие инцидента', async () => {
     await app.get(IncidentsRepository).open({
       serverId,

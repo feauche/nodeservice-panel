@@ -96,7 +96,7 @@ describe('housekeeping e2e — чистка по сроку хранения', (
       ).length;
     const entriesBefore = await countEntries();
     const report = await app.get(HousekeepingService).applyRetention();
-    expect(report).toEqual({ terminalSessions: 1, maintenanceRuns: 1, incidents: 1 });
+    expect(report).toEqual({ terminalSessions: 1, maintenanceRuns: 1, incidents: 1, notifications: 0 });
 
     const term = await db.select({ t: terminalSessions.transcript }).from(terminalSessions);
     expect(term.map((r) => r.t).sort()).toEqual(['fresh', 'live']);
@@ -120,6 +120,7 @@ describe('housekeeping e2e — чистка по сроку хранения', (
       terminalSessions: 0,
       maintenanceRuns: 0,
       incidents: 0,
+      notifications: 0,
     });
     expect(await countEntries()).toBe(entriesBefore + 1);
   });

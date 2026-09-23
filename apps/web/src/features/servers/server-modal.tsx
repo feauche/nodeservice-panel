@@ -20,8 +20,6 @@ import {
 } from 'lucide-react';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { toast } from 'sonner';
-
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { DialogPrimaryButton } from '@/components/dialog-actions';
 import { Button } from '@/components/ui/button';
@@ -45,6 +43,7 @@ import { StepUpCancelledError } from '@/features/security/step-up';
 import { Pill } from '@/features/settings/settings-ui';
 import { useTerminalStore } from '@/features/terminal/terminal-store';
 import { apiErrorMessage, isApiError } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { useMediaQuery } from '@/lib/use-media';
 import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';

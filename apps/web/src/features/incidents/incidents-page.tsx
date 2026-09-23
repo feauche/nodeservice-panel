@@ -16,9 +16,7 @@ import {
   TerminalIcon,
   WrenchIcon,
 } from 'lucide-react';
-import { useState } from 'react';
-import { toast } from 'sonner';
-
+import { useEffect, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatWhen } from '@/features/audit/audit-format';
@@ -26,6 +24,7 @@ import { useServers } from '@/features/servers/servers-api';
 import { Pill } from '@/features/settings/settings-ui';
 import { useTerminalStore } from '@/features/terminal/terminal-store';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { AutofixTab } from './autofix-tab';
 import {
@@ -73,10 +72,14 @@ const STEP_ICON: Record<IncidentAttempt['steps'][number]['status'], { cls: strin
 type Tab = 'incidents' | 'autofix';
 
 /** Инциденты (R3): хронология с уровнями T0–T3, попытки починки на месте, предложения «ждёт «Да»», вкладка «Автопочинка». */
-export function IncidentsPage() {
+export function IncidentsPage({ openId }: { openId?: string | undefined } = {}) {
   const [tab, setTab] = useState<Tab>('incidents');
   const [filter, setFilter] = useState<IncidentsFilter>('all');
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(openId ?? null);
+  // Пришли по ссылке из уведомления — раскрываем нужный инцидент.
+  useEffect(() => {
+    if (openId) setExpanded(openId);
+  }, [openId]);
   const incidents = useIncidents(filter);
   const items = incidents.data?.items ?? [];
   const openCount = incidents.data?.counts.open ?? 0;

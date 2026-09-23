@@ -72,6 +72,8 @@ export const agentMetricsSchema = z.object({
   /** null — conntrack недоступен (нет модуля/прав). */
   conntrackCount: z.number().int().min(0).nullable(),
   uptimeSec: z.number().int().min(0),
+  /** Есть ли процесс xray (нода работает). null/нет поля — агент старый или не смог посмотреть. */
+  xrayRunning: z.boolean().nullable().optional(),
 });
 export type AgentMetrics = z.infer<typeof agentMetricsSchema>;
 

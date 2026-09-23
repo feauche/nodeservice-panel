@@ -1,10 +1,10 @@
 import { IDLE_MINUTES_OPTIONS, LOCK_AFTER_OPTIONS, type SecurityPolicy } from '@nodeservice/shared';
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SettingsCard, SettingsRow, Toggle } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { useSecurityOverview, useUpdatePolicy } from './security-api';
 import { plural } from './security-format';
 import { StepUpCancelledError } from './step-up';

@@ -43,7 +43,7 @@ export class AuditPartitionsService implements OnApplicationBootstrap {
   }
 
   /** Ежедневно 03:17 — создать разделы вперёд и удалить старше срока хранения. */
-  @Cron('17 3 * * *', { name: 'audit-partitions' })
+  @Cron('17 3 * * *', { name: 'audit-partitions', timeZone: 'UTC' })
   async daily(): Promise<void> {
     try {
       await this.ensureAhead();

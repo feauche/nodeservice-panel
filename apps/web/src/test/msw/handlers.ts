@@ -7,6 +7,7 @@ import { incidentsHandlers, seedIncidents } from './incidents-mock';
 import { knowledgeHandlers, seedKnowledge } from './knowledge-mock';
 import { maintenanceHandlers } from './maintenance-mock';
 import { metricsHandlers, seedMetrics } from './metrics-mock';
+import { notificationsHandlers, seedNotifications } from './notifications-mock';
 import { providersHandlers, seedProviders } from './providers-mock';
 import { mockSecurity, securityHandlers, seedSecurity } from './security-mock';
 import { seedServers, serversHandlers, terminalHistoryHandlers } from './servers-mock';
@@ -70,6 +71,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
   seedProviders();
   seedMetrics();
   seedIncidents();
+  seedNotifications();
   seedKnowledge();
   seedAssistant();
   mockSnippets.items = [];
@@ -158,6 +160,7 @@ export const handlers = [
   ...providersHandlers,
   ...metricsHandlers,
   ...incidentsHandlers,
+  ...notificationsHandlers,
   ...knowledgeHandlers,
   ...assistantHandlers,
   http.get('/api/settings/snippets', () => {

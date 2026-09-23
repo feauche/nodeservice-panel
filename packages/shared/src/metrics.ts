@@ -74,10 +74,12 @@ export const overviewMetricsResponseSchema = z.object({
 export type OverviewMetricsResponse = z.infer<typeof overviewMetricsResponseSchema>;
 
 /** Имена метрик в VictoriaMetrics (пишет агент через VmWriterService). */
-export const VM_METRIC_NAMES: Record<ServerMetricKey, string> = {
+export const VM_METRIC_NAMES: Record<ServerMetricKey | 'xrayRunning', string> = {
   cpuPct: 'nodeservice_cpu_pct',
   load1: 'nodeservice_load1',
   memUsedMb: 'nodeservice_mem_used_mb',
+  /** 1 — процесс xray есть, 0 — нет; серия отсутствует у старых агентов. */
+  xrayRunning: 'nodeservice_xray_running',
   memTotalMb: 'nodeservice_mem_total_mb',
   diskUsedMb: 'nodeservice_disk_used_mb',
   diskTotalMb: 'nodeservice_disk_total_mb',

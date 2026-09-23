@@ -1,13 +1,12 @@
 import { type TerminalSnippet, type TerminalSnippets, terminalSnippetsSchema } from '@nodeservice/shared';
 import { Loader2Icon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
-
 import { DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { useSnippets, useUpdateSnippets } from '@/features/settings/settings-api';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 
 interface Props {

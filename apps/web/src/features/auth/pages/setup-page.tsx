@@ -5,12 +5,11 @@ import { useNavigate } from '@tanstack/react-router';
 import { CheckIcon, CopyIcon } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { toast } from 'sonner';
 import { z } from 'zod';
-
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { apiErrorMessage, isApiError } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { AuthHeading, AuthShell } from '../components/auth-shell';
 import { CtaButton, GhostButton } from '../components/cta-button';
 import { ErrorBox } from '../components/error-box';

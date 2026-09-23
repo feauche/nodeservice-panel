@@ -13,6 +13,7 @@ import {
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { diffChanges } from '../audit/audit.diff.js';
 import { AuditService } from '../audit/audit.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { type FetchedIcon, IconFetchService } from './icon-fetch.service.js';
 import { ProvidersRepository, type ProviderWithCount } from './providers.repository.js';
 
@@ -44,6 +45,7 @@ export class ProvidersService implements OnModuleInit {
     private readonly repo: ProvidersRepository,
     private readonly icons: IconFetchService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -170,10 +172,18 @@ export class ProvidersService implements OnModuleInit {
     const row = await this.repo.findById(id);
     if (!row) return;
     let icon: FetchedIcon | null = null;
+    let reason: string | null = null;
     try {
-      ({ icon } = row.iconUrl
+      ({ icon, reason } = row.iconUrl
         ? await this.icons.fetchDirect(row.iconUrl)
         : await this.icons.fetch(row.siteUrl));
+      if (!icon)
+        await this.notifications.push({
+          severity: 'warn',
+          title: `Провайдер «${row.name}»: иконку не нашли`,
+          body: reason ?? null,
+          link: { to: '/servers/providers', label: 'Открыть провайдеров' },
+        });
     } finally {
       await this.repo.setIcon(
         id,

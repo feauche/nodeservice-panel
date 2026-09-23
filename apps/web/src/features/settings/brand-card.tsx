@@ -1,10 +1,9 @@
 import { BRAND_NAME_DEFAULT, brandNameSchema, logoUrlSchema } from '@nodeservice/shared';
 import { type FormEvent, useEffect, useState } from 'react';
-import { toast } from 'sonner';
-
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { useAppearance, useUpdateAppearance } from './settings-api';
 import { SettingsCard } from './settings-ui';
 

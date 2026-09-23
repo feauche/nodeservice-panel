@@ -4,6 +4,7 @@ import {
   type ActionKey,
   type ActionLevel,
   ATTEMPT_LOG_MAX,
+  ATTEMPT_STATUS_LABELS,
   type AttemptStep,
   type AttemptStepKey,
   actionByKey,
@@ -18,6 +19,7 @@ import { problem } from '../../common/filters/problem-details.filter.js';
 import type { IncidentRow } from '../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { ServersRepository } from '../servers/servers.repository.js';
 import { ServersService } from '../servers/servers.service.js';
 import { SshService } from '../servers/ssh.service.js';
@@ -68,6 +70,7 @@ export class IncidentRunnerService {
     private readonly settings: IncidentsSettingsStore,
     private readonly audit: AuditService,
     private readonly metrics: IncidentMetricsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** Дождаться всех идущих попыток — для тестов и корректного выключения. */
@@ -347,6 +350,16 @@ export class IncidentRunnerService {
   ): Promise<{ ok: boolean; note: string }> {
     const pc = spec.postcheck;
     if (pc.kind === 'none') return { ok: true, note: 'проверка не нужна' };
+    if (kind === 'xray_down') {
+      // Для «Xray не запущен» пост-проверка одна: процесс появился.
+      const deadline = Date.now() + T.agentTimeoutMs;
+      while (Date.now() < deadline) {
+        const m = await this.metrics.latestFor(serverId);
+        if (m?.xray !== undefined && m.xray >= 0.5) return { ok: true, note: 'процесс xray запущен' };
+        await sleep(T.pollMs);
+      }
+      return { ok: false, note: `процесс xray не появился за ${Math.round(T.agentTimeoutMs / 1000)} с` };
+    }
     if (pc.kind === 'agent_online') {
       const deadline = Date.now() + T.agentTimeoutMs;
       while (Date.now() < deadline) {
@@ -485,6 +498,15 @@ export class IncidentRunnerService {
         ),
       ],
     });
+    await this.notifications.push({
+      severity: level === 'T3' ? 'crit' : 'warn',
+      title: level === 'T3' ? `${row.title}: нужно вмешательство` : `${row.title}: ждёт «Да»`,
+      body:
+        level === 'T3'
+          ? `${action.title} — только вручную. ${reason}.`
+          : `${action.title} (${level}). ${reason}.`,
+      link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
+    });
     await this.audit.record({
       action: 'incident.action.proposed',
       actor: SYSTEM_ACTOR,
@@ -563,6 +585,15 @@ export class IncidentRunnerService {
     note: string,
   ): Promise<void> {
     const action = actionByKey(key);
+    await this.notifications.push({
+      severity: result === 'helped' ? 'ok' : 'warn',
+      title:
+        result === 'helped'
+          ? `${row.title}: «${action.title}» помогло`
+          : `${row.title}: «${action.title}» — ${ATTEMPT_STATUS_LABELS[result]}`,
+      body: `${by === 'auto' ? 'Автоматически' : 'По вашей команде'} · ${note}`,
+      link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
+    });
     await this.audit.record({
       action: 'incident.autofix',
       ...(result === 'helped' ? {} : { result: 'failed' as const, severity: 'warn' as const }),

@@ -8,13 +8,12 @@ import {
 } from '@nodeservice/shared';
 import { Link2Icon, Loader2Icon } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
-
 import { DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Field } from '@/features/auth/components/field';
 import { apiErrorMessage, isApiError } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { ProviderIcon } from './provider-icon';
 import { providersApi, useCreateProvider, useUpdateProvider } from './providers-api';

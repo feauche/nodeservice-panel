@@ -10,13 +10,12 @@ import {
   Trash2Icon,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { toast } from 'sonner';
-
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { plural } from '@/lib/plural';
 import { cn } from '@/lib/utils';
 import { ProviderDialog } from './provider-dialog';

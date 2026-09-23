@@ -24,14 +24,13 @@ import {
   XIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
-
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatWhen } from '@/features/audit/audit-format';
 import { formatAgo, formatIn } from '@/features/security/security-format';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { plural } from '@/lib/plural';
 import { cn } from '@/lib/utils';
 import { useMaintenance, useStartMaintenance } from '../maintenance-api';

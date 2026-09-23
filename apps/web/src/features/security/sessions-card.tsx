@@ -1,12 +1,11 @@
 import type { SessionInfo, TrustedDeviceInfo } from '@nodeservice/shared';
 import { useState } from 'react';
-import { toast } from 'sonner';
-
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { shortUserAgent } from '@/features/audit/audit-format';
 import { GhostButton } from '@/features/auth/components/cta-button';
 import { Pill, SettingsCard } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import {
   useClearTrustedDevices,

@@ -5,13 +5,12 @@ import {
 } from '@nodeservice/shared';
 import { RotateCcwIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
-
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SettingsCard, Toggle } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useIncidentsSettings, useUpdateIncidentsSettings } from './incidents-settings-api';
 

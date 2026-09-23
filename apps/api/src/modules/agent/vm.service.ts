@@ -33,6 +33,10 @@ export class VmWriterService {
       `nodeservice_net_tx_pps${l} ${m.netTxPps}`,
       `nodeservice_uptime_sec${l} ${m.uptimeSec}`,
       ...(m.conntrackCount === null ? [] : [`nodeservice_conntrack_count${l} ${m.conntrackCount}`]),
+      // Старый агент поле не шлёт — серии нет, панель не судит о ноде.
+      ...(typeof m.xrayRunning === 'boolean'
+        ? [`nodeservice_xray_running${l} ${m.xrayRunning ? 1 : 0}`]
+        : []),
     ];
     try {
       const res = await fetch(`${this.url}/api/v1/import/prometheus`, {

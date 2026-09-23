@@ -6,6 +6,7 @@ import { and, eq, isNotNull, lt, ne } from 'drizzle-orm';
 import type { Env } from '../../config/env.schema.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { incidents } from '../../infra/db/schema/incidents.js';
+import { notifications } from '../../infra/db/schema/notifications.js';
 import { maintenanceRuns, terminalSessions } from '../../infra/db/schema/servers.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -14,6 +15,7 @@ export interface RetentionReport {
   terminalSessions: number;
   maintenanceRuns: number;
   incidents: number;
+  notifications: number;
 }
 
 /**
@@ -33,7 +35,7 @@ export class HousekeepingService {
   ) {}
 
   /** 03:47 — после ночного бэкапа (03:17), чтобы в бэкап попало всё, что вот-вот удалим. */
-  @Cron('47 3 * * *', { name: 'housekeeping-retention' })
+  @Cron('47 3 * * *', { name: 'housekeeping-retention', timeZone: 'UTC' })
   async nightly(): Promise<void> {
     if (process.env.NODE_ENV === 'test') return;
     try {
@@ -48,6 +50,7 @@ export class HousekeepingService {
     const tTerm = before(this.config.get('TERMINAL_RETENTION_DAYS'));
     const tMaint = before(this.config.get('MAINTENANCE_RETENTION_DAYS'));
     const tInc = before(this.config.get('INCIDENTS_RETENTION_DAYS'));
+    const tNotif = before(this.config.get('NOTIFICATIONS_RETENTION_DAYS'));
 
     const term = await this.db
       .delete(terminalSessions)
@@ -74,8 +77,18 @@ export class HousekeepingService {
       )
       .returning({ id: incidents.id });
 
-    const report = { terminalSessions: term.length, maintenanceRuns: maint.length, incidents: inc.length };
-    const total = report.terminalSessions + report.maintenanceRuns + report.incidents;
+    const notif = await this.db
+      .delete(notifications)
+      .where(lt(notifications.createdAt, tNotif))
+      .returning({ id: notifications.id });
+
+    const report = {
+      terminalSessions: term.length,
+      maintenanceRuns: maint.length,
+      incidents: inc.length,
+      notifications: notif.length,
+    };
+    const total = report.terminalSessions + report.maintenanceRuns + report.incidents + report.notifications;
     if (total > 0) {
       this.log.log(
         `удалено по сроку хранения: терминал ${report.terminalSessions}, обслуживание ${report.maintenanceRuns}, инциденты ${report.incidents}`,
@@ -90,6 +103,7 @@ export class HousekeepingService {
             terminal: this.config.get('TERMINAL_RETENTION_DAYS'),
             maintenance: this.config.get('MAINTENANCE_RETENTION_DAYS'),
             incidents: this.config.get('INCIDENTS_RETENTION_DAYS'),
+            notifications: this.config.get('NOTIFICATIONS_RETENTION_DAYS'),
           },
         },
       });

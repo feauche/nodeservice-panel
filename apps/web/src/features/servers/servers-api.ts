@@ -14,11 +14,9 @@ import {
   type UpdateServerRequest,
 } from '@nodeservice/shared';
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-
-import { toast } from 'sonner';
-
 import { withStepUp } from '@/features/security/step-up';
 import { api, request } from '@/lib/api';
+import { toast } from '@/lib/notify';
 
 /** /api/servers — строго по контракту packages/shared/src/servers.ts. */
 export const serversApi = {

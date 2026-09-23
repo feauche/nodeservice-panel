@@ -1,13 +1,12 @@
 import type { Server } from '@nodeservice/shared';
 import { CopyIcon, Loader2Icon } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
-
 import { DialogActions, DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { StepUpCancelledError } from '@/features/security/step-up';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { useEnrollmentToken, useInstallAgent } from './servers-api';
 
 interface Props {

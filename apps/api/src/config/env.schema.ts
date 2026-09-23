@@ -83,6 +83,7 @@ export const envSchema = z.object({
   TERMINAL_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
   MAINTENANCE_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
   INCIDENTS_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(365),
+  NOTIFICATIONS_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
   /** Применять миграции БД при старте (в проде — да, образ самодостаточен). */
   AUTO_MIGRATE: z
     .enum(['true', 'false'])

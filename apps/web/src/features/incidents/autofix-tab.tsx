@@ -1,10 +1,9 @@
 import { ACTION_LEVEL_LABELS, INCIDENT_KIND_META, type IncidentActionInfo } from '@nodeservice/shared';
-import { toast } from 'sonner';
-
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatWhen } from '@/features/audit/audit-format';
 import { Toggle } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useIncidentActions, useUpdateIncidentActions } from './incidents-api';
 import { LevelChip } from './level-chip';
