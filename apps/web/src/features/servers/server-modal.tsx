@@ -171,7 +171,12 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
         showCloseButton={false}
         onPointerDownOutside={(e) => e.preventDefault()}
         onInteractOutside={(e) => e.preventDefault()}
-        className="grid h-[min(780px,calc(100vh-56px))] w-[min(1120px,calc(100vw-40px))] grid-cols-[260px_minmax(0,1fr)] gap-0 overflow-hidden rounded-2xl border-border-2 bg-surface p-0 shadow-float ring-1 ring-(--ns-hairline) max-md:h-[calc(100vh-24px)] max-md:w-[calc(100vw-24px)] max-md:grid-cols-1 max-md:grid-rows-[auto_minmax(0,1fr)] sm:max-w-[1120px]"
+        className={cn(
+          'grid h-[min(780px,calc(100vh-56px))] w-[min(1120px,calc(100vw-40px))] grid-cols-[260px_minmax(0,1fr)] gap-0 overflow-hidden rounded-2xl border-border-2 bg-surface p-0 shadow-float ring-1 ring-(--ns-hairline) sm:max-w-[1120px]',
+          // Телефон: лист на весь экран без центрирования. 100dvh — видимая высота в Safari с адресной
+          // строкой (100vh там больше экрана, и центрированное окно уезжало верхом за край).
+          'max-md:top-0 max-md:left-0 max-md:h-dvh max-md:max-w-none max-md:w-screen max-md:translate-x-0 max-md:translate-y-0 max-md:rounded-none max-md:border-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:grid-cols-1 max-md:grid-rows-[auto_minmax(0,1fr)]',
+        )}
       >
         {/* Левая панель: состояние, факты, действия */}
         <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-r border-border bg-bg-2 p-5 max-md:border-r-0 max-md:border-b max-md:p-4">
@@ -278,7 +283,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
         {/* Правая панель: вкладки и содержимое */}
         <div className="flex min-h-0 min-w-0 flex-col">
           <div className="flex flex-none items-center gap-3 border-b border-border px-5 py-3.5 max-md:px-4">
-            <fieldset className="m-0 flex h-10 items-center rounded-[11px] border border-border bg-surface-2 p-[3px] max-md:h-9 max-md:flex-1">
+            <fieldset className="m-0 flex h-10 min-w-0 items-center rounded-[11px] border border-border bg-surface-2 p-[3px] max-md:h-9 max-md:flex-1 max-md:overflow-x-auto max-md:[scrollbar-width:none]">
               <legend className="sr-only">Разделы сервера</legend>
               {TABS.map((t) => (
                 <button
@@ -287,7 +292,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
                   aria-pressed={tab === t.key}
                   onClick={() => setTab(t.key)}
                   className={cn(
-                    'h-full cursor-pointer rounded-[8px] px-4 text-[13px] font-semibold text-text-3 transition-colors hover:text-foreground max-md:flex-1 max-md:px-2',
+                    'h-full flex-none cursor-pointer rounded-[8px] px-4 text-[13px] font-semibold whitespace-nowrap text-text-3 transition-colors hover:text-foreground max-md:px-3',
                     tab === t.key && 'bg-surface text-foreground shadow-[0_1px_0_var(--ns-hairline)]',
                   )}
                 >
@@ -295,13 +300,13 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
                 </button>
               ))}
             </fieldset>
-            <div className="flex-1" />
+            <div className="flex-1 max-md:hidden" />
             <Button
               type="button"
               variant="outline"
               aria-label="Закрыть"
               onClick={onClose}
-              className="size-9 rounded-[10px] border-border bg-surface-2 p-0 text-text-2 hover:bg-surface-3 hover:text-foreground"
+              className="size-9 flex-none rounded-[10px] border-border bg-surface-2 p-0 text-text-2 hover:bg-surface-3 hover:text-foreground"
             >
               <XIcon className="size-4" aria-hidden="true" />
             </Button>
