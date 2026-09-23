@@ -1,6 +1,15 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -29,7 +38,7 @@ function stub(bin: string, name: string, body: string): void {
 }
 
 function run(script: string, opts: { bin: string; env?: Record<string, string> }) {
-  const res = spawnSync('sh', ['-c', script], {
+  const res = spawnSync('/bin/sh', ['-c', script], {
     env: { ...process.env, PATH: `${opts.bin}:${process.env.PATH ?? ''}`, ...(opts.env ?? {}) },
     encoding: 'utf8',
   });
@@ -96,8 +105,13 @@ describe('maintenance scripts', () => {
     const bin = join(scratch(), 'bin');
     mkdirSync(bin);
     baseStubs(bin);
-    // apt-get в PATH нет; command -v не найдёт
-    const { code, out } = run(checkScript(), { bin, env: { PATH: bin + ':/usr/bin:/bin' } });
+    // Герметичный PATH: только заглушки и симлинки на нужные утилиты — без apt-get,
+    // иначе на Ubuntu-раннере скрипт найдёт системный apt и уйдёт в настоящий apt-get update.
+    for (const tool of ['uname', 'ls', 'sed', 'sort', 'tail', 'head', 'df', 'awk', 'grep', 'cat']) {
+      const real = spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim();
+      if (real && !existsSync(join(bin, tool))) symlinkSync(real, join(bin, tool));
+    }
+    const { code, out } = run(checkScript(), { bin, env: { PATH: bin } });
     expect(code).toBe(0);
     const c = parseCheckOutput(out, null);
     expect(c.supported).toBe(false);

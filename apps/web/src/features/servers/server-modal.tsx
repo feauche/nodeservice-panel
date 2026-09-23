@@ -7,9 +7,11 @@ import {
   updateServerRequestSchema,
 } from '@nodeservice/shared';
 import {
+  ChevronDownIcon,
   CopyPlusIcon,
   KeyRoundIcon,
   Loader2Icon,
+  MoreHorizontalIcon,
   RefreshCwIcon,
   TerminalIcon,
   Trash2Icon,
@@ -23,6 +25,13 @@ import { ConfirmDialog } from '@/components/confirm-dialog';
 import { DialogPrimaryButton } from '@/components/dialog-actions';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Field } from '@/features/auth/components/field';
 import { PasswordField } from '@/features/auth/components/password-field';
@@ -32,6 +41,7 @@ import { StepUpCancelledError } from '@/features/security/step-up';
 import { Pill } from '@/features/settings/settings-ui';
 import { useTerminalStore } from '@/features/terminal/terminal-store';
 import { apiErrorMessage, isApiError } from '@/lib/api';
+import { useMediaQuery } from '@/lib/use-media';
 import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
 import { HealthDot, osLine, SshPill } from './server-card';
@@ -86,6 +96,9 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
   const [range, setRange] = useState<MetricRange>('1h');
   const [installOpen, setInstallOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // Телефон — своя раскладка (вариант 1 витрины): шапка + вкладки сверху, факты свёрнуты,
+  // действия в нижней панели. В jsdom matchMedia нет — считаем, что не телефон.
+  const phone = useMediaQuery('(max-width: 767px)', false);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: вкладка выставляется при каждом открытии
   useEffect(() => {
@@ -151,6 +164,100 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
     ],
   ];
 
+  const content = (
+    <>
+      {tab === 'metrics' && <MetricsTab serverId={s.id} range={range} onRange={setRange} />}
+      {tab === 'journal' && <JournalTab serverId={s.id} />}
+      {tab === 'terminal' && <TerminalHistoryTab serverId={s.id} />}
+      {tab === 'maintenance' && <MaintenanceTab server={s} />}
+      {tab === 'connection' && <ConnectionTab server={s} />}
+    </>
+  );
+  const dialogs = (
+    <>
+      <AgentInstallDialog server={s} open={installOpen} onOpenChange={setInstallOpen} />
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        kind="crit"
+        title={`Удалить «${s.name}»?`}
+        description="Сервер пропадёт из панели вместе с историей проверок. Сам сервер и то, что на нём установлено, не трогаем."
+        yesLabel="Да, удалить"
+        loading={remove.isPending}
+        onConfirm={doDelete}
+      />
+    </>
+  );
+  const tabsBar = (
+    <fieldset
+      className={cn(
+        'm-0 flex h-10 min-w-0 items-center rounded-[11px] border border-border bg-surface-2 p-[3px]',
+        phone && 'h-9 w-full overflow-x-auto [scrollbar-width:none]',
+      )}
+    >
+      <legend className="sr-only">Разделы сервера</legend>
+      {TABS.map((t) => (
+        <button
+          key={t.key}
+          type="button"
+          aria-pressed={tab === t.key}
+          onClick={() => setTab(t.key)}
+          className={cn(
+            'h-full flex-none cursor-pointer rounded-[8px] px-4 text-[13px] font-semibold whitespace-nowrap text-text-3 transition-colors hover:text-foreground',
+            phone && 'px-3',
+            tab === t.key && 'bg-surface text-foreground shadow-[0_1px_0_var(--ns-hairline)]',
+          )}
+        >
+          {t.label}
+        </button>
+      ))}
+    </fieldset>
+  );
+  const closeButton = (
+    <Button
+      type="button"
+      variant="outline"
+      aria-label="Закрыть"
+      onClick={onClose}
+      className="size-9 flex-none rounded-[10px] border-border bg-surface-2 p-0 text-text-2 hover:bg-surface-3 hover:text-foreground"
+    >
+      <XIcon className="size-4" aria-hidden="true" />
+    </Button>
+  );
+  const pills = (
+    <>
+      <Pill tone={s.agentStatus === 'online' ? 'ok' : s.agentStatus === 'offline' ? 'crit' : 'muted'}>
+        {AGENT_STATUS_LABELS[s.agentStatus]}
+      </Pill>
+      <SshPill server={s} />
+    </>
+  );
+  const factsList = (
+    <dl className={cn('grid grid-cols-1 gap-x-4 gap-y-2.5', phone && 'grid-cols-2')}>
+      {facts.map(([k, v]) => (
+        <div key={k} className="min-w-0">
+          <dt className="text-[11px] text-text-3">{k}</dt>
+          <dd className="mt-px truncate text-[13px] font-medium">{v}</dd>
+        </div>
+      ))}
+      {s.tags.length > 0 && (
+        <div className={cn('min-w-0', phone && 'col-span-2')}>
+          <dt className="text-[11px] text-text-3">Теги</dt>
+          <dd className="mt-1 flex flex-wrap gap-1">
+            {s.tags.map((t) => (
+              <span
+                key={t}
+                className="rounded-[6px] border border-border bg-surface-2 px-2 py-[2px] text-[11px] font-medium text-text-2"
+              >
+                {t}
+              </span>
+            ))}
+          </dd>
+        </div>
+      )}
+    </dl>
+  );
+
   return (
     <Dialog open modal={false} onOpenChange={(o) => !o && onClose()}>
       {/* Свой блюр-фон: в неблокирующем режиме Radix не рисует overlay, а плавающий терминал (z-90)
@@ -175,164 +282,221 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
           'grid h-[min(780px,calc(100vh-56px))] w-[min(1120px,calc(100vw-40px))] grid-cols-[260px_minmax(0,1fr)] gap-0 overflow-hidden rounded-2xl border-border-2 bg-surface p-0 shadow-float ring-1 ring-(--ns-hairline) sm:max-w-[1120px]',
           // Телефон: лист на весь экран без центрирования. 100dvh — видимая высота в Safari с адресной
           // строкой (100vh там больше экрана, и центрированное окно уезжало верхом за край).
-          'max-md:top-0 max-md:left-0 max-md:h-dvh max-md:max-w-none max-md:w-screen max-md:translate-x-0 max-md:translate-y-0 max-md:rounded-none max-md:border-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:grid-cols-1 max-md:grid-rows-[auto_minmax(0,1fr)]',
+          'max-md:top-0 max-md:left-0 max-md:h-dvh max-md:w-screen max-md:max-w-none max-md:translate-x-0 max-md:translate-y-0 max-md:rounded-none max-md:border-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:grid-cols-1 max-md:grid-rows-[auto_minmax(0,1fr)_auto]',
         )}
       >
-        {/* Левая панель: состояние, факты, действия */}
-        <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-r border-border bg-bg-2 p-5 max-md:border-r-0 max-md:border-b max-md:p-4">
-          <DialogHeader className="gap-1.5">
-            <div className="flex items-center gap-2.5">
-              <HealthDot health={health} />
-              <DialogTitle className="min-w-0 truncate font-heading text-[18px] font-bold tracking-[-0.01em]">
-                {s.name}
-              </DialogTitle>
-            </div>
-            <DialogDescription className="sr-only">
-              Сервер {s.name}: метрики, журнал и подключение
-            </DialogDescription>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Pill tone={s.agentStatus === 'online' ? 'ok' : s.agentStatus === 'offline' ? 'crit' : 'muted'}>
-                {AGENT_STATUS_LABELS[s.agentStatus]}
-              </Pill>
-              <SshPill server={s} />
-            </div>
-          </DialogHeader>
-
-          <dl className="grid grid-cols-1 gap-x-4 gap-y-2.5 max-md:grid-cols-2">
-            {facts.map(([k, v]) => (
-              <div key={k} className="min-w-0">
-                <dt className="text-[11px] text-text-3">{k}</dt>
-                <dd className="mt-px truncate text-[13px] font-medium">{v}</dd>
+        {phone ? (
+          <>
+            {/* Шапка: имя и закрыть, статусы, вкладки — всё, что нужно, сразу на экране */}
+            <div className="flex flex-col border-b border-border bg-bg-2">
+              <DialogHeader className="flex flex-row items-center gap-2.5 space-y-0 px-4 pt-3 pb-2">
+                <HealthDot health={health} />
+                <DialogTitle className="min-w-0 flex-1 truncate text-left font-heading text-[17px] font-bold tracking-[-0.01em]">
+                  {s.name}
+                </DialogTitle>
+                <DialogDescription className="sr-only">
+                  Сервер {s.name}: метрики, журнал и подключение
+                </DialogDescription>
+                {closeButton}
+              </DialogHeader>
+              <div className="flex items-center gap-1.5 overflow-x-auto px-4 pb-2.5 [scrollbar-width:none]">
+                {pills}
+                {s.tags.length > 0 && (
+                  <span className="ml-auto flex-none pl-2 text-[11.5px] text-text-3">
+                    {s.tags.join(' · ')}
+                  </span>
+                )}
               </div>
-            ))}
-            {s.tags.length > 0 && (
-              <div className="min-w-0 max-md:col-span-2">
-                <dt className="text-[11px] text-text-3">Теги</dt>
-                <dd className="mt-1 flex flex-wrap gap-1">
-                  {s.tags.map((t) => (
-                    <span
-                      key={t}
-                      className="rounded-[6px] border border-border bg-surface-2 px-2 py-[2px] text-[11px] font-medium text-text-2"
-                    >
-                      {t}
-                    </span>
-                  ))}
-                </dd>
-              </div>
-            )}
-          </dl>
+              <div className="px-4 pb-3">{tabsBar}</div>
+            </div>
 
-          <div className="mt-auto flex flex-col gap-1.5 border-t border-border pt-4 max-md:flex-row max-md:flex-wrap max-md:[&>button]:w-auto max-md:[&>button]:flex-1">
-            <Button
-              type="button"
-              variant="outline"
-              className={SIDE_BTN}
-              onClick={() =>
-                openTerminal({ id: s.id, name: s.name, host: s.host, port: s.port, sshUser: s.sshUser })
-              }
-            >
-              <TerminalIcon className="size-4" aria-hidden="true" />
-              SSH-терминал
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={check.isPending}
-              onClick={() => void doCheck()}
-              className={SIDE_BTN}
-            >
-              <RefreshCwIcon className={cn('size-4', check.isPending && 'animate-spin')} aria-hidden="true" />
-              Проверить связь
-            </Button>
-            {s.agentStatus !== 'online' && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setInstallOpen(true)}
-                className={SIDE_BTN}
-              >
-                <KeyRoundIcon className="size-4" aria-hidden="true" />
-                Установить агента
-              </Button>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              disabled={duplicate.isPending}
-              onClick={() => void doDuplicate()}
-              className={SIDE_BTN}
-            >
-              <CopyPlusIcon className="size-4" aria-hidden="true" />
-              Дублировать
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setDeleteOpen(true)}
-              className={cn(
-                SIDE_BTN,
-                'border-transparent bg-transparent text-crit hover:bg-crit-soft hover:text-crit',
-              )}
-            >
-              <Trash2Icon className="size-4" aria-hidden="true" />
-              Удалить сервер
-            </Button>
-          </div>
-        </aside>
+            {/* Содержимое вкладки; факты свёрнуты сверху, чтобы не съедать экран */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+              <details className="group mb-3 rounded-2xl border border-border bg-surface">
+                <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[13px] [&::-webkit-details-marker]:hidden">
+                  <span className="font-semibold">Подробнее о сервере</span>
+                  <span className="min-w-0 flex-1 truncate text-right text-[12px] text-text-3">
+                    адрес, система, аптайм
+                  </span>
+                  <ChevronDownIcon
+                    className="size-4 flex-none text-text-3 transition-transform group-open:rotate-180"
+                    aria-hidden="true"
+                  />
+                </summary>
+                <div className="border-t border-border px-4 py-3">{factsList}</div>
+              </details>
+              {content}
+            </div>
 
-        {/* Правая панель: вкладки и содержимое */}
-        <div className="flex min-h-0 min-w-0 flex-col">
-          <div className="flex flex-none items-center gap-3 border-b border-border px-5 py-3.5 max-md:px-4">
-            <fieldset className="m-0 flex h-10 min-w-0 items-center rounded-[11px] border border-border bg-surface-2 p-[3px] max-md:h-9 max-md:flex-1 max-md:overflow-x-auto max-md:[scrollbar-width:none]">
-              <legend className="sr-only">Разделы сервера</legend>
-              {TABS.map((t) => (
-                <button
-                  key={t.key}
+            {/* Нижняя панель действий: под большим пальцем */}
+            <div className="flex gap-2 border-t border-border bg-surface px-3 py-2.5">
+              <PhoneAction
+                label="Терминал"
+                aria-label="SSH-терминал"
+                icon={<TerminalIcon className="size-[17px]" aria-hidden="true" />}
+                primary
+                onClick={() =>
+                  openTerminal({ id: s.id, name: s.name, host: s.host, port: s.port, sshUser: s.sshUser })
+                }
+              />
+              <PhoneAction
+                label="Проверить"
+                icon={
+                  <RefreshCwIcon
+                    className={cn('size-[17px]', check.isPending && 'animate-spin')}
+                    aria-hidden="true"
+                  />
+                }
+                disabled={check.isPending}
+                onClick={() => void doCheck()}
+              />
+              <PhoneAction
+                label="Дублировать"
+                icon={<CopyPlusIcon className="size-[17px]" aria-hidden="true" />}
+                disabled={duplicate.isPending}
+                onClick={() => void doDuplicate()}
+              />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <PhoneAction
+                    label="Ещё"
+                    icon={<MoreHorizontalIcon className="size-[17px]" aria-hidden="true" />}
+                  />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" side="top" className="z-[60] min-w-[220px]">
+                  <DropdownMenuItem onSelect={() => setInstallOpen(true)}>
+                    <KeyRoundIcon className="size-4" aria-hidden="true" />
+                    {s.agentStatus === 'online' ? 'Переустановить агента' : 'Установить агента'}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
+                    <Trash2Icon className="size-4" aria-hidden="true" />
+                    Удалить сервер
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Левая панель: состояние, факты, действия */}
+            <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-r border-border bg-bg-2 p-5">
+              <DialogHeader className="gap-1.5">
+                <div className="flex items-center gap-2.5">
+                  <HealthDot health={health} />
+                  <DialogTitle className="min-w-0 truncate font-heading text-[18px] font-bold tracking-[-0.01em]">
+                    {s.name}
+                  </DialogTitle>
+                </div>
+                <DialogDescription className="sr-only">
+                  Сервер {s.name}: метрики, журнал и подключение
+                </DialogDescription>
+                <div className="flex flex-wrap items-center gap-1.5">{pills}</div>
+              </DialogHeader>
+
+              {factsList}
+
+              <div className="mt-auto flex flex-col gap-1.5 border-t border-border pt-4">
+                <Button
                   type="button"
-                  aria-pressed={tab === t.key}
-                  onClick={() => setTab(t.key)}
+                  variant="outline"
+                  className={SIDE_BTN}
+                  onClick={() =>
+                    openTerminal({ id: s.id, name: s.name, host: s.host, port: s.port, sshUser: s.sshUser })
+                  }
+                >
+                  <TerminalIcon className="size-4" aria-hidden="true" />
+                  SSH-терминал
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={check.isPending}
+                  onClick={() => void doCheck()}
+                  className={SIDE_BTN}
+                >
+                  <RefreshCwIcon
+                    className={cn('size-4', check.isPending && 'animate-spin')}
+                    aria-hidden="true"
+                  />
+                  Проверить связь
+                </Button>
+                {s.agentStatus !== 'online' && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setInstallOpen(true)}
+                    className={SIDE_BTN}
+                  >
+                    <KeyRoundIcon className="size-4" aria-hidden="true" />
+                    Установить агента
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={duplicate.isPending}
+                  onClick={() => void doDuplicate()}
+                  className={SIDE_BTN}
+                >
+                  <CopyPlusIcon className="size-4" aria-hidden="true" />
+                  Дублировать
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setDeleteOpen(true)}
                   className={cn(
-                    'h-full flex-none cursor-pointer rounded-[8px] px-4 text-[13px] font-semibold whitespace-nowrap text-text-3 transition-colors hover:text-foreground max-md:px-3',
-                    tab === t.key && 'bg-surface text-foreground shadow-[0_1px_0_var(--ns-hairline)]',
+                    SIDE_BTN,
+                    'border-transparent bg-transparent text-crit hover:bg-crit-soft hover:text-crit',
                   )}
                 >
-                  {t.label}
-                </button>
-              ))}
-            </fieldset>
-            <div className="flex-1 max-md:hidden" />
-            <Button
-              type="button"
-              variant="outline"
-              aria-label="Закрыть"
-              onClick={onClose}
-              className="size-9 flex-none rounded-[10px] border-border bg-surface-2 p-0 text-text-2 hover:bg-surface-3 hover:text-foreground"
-            >
-              <XIcon className="size-4" aria-hidden="true" />
-            </Button>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 max-md:px-4">
-            {tab === 'metrics' && <MetricsTab serverId={s.id} range={range} onRange={setRange} />}
-            {tab === 'journal' && <JournalTab serverId={s.id} />}
-            {tab === 'terminal' && <TerminalHistoryTab serverId={s.id} />}
-            {tab === 'maintenance' && <MaintenanceTab server={s} />}
-            {tab === 'connection' && <ConnectionTab server={s} />}
-          </div>
-        </div>
+                  <Trash2Icon className="size-4" aria-hidden="true" />
+                  Удалить сервер
+                </Button>
+              </div>
+            </aside>
 
-        <AgentInstallDialog server={s} open={installOpen} onOpenChange={setInstallOpen} />
-        <ConfirmDialog
-          open={deleteOpen}
-          onOpenChange={setDeleteOpen}
-          kind="crit"
-          title={`Удалить «${s.name}»?`}
-          description="Сервер пропадёт из панели вместе с историей проверок. Сам сервер и то, что на нём установлено, не трогаем."
-          yesLabel="Да, удалить"
-          loading={remove.isPending}
-          onConfirm={doDelete}
-        />
+            {/* Правая панель: вкладки и содержимое */}
+            <div className="flex min-h-0 min-w-0 flex-col">
+              <div className="flex flex-none items-center gap-3 border-b border-border px-5 py-3.5">
+                {tabsBar}
+                <div className="flex-1" />
+                {closeButton}
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{content}</div>
+            </div>
+          </>
+        )}
+
+        {dialogs}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Кнопка нижней панели на телефоне: иконка над подписью, одна ширина на всех. */
+function PhoneAction({
+  label,
+  icon,
+  primary,
+  ...rest
+}: { label: string; icon: ReactNode; primary?: boolean } & Omit<React.ComponentProps<'button'>, 'children'>) {
+  return (
+    <button
+      type="button"
+      {...rest}
+      className={cn(
+        'flex h-12 flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-[12px] border text-[10.5px] font-medium transition-colors disabled:cursor-default disabled:opacity-50',
+        primary
+          ? 'border-transparent bg-brand text-(--ns-on-accent) hover:brightness-[1.07]'
+          : 'border-border bg-surface-2 text-text-2 hover:bg-surface-3 hover:text-foreground',
+        rest.className,
+      )}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
 
