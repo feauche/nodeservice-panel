@@ -54,6 +54,17 @@ export class IncidentsRepository {
     return row;
   }
 
+  async delete(id: string): Promise<boolean> {
+    const rows = await this.db.delete(incidents).where(eq(incidents.id, id)).returning({ id: incidents.id });
+    return rows.length > 0;
+  }
+
+  async deleteResolved(): Promise<number> {
+    return (
+      await this.db.delete(incidents).where(eq(incidents.status, 'resolved')).returning({ id: incidents.id })
+    ).length;
+  }
+
   async appendEvent(id: string, event: IncidentEvent): Promise<IncidentRow | undefined> {
     const row = await this.findById(id);
     if (!row) return undefined;

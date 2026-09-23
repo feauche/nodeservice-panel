@@ -240,6 +240,12 @@ export const ATTEMPT_STATUS_LABELS: Record<AttemptStatus, string> = {
 /** Лог попытки в БД ограничен, чтобы инцидент не раздувался. */
 export const ATTEMPT_LOG_MAX = 20_000;
 
+/**
+ * Инцидент открывается в момент сбоя, а автопочинка (само или предложение) ждёт столько секунд:
+ * вдруг нода поднимется сама после перезапуска или обновления. Поднялась — инцидент закрывается сам.
+ */
+export const AUTOFIX_GRACE_SECONDS = 60;
+
 export const incidentAttemptSchema = z.object({
   id: z.string(),
   /** Ключ действия; строка, а не enum — в БД могут лежать попытки действий, убранных из реестра. */

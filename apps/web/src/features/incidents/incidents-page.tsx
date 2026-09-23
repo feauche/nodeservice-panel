@@ -1,7 +1,9 @@
 import {
   ATTEMPT_STATUS_LABELS,
+  AUTOFIX_GRACE_SECONDS,
   actionKeySchema,
   actionMeta,
+  INCIDENT_CHAINS,
   INCIDENT_KIND_META,
   type Incident,
   type IncidentAttempt,
@@ -15,6 +17,7 @@ import {
   Loader2Icon,
   ShieldCheckIcon,
   TerminalIcon,
+  Trash2Icon,
   WrenchIcon,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -32,6 +35,8 @@ import { AutofixTab } from './autofix-tab';
 import {
   type IncidentsFilter,
   useAcknowledgeIncident,
+  useDeleteIncident,
+  useDeleteResolvedIncidents,
   useIncidents,
   useResolveIncident,
   useRunAction,
@@ -85,6 +90,9 @@ export function IncidentsPage({ openId }: { openId?: string | undefined } = {}) 
   const incidents = useIncidents(filter);
   const items = incidents.data?.items ?? [];
   const openCount = incidents.data?.counts.open ?? 0;
+  const deleteResolved = useDeleteResolvedIncidents();
+  const [confirmClear, setConfirmClear] = useState(false);
+  const resolvedShown = filter === 'resolved' && items.length > 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -135,6 +143,36 @@ export function IncidentsPage({ openId }: { openId?: string | undefined } = {}) 
             ))}
           </fieldset>
         )}
+        {tab === 'incidents' && resolvedShown && (
+          <button
+            type="button"
+            disabled={deleteResolved.isPending}
+            onClick={() => setConfirmClear(true)}
+            className="ml-auto inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3.5 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-50"
+          >
+            <Trash2Icon className="size-3.5" aria-hidden="true" />
+            Удалить решённые
+          </button>
+        )}
+        <ConfirmDialog
+          open={confirmClear}
+          onOpenChange={setConfirmClear}
+          kind="crit"
+          title="Удалить все решённые инциденты?"
+          description="История починок по ним пропадёт, статистика «помогло N из M» пересчитается. Открытые инциденты останутся. Записи Журнала не трогаем."
+          yesLabel="Удалить"
+          loading={deleteResolved.isPending}
+          onConfirm={async () => {
+            try {
+              const { deleted } = await deleteResolved.mutateAsync();
+              setConfirmClear(false);
+              toast.success(deleted > 0 ? `Удалено инцидентов: ${deleted}.` : 'Решённых инцидентов не было.');
+            } catch (err) {
+              setConfirmClear(false);
+              toast.error(apiErrorMessage(err));
+            }
+          }}
+        />
       </div>
 
       {tab === 'autofix' && <AutofixTab />}
@@ -181,8 +219,16 @@ export function IncidentsPage({ openId }: { openId?: string | undefined } = {}) 
   );
 }
 
+/** Сколько секунд автопочинка ещё выжидает по свежему инциденту; null — пауза не идёт. */
+function graceLeftS(inc: Incident, now: number): number | null {
+  if (inc.status === 'resolved' || inc.attempts.length > 0 || inc.proposal) return null;
+  if (INCIDENT_CHAINS[inc.kind].length === 0) return null;
+  const left = Math.ceil((new Date(inc.openedAt).getTime() + AUTOFIX_GRACE_SECONDS * 1000 - now) / 1000);
+  return left > 0 ? left : null;
+}
+
 /** Одна строка под заголовком: что делается и чем кончилось (витрина 4-1). */
-function summaryLine(inc: Incident): React.ReactNode {
+function summaryLine(inc: Incident, now: number): React.ReactNode {
   const meta = INCIDENT_KIND_META[inc.kind];
   const when =
     inc.status === 'resolved' && inc.resolvedAt
@@ -230,6 +276,14 @@ function summaryLine(inc: Incident): React.ReactNode {
         </span>,
       ]);
     if (!last && !inc.proposal && inc.kind === 'ssh_down') parts.push(['none', 'автопочинки нет']);
+    const waitS = graceLeftS(inc, now);
+    if (waitS !== null)
+      parts.push([
+        'wait',
+        <span key="wait" className="text-text-2">
+          {`ждём ещё ${waitS} с — возможно, поднимется само`}
+        </span>,
+      ]);
   }
   return parts.map(([key, node], i) => (
     <span key={key} className="inline-flex items-center gap-1">
@@ -249,6 +303,7 @@ function IncidentCard({
   onToggle: () => void;
 }) {
   const status = STATUS_PILL[incident.status];
+  const now = useNow(graceLeftS(incident, Date.now()) !== null);
   return (
     <section
       className={cn(
@@ -272,7 +327,7 @@ function IncidentCard({
             {incident.title}
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[12px] text-text-3">
-            {summaryLine(incident)}
+            {summaryLine(incident, now)}
           </span>
         </span>
         <span className="hidden text-[11.5px] text-text-3 sm:inline">{SEV_LABEL[incident.severity]}</span>
@@ -290,8 +345,10 @@ function IncidentCard({
 function IncidentDetails({ incident }: { incident: Incident }) {
   const ack = useAcknowledgeIncident();
   const resolve = useResolveIncident();
+  const remove = useDeleteIncident();
   const run = useRunAction();
   const [confirmResolve, setConfirmResolve] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const running = incident.attempts.find((a) => a.status === 'running');
   const lastAttempt = running ?? incident.attempts.at(-1);
   const canAct = incident.status !== 'resolved' && incident.serverId !== null;
@@ -392,15 +449,47 @@ function IncidentDetails({ incident }: { incident: Incident }) {
             <CheckIcon className="size-3.5" aria-hidden="true" />
             Закрыть вручную
           </button>
+          <DeleteButton onClick={() => setConfirmDelete(true)} disabled={remove.isPending} />
         </div>
       )}
-      {incident.status === 'resolved' && lastAttempt?.status === 'helped' && (
-        <p className="mt-4 border-t border-border pt-3 text-[12px] text-text-3">
-          Чинилось {lastAttempt.by === 'auto' ? 'автоматически' : 'по вашей команде'}: «
-          {actionMeta(lastAttempt.action).title}» <LevelChip level={lastAttempt.level} /> · помогло{' '}
-          {incident.attempts.length === 1 ? 'с первой попытки' : `с попытки ${incident.attempts.length}`}
-        </p>
+      {incident.status === 'resolved' && (
+        <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-border pt-3">
+          {lastAttempt?.status === 'helped' ? (
+            <p className="min-w-0 flex-1 text-[12px] text-text-3">
+              Чинилось {lastAttempt.by === 'auto' ? 'автоматически' : 'по вашей команде'}: «
+              {actionMeta(lastAttempt.action).title}» <LevelChip level={lastAttempt.level} /> · помогло{' '}
+              {incident.attempts.length === 1 ? 'с первой попытки' : `с попытки ${incident.attempts.length}`}
+            </p>
+          ) : (
+            <span className="flex-1" />
+          )}
+          <DeleteButton onClick={() => setConfirmDelete(true)} disabled={remove.isPending} />
+        </div>
       )}
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        kind="crit"
+        title="Удалить инцидент?"
+        description={
+          incident.status === 'resolved'
+            ? 'Хронология и попытки починки по нему пропадут, статистика «помогло N из M» пересчитается. Записи Журнала остаются.'
+            : 'Идущая попытка будет прервана, хронология пропадёт. Если проблема не ушла, панель заведёт новый инцидент.'
+        }
+        yesLabel="Удалить"
+        loading={remove.isPending}
+        onConfirm={async () => {
+          try {
+            await remove.mutateAsync(incident.id);
+            setConfirmDelete(false);
+            toast.success('Инцидент удалён.');
+          } catch (err) {
+            setConfirmDelete(false);
+            toast.error(apiErrorMessage(err));
+          }
+        }}
+      />
 
       <ConfirmDialog
         open={confirmResolve}
@@ -612,5 +701,20 @@ function ProposalBlock({
         </button>
       </div>
     </div>
+  );
+}
+
+/** Кнопка удаления в подвале карточки: тихая, справа, краснеет только при наведении. */
+function DeleteButton({ onClick, disabled }: { onClick: () => void; disabled: boolean }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="ml-auto inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] px-3 text-[12.5px] font-medium text-text-3 transition-colors hover:bg-crit-soft hover:text-crit disabled:opacity-50"
+    >
+      <Trash2Icon className="size-3.5" aria-hidden="true" />
+      Удалить
+    </button>
   );
 }

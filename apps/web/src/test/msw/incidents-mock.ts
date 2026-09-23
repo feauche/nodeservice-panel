@@ -392,6 +392,17 @@ export const incidentsHandlers = [
       if (actionMeta(k as ActionKey).level === 'T1') mockIncidents.settings.actions[k] = v as boolean;
     return HttpResponse.json(actionsResponse());
   }),
+  http.delete('/api/incidents/resolved', () => {
+    const before = mockIncidents.items.length;
+    mockIncidents.items = mockIncidents.items.filter((i) => i.status !== 'resolved');
+    return HttpResponse.json({ deleted: before - mockIncidents.items.length });
+  }),
+  http.delete('/api/incidents/:id', ({ params }) => {
+    const idx = mockIncidents.items.findIndex((i) => i.id === params.id);
+    if (idx < 0) return problem(404, 'Инцидент не найден.');
+    mockIncidents.items.splice(idx, 1);
+    return new HttpResponse(null, { status: 204 });
+  }),
   http.get('/api/incidents/:id', ({ params }) => {
     const inc = mockIncidents.items.find((i) => i.id === params.id);
     return inc ? HttpResponse.json(inc) : problem(404, 'Инцидент не найден.');

@@ -157,6 +157,8 @@ export const AUDIT_ACTIONS = {
   'incident.acknowledged': { category: 'server', label: 'Инцидент взят в работу' },
   'incident.autofix': { category: 'server', label: 'Инцидент: попытка починки' },
   'incident.action.proposed': { category: 'server', label: 'Инцидент: предложен следующий шаг' },
+  'incident.deleted': { category: 'server', label: 'Инцидент удалён' },
+  'incidents.resolved.deleted': { category: 'server', label: 'Решённые инциденты удалены' },
   'system.started': { category: 'system', label: 'Сервис запущен' },
   'system.audit.partition_created': { category: 'system', label: 'Журнал: создан раздел на месяц' },
   'system.audit.partition_dropped': {

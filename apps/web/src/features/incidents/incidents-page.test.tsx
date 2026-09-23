@@ -110,6 +110,22 @@ describe('IncidentsPage', () => {
     );
   });
 
+  it('удаление: один инцидент из карточки и все решённые кнопкой на фильтре', async () => {
+    renderPage(IncidentsPage, '/incidents');
+    const user = userEvent.setup();
+    await user.click(await screen.findByText('SSH недоступен · nl-ams-02'));
+    await user.click(await screen.findByRole('button', { name: /^Удалить$/ }));
+    await user.click(await screen.findByRole('button', { name: 'Удалить' }));
+    await waitFor(() => expect(mockIncidents.items.some((i) => i.kind === 'ssh_down')).toBe(false));
+    await waitFor(() => expect(screen.queryByText('SSH недоступен · nl-ams-02')).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: /^Решённые/ }));
+    await user.click(await screen.findByRole('button', { name: /Удалить решённые/ }));
+    await user.click(await screen.findByRole('button', { name: 'Удалить' }));
+    await waitFor(() => expect(mockIncidents.items.some((i) => i.status === 'resolved')).toBe(false));
+    expect(await screen.findByText('Пока спокойно')).toBeInTheDocument();
+  });
+
   it('вкладка «Автопочинка»: карточки с уровнями, общий тумблер и тумблер T1 пишутся в настройки', async () => {
     renderPage(IncidentsPage, '/incidents');
     const user = userEvent.setup();
@@ -130,6 +146,24 @@ describe('IncidentsPage', () => {
     await waitFor(() => expect(mockIncidents.settings.autofixEnabled).toBe(true));
     await user.click(within(free).getByRole('switch', { name: 'Авто: Освободить диск' }));
     await waitFor(() => expect(mockIncidents.settings.actions.free_disk).toBe(true));
+  });
+
+  it('свежий инцидент: «ждём ещё N с — возможно, поднимется само», пока автопочинка выжидает', async () => {
+    const [base] = mockIncidents.items;
+    if (!base) throw new Error('нет мок-инцидента');
+    mockIncidents.items = [
+      {
+        ...base,
+        id: '7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3c4d',
+        kind: 'node_down',
+        title: 'Контейнер ноды не запущен · nl-ams-02',
+        openedAt: new Date(Date.now() - 10_000).toISOString(),
+        attempts: [],
+        proposal: null,
+      },
+    ];
+    renderPage(IncidentsPage, '/incidents');
+    expect(await screen.findByText(/ждём ещё \d+ с — возможно, поднимется само/)).toBeInTheDocument();
   });
 
   it('пустое состояние, когда инцидентов нет', async () => {

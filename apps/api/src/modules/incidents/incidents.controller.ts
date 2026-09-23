@@ -1,4 +1,15 @@
-import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   type ActionKey,
@@ -51,11 +62,25 @@ export class IncidentsController {
     return this.incidents.updateActions(body);
   }
 
+  @Delete('resolved')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Удалить все решённые инциденты' })
+  deleteResolved(): Promise<{ deleted: number }> {
+    return this.incidents.deleteResolved();
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Один инцидент с хронологией и попытками' })
   @ApiOkResponse({ type: IncidentDto })
   get(@Param('id', ParseUUIDPipe) id: string): Promise<IncidentDto> {
     return this.incidents.get(id);
+  }
+
+  @Delete(':id')
+  @HttpCode(204)
+  @ApiOperation({ summary: 'Удалить инцидент из истории' })
+  remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.incidents.delete(id);
   }
 
   @Post(':id/acknowledge')

@@ -1,7 +1,7 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import {
+  AUTOFIX_GRACE_SECONDS,
   INCIDENT_ACTIONS,
-  INCIDENT_CHAINS,
   INCIDENT_KIND_META,
   INCIDENT_KINDS,
   type Incident,
@@ -31,8 +31,6 @@ export const INCIDENT_HYSTERESIS_PCT = 5;
  * «не в сети». Столько после старта состояния связи не оцениваем, чтобы не заводить ложные инциденты.
  */
 export const STARTUP_GRACE_MS = process.env.NODE_ENV === 'test' ? 0 : 3 * 60_000;
-/** «Контейнер ноды не запущен» — если контейнер не работает дольше этого (перезапуск длится секунды). */
-export const NODE_DOWN_FOR_MS = process.env.NODE_ENV === 'test' ? 0 : 45_000;
 /** «Агент не в сети» — только если молчит дольше этого (короткий обрыв при обновлении — не инцидент). */
 export const AGENT_OFFLINE_FOR_MS = process.env.NODE_ENV === 'test' ? 0 : 2 * 60_000;
 /** Статистика действий на вкладке «Автопочинка» — за последние N дней. */
@@ -53,8 +51,6 @@ export class IncidentsService {
   /** Момент первого превышения порога (server:kind) — для «времени реакции» без флаппинга. */
   private readonly exceededSince = new Map<string, number>();
   private readonly bootAt = Date.now();
-  /** Серверы, где панель хоть раз видела запущенный контейнер ноды: только для них его остановка — инцидент. */
-  private readonly nodeSeen = new Set<string>();
 
   constructor(
     private readonly repo: IncidentsRepository,
@@ -145,6 +141,35 @@ export class IncidentsService {
       metadata: { by: 'manual' },
     });
     return this.toDto(updated ?? row);
+  }
+
+  /**
+   * Удалить инцидент из истории. Открытый — сначала обрываем идущую попытку; если проблема
+   * не ушла, детекция заведёт новый. Статистика «помогло N из M» этот инцидент больше не учитывает.
+   */
+  async delete(id: string): Promise<void> {
+    const row = await this.repo.findById(id);
+    if (!row) throw problem(HttpStatus.NOT_FOUND, { detail: 'Инцидент не найден.' });
+    await this.runner.cancelRunning(id, 'Прервано: инцидент удалён');
+    await this.repo.delete(id);
+    if (row.serverId) this.exceededSince.delete(`${row.serverId}:${row.kind}`);
+    await this.audit.record({
+      action: 'incident.deleted',
+      target: { type: 'incident', id, display: row.title },
+      metadata: { kind: row.kind, status: row.status, server: row.serverName },
+    });
+  }
+
+  /** Очистить историю: удалить все решённые инциденты. Открытые остаются. */
+  async deleteResolved(): Promise<{ deleted: number }> {
+    const deleted = await this.repo.deleteResolved();
+    if (deleted > 0)
+      await this.audit.record({
+        action: 'incidents.resolved.deleted',
+        target: { type: 'incident', id: 'resolved', display: 'Решённые инциденты' },
+        metadata: { deleted },
+      });
+    return { deleted };
   }
 
   /** Запустить действие реестра по инциденту (T1/T2). T3 панель не выполняет. */
@@ -250,34 +275,38 @@ export class IncidentsService {
   /** Зонд контейнера (NodeProbeJob или тест) сообщает состояние; отсюда решаем про инцидент. */
   recordNodeState(serverId: string, running: boolean | undefined): void {
     this.metrics.setNodeRunning(serverId, running);
-    if (running) this.nodeSeen.add(serverId);
   }
 
   /**
-   * Контейнер ноды не работает дольше NODE_DOWN_FOR_MS → инцидент; снова работает → закрываем.
-   * Судим только серверы, где контейнер хоть раз видели запущенным: на остальных его просто нет.
+   * Зонд увидел другое состояние контейнера — судим сразу, не дожидаясь тика: инцидент
+   * открывается в момент сбоя, а после возврата контейнера закрывается сам.
+   */
+  async probeNodeState(serverId: string, running: boolean | undefined): Promise<void> {
+    const changed = this.metrics.nodeRunning(serverId) !== running;
+    this.recordNodeState(serverId, running);
+    if (!changed) return;
+    const server = await this.serversRepo.findById(serverId);
+    if (server) await this.evalNode(server);
+  }
+
+  /**
+   * `false` — контейнер есть, но не работает → инцидент сразу; `true` → закрываем; `undefined`
+   * (контейнера нет или зонд не ответил) → сервер не судим. Ждать здесь нечего: пауза «вдруг
+   * поднимется само» — у автопочинки (AUTOFIX_GRACE_SECONDS), а не у детекции.
    */
   private async evalNode(server: ServerRow): Promise<void> {
-    const key = `${server.id}:node_down`;
     const running = this.metrics.nodeRunning(server.id);
+    if (running === undefined) return;
     const existing = await this.repo.findOpen(server.id, 'node_down');
-    if (running === undefined || (!this.nodeSeen.has(server.id) && !existing)) {
-      this.exceededSince.delete(key);
-      return;
-    }
     if (!running) {
-      const since = this.exceededSince.get(key) ?? Date.now();
-      this.exceededSince.set(key, since);
-      if (!existing && Date.now() - since >= NODE_DOWN_FOR_MS)
+      if (!existing)
         await this.openIncident(
           server,
           'node_down',
-          'Контейнер remnanode остановлен или упал — нода не работает.',
+          'Контейнер ноды остановлен или упал — нода не работает.',
         );
-    } else {
-      this.exceededSince.delete(key);
-      if (existing && !existing.attempts.some((a) => a.status === 'running'))
-        await this.autoResolve(existing);
+    } else if (existing && !existing.attempts.some((a) => a.status === 'running')) {
+      await this.autoResolve(existing);
     }
   }
 
@@ -339,24 +368,28 @@ export class IncidentsService {
       detail,
       timeline: [ev('auto', `Обнаружено: ${meta.label}`, 'detect')],
     });
-    // Есть цепочка починки — уведомление пришлёт исполнитель одним сообщением («чиню» или «ждёт подтверждения»),
-    // иначе было бы два подряд. Без цепочки (SSH недоступен) — сообщаем здесь.
-    if (row && INCIDENT_CHAINS[kind].length === 0)
+    if (!row) return;
+    // Решаем сразу: предложение шага уходит своим уведомлением, автопочинка выжидает паузу —
+    // тогда сообщаем об обнаружении и о том, что ждём. Без цепочки — просто сообщаем.
+    const decision = await this.runner.onOpened(row);
+    if (decision === 'waiting' || decision === 'none')
       await this.notifications.push({
         severity: meta.severity === 'crit' ? 'crit' : 'warn',
         title: row.title,
-        body: detail,
+        body:
+          decision === 'waiting'
+            ? `${detail} Ждём ${AUTOFIX_GRACE_SECONDS} с — возможно, поднимется само, иначе починим автоматически.`
+            : detail,
         link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
       });
-    if (row)
-      await this.audit.record({
-        action: 'incident.opened',
-        actor: SYSTEM_ACTOR,
-        source: 'auto',
-        severity: meta.severity === 'crit' ? 'crit' : 'warn',
-        target: { type: 'incident', id: row.id, display: row.title },
-        metadata: { server: server.name, kind },
-      });
+    await this.audit.record({
+      action: 'incident.opened',
+      actor: SYSTEM_ACTOR,
+      source: 'auto',
+      severity: meta.severity === 'crit' ? 'crit' : 'warn',
+      target: { type: 'incident', id: row.id, display: row.title },
+      metadata: { server: server.name, kind },
+    });
   }
 
   private async autoResolve(row: IncidentRow): Promise<void> {

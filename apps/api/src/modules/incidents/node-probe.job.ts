@@ -6,10 +6,12 @@ import { IncidentRunnerService, NODE_PROBE } from './incident-runner.service.js'
 import { IncidentsService } from './incidents.service.js';
 
 /**
- * Зонд контейнера ноды: раз в минуту по SSH от root спрашиваем `docker inspect remnanode` у каждого
- * сервера с рабочим SSH. Агент в песочнице контейнер видеть не может, поэтому источник — панель.
- * `true`/`false` → состояние, `none` (контейнера нет) → сервер не нода, его не судим.
+ * Зонд контейнера ноды: раз в 15 с по SSH от root спрашиваем `docker inspect` у каждого сервера
+ * с рабочим SSH. Агент в песочнице контейнер видеть не может, поэтому источник — панель.
+ * `true`/`false` → состояние (сменилось — инцидент судится сразу), `none` (контейнера нет) → не судим.
  */
+export const PROBE_INTERVAL_MS = 15_000;
+
 @Injectable()
 export class NodeProbeJob {
   private readonly log = new Logger(NodeProbeJob.name);
@@ -21,7 +23,7 @@ export class NodeProbeJob {
     private readonly incidents: IncidentsService,
   ) {}
 
-  @Interval(60_000)
+  @Interval(PROBE_INTERVAL_MS)
   async tick(): Promise<void> {
     if (process.env.NODE_ENV === 'test') return;
     if (this.busy) return;
@@ -33,7 +35,7 @@ export class NodeProbeJob {
       const worker = async () => {
         for (let row = queue.shift(); row; row = queue.shift()) {
           const probe = await this.runner.sshProbe(row.id, NODE_PROBE);
-          this.incidents.recordNodeState(
+          await this.incidents.probeNodeState(
             row.id,
             probe === 'true' ? true : probe === 'false' ? false : undefined,
           );

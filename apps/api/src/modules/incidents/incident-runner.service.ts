@@ -7,6 +7,7 @@ import {
   ATTEMPT_STATUS_LABELS,
   type AttemptStep,
   type AttemptStepKey,
+  AUTOFIX_GRACE_SECONDS,
   actionByKey,
   actionMeta,
   INCIDENT_CHAINS,
@@ -40,6 +41,7 @@ const T = TEST
       xrayTimeoutMs: 400,
       execTimeoutMs: 5_000,
       staleMs: 1_000,
+      graceMs: 0,
     }
   : {
       pollMs: 20_000,
@@ -51,6 +53,8 @@ const T = TEST
       execTimeoutMs: 180_000,
       /** Попытка, которая идёт дольше и не числится в памяти, — зависла: сторож её закрывает. */
       staleMs: 15 * 60_000,
+      /** Пауза перед первым шагом цепочки: вдруг поднимется само. */
+      graceMs: AUTOFIX_GRACE_SECONDS * 1000,
     };
 
 /**
@@ -62,6 +66,9 @@ export const NODE_FIND =
 export const NODE_PROBE = `${NODE_FIND}; [ -n "$N" ] && docker inspect -f '{{.State.Running}}' "$N" 2>/dev/null || echo none`;
 
 const iso = () => new Date().toISOString();
+
+/** Что сделано с открытым инцидентом: ждём паузу автопочинки, предложили шаг, запустили, ничего. */
+export type Decision = 'waiting' | 'proposed' | 'started' | 'none';
 const ev = (
   by: 'auto' | 'manual',
   action: string,
@@ -245,7 +252,7 @@ export class IncidentRunnerService implements OnModuleInit {
     return updated ?? row;
   }
 
-  /** Тик автопочинки: первый шаг цепочки — сам (T1 включено) или как предложение. */
+  /** Тик автопочинки: свежие инциденты без попыток — решаем, что с ними делать; сторож зависших попыток. */
   async autoTick(): Promise<void> {
     // Сторож: «выполняется» дольше лимита и не в памяти — зависла, закрываем.
     await this.failOrphans(
@@ -253,41 +260,50 @@ export class IncidentRunnerService implements OnModuleInit {
       (a) => Date.now() - new Date(a.startedAt).getTime() > T.staleMs,
     ).catch((err) => this.log.warn(`сторож попыток: ${(err as Error).message}`));
     const cfg = await this.settings.get();
-    for (const row of await this.repo.list('open')) {
-      if (!row.serverId || row.proposal || row.attempts.some((a) => a.status === 'running')) continue;
-      // Уже пробовали — эскалация решает, что дальше; сюда только «свежие» инциденты.
-      if (row.attempts.length > 0) continue;
-      const first = INCIDENT_CHAINS[row.kind as IncidentKind][0];
-      if (!first) continue;
-      const action = actionByKey(first);
-      const autoAllowed =
-        cfg.autofixEnabled &&
-        action.level === 'T1' &&
-        cfg.actions[first] === true &&
-        !this.busy.has(row.serverId);
-      if (autoAllowed) {
-        if (
-          row.lastAutofixAt &&
-          Date.now() - row.lastAutofixAt.getTime() < cfg.autofixCooldownMinutes * 60_000
-        )
-          continue;
-        await this.notifications.push({
-          severity: row.severity === 'crit' ? 'crit' : 'warn',
-          title: `${row.title}: чиню автоматически`,
-          body: `${row.detail} Запускаю «${action.title}» (T1).`,
-          link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
-        });
-        await this.start(row.id, first, 'auto').catch((err) =>
-          this.log.warn(`автопочинка ${row.id}: ${(err as Error).message}`),
-        );
-      } else {
-        await this.propose(
-          row,
-          first,
-          action.level === 'T1' ? 'авто для этого действия выключено' : 'первый шаг цепочки',
-        );
-      }
+    for (const row of await this.repo.list('open')) await this.decide(row, cfg);
+  }
+
+  /** Инцидент только что открыт — решаем сразу, не дожидаясь тика. */
+  async onOpened(row: IncidentRow): Promise<Decision> {
+    return this.decide(row, await this.settings.get());
+  }
+
+  /**
+   * Первый шаг цепочки. T1 с включённым авто — выполняется сам, но не раньше AUTOFIX_GRACE_SECONDS
+   * после открытия: вдруг поднимется само. Всё остальное (T2, T3, выключенное авто) предлагается
+   * сразу — предложение и ручной запуск не ждут.
+   */
+  private async decide(
+    row: IncidentRow,
+    cfg: Awaited<ReturnType<IncidentsSettingsStore['get']>>,
+  ): Promise<Decision> {
+    if (!row.serverId || row.proposal || row.attempts.length > 0) return 'none';
+    const first = INCIDENT_CHAINS[row.kind as IncidentKind][0];
+    if (!first) return 'none';
+    const action = actionByKey(first);
+    const autoAllowed = cfg.autofixEnabled && action.level === 'T1' && cfg.actions[first] === true;
+    if (!autoAllowed) {
+      await this.propose(
+        row,
+        first,
+        action.level === 'T1' ? 'авто для этого действия выключено' : 'первый шаг цепочки',
+      );
+      return 'proposed';
     }
+    if (Date.now() - row.openedAt.getTime() < T.graceMs) return 'waiting';
+    if (this.busy.has(row.serverId)) return 'waiting';
+    if (row.lastAutofixAt && Date.now() - row.lastAutofixAt.getTime() < cfg.autofixCooldownMinutes * 60_000)
+      return 'waiting';
+    await this.notifications.push({
+      severity: row.severity === 'crit' ? 'crit' : 'warn',
+      title: `${row.title}: чиню автоматически`,
+      body: `${row.detail} Запускаю «${action.title}» (T1).`,
+      link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
+    });
+    await this.start(row.id, first, 'auto').catch((err) =>
+      this.log.warn(`автопочинка ${row.id}: ${(err as Error).message}`),
+    );
+    return 'started';
   }
 
   /* ---------- ход попытки ---------- */

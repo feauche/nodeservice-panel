@@ -9,6 +9,7 @@ import {
   incidentsListResponseSchema,
 } from '@nodeservice/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { z } from 'zod';
 
 import { api, request } from '@/lib/api';
 
@@ -25,6 +26,9 @@ export const incidentsApi = {
   /** Запуск действия реестра (T1/T2): попытка идёт в фоне, инцидент перечитывается, пока она идёт. */
   run: (id: string, action: ActionKey): Promise<Incident> =>
     api.post(`/incidents/${id}/actions/${action}/run`, {}, incidentSchema),
+  remove: (id: string): Promise<void> => request(`/incidents/${id}`, { method: 'DELETE' }),
+  removeResolved: (): Promise<{ deleted: number }> =>
+    request('/incidents/resolved', { method: 'DELETE', schema: z.object({ deleted: z.number().int() }) }),
   actions: (signal?: AbortSignal): Promise<IncidentActionsResponse> =>
     api.get('/incidents/actions', incidentActionsResponseSchema, signal),
   updateActions: (body: IncidentActionsUpdate): Promise<IncidentActionsResponse> =>
@@ -33,6 +37,7 @@ export const incidentsApi = {
 
 export const incidentsKeys = {
   all: ['incidents'] as const,
+  lists: ['incidents', 'list'] as const,
   list: (status: IncidentsFilter) => ['incidents', 'list', status] as const,
   actions: ['incidents', 'actions'] as const,
 };
@@ -63,6 +68,27 @@ function useIncidentAction(fn: (id: string) => Promise<Incident>) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: fn,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: incidentsKeys.all }),
+  });
+}
+
+/** Удаление одного инцидента: убираем из кэша сразу, потом перечитываем. */
+export function useDeleteIncident() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: incidentsApi.remove,
+    onSuccess: (_d, id) => {
+      qc.setQueriesData<IncidentsListResponse>({ queryKey: incidentsKeys.lists }, (cur) =>
+        cur ? { ...cur, items: cur.items.filter((i) => i.id !== id) } : cur,
+      );
+      void qc.invalidateQueries({ queryKey: incidentsKeys.all });
+    },
+  });
+}
+export function useDeleteResolvedIncidents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: incidentsApi.removeResolved,
     onSuccess: () => void qc.invalidateQueries({ queryKey: incidentsKeys.all }),
   });
 }

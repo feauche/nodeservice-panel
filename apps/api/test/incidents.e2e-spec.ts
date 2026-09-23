@@ -323,25 +323,41 @@ describe('incidents e2e', () => {
     const db = app.get<Db>(DB);
     await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
     const svc = app.get(IncidentsService);
-    // контейнер на сервере ни разу не видели — не судим
-    svc.recordNodeState(serverId, false);
+    // контейнера нет (зонд: none) — не судим
+    await svc.probeNodeState(serverId, undefined);
     await svc.evaluate(noMetrics);
     expect(
       incidentsListResponseSchema
         .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
         .items.some((i) => i.kind === 'node_down'),
     ).toBe(false);
-    // увидели запущенный контейнер → его остановка становится инцидентом
-    svc.recordNodeState(serverId, true);
-    await svc.evaluate(noMetrics);
-    svc.recordNodeState(serverId, false);
+    // зонд увидел остановленный контейнер → инцидент в тот же момент, без тика
+    await svc.probeNodeState(serverId, false);
+    expect(
+      incidentsListResponseSchema
+        .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
+        .items.some((i) => i.kind === 'node_down'),
+    ).toBe(true);
+    // предложение первого шага — на тике автопочинки
     await svc.evaluate(noMetrics);
     const list = incidentsListResponseSchema.parse(
       (await agent.get('/api/incidents?status=open').expect(200)).body,
     );
-    const inc = list.items.find((i) => i.kind === 'node_down');
-    expect(inc?.severity).toBe('crit');
-    expect(inc?.proposal).toMatchObject({ action: 'node_up', level: 'T1' });
+    const inc0 = list.items.find((i) => i.kind === 'node_down');
+    expect(inc0?.severity).toBe('crit');
+    expect(inc0?.proposal).toMatchObject({ action: 'node_up', level: 'T1' });
+    // контейнер вернулся сам → инцидент закрывается зондом сразу; упал снова → новый инцидент
+    await svc.probeNodeState(serverId, true);
+    expect(
+      incidentSchema.parse((await agent.get(`/api/incidents/${inc0?.id}`).expect(200)).body).status,
+    ).toBe('resolved');
+    await svc.probeNodeState(serverId, false);
+    await svc.evaluate(noMetrics);
+    const inc2 = incidentsListResponseSchema
+      .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
+      .items.find((i) => i.kind === 'node_down');
+    expect(inc2?.id).not.toBe(inc0?.id);
+    const inc = inc2;
 
     // T0 «Логи ноды»: попытка «выполнено», инцидент открыт, предложение на месте
     await agent.post(`/api/incidents/${inc?.id}/actions/node_logs/run`).set(CSRF_HEADER, csrf).expect(202);
@@ -480,6 +496,27 @@ describe('incidents e2e', () => {
     expect(after.attempts[0]).toMatchObject({ status: 'failed' });
     expect(after.attempts[0]?.steps[1]?.note).toContain('зависло');
     await agent.post(`/api/incidents/${id}/resolve`).set(CSRF_HEADER, csrf);
+  });
+
+  it('удаление: открытый с идущей попыткой — попытка обрывается и запись исчезает; DELETE resolved чистит историю', async () => {
+    const id = await openWithOrphan(0);
+    await agent.delete(`/api/incidents/${id}`).set(CSRF_HEADER, csrf).expect(204);
+    await agent.get(`/api/incidents/${id}`).expect(404);
+    const audit = auditListResponseSchema.parse(
+      (await agent.get('/api/audit?category=server').expect(200)).body,
+    );
+    expect(audit.items.some((e) => e.action === 'incident.deleted')).toBe(true);
+
+    const before = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=resolved').expect(200)).body,
+    );
+    expect(before.items.length).toBeGreaterThan(0);
+    const res = await agent.delete('/api/incidents/resolved').set(CSRF_HEADER, csrf).expect(200);
+    expect(res.body.deleted).toBe(before.items.length);
+    const after = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=resolved').expect(200)).body,
+    );
+    expect(after.items).toHaveLength(0);
   });
 
   it('настройки инцидентов: PUT меняет порог, diff в Журнале', async () => {
