@@ -14,8 +14,8 @@ describe('IncidentsPage', () => {
     renderPage(IncidentsPage, '/incidents');
     expect(await screen.findByText('SSH недоступен · nl-ams-02')).toBeInTheDocument();
     expect(screen.getByText('Высокая нагрузка на CPU · de-fra-01')).toBeInTheDocument();
-    // строка под заголовком: что ждёт «Да»
-    expect(screen.getByText(/Перезапустить контейнер ноды ждёт «Да»/)).toBeInTheDocument();
+    // строка под заголовком: что ждёт подтверждения
+    expect(screen.getByText(/Перезапустить контейнер ноды ждёт подтверждения/)).toBeInTheDocument();
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /^Решённые/ }));
     await waitFor(() => expect(screen.queryByText('SSH недоступен · nl-ams-02')).not.toBeInTheDocument());
@@ -23,7 +23,7 @@ describe('IncidentsPage', () => {
     expect(screen.getByText(/«освободить диск» помогло/i)).toBeInTheDocument();
   });
 
-  it('раскрытие: хронология с уровнями, попытка с шагами и предложение «ждёт «Да»»', async () => {
+  it('раскрытие: хронология с уровнями, попытка с шагами и предложение «ждёт подтверждения»', async () => {
     renderPage(IncidentsPage, '/incidents');
     const user = userEvent.setup();
     await user.click(await screen.findByText('Высокая нагрузка на CPU · de-fra-01'));
@@ -35,15 +35,17 @@ describe('IncidentsPage', () => {
     expect(proposal).toHaveTextContent('Следующий шаг требует подтверждения');
     expect(proposal).toHaveTextContent('T2');
     expect(
-      within(proposal).getByRole('button', { name: /Да, перезапустить контейнер ноды/ }),
+      within(proposal).getByRole('button', { name: /Подтвердить: перезапустить контейнер ноды/ }),
     ).toBeInTheDocument();
   });
 
-  it('«Да» запускает действие без пароля: шаги идут на месте, инцидент закрывается', async () => {
+  it('Подтверждение запускает действие без пароля: шаги идут на месте, инцидент закрывается', async () => {
     renderPage(IncidentsPage, '/incidents');
     const user = userEvent.setup();
     await user.click(await screen.findByText('Высокая нагрузка на CPU · de-fra-01'));
-    await user.click(await screen.findByRole('button', { name: /Да, перезапустить контейнер ноды/ }));
+    await user.click(
+      await screen.findByRole('button', { name: /Подтвердить: перезапустить контейнер ноды/ }),
+    );
     await waitFor(() =>
       expect(screen.getByTestId('attempt-block')).toHaveTextContent(
         'Попытка 1 · Перезапустить контейнер ноды',
@@ -59,7 +61,7 @@ describe('IncidentsPage', () => {
     expect(screen.queryByTestId('proposal-block')).not.toBeInTheDocument();
   });
 
-  it('T3 в предложении: команда, «Копировать», «Открыть терминал», без кнопки «Да»', async () => {
+  it('T3 в предложении: команда, «Копировать», «Открыть терминал», без кнопки подтверждения', async () => {
     const cpu = mockIncidents.items.find((i) => i.kind === 'cpu_high');
     if (!cpu) throw new Error('seed');
     cpu.proposal = {
@@ -75,7 +77,7 @@ describe('IncidentsPage', () => {
     expect(proposal).toHaveTextContent('Следующий шаг только вручную');
     expect(within(proposal).getByRole('button', { name: 'Копировать команду' })).toBeInTheDocument();
     expect(await within(proposal).findByRole('button', { name: 'Открыть терминал' })).toBeInTheDocument();
-    expect(within(proposal).queryByRole('button', { name: /^Да,/ })).not.toBeInTheDocument();
+    expect(within(proposal).queryByRole('button', { name: /^Подтвердить:/ })).not.toBeInTheDocument();
   });
 
   it('«Логи ноды» (T0): попытка «выполнено», вывод в карточке, предложение на месте', async () => {

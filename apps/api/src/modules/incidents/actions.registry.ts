@@ -1,5 +1,9 @@
 import type { ActionKey, IncidentKind } from '@nodeservice/shared';
 
+/** Имя контейнера ноды в переменную $N (см. NODE_FIND в исполнителе). */
+const FIND_NODE =
+  "N=$(docker ps -a --format '{{.Names}}|{{.Image}}' 2>/dev/null | awk -F'|' 'tolower($1) ~ /remna/ || tolower($2) ~ /remnawave\\/node/ {print $1; exit}')";
+
 /**
  * Что именно делает каждое действие реестра — ТОЛЬКО здесь (никаких shell-строк из БД).
  * `command` выполняется по SSH ключом панели; `special` — не shell, а вызов сервиса панели.
@@ -39,19 +43,19 @@ export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
     postcheck: { kind: 'metric_below', metric: 'disk', marginPct: 5, samples: 1 },
   },
   node_up: {
-    command: SH('docker start remnanode 2>&1'),
+    command: `sh -c '${FIND_NODE.replace(/'/g, "'\\''")}; [ -n "$N" ] || { echo "контейнер ноды не найден"; exit 3; }; docker start "$N" 2>&1'`,
     precheck: ['ssh_ok', 'no_other_action'],
     postcheck: { kind: 'node_up' },
   },
   node_logs: {
     // T0: только читаем; результат — в лог попытки, инцидент не меняется.
-    command: SH('docker logs --tail 100 remnanode 2>&1'),
+    command: `sh -c '${FIND_NODE.replace(/'/g, "'\\''")}; [ -n "$N" ] || { echo "контейнер ноды не найден"; exit 3; }; timeout -k 5 30 docker logs --tail 100 "$N" 2>&1 || true'`,
     precheck: ['ssh_ok'],
     postcheck: { kind: 'none' },
   },
   restart_node: {
-    command: SH('docker restart remnanode 2>&1'),
-    containerCheck: "docker inspect -f '{{.State.Running}}' remnanode 2>/dev/null",
+    command: `sh -c '${FIND_NODE.replace(/'/g, "'\\''")}; [ -n "$N" ] || { echo "контейнер ноды не найден"; exit 3; }; docker restart "$N" 2>&1'`,
+    containerCheck: `${FIND_NODE}; docker inspect -f '{{.State.Running}}' "$N" 2>/dev/null`,
     precheck: ['agent_online', 'no_other_action'],
     // Метрика выбирается по виду инцидента (cpu_high → cpu, mem_high → mem) в исполнителе.
     postcheck: { kind: 'metric_below', metric: 'cpu', marginPct: 10, samples: 3 },

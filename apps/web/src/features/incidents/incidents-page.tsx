@@ -73,7 +73,7 @@ const STEP_ICON: Record<IncidentAttempt['steps'][number]['status'], { cls: strin
 
 type Tab = 'incidents' | 'autofix';
 
-/** Инциденты (R3): хронология с уровнями T0–T3, попытки починки на месте, предложения «ждёт «Да»», вкладка «Автопочинка». */
+/** Инциденты (R3): хронология с уровнями T0–T3, попытки починки на месте, предложения «ждёт подтверждения», вкладка «Автопочинка». */
 export function IncidentsPage({ openId }: { openId?: string | undefined } = {}) {
   const [tab, setTab] = useState<Tab>('incidents');
   const [filter, setFilter] = useState<IncidentsFilter>('all');
@@ -226,7 +226,7 @@ function summaryLine(inc: Incident): React.ReactNode {
         'prop',
         <span key="prop" className="inline-flex items-center gap-1 font-medium text-warn">
           <LevelChip level={inc.proposal.level} /> {actionMeta(inc.proposal.action).title}{' '}
-          {inc.proposal.level === 'T3' ? 'только вручную' : 'ждёт «Да»'}
+          {inc.proposal.level === 'T3' ? 'только вручную' : 'ждёт подтверждения'}
         </span>,
       ]);
     if (!last && !inc.proposal && inc.kind === 'ssh_down') parts.push(['none', 'автопочинки нет']);
@@ -502,7 +502,7 @@ function AttemptBlock({ attempt, index }: { attempt: IncidentAttempt; index: num
   );
 }
 
-/** Предложенный следующий шаг: T2/T1 — «Да» без пароля; T3 — команда для терминала. */
+/** Предложенный следующий шаг: T2/T1 — подтверждение без пароля; T3 — команда для терминала. */
 function ProposalBlock({
   incident,
   onRun,
@@ -600,7 +600,7 @@ function ProposalBlock({
             ) : (
               <CheckIcon className="size-3.5" aria-hidden="true" />
             )}
-            Да, {action.title.toLowerCase()}
+            Подтвердить: {action.title.toLowerCase()}
           </button>
         )}
         <button

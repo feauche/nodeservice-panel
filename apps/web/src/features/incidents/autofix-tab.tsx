@@ -82,7 +82,9 @@ export function AutofixTab() {
             onToggle={(v) =>
               void patch(
                 { actions: { [a.key]: v } },
-                v ? `«${a.title}»: авто включено.` : `«${a.title}»: авто выключено, будет ждать «Да».`,
+                v
+                  ? `«${a.title}»: авто включено.`
+                  : `«${a.title}»: авто выключено, будет ждать подтверждения.`,
               )
             }
           />

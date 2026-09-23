@@ -141,7 +141,7 @@ export function seedIncidents(): void {
       resolvedBy: null,
       timeline: [
         ev(7, 'auto', 'Обнаружено: CPU 96 % дольше 5 мин', 'detect', 'T0'),
-        ev(7, 'auto', 'Предложено: Перезапустить контейнер ноды — ждёт «Да»', 'escalate', 'T2'),
+        ev(7, 'auto', 'Предложено: Перезапустить контейнер ноды — ждёт подтверждения', 'escalate', 'T2'),
       ],
       attempts: [],
       proposal: {
@@ -323,7 +323,7 @@ function runAttempt(inc: Incident, action: ActionKey, by: 'auto' | 'manual'): vo
             'auto',
             n.level === 'T3'
               ? `Следующий шаг только вручную: ${n.title}`
-              : `Предложено: ${n.title} — ждёт «Да»`,
+              : `Предложено: ${n.title} — ждёт подтверждения`,
             'escalate',
             n.level,
           ),

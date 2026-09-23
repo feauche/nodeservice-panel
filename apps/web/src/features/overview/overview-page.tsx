@@ -222,7 +222,7 @@ export function OverviewPage() {
     .map((inc) => ({
       key: `i:${inc.id}`,
       name: inc.serverName,
-      reason: `${INCIDENT_KIND_META[inc.kind].label}${inc.proposal ? ' · ждёт «Да»' : ''}`,
+      reason: `${INCIDENT_KIND_META[inc.kind].label}${inc.proposal ? ' · ждёт подтверждения' : ''}`,
       tone: (inc.severity === 'crit' ? 'crit' : 'warn') as 'warn' | 'crit',
       pill: 'инцидент',
       to: '/incidents' as const,

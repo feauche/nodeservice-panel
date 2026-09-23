@@ -74,7 +74,7 @@ export function useResolveIncident() {
   return useIncidentAction(incidentsApi.resolve);
 }
 
-/** «Да» на предложение или ручной запуск действия. Пароль не спрашивается — решение владельца. */
+/** подтверждение предложения или ручной запуск действия. Пароль не спрашивается — решение владельца. */
 export function useRunAction() {
   const qc = useQueryClient();
   return useMutation({

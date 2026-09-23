@@ -221,7 +221,7 @@ describe('incidents e2e', () => {
     });
     const id1b = opened1b?.id ?? '';
 
-    // «Да» на предложение: перезапуск контейнера помогает (CPU падает)
+    // подтверждение предложения: перезапуск контейнера помогает (CPU падает)
     const p = agent.post(`/api/incidents/${id1b}/actions/restart_node/run`).set(CSRF_HEADER, csrf);
     metrics.setForTest(serverId, { cpu: 40 });
     await p.expect(202);
@@ -359,7 +359,7 @@ describe('incidents e2e', () => {
     expect(done.attempts[1]?.status).toBe('helped');
     expect(done.attempts[1]?.steps[2]?.note).toContain('контейнер ноды запущен');
     expect(done.status).toBe('resolved');
-    expect(ssh.execLog.some((c) => c.includes('docker start remnanode'))).toBe(true);
+    expect(ssh.execLog.some((c) => c.includes('docker start'))).toBe(true);
   });
 
   it('ручное закрытие инцидента', async () => {

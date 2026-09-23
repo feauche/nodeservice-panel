@@ -29,7 +29,7 @@ describe('NotificationBell', () => {
     const rows = within(list).getAllByTestId('notification-row');
     expect(rows).toHaveLength(6);
     expect(rows[0]).toHaveAttribute('data-unread', 'true');
-    expect(rows[0]).toHaveTextContent('Высокая нагрузка на CPU · de-fra-01: ждёт «Да»');
+    expect(rows[0]).toHaveTextContent('Высокая нагрузка на CPU · de-fra-01: ждёт подтверждения');
     expect(rows[4]).not.toHaveAttribute('data-unread');
     // через полторы секунды всё прочитано
     await waitFor(() => expect(mockNotifications.items.every((n) => n.readAt !== null)).toBe(true), {

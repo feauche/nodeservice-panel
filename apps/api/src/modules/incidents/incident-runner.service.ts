@@ -49,8 +49,13 @@ const T = TEST
       execTimeoutMs: 180_000,
     };
 
-/** Запущен ли контейнер ноды — по SSH от root: `true` / `false` / `none` (контейнера нет). */
-export const NODE_PROBE = "docker inspect -f '{{.State.Running}}' remnanode 2>/dev/null || echo none";
+/**
+ * Контейнер ноды ищем по имени `*remna*` или образу `remnawave/node` — имя у установок разное
+ * (remnanode, remnawave-node…). Зонд по SSH от root: `true` / `false` / `none` (контейнера нет).
+ */
+export const NODE_FIND =
+  "N=$(docker ps -a --format '{{.Names}}|{{.Image}}' 2>/dev/null | awk -F'|' 'tolower($1) ~ /remna/ || tolower($2) ~ /remnawave\\/node/ {print $1; exit}')";
+export const NODE_PROBE = `${NODE_FIND}; [ -n "$N" ] && docker inspect -f '{{.State.Running}}' "$N" 2>/dev/null || echo none`;
 
 const iso = () => new Date().toISOString();
 const ev = (
@@ -70,7 +75,7 @@ const STEP_LABELS: Record<AttemptStepKey, string> = {
 /**
  * Исполнитель действий по инциденту (§2 мастер-плана). Одна попытка = пред-проверка → действие →
  * пост-проверка → откат. Не помогло — следующий шаг цепочки: T1 при включённом авто выполняется
- * сам, T2 ждёт «Да», T3 показывается как команда. Всё пишется в попытку (шаги + лог) и в Журнал.
+ * сам, T2 ждёт подтверждения, T3 показывается как команда. Всё пишется в попытку (шаги + лог) и в Журнал.
  * Одновременно на сервере идёт не больше одного действия.
  */
 @Injectable()
@@ -78,6 +83,8 @@ export class IncidentRunnerService {
   private readonly log = new Logger(IncidentRunnerService.name);
   /** serverId → incidentId с идущим действием. */
   private readonly busy = new Map<string, string>();
+  /** Куски вывода пишутся в БД строго по очереди — иначе параллельные read-modify-write затирают друг друга. */
+  private readonly logChains = new Map<string, Promise<void>>();
   private readonly inflight = new Set<Promise<void>>();
 
   constructor(
@@ -493,7 +500,7 @@ export class IncidentRunnerService {
     }
   }
 
-  /** Следующий шаг цепочки: T1 при включённом авто — сразу, иначе предложение (T2/T3 или «Да»). */
+  /** Следующий шаг цепочки: T1 при включённом авто — сразу, иначе предложение (T2/T3 или подтверждение T1). */
   private async escalate(
     incidentId: string,
     current: ActionKey,
@@ -549,7 +556,7 @@ export class IncidentRunnerService {
           'auto',
           level === 'T3'
             ? `Следующий шаг только вручную: ${action.title} — команда показана в инциденте`
-            : `Предложено: ${action.title} — ждёт «Да»`,
+            : `Предложено: ${action.title} — ждёт подтверждения`,
           'escalate',
           level,
         ),
@@ -558,11 +565,11 @@ export class IncidentRunnerService {
     const first = fresh.attempts.length === 0;
     await this.notifications.push({
       severity: level === 'T3' || row.severity === 'crit' ? 'crit' : 'warn',
-      title: level === 'T3' ? `${row.title}: нужно вмешательство` : `${row.title}: ждёт «Да»`,
+      title: level === 'T3' ? `${row.title}: нужно вмешательство` : `${row.title}: ждёт подтверждения`,
       body:
         level === 'T3'
           ? `${action.title} — только вручную. ${reason}.`
-          : `${first ? `${row.detail} ` : ''}Предложено: ${action.title} (${level}), ${reason}. Нажмите «Да» в инциденте.`,
+          : `${first ? `${row.detail} ` : ''}Предложено: ${action.title} (${level}), ${reason}. Подтвердите запуск в инциденте.`,
       link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
     });
     await this.audit.record({
@@ -606,6 +613,8 @@ export class IncidentRunnerService {
     status: IncidentAttempt['status'],
     skip: AttemptStepKey[],
   ): Promise<void> {
+    await (this.logChains.get(attemptId) ?? Promise.resolve()).catch(() => undefined);
+    this.logChains.delete(attemptId);
     await this.patchAttempt(incidentId, attemptId, (a) => ({
       ...a,
       status,
@@ -616,11 +625,19 @@ export class IncidentRunnerService {
     }));
   }
 
-  private async appendLog(incidentId: string, attemptId: string, chunk: string): Promise<void> {
-    await this.patchAttempt(incidentId, attemptId, (a) => ({
-      ...a,
-      log: (a.log + chunk).slice(-ATTEMPT_LOG_MAX),
-    }));
+  private appendLog(incidentId: string, attemptId: string, chunk: string): Promise<void> {
+    const clean = stripAnsi(chunk);
+    const prev = this.logChains.get(attemptId) ?? Promise.resolve();
+    const next = prev
+      .catch(() => undefined)
+      .then(() =>
+        this.patchAttempt(incidentId, attemptId, (a) => ({
+          ...a,
+          log: (a.log + clean).slice(-ATTEMPT_LOG_MAX),
+        })),
+      );
+    this.logChains.set(attemptId, next);
+    return next;
   }
 
   private async patchAttempt(
@@ -666,3 +683,9 @@ export class IncidentRunnerService {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Цвета и управляющие последовательности терминала в логе не нужны. */
+const ESC = String.fromCharCode(27);
+const BEL = String.fromCharCode(7);
+const ANSI_RE = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]|${ESC}\\][^${BEL}]*${BEL}|\\r`, 'g');
+const stripAnsi = (s: string) => s.replace(ANSI_RE, '');

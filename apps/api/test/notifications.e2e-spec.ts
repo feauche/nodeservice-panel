@@ -58,7 +58,7 @@ describe('notifications e2e', () => {
   it('серверное push + всплывашка клиента; непрочитанные; прочитать все; удалить одно; очистить', async () => {
     await app.get(NotificationsService).push({
       severity: 'warn',
-      title: 'Инцидент: ждёт «Да»',
+      title: 'Инцидент: ждёт подтверждения',
       body: 'Перезапустить контейнер ноды',
       link: { to: '/incidents?open=x', label: 'Открыть инцидент' },
     });

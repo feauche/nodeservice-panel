@@ -19,7 +19,7 @@ export const incidents = pgTable(
     timeline: jsonb('timeline').$type<IncidentEvent[]>().notNull().default([]),
     /** Попытки починки с шагами и логом (R3, миграция 0022). */
     attempts: jsonb('attempts').$type<IncidentAttempt[]>().notNull().default([]),
-    /** Предложенный следующий шаг, ждёт «Да» (T2) или показывается как команда (T3). */
+    /** Предложенный следующий шаг, ждёт подтверждения (T2) или показывается как команда (T3). */
     proposal: jsonb('proposal').$type<IncidentProposal | null>(),
     lastAutofixAt: timestamp('last_autofix_at', { withTimezone: true }),
     openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
