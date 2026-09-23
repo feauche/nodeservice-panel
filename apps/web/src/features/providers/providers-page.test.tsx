@@ -71,8 +71,12 @@ describe('ProvidersPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(mockProviders.items.map((p) => p.name)).toContain('Contabo');
     expect(mockProviders.items.find((p) => p.name === 'Contabo')?.siteUrl).toBe('https://contabo.com');
+    const card = screen.getByTestId('provider-card');
+    expect(within(card).getByRole('heading', { name: 'Contabo' })).toBeInTheDocument();
+    // сохранили сразу, иконка ищется в фоне: сначала «ищем», потом результат сам подтянулся
+    expect(within(card).getByText('Ищем иконку на сайте…')).toBeInTheDocument();
     expect(
-      within(screen.getByTestId('provider-card')).getByRole('heading', { name: 'Contabo' }),
+      await within(card).findByText('Иконка не найдена — показываем букву', {}, { timeout: 4000 }),
     ).toBeInTheDocument();
   });
 
@@ -126,6 +130,10 @@ describe('ProvidersPage', () => {
       'aria-expanded',
       'true',
     );
+    // ссылка на сайт за защитой: причина показана прямо в форме
+    await user.type(within(dialog).getByLabelText('Ссылка на иконку'), 'https://rawi.host/favicon.svg');
+    expect(await within(dialog).findByTestId('provider-icon-reason')).toHaveTextContent(/защита от ботов/);
+    await user.clear(within(dialog).getByLabelText('Ссылка на иконку'));
     await user.type(within(dialog).getByLabelText('Ссылка на иконку'), '4vps.su/assets/img/favicon_news.svg');
     await waitFor(() =>
       expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('по ссылке — нашли'),
@@ -134,9 +142,11 @@ describe('ProvidersPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     const created = mockProviders.items.find((p) => p.name === '4VPS');
     expect(created?.iconUrl).toBe('https://4vps.su/assets/img/favicon_news.svg');
-    expect(created?.hasIcon).toBe(true);
+    await waitFor(() => expect(created?.hasIcon).toBe(true));
     const card = screen.getByTestId('provider-card');
-    expect(within(card).getByText(/Иконка по ссылке: 4vps\.su\/assets/)).toBeInTheDocument();
+    expect(
+      await within(card).findByText(/Иконка по ссылке: 4vps\.su\/assets/, {}, { timeout: 4000 }),
+    ).toBeInTheDocument();
 
     // «Изменить»: ссылка уже в поле, поле раскрыто; очистка возвращает автопоиск
     await user.click(within(card).getByRole('button', { name: 'Изменить' }));
@@ -182,7 +192,7 @@ describe('ProvidersPage', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     const card = screen.getByTestId('provider-card');
-    expect(within(card).getByText(/Иконка из кэша Google/)).toBeInTheDocument();
+    expect(await within(card).findByText(/Иконка из кэша Google/, {}, { timeout: 4000 })).toBeInTheDocument();
     await user.click(within(card).getByRole('button', { name: 'Изменить' }));
     const edit = await screen.findByRole('dialog', { name: 'Изменить провайдера' });
     expect(within(edit).getByTestId('provider-icon-state')).toHaveTextContent('из кэша Google');

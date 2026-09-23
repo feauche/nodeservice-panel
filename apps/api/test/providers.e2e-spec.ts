@@ -17,7 +17,12 @@ import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
-import { extractIconLinks, isPrivateHost, sanitizeSvg } from '../src/modules/providers/icon-fetch.service.js';
+import {
+  extractIconLinks,
+  fallbackHosts,
+  isPrivateHost,
+  sanitizeSvg,
+} from '../src/modules/providers/icon-fetch.service.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: DATABASE_URL должен указывать на nodeservice_test');
@@ -126,6 +131,17 @@ describe('providers e2e', () => {
     await new Promise<void>((r) => site.server.close(() => r()));
   });
 
+  /** Иконка ищется в фоне: ждём, пока API снимет iconPending. */
+  const settled = async (id: string) => {
+    for (let i = 0; i < 100; i += 1) {
+      const items = (await agent.get('/api/providers').expect(200)).body.items as unknown[];
+      const p = items.map((x) => providerSchema.parse(x)).find((x) => x.id === id);
+      if (p && !p.iconPending) return p;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error('иконка ищется слишком долго');
+  };
+
   it('разбор <link rel=icon>: маленькая иконка раньше apple-touch, data: пропускается', () => {
     const links = extractIconLinks(
       '<link rel="apple-touch-icon" href="/a.png"><link rel="shortcut icon" href="/f.ico"><link rel="icon" href="data:x"><link rel="icon" sizes="32x32" href="/32.png">',
@@ -141,9 +157,12 @@ describe('providers e2e', () => {
       .expect(201);
     const p = providerSchema.parse(res.body);
     providerId = p.id;
+    // Сохранение не ждёт сайт: иконка ищется в фоне
+    expect(p.iconPending).toBe(true);
     // «127.0.0.1:port/» без схемы → https://…, иконку с https не найти; ниже — явный http.
     expect(p.siteUrl.startsWith('https://')).toBe(true);
-    const fixed = providerSchema.parse(
+    expect((await settled(p.id)).hasIcon).toBe(false);
+    const patched = providerSchema.parse(
       (
         await agent
           .patch(`/api/providers/${p.id}`)
@@ -152,6 +171,8 @@ describe('providers e2e', () => {
           .expect(200)
       ).body,
     );
+    expect(patched.iconPending).toBe(true);
+    const fixed = await settled(p.id);
     expect(fixed).toMatchObject({
       name: 'Aéza',
       siteHost: '127.0.0.1',
@@ -198,10 +219,15 @@ describe('providers e2e', () => {
           .set(CSRF_HEADER, csrf)
           .send({ siteUrl: `${site.url}${path}`, ...(iconUrl ? { iconUrl } : {}) })
           .expect(200)
-      ).body as { iconDataUrl: string | null; sourceUrl: string | null };
+      ).body as { iconDataUrl: string | null; sourceUrl: string | null; reason: string | null };
     expect((await preview('redir/')).iconDataUrl).toMatch(/^data:image\/png;base64,/);
     expect((await preview('redir/')).sourceUrl).toBe(`${site.url}i/fav.png`);
-    expect((await preview('loop/')).iconDataUrl).toBeNull();
+    const loop = await preview('loop/');
+    expect(loop.iconDataUrl).toBeNull();
+    expect(loop.reason).toMatch(/по кругу/);
+    expect((await preview('bare/', `${site.url}nope.png`)).reason).toBe('сайт ответил 404');
+    expect(fallbackHosts('my.rawi.host')).toEqual(['my.rawi.host', 'rawi.host']);
+    expect(fallbackHosts('www.hetzner.com')).toEqual(['hetzner.com']);
     const svg = await preview('svg/');
     expect(svg.iconDataUrl).toMatch(/^data:image\/svg\+xml;base64,/);
     const body = Buffer.from(svg.iconDataUrl?.split(',')[1] ?? '', 'base64').toString('utf8');
@@ -239,21 +265,17 @@ describe('providers e2e', () => {
           .expect(201)
       ).body,
     );
-    expect(created).toMatchObject({
+    expect(await settled(created.id)).toMatchObject({
       hasIcon: true,
       iconUrl: `${site.url}i/fav.png`,
       iconSourceUrl: `${site.url}i/fav.png`,
     });
-    const auto = providerSchema.parse(
-      (
-        await agent
-          .patch(`/api/providers/${created.id}`)
-          .set(CSRF_HEADER, csrf)
-          .send({ iconUrl: null })
-          .expect(200)
-      ).body,
-    );
-    expect(auto).toMatchObject({ hasIcon: false, iconUrl: null, iconSourceUrl: null });
+    await agent
+      .patch(`/api/providers/${created.id}`)
+      .set(CSRF_HEADER, csrf)
+      .send({ iconUrl: null })
+      .expect(200);
+    expect(await settled(created.id)).toMatchObject({ hasIcon: false, iconUrl: null, iconSourceUrl: null });
     await agent.delete(`/api/providers/${created.id}`).set(CSRF_HEADER, csrf).expect(204);
   });
 

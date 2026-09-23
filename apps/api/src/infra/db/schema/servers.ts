@@ -34,6 +34,8 @@ export const providers = pgTable('providers', {
   iconUrl: text('icon_url'),
   /** Откуда иконка взята фактически. */
   iconSourceUrl: text('icon_source_url'),
+  /** Иконка ищется в фоне (после создания или смены сайта/ссылки). */
+  iconPending: boolean('icon_pending').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

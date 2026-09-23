@@ -35,6 +35,14 @@ export interface FetchedIcon {
   sourceUrl: string;
 }
 
+/** Иконка либо причина, почему её нет — коротко и по-русски, показывается в форме. */
+export interface IconResult {
+  icon: FetchedIcon | null;
+  reason: string | null;
+}
+
+type GetResult = { ok: true; data: Buffer; type: string; finalUrl: URL } | { ok: false; reason: string };
+
 /** Литеральные адреса внутренних сетей: панель не должна ходить туда по чужой ссылке. */
 export function isPrivateHost(host: string): boolean {
   let h = host.toLowerCase().replace(/^\[|\]$/g, '');
@@ -87,18 +95,19 @@ export class IconFetchService {
 
   constructor(private readonly config: ConfigService<Env, true>) {}
 
-  async fetch(siteUrl: string): Promise<FetchedIcon | null> {
+  async fetch(siteUrl: string): Promise<IconResult> {
     let url: URL;
     try {
       url = new URL(siteUrl);
     } catch {
-      return null;
+      return { icon: null, reason: 'некорректный адрес сайта' };
     }
-    if (!(await this.allowed(url))) return null;
+    const allowed = await this.allowed(url);
+    if (allowed !== true) return { icon: null, reason: allowed };
 
     const candidates: URL[] = [];
     const page = await this.get(url, HTML_MAX_BYTES, 'text/html');
-    if (page) {
+    if (page.ok) {
       for (const href of extractIconLinks(page.data.toString('utf8'))) {
         try {
           candidates.push(new URL(href, page.finalUrl));
@@ -107,22 +116,35 @@ export class IconFetchService {
         }
       }
     }
+    const base = page.ok ? page.finalUrl : url;
     // Сайт без <link rel=icon>: угадываем обычные адреса.
     for (const guess of ['/favicon.ico', '/favicon.svg', '/favicon.png'])
-      candidates.push(new URL(guess, page?.finalUrl ?? url));
+      candidates.push(new URL(guess, base));
 
     const seen = new Set<string>();
     for (const c of candidates) {
       if (seen.has(c.href)) continue;
       seen.add(c.href);
       // href из чужого HTML может вести куда угодно — та же проверка, что и для самого сайта.
-      if (!(await this.allowed(c))) continue;
-      const icon = await this.image(c);
-      if (icon) return icon;
+      if ((await this.allowed(c)) !== true) continue;
+      const { icon } = await this.image(c);
+      if (icon) return { icon, reason: null };
     }
-    // Сайт закрыт защитой или иконки нет — пробуем запасной кэш (только имя хоста наружу).
-    const fallback = this.fallbackUrl(url.hostname);
-    return fallback ? this.image(fallback) : null;
+    // Сайт закрыт защитой или иконки нет — пробуем запасной кэш (только имя хоста наружу),
+    // сначала для самого хоста, потом для родительского домена (my.rawi.host → rawi.host).
+    for (const host of fallbackHosts(url.hostname)) {
+      const fallback = this.fallbackUrl(host);
+      if (!fallback) break;
+      const { icon } = await this.image(fallback);
+      if (icon) return { icon, reason: null };
+    }
+    const siteReason = page.ok
+      ? 'на сайте нет ссылки на иконку, /favicon.* не отвечает'
+      : `сайт: ${page.reason}`;
+    return {
+      icon: null,
+      reason: this.fallbackUrl(url.hostname) ? `${siteReason}; в кэше Google тоже нет` : siteReason,
+    };
   }
 
   private fallbackUrl(host: string): URL | null {
@@ -131,54 +153,53 @@ export class IconFetchService {
       raw === undefined ? (this.config.get('NODE_ENV') === 'test' ? '' : DEFAULT_FALLBACK) : raw;
     if (!template) return null;
     try {
-      return new URL(template.replace('{host}', encodeURIComponent(host.replace(/^www\./, ''))));
+      return new URL(template.replace('{host}', encodeURIComponent(host)));
     } catch {
       return null;
     }
   }
 
   /** Иконка по ручной ссылке: только эта картинка, сайт не сканируется. */
-  async fetchDirect(iconUrl: string): Promise<FetchedIcon | null> {
+  async fetchDirect(iconUrl: string): Promise<IconResult> {
     let url: URL;
     try {
       url = new URL(iconUrl);
     } catch {
-      return null;
+      return { icon: null, reason: 'некорректная ссылка' };
     }
-    if (!(await this.allowed(url))) return null;
+    const allowed = await this.allowed(url);
+    if (allowed !== true) return { icon: null, reason: allowed };
     return this.image(url);
   }
 
-  private async image(url: URL): Promise<FetchedIcon | null> {
+  private async image(url: URL): Promise<IconResult> {
     const res = await this.get(url, PROVIDER_ICON_MAX_BYTES, 'image/');
-    if (!res || res.data.length === 0) return null;
+    if (!res.ok) return { icon: null, reason: res.reason };
+    if (res.data.length === 0) return { icon: null, reason: 'пустой файл' };
     const type = normalizeType(res.type, url.pathname);
-    if (!IMAGE_TYPES.has(type)) return null;
+    if (!IMAGE_TYPES.has(type)) return { icon: null, reason: `по ссылке не картинка (${type})` };
     if (type === 'image/svg+xml') {
       const clean = sanitizeSvg(res.data.toString('utf8'));
-      if (!clean) return null;
-      return { type, data: Buffer.from(clean, 'utf8'), sourceUrl: url.href };
+      if (!clean) return { icon: null, reason: 'SVG не прошёл проверку безопасности' };
+      return { icon: { type, data: Buffer.from(clean, 'utf8'), sourceUrl: url.href }, reason: null };
     }
-    return { type, data: res.data, sourceUrl: url.href };
+    return { icon: { type, data: res.data, sourceUrl: url.href }, reason: null };
   }
 
-  /** Только http(s) и только публичные адреса (в e2e сайт — локальный http-сервер, там проверка адресов выключена). */
-  private async allowed(url: URL): Promise<boolean> {
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
-    if (url.username || url.password) return false;
+  /** Только http(s) и только публичные адреса (в e2e сайт — локальный http-сервер, там проверка адресов выключена). Возвращает true или причину. */
+  private async allowed(url: URL): Promise<true | string> {
+    if (url.protocol !== 'http:' && url.protocol !== 'https:')
+      return 'ссылка должна начинаться с http:// или https://';
+    if (url.username || url.password) return 'ссылка с логином и паролем не принимается';
     if (this.config.get('NODE_ENV') === 'test') return true;
-    return resolvesToPublic(url.hostname);
+    return (await resolvesToPublic(url.hostname)) ? true : 'внутренние адреса запрещены';
   }
 
   /**
    * GET с ручными редиректами: каждый переход проверяется той же `allowed`, чтобы публичный сайт
    * не увёл запрос на внутренний адрес. Больше MAX_REDIRECTS переходов — сдаёмся.
    */
-  private async get(
-    start: URL,
-    maxBytes: number,
-    acceptPrefix: string,
-  ): Promise<{ data: Buffer; type: string; finalUrl: URL } | null> {
+  private async get(start: URL, maxBytes: number, acceptPrefix: string): Promise<GetResult> {
     try {
       let url = start;
       let res: Response | null = null;
@@ -194,42 +215,76 @@ export class IconFetchService {
         if (res.status < 300 || res.status > 399) break;
         const location = res.headers.get('location');
         await res.body?.cancel();
-        if (!location || hop === MAX_REDIRECTS) return null;
+        if (!location) return { ok: false, reason: `сайт ответил ${res.status} без адреса перенаправления` };
         let next: URL;
         try {
           next = new URL(location, url);
         } catch {
-          return null;
+          return { ok: false, reason: 'сайт перенаправляет на некорректный адрес' };
         }
-        if (!(await this.allowed(next))) return null;
+        if (next.href === url.href || hop === MAX_REDIRECTS)
+          return {
+            ok: false,
+            reason: 'сайт перенаправляет по кругу — похоже, защита от ботов, которую проходит только браузер',
+          };
+        const allowed = await this.allowed(next);
+        if (allowed !== true) return { ok: false, reason: `перенаправление отклонено: ${allowed}` };
         url = next;
         res = null;
       }
-      if (!res || !res.ok || !res.body) return null;
+      if (!res) return { ok: false, reason: 'сайт не ответил' };
+      if (!res.ok) {
+        await res.body?.cancel();
+        return { ok: false, reason: `сайт ответил ${res.status}` };
+      }
+      if (!res.body) return { ok: false, reason: 'пустой ответ' };
       const type = (res.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
       // favicon.ico часто отдают как octet-stream — ему верим по расширению.
       const typeOk =
         type.startsWith(acceptPrefix) ||
         (acceptPrefix === 'image/' &&
           (type === 'application/octet-stream' || type === '') &&
-          url.pathname.endsWith('.ico'));
-      if (!typeOk) return null;
+          (url.pathname.endsWith('.ico') || url.pathname.endsWith('.svg')));
+      if (!typeOk) {
+        await res.body.cancel();
+        return {
+          ok: false,
+          reason:
+            acceptPrefix === 'image/'
+              ? `по ссылке не картинка (${type || 'без типа'})`
+              : `отдаёт не страницу (${type || 'без типа'})`,
+        };
+      }
       const chunks: Buffer[] = [];
       let total = 0;
       for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
         total += chunk.length;
         if (total > maxBytes) {
-          if (acceptPrefix === 'image/') return null;
+          if (acceptPrefix === 'image/')
+            return { ok: false, reason: `картинка больше ${Math.round(maxBytes / 1024)} КБ` };
           break;
         }
         chunks.push(Buffer.from(chunk));
       }
-      return { data: Buffer.concat(chunks), type, finalUrl: url };
+      return { ok: true, data: Buffer.concat(chunks), type, finalUrl: url };
     } catch (err) {
+      const msg =
+        (err as Error).name === 'TimeoutError'
+          ? `сайт не ответил за ${FETCH_TIMEOUT_MS / 1000} с`
+          : 'сайт недоступен';
       this.log.debug(`иконка ${start.href}: ${(err as Error).message}`);
-      return null;
+      return { ok: false, reason: msg };
     }
   }
+}
+
+/** Хост и его родительские домены до двух уровней: my.rawi.host → rawi.host. */
+export function fallbackHosts(hostname: string): string[] {
+  const host = hostname.toLowerCase().replace(/^www\./, '');
+  const out = [host];
+  const labels = host.split('.');
+  if (labels.length > 2 && !isIP(host)) out.push(labels.slice(-2).join('.'));
+  return out;
 }
 
 /** href всех <link rel="…icon…"> в порядке предпочтения: маленькие иконки раньше apple-touch. */

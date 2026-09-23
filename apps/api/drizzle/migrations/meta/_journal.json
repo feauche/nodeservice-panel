@@ -148,6 +148,13 @@
       "when": 1789100100000,
       "tag": "0020_provider_icon_url",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1789100200000,
+      "tag": "0021_provider_icon_pending",
+      "breakpoints": true
     }
   ]
 }

@@ -27,7 +27,8 @@ export function ProviderIcon({
   className,
   src,
 }: {
-  provider: Pick<Provider, 'id' | 'name' | 'hasIcon' | 'iconVersion'>;
+  provider: Pick<Provider, 'id' | 'name' | 'hasIcon' | 'iconVersion'> &
+    Partial<Pick<Provider, 'iconPending'>>;
   size?: keyof typeof SIZE;
   className?: string;
   /** Явный источник (превью в форме) вместо адреса из API. */
@@ -51,11 +52,14 @@ export function ProviderIcon({
     );
   }
   const letter = (provider.name.trim()[0] ?? '?').toUpperCase();
+  const pending = provider.iconPending && src === undefined;
   return (
     <span
       aria-hidden="true"
-      data-testid="provider-icon-fallback"
+      data-testid={pending ? 'provider-icon-pending' : 'provider-icon-fallback'}
+      title={pending ? 'Ищем иконку…' : undefined}
       className={cn(
+        pending && 'animate-pulse',
         'grid flex-none place-items-center font-bold text-white select-none',
         SIZE[size],
         className,

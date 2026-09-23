@@ -2,6 +2,7 @@ import { setupWorker } from 'msw/browser';
 
 import { handlers, resetMockState } from '@/test/msw/handlers';
 import { mockMaintenance } from '@/test/msw/maintenance-mock';
+import { mockProviders } from '@/test/msw/providers-mock';
 import { installMockTerminalSocket } from './terminal-ws';
 
 /**
@@ -13,6 +14,7 @@ export async function startMockWorker(): Promise<void> {
   resetMockState({ setupRequired: import.meta.env.VITE_MOCK_SETUP === '1' });
   // В браузере шаги обслуживания идут «как на живом» — видно прогресс.
   mockMaintenance.speedMs = 1400;
+  mockProviders.iconDelayMs = 2500;
   (window as unknown as { __nsMockMaintenance: typeof mockMaintenance }).__nsMockMaintenance =
     mockMaintenance;
   installMockTerminalSocket();

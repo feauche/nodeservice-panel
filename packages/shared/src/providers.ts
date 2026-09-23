@@ -5,7 +5,7 @@ import { z } from 'zod';
  * Название и сайт вводит администратор, иконку панель берёт с сайта сама (favicon).
  *
  *  GET    /api/providers                 → { items: Provider[] } (с числом серверов)
- *  POST   /api/providers                 → Provider (иконка подтягивается в фоне запроса)
+ *  POST   /api/providers                 → Provider (iconPending: true — иконка ищется в фоне)
  *  PATCH  /api/providers/:id             → Provider (смена сайта — иконка заново)
  *  DELETE /api/providers/:id             → 204 (у серверов провайдер сбрасывается)
  *  GET    /api/providers/:id/icon        → картинка (404, если не нашли)
@@ -62,6 +62,8 @@ export const providerSchema = z.object({
   iconUrl: z.string().nullable(),
   /** Откуда иконка взята фактически (найдена на сайте или по ручной ссылке); null — не нашли. */
   iconSourceUrl: z.string().nullable(),
+  /** Иконка ещё ищется в фоне: клиент перечитывает список, пока true. */
+  iconPending: z.boolean(),
   /** Меняется при каждом обновлении иконки — ломает кэш <img>. */
   iconVersion: z.number().int(),
   note: z.string().nullable(),
@@ -103,6 +105,8 @@ export const providerIconPreviewResponseSchema = z.object({
   iconDataUrl: z.string().nullable(),
   /** Откуда взята иконка превью. */
   sourceUrl: z.string().nullable(),
+  /** Почему иконки нет — короткая причина для формы; null, если нашли. */
+  reason: z.string().nullable(),
 });
 export type ProviderIconPreviewResponse = z.infer<typeof providerIconPreviewResponseSchema>;
 

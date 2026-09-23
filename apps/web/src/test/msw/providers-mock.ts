@@ -4,10 +4,26 @@ import { HttpResponse, http } from 'msw';
 import { mockServers } from './servers-mock';
 
 /** Мок справочника провайдеров: состояние в памяти, иконка «находится» у сайтов с известным хостом. */
-export const mockProviders: { items: Provider[]; iconHosts: Set<string> } = {
+export const mockProviders: { items: Provider[]; iconHosts: Set<string>; iconDelayMs: number } = {
   items: [],
   iconHosts: new Set(['aeza.net', 'hetzner.com', 'timeweb.cloud']),
+  /** Сколько «ищем иконку» после сохранения: в тестах быстро, в браузере — как на живом сайте. */
+  iconDelayMs: 40,
 };
+
+/** Фоновый поиск, как на API: сначала iconPending, потом иконка (или её нет). */
+function scheduleIcon(p: Provider): void {
+  p.iconPending = true;
+  p.hasIcon = false;
+  p.iconSourceUrl = null;
+  setTimeout(() => {
+    if (!mockProviders.items.includes(p)) return;
+    p.iconSourceUrl = resolveIcon(p.siteUrl, p.iconUrl);
+    p.hasIcon = p.iconSourceUrl !== null;
+    p.iconVersion += 1;
+    p.iconPending = false;
+  }, mockProviders.iconDelayMs);
+}
 
 let seq = 0;
 const withScheme = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
@@ -18,7 +34,9 @@ const autoSource = (siteUrl: string) => {
   if (host === 'rawi.host') return `https://www.google.com/s2/favicons?sz=64&domain=${host}`;
   return mockProviders.iconHosts.has(host) ? `${withScheme(siteUrl).replace(/\/$/, '')}/favicon.ico` : null;
 };
-const manualSource = (iconUrl: string) => (/favicon|icon/i.test(iconUrl) ? withScheme(iconUrl) : null);
+/** Ручная ссылка «находится», если в ней есть favicon или icon; rawi.host — за защитой, не отдаёт ничего. */
+const manualSource = (iconUrl: string) =>
+  /favicon|icon/i.test(iconUrl) && !/rawi\.host/i.test(iconUrl) ? withScheme(iconUrl) : null;
 const resolveIcon = (siteUrl: string, iconUrl: string | null) =>
   iconUrl ? manualSource(iconUrl) : autoSource(siteUrl);
 
@@ -39,6 +57,7 @@ function make(
     hasIcon: source !== null,
     iconUrl,
     iconSourceUrl: source,
+    iconPending: false,
     iconVersion: 1,
     note,
     serversCount: 0,
@@ -106,12 +125,21 @@ export const providersHandlers = [
       body.iconUrl ? withScheme(body.iconUrl) : null,
     );
     mockProviders.items.push(p);
+    scheduleIcon(p);
     return HttpResponse.json(p, { status: 201 });
   }),
   http.post('/api/providers/icon-preview', async ({ request }) => {
     const body = (await request.json()) as { siteUrl: string; iconUrl?: string | null };
-    const source = resolveIcon(withScheme(body.siteUrl), body.iconUrl ? withScheme(body.iconUrl) : null);
-    return HttpResponse.json({ iconDataUrl: source ? PNG_DATA_URL : null, sourceUrl: source });
+    const iconUrl = body.iconUrl ? withScheme(body.iconUrl) : null;
+    const source = resolveIcon(withScheme(body.siteUrl), iconUrl);
+    const reason = source
+      ? null
+      : iconUrl
+        ? /rawi\.host/.test(iconUrl)
+          ? 'сайт перенаправляет по кругу — похоже, защита от ботов, которую проходит только браузер'
+          : 'сайт ответил 404'
+        : 'на сайте нет ссылки на иконку, /favicon.* не отвечает; в кэше Google тоже нет';
+    return HttpResponse.json({ iconDataUrl: source ? PNG_DATA_URL : null, sourceUrl: source, reason });
   }),
   http.patch('/api/providers/:id', async ({ params, request }) => {
     const p = mockProviders.items.find((x) => x.id === params.id);
@@ -128,11 +156,7 @@ export const providersHandlers = [
       p.siteHost = providerSiteHost(p.siteUrl);
     }
     if (body.iconUrl !== undefined) p.iconUrl = body.iconUrl ? withScheme(body.iconUrl) : null;
-    if (body.siteUrl !== undefined || body.iconUrl !== undefined) {
-      p.iconSourceUrl = resolveIcon(p.siteUrl, p.iconUrl);
-      p.hasIcon = p.iconSourceUrl !== null;
-      p.iconVersion += 1;
-    }
+    if (body.siteUrl !== undefined || body.iconUrl !== undefined) scheduleIcon(p);
     if (body.note !== undefined) p.note = body.note?.trim() || null;
     p.updatedAt = new Date().toISOString();
     return HttpResponse.json(withCounts().find((x) => x.id === p.id));

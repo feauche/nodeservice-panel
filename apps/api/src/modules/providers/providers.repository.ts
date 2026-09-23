@@ -38,6 +38,11 @@ export class ProvidersRepository {
     return { ...row, serversCount: Number(n) };
   }
 
+  /** Провайдеры, у которых поиск иконки не завершился (например, API перезапустили). */
+  async listIconPending(): Promise<ProviderRow[]> {
+    return this.db.select().from(providers).where(eq(providers.iconPending, true));
+  }
+
   async findByName(name: string): Promise<ProviderRow | undefined> {
     return this.db.query.providers.findFirst({ where: sql`lower(${providers.name}) = lower(${name})` });
   }
@@ -67,6 +72,7 @@ export class ProvidersRepository {
         iconType: icon?.type ?? null,
         iconData: icon?.data ?? null,
         iconSourceUrl: icon?.sourceUrl ?? null,
+        iconPending: false,
         iconVersion: sql`${providers.iconVersion} + 1`,
         updatedAt: new Date(),
       })

@@ -51,7 +51,11 @@ export const providersListQuery = queryOptions({
 });
 
 export function useProviders() {
-  return useQuery(providersListQuery);
+  return useQuery({
+    ...providersListQuery,
+    // Иконка ищется в фоне: пока у кого-то iconPending, перечитываем список.
+    refetchInterval: (q) => (q.state.data?.items.some((p) => p.iconPending) ? 1500 : false),
+  });
 }
 
 export function useProviderServers(id: string | null) {

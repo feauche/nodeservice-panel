@@ -48,6 +48,7 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
   const [preview, setPreview] = useState<{
     icon: string | null;
     source: string | null;
+    reason: string | null;
     manual: boolean;
   } | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -88,9 +89,20 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
       try {
         const res = await providersApi.preview(site, manualUrl || null);
         if (seq === previewSeq.current)
-          setPreview({ icon: res.iconDataUrl, source: res.sourceUrl, manual: Boolean(manualUrl) });
+          setPreview({
+            icon: res.iconDataUrl,
+            source: res.sourceUrl,
+            reason: res.reason,
+            manual: Boolean(manualUrl),
+          });
       } catch {
-        if (seq === previewSeq.current) setPreview({ icon: null, source: null, manual: Boolean(manualUrl) });
+        if (seq === previewSeq.current)
+          setPreview({
+            icon: null,
+            source: null,
+            reason: 'панель не смогла проверить',
+            manual: Boolean(manualUrl),
+          });
       } finally {
         if (seq === previewSeq.current) setPreviewing(false);
       }
@@ -131,7 +143,11 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
             },
           })
         : await create.mutateAsync(parsed.data);
-      toast.success(provider ? `«${saved.name}» сохранён.` : `Провайдер «${saved.name}» добавлен.`);
+      toast.success(
+        provider
+          ? `«${saved.name}» сохранён.${saved.iconPending ? ' Иконку подтянем в фоне.' : ''}`
+          : `Провайдер «${saved.name}» добавлен, иконку подтянем в фоне.`,
+      );
       onSaved?.(saved);
       onOpenChange(false);
     } catch (err) {
@@ -163,17 +179,19 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
             ? 'на сайте нет, нашли в кэше Google'
             : 'нашли на сайте'
         : preview.manual
-          ? 'по ссылке картинки нет — будет буква'
+          ? 'по ссылке не вышло — будет буква'
           : 'на сайте иконки нет — будет буква'
-      : provider?.hasIcon
-        ? provider.iconUrl
-          ? 'по ручной ссылке'
-          : isProviderIconServiceUrl(provider.iconSourceUrl)
-            ? 'из кэша Google'
-            : 'найдена на сайте'
-        : siteUrl.trim()
-          ? 'не нашли — будет буква'
-          : 'появится после ввода сайта';
+      : provider?.iconPending
+        ? 'ещё ищем на сайте…'
+        : provider?.hasIcon
+          ? provider.iconUrl
+            ? 'по ручной ссылке'
+            : isProviderIconServiceUrl(provider.iconSourceUrl)
+              ? 'из кэша Google'
+              : 'найдена на сайте'
+          : siteUrl.trim()
+            ? 'не нашли — будет буква'
+            : 'появится после ввода сайта';
   const iconHint = manualUrl
     ? 'Берём только эту картинку. Очистите поле — панель снова будет искать на сайте.'
     : iconUrl.trim()
@@ -270,6 +288,14 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
                   {previewing && <Loader2Icon className="size-3 animate-spin" aria-hidden="true" />}
                   <span data-testid="provider-icon-state">{iconState}</span>
                 </div>
+                {preview && !preview.icon && preview.reason && !previewing && (
+                  <div
+                    className="mt-0.5 text-[11.5px] leading-snug text-warn"
+                    data-testid="provider-icon-reason"
+                  >
+                    {preview.reason}
+                  </div>
+                )}
               </div>
               <button
                 type="button"

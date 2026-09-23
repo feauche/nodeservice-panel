@@ -261,7 +261,9 @@ function ProviderCard({
             {provider.siteHost}
             <ExternalLinkIcon className="size-3" aria-hidden="true" />
           </a>
-          {provider.iconSourceUrl ? (
+          {provider.iconPending ? (
+            <div className="text-[11.5px] text-text-3">Ищем иконку на сайте…</div>
+          ) : provider.iconSourceUrl ? (
             isProviderIconServiceUrl(provider.iconSourceUrl) ? (
               <div className="text-[11.5px] text-text-3">Иконка из кэша Google: на сайте её не нашлось</div>
             ) : (
