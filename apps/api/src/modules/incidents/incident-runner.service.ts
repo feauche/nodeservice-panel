@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import {
   type ActionKey,
   type ActionLevel,
@@ -8,6 +8,7 @@ import {
   type AttemptStep,
   type AttemptStepKey,
   actionByKey,
+  actionMeta,
   INCIDENT_CHAINS,
   type IncidentAttempt,
   type IncidentEvent,
@@ -38,6 +39,7 @@ const T = TEST
       agentTimeoutMs: 400,
       xrayTimeoutMs: 400,
       execTimeoutMs: 5_000,
+      staleMs: 1_000,
     }
   : {
       pollMs: 20_000,
@@ -47,6 +49,8 @@ const T = TEST
       agentTimeoutMs: 120_000,
       xrayTimeoutMs: 60_000,
       execTimeoutMs: 180_000,
+      /** Попытка, которая идёт дольше и не числится в памяти, — зависла: сторож её закрывает. */
+      staleMs: 15 * 60_000,
     };
 
 /**
@@ -72,6 +76,30 @@ const STEP_LABELS: Record<AttemptStepKey, string> = {
   rollback: 'Откат',
 };
 
+/** Попытку оборвали снаружи (закрыли инцидент, сторож) — её ход в памяти молча останавливается. */
+class AttemptAborted extends Error {
+  constructor() {
+    super('attempt aborted');
+  }
+}
+
+/** Оборванная попытка: идущий шаг — «ошибка» с пометкой, не начатые — «пропущен». */
+function abortAttempt(a: IncidentAttempt, note: string): IncidentAttempt {
+  const now = iso();
+  return {
+    ...a,
+    status: 'failed',
+    finishedAt: now,
+    steps: a.steps.map((s) =>
+      s.status === 'running'
+        ? { ...s, status: 'failed', finishedAt: now, note }
+        : s.status === 'pending'
+          ? { ...s, status: 'skipped' }
+          : s,
+    ),
+  };
+}
+
 /**
  * Исполнитель действий по инциденту (§2 мастер-плана). Одна попытка = пред-проверка → действие →
  * пост-проверка → откат. Не помогло — следующий шаг цепочки: T1 при включённом авто выполняется
@@ -79,8 +107,10 @@ const STEP_LABELS: Record<AttemptStepKey, string> = {
  * Одновременно на сервере идёт не больше одного действия.
  */
 @Injectable()
-export class IncidentRunnerService {
+export class IncidentRunnerService implements OnModuleInit {
   private readonly log = new Logger(IncidentRunnerService.name);
+  /** id попыток, которые реально идут в этом процессе. Есть в БД, но нет здесь — осиротела. */
+  private readonly active = new Set<string>();
   /** serverId → incidentId с идущим действием. */
   private readonly busy = new Map<string, string>();
   /** Куски вывода пишутся в БД строго по очереди — иначе параллельные read-modify-write затирают друг друга. */
@@ -97,6 +127,55 @@ export class IncidentRunnerService {
     private readonly metrics: IncidentMetricsService,
     private readonly notifications: NotificationsService,
   ) {}
+
+  /** Панель перезапустили — попытки, шедшие в памяти, некому завершить: закрываем их как прерванные. */
+  async onModuleInit(): Promise<void> {
+    const n = await this.failOrphans('Прервано перезапуском панели', () => true).catch(() => 0);
+    if (n > 0) this.log.warn(`Закрыто незавершённых попыток по инцидентам: ${n}`);
+  }
+
+  /**
+   * Закрыть попытки со статусом «выполняется», которых нет в памяти процесса. Иначе инцидент
+   * навсегда «идёт» и блокирует новые действия. Шаг, что шёл, — «ошибка» с пометкой, остальные — «пропущен».
+   */
+  async failOrphans(note: string, pick: (a: IncidentAttempt) => boolean): Promise<number> {
+    let n = 0;
+    for (const row of await this.repo.list('all')) {
+      const stale = row.attempts.filter((a) => a.status === 'running' && !this.active.has(a.id) && pick(a));
+      if (stale.length === 0) continue;
+      const ids = new Set(stale.map((a) => a.id));
+      await this.repo.update(row.id, {
+        attempts: row.attempts.map((a) => (ids.has(a.id) ? abortAttempt(a, note) : a)),
+        timeline: [
+          ...row.timeline,
+          ...stale.map((a) =>
+            ev(a.by, `${actionMeta(a.action).title}: ${note.toLowerCase()}`, 'failed', a.level),
+          ),
+        ],
+      });
+      n += stale.length;
+    }
+    return n;
+  }
+
+  /** Инцидент закрывают руками, пока действие идёт — попытку обрываем, чтобы не висела «выполняется». */
+  async cancelRunning(incidentId: string, note: string): Promise<void> {
+    const row = await this.repo.findById(incidentId);
+    if (!row) return;
+    const running = row.attempts.filter((a) => a.status === 'running');
+    if (running.length === 0) return;
+    for (const a of running) this.active.delete(a.id);
+    await this.repo.update(incidentId, {
+      attempts: row.attempts.map((a) => (a.status === 'running' ? abortAttempt(a, note) : a)),
+      timeline: [
+        ...row.timeline,
+        ...running.map((a) =>
+          ev(a.by, `${actionMeta(a.action).title}: ${note.toLowerCase()}`, 'failed', a.level),
+        ),
+      ],
+    });
+    if (row.serverId && this.busy.get(row.serverId) === incidentId) this.busy.delete(row.serverId);
+  }
 
   /** Дождаться всех идущих попыток — для тестов и корректного выключения. */
   async settle(): Promise<void> {
@@ -151,9 +230,14 @@ export class IncidentRunnerService {
       ...(row.status === 'open' && by === 'manual' ? { status: 'acknowledged' } : {}),
     });
     this.busy.set(row.serverId, incidentId);
+    this.active.add(attempt.id);
     const job = this.run(incidentId, attempt.id, key, by)
-      .catch((err) => this.log.warn(`действие ${key} по инциденту ${incidentId}: ${(err as Error).message}`))
+      .catch((err) => {
+        if (err instanceof AttemptAborted) return;
+        this.log.warn(`действие ${key} по инциденту ${incidentId}: ${(err as Error).message}`);
+      })
       .finally(() => {
+        this.active.delete(attempt.id);
         if (this.busy.get(row.serverId as string) === incidentId) this.busy.delete(row.serverId as string);
         this.inflight.delete(job);
       });
@@ -163,6 +247,11 @@ export class IncidentRunnerService {
 
   /** Тик автопочинки: первый шаг цепочки — сам (T1 включено) или как предложение. */
   async autoTick(): Promise<void> {
+    // Сторож: «выполняется» дольше лимита и не в памяти — зависла, закрываем.
+    await this.failOrphans(
+      'Прервано: действие зависло',
+      (a) => Date.now() - new Date(a.startedAt).getTime() > T.staleMs,
+    ).catch((err) => this.log.warn(`сторож попыток: ${(err as Error).message}`));
     const cfg = await this.settings.get();
     for (const row of await this.repo.list('open')) {
       if (!row.serverId || row.proposal || row.attempts.some((a) => a.status === 'running')) continue;
@@ -647,6 +736,8 @@ export class IncidentRunnerService {
   ): Promise<void> {
     const row = await this.repo.findById(incidentId);
     if (!row) return;
+    // Попытку уже оборвали (закрыли инцидент, сторож) — ход в памяти останавливается, ничего не пишет.
+    if (!row.attempts.some((a) => a.id === attemptId && a.status === 'running')) throw new AttemptAborted();
     await this.repo.update(incidentId, {
       attempts: row.attempts.map((a) => (a.id === attemptId ? fn(a) : a)),
     });

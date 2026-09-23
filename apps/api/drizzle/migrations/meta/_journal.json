@@ -183,6 +183,13 @@
       "when": 1789100600000,
       "tag": "0025_incident_kind_node_down",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1789100700000,
+      "tag": "0026_incident_wording_confirm",
+      "breakpoints": true
     }
   ]
 }

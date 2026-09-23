@@ -384,6 +384,104 @@ describe('incidents e2e', () => {
     expect(resolved.resolvedBy).toBe('manual');
   });
 
+  /** Попытка «выполняется», которую некому завершить — как после перезапуска панели. */
+  const orphanAttempt = (ageMs: number) => ({
+    id: crypto.randomUUID(),
+    action: 'node_logs',
+    level: 'T0' as const,
+    by: 'manual' as const,
+    status: 'running' as const,
+    startedAt: new Date(Date.now() - ageMs).toISOString(),
+    finishedAt: null,
+    steps: [
+      {
+        key: 'precheck' as const,
+        label: 'Пред-проверка',
+        status: 'ok' as const,
+        startedAt: null,
+        finishedAt: null,
+        note: 'SSH отвечает',
+      },
+      {
+        key: 'action' as const,
+        label: 'Логи ноды',
+        status: 'running' as const,
+        startedAt: null,
+        finishedAt: null,
+        note: null,
+      },
+      {
+        key: 'postcheck' as const,
+        label: 'Пост-проверка',
+        status: 'pending' as const,
+        startedAt: null,
+        finishedAt: null,
+        note: null,
+      },
+      {
+        key: 'rollback' as const,
+        label: 'Откат',
+        status: 'pending' as const,
+        startedAt: null,
+        finishedAt: null,
+        note: null,
+      },
+    ],
+    log: '$ docker logs',
+  });
+  const openWithOrphan = async (ageMs: number) => {
+    const repo = app.get(IncidentsRepository);
+    const row = await repo.open({
+      serverId,
+      serverName: 'inc-host',
+      kind: 'node_down',
+      severity: 'crit',
+      title: 'Контейнер ноды не запущен · inc-host',
+      detail: 'осиротевшая попытка',
+      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+    });
+    await repo.update(row?.id ?? '', { attempts: [orphanAttempt(ageMs)] });
+    return row?.id ?? '';
+  };
+
+  it('ручное закрытие обрывает идущую попытку — она не висит «выполняется»', async () => {
+    const id = await openWithOrphan(0);
+    const resolved = incidentSchema.parse(
+      (await agent.post(`/api/incidents/${id}/resolve`).set(CSRF_HEADER, csrf).expect(200)).body,
+    );
+    expect(resolved.status).toBe('resolved');
+    expect(resolved.attempts[0]).toMatchObject({ status: 'failed' });
+    expect(resolved.attempts[0]?.finishedAt).not.toBeNull();
+    expect(resolved.attempts[0]?.steps[1]).toMatchObject({
+      status: 'failed',
+      note: expect.stringContaining('закрыт администратором'),
+    });
+    expect(resolved.attempts[0]?.steps[2]?.status).toBe('skipped');
+    expect(resolved.timeline.some((e) => e.action.includes('Логи ноды: прервано'))).toBe(true);
+  });
+
+  it('после перезапуска панели осиротевшие попытки закрываются, новое действие снова можно запустить', async () => {
+    const id = await openWithOrphan(0);
+    await agent.post(`/api/incidents/${id}/actions/node_up/run`).set(CSRF_HEADER, csrf).expect(409);
+    await app.get(IncidentRunnerService).onModuleInit();
+    const after = incidentSchema.parse((await agent.get(`/api/incidents/${id}`).expect(200)).body);
+    expect(after.attempts[0]).toMatchObject({ status: 'failed' });
+    expect(after.attempts[0]?.steps[1]?.note).toContain('перезапуском панели');
+    expect(after.status).not.toBe('resolved');
+    await agent.post(`/api/incidents/${id}/actions/node_up/run`).set(CSRF_HEADER, csrf).expect(202);
+    await settled(id);
+    await agent.post(`/api/incidents/${id}/resolve`).set(CSRF_HEADER, csrf);
+  });
+
+  it('сторож: попытка «выполняется» дольше лимита и не в памяти — закрывается на тике', async () => {
+    const id = await openWithOrphan(5_000);
+    await app.get(IncidentsService).evaluate(noMetrics);
+    const after = incidentSchema.parse((await agent.get(`/api/incidents/${id}`).expect(200)).body);
+    expect(after.attempts[0]).toMatchObject({ status: 'failed' });
+    expect(after.attempts[0]?.steps[1]?.note).toContain('зависло');
+    await agent.post(`/api/incidents/${id}/resolve`).set(CSRF_HEADER, csrf);
+  });
+
   it('настройки инцидентов: PUT меняет порог, diff в Журнале', async () => {
     const res = await agent
       .put('/api/settings/incidents')

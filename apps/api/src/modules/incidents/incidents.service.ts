@@ -125,13 +125,17 @@ export class IncidentsService {
 
   /** Ручное закрытие администратором. */
   async resolveManual(id: string): Promise<Incident> {
-    const row = await this.repo.findById(id);
-    if (!row) throw problem(HttpStatus.NOT_FOUND, { detail: 'Инцидент не найден.' });
-    if (row.status === 'resolved') return this.toDto(row);
+    const row0 = await this.repo.findById(id);
+    if (!row0) throw problem(HttpStatus.NOT_FOUND, { detail: 'Инцидент не найден.' });
+    if (row0.status === 'resolved') return this.toDto(row0);
+    // Идущую попытку обрываем (она дописывает хронологию) и перечитываем, чтобы не затереть.
+    await this.runner.cancelRunning(id, 'Прервано: инцидент закрыт администратором');
+    const row = (await this.repo.findById(id)) ?? row0;
     const updated = await this.repo.update(id, {
       status: 'resolved',
       resolvedAt: new Date(),
       resolvedBy: 'manual',
+      proposal: null,
       timeline: [...row.timeline, ev('manual', 'Закрыт администратором', 'resolved')],
     });
     if (row.serverId) this.exceededSince.delete(`${row.serverId}:${row.kind}`);
