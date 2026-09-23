@@ -26,12 +26,27 @@ Settings → Deploy keys), сгенерирует `infra/.env` с секрета
 | `nodeservice logs [api]` | логи |
 | `nodeservice update [ref]` | бэкап → git fetch (по умолчанию `origin/main`) → сборка → перезапуск; миграции применяет api при старте |
 | `nodeservice rollback` | вернуть предыдущий образ api |
-| `nodeservice backup` / `restore <файл>` | pg_dump в `/opt/nodeservice/backups` (14 дней) + копия `.env`; восстановление с остановкой api |
+| `nodeservice backup [--to user@host:/dir]` | полный бэкап одним архивом `nodeservice-backup-<время>.tar.gz` (дамп БД + `.env` + meta) в `/opt/nodeservice/backups`, 14 дней; `--to` — копия по scp или в папку |
+| `nodeservice restore <файл> [--yes]` | восстановить из архива на работающей панели: секреты из бэкапа переносятся в `.env`, БД заменяется (прежняя сохраняется как `nodeservice_pre_restore_*`), api перезапускается |
 | `nodeservice cli setup-token` | rescue CLI: `setup-token`, `list-users`, `reset-password`, `disable-2fa`, `revoke-sessions` |
 | `nodeservice uninstall` | снять панель: бэкап БД и `.env` в `/root/nodeservice-last-backup`, затем контейнеры, образы, тома, `/opt/nodeservice`, cron и сама команда. Docker и deploy-ключ остаются |
 
 `infra/.env` — единственное место с секретами. Без `ENCRYPTION_KEY` из него зашифрованные данные
-(TOTP, доступы к серверам) не восстановить, поэтому бэкап кладёт его копию рядом с дампом.
+(TOTP, доступы к серверам, SSH-ключ панели) не восстановить, поэтому он лежит внутри архива бэкапа.
+
+## Переезд на другой сервер / восстановление с нуля
+
+1. На старом сервере: `nodeservice backup` (или `nodeservice backup --to root@новый:/root`), скачать
+   архив `nodeservice-backup-<время>.tar.gz`.
+2. На чистом сервере одной командой:
+   ```bash
+   bash <(curl -fsSL https://raw.githubusercontent.com/feauche/nodeservice-panel/main/infra/scripts/install.sh) --restore /root/nodeservice-backup-<время>.tar.gz
+   ```
+   Установщик возьмёт секреты и данные из архива, домен предложит прежний (при том же домене
+   агенты на нодах переподключатся сами, ничего переустанавливать не нужно).
+3. Переключить A-запись домена на новый сервер. Сертификат Caddy выпустит сам.
+
+В бэкап не входит история метрик (графики заполнятся заново) и сессии входа.
 
 ## Разработка
 

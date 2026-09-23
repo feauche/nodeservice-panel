@@ -3,6 +3,10 @@
 #
 #   bash <(curl -fsSL https://raw.githubusercontent.com/feauche/nodeservice-panel/main/infra/scripts/install.sh)
 #
+# Переезд/восстановление на чистом сервере из бэкапа (nodeservice backup):
+#   bash <(curl -fsSL …/install.sh) --restore /root/nodeservice-backup-<время>.tar.gz
+# — секреты и данные берутся из бэкапа, домен по умолчанию прежний; потом переключи DNS.
+#
 # Ставит Docker, клонирует репозиторий в /opt/nodeservice (для приватного — по deploy-ключу),
 # генерирует infra/.env с секретами, собирает образ api из исходников, поднимает стек
 # (Caddy + api + Postgres + Valkey + VictoriaMetrics), ставит команду `nodeservice`, ежедневный
@@ -18,6 +22,15 @@ DEPLOY_KEY="/root/.ssh/nodeservice_deploy"
 ENV_FILE="$APP_DIR/infra/.env"
 export GIT_TERMINAL_PROMPT=0
 COMPOSE=(docker compose -f "$APP_DIR/infra/compose.yaml" --env-file "$ENV_FILE")
+
+RESTORE_FILE=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --restore) RESTORE_FILE="${2:-}"; shift 2 ;;
+        -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "Неизвестный параметр: $1 (поддерживается --restore <файл бэкапа>)" >&2; exit 1 ;;
+    esac
+done
 
 C='\033[0;36m'; G='\033[0;32m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 step() { echo -e "\n${C}==> $1${N}"; }
@@ -45,7 +58,23 @@ command -v apt-get >/dev/null || die "Поддерживаются только 
 
 # --- 0. Параметры ---------------------------------------------------------------------------
 step "Параметры"
-if [[ -f "$ENV_FILE" ]]; then
+RESTORE_ENV=""
+if [[ -n "$RESTORE_FILE" ]]; then
+    [[ -f "$RESTORE_FILE" ]] || die "Файл бэкапа не найден: $RESTORE_FILE"
+    RESTORE_FILE=$(readlink -f "$RESTORE_FILE")
+    [[ -f "$ENV_FILE" ]] && die "Панель уже установлена в $APP_DIR. Восстановление поверх: nodeservice restore $RESTORE_FILE"
+    RESTORE_WORK=$(mktemp -d /tmp/nodeservice-restore-env.XXXXXX); chmod 700 "$RESTORE_WORK"
+    tar -C "$RESTORE_WORK" -xzf "$RESTORE_FILE" env meta 2>/dev/null || die "Это не бэкап панели (ожидается nodeservice-backup-*.tar.gz от nodeservice backup)."
+    RESTORE_ENV="$RESTORE_WORK/env"
+    [[ -f "$RESTORE_WORK/meta" ]] && { info "Бэкап:"; sed 's/^/     /' "$RESTORE_WORK/meta"; }
+    # Домен по умолчанию — прежний: тогда агенты на нодах подключатся к новой панели сами.
+    old_domain=$(grep -E '^PANEL_DOMAIN=' "$RESTORE_ENV" | cut -d= -f2- || true)
+    old_email=$(grep -E '^ACME_EMAIL=' "$RESTORE_ENV" | cut -d= -f2- || true)
+    PANEL_DOMAIN=$(ask "Домен панели (прежний — агенты на нодах переподключатся сами)" "${old_domain:-}")
+    [[ "$PANEL_DOMAIN" =~ ^[a-z0-9.-]+\.[a-z]{2,}$ ]] || die "Некорректный домен: '$PANEL_DOMAIN'"
+    [[ -n "$old_domain" && "$PANEL_DOMAIN" != "$old_domain" ]] && warn "Домен меняется: агентам на нодах нужно будет переустановиться (Серверы → Установить агента)."
+    ACME_EMAIL=$(ask "E-mail для Let's Encrypt" "${old_email:-admin@${PANEL_DOMAIN#*.}}")
+elif [[ -f "$ENV_FILE" ]]; then
     # shellcheck disable=SC1090
     source "$ENV_FILE"
     ok "infra/.env уже есть: домен ${PANEL_DOMAIN:-?}, секреты сохраняются."
@@ -125,7 +154,32 @@ ok "Код в $APP_DIR ($(git -C "$APP_DIR" rev-parse --short HEAD))"
 
 # --- 3. .env с секретами --------------------------------------------------------------------
 step "Конфигурация"
-if [[ ! -f "$ENV_FILE" ]]; then
+envval() { grep -E "^$2=" "$1" 2>/dev/null | head -1 | cut -d= -f2- || true; }
+if [[ -n "$RESTORE_ENV" ]]; then
+    # Секреты — из бэкапа (иначе TOTP, доступы к серверам и ключ панели не расшифровать),
+    # домен/e-mail — что выбрали выше, версия кода — текущая.
+    umask 077
+    cat > "$ENV_FILE" <<ENV
+# Восстановлено install.sh --restore $(date -u +%Y-%m-%dT%H:%MZ) из $(basename "$RESTORE_FILE"). Не коммитить.
+# Бэкапь вместе с БД — без ENCRYPTION_KEY зашифрованные секреты не восстановить.
+PANEL_DOMAIN=${PANEL_DOMAIN}
+ACME_EMAIL=${ACME_EMAIL}
+NODESERVICE_VERSION=$(git -C "$APP_DIR" rev-parse --short HEAD)
+POSTGRES_PASSWORD=$(envval "$RESTORE_ENV" POSTGRES_PASSWORD)
+APP_SECRET=$(envval "$RESTORE_ENV" APP_SECRET)
+ENCRYPTION_KEY=$(envval "$RESTORE_ENV" ENCRYPTION_KEY)
+ENCRYPTION_KEY_VERSION=$(envval "$RESTORE_ENV" ENCRYPTION_KEY_VERSION)
+PASSWORD_PEPPER=$(envval "$RESTORE_ENV" PASSWORD_PEPPER)
+ENV
+    umask 022
+    for k in POSTGRES_PASSWORD APP_SECRET ENCRYPTION_KEY; do
+        [[ -n "$(envval "$ENV_FILE" $k)" ]] || die "В бэкапе нет $k — .env в архиве неполный."
+    done
+    # Прочие переменные из старого .env (например, PROVIDER_ICON_FALLBACK_URL) переносим как есть.
+    grep -vE '^(#|$|PANEL_DOMAIN=|ACME_EMAIL=|NODESERVICE_VERSION=|POSTGRES_PASSWORD=|APP_SECRET=|ENCRYPTION_KEY=|ENCRYPTION_KEY_VERSION=|PASSWORD_PEPPER=)' "$RESTORE_ENV" >> "$ENV_FILE" || true
+    rm -rf "$RESTORE_WORK"
+    ok "infra/.env восстановлен из бэкапа (домен $PANEL_DOMAIN)."
+elif [[ ! -f "$ENV_FILE" ]]; then
     umask 077
     cat > "$ENV_FILE" <<ENV
 # Сгенерировано install.sh $(date -u +%Y-%m-%dT%H:%MZ). Не коммитить. Бэкапь вместе с БД —
@@ -167,12 +221,24 @@ step "Обслуживание"
 install -m 0755 "$APP_DIR/infra/scripts/nodeservice" /usr/local/bin/nodeservice
 mkdir -p -m 700 "$APP_DIR/backups"
 cat > /etc/cron.d/nodeservice-backup <<CRON
-# Ежедневный бэкап БД NodeService (хранится 14 дней) — infra/scripts/backup.sh
+# Ежедневный полный бэкап NodeService: БД + .env одним архивом (хранится 14 дней) — infra/scripts/backup.sh
 17 3 * * * root NODESERVICE_DIR="$APP_DIR" /usr/local/bin/nodeservice backup >> /var/log/nodeservice-backup.log 2>&1
 CRON
-ok "Команда nodeservice установлена; бэкап БД ежедневно в 03:17 → $APP_DIR/backups"
+ok "Команда nodeservice установлена; бэкап ежедневно в 03:17 → $APP_DIR/backups"
 
-# --- 7. Токен первого запуска ---------------------------------------------------------------
+# --- 7. Восстановление из бэкапа ------------------------------------------------------------
+if [[ -n "$RESTORE_FILE" ]]; then
+    step "Восстановление данных из бэкапа"
+    bash "$APP_DIR/infra/scripts/restore.sh" "$RESTORE_FILE" --yes || die "Восстановление не удалось — лог выше. Стек запущен с пустой БД."
+    step "Готово"
+    echo -e "Панель восстановлена: ${G}https://${PANEL_DOMAIN}${N} — вход прежним паролем и кодом из приложения."
+    echo "Переключи A-запись $PANEL_DOMAIN на этот сервер; сертификат выпустится сам, агенты на нодах переподключатся."
+    echo ""
+    echo "Команды: nodeservice status | logs | update | rollback | backup | restore <файл> | cli <команда>"
+    exit 0
+fi
+
+# --- 8. Токен первого запуска ---------------------------------------------------------------
 step "Готово"
 echo -e "Панель: ${G}https://${PANEL_DOMAIN}${N} (сертификат выпускается ~30 с после первого запроса)"
 echo ""

@@ -1,5 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import type { Provider } from '@nodeservice/shared';
 import {
   AGENT_STATUS_LABELS,
   type OverviewServerMetrics,
@@ -17,7 +18,6 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { toast } from 'sonner';
-
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { DialogActions, DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
 import { Button } from '@/components/ui/button';
@@ -183,6 +183,24 @@ function CardFooter({ server, handle }: { server: Server; handle?: ReactNode }) 
   );
 }
 
+/** Провайдер сервера из справочника (иконка у адреса) — общий для карточки и её «призрака». */
+function useServerProvider(server: Server): Provider | null {
+  const providers = useProviders();
+  return server.providerId ? (providers.data?.items.find((p) => p.id === server.providerId) ?? null) : null;
+}
+
+/** Адрес SSH с иконкой провайдера. */
+function AddressLine({ server, provider }: { server: Server; provider: Provider | null }) {
+  return (
+    <p className="mt-0.5 flex min-w-0 items-center gap-1.5 font-mono text-[11.5px] text-text-3">
+      {provider && <ProviderIcon provider={provider} size="sm" className="flex-none" />}
+      <span className="truncate">
+        {server.sshUser}@{server.host}:{server.port}
+      </span>
+    </p>
+  );
+}
+
 /** «Призрак» для DragOverlay: летит за курсором при перетаскивании и плавно «долетает» в слот. */
 export function ServerCardGhost({
   server,
@@ -192,6 +210,7 @@ export function ServerCardGhost({
   metrics?: OverviewServerMetrics | null;
 }) {
   const health = serverHealth(server, metrics);
+  const provider = useServerProvider(server);
   return (
     <div className="relative flex cursor-grabbing flex-col gap-3 rounded-2xl border border-border-2 bg-surface p-4 shadow-float">
       <div className="flex items-start gap-2.5">
@@ -200,9 +219,7 @@ export function ServerCardGhost({
           <h2 className="line-clamp-2 font-heading text-[15px] leading-[1.25] font-bold tracking-[-0.01em]">
             {server.name}
           </h2>
-          <p className="mt-0.5 truncate font-mono text-[11.5px] text-text-3">
-            {server.sshUser}@{server.host}:{server.port}
-          </p>
+          <AddressLine server={server} provider={provider} />
         </div>
       </div>
       <StatusPills server={server} />
@@ -233,10 +250,7 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
   const sortable = useSortable({ id: server.id });
   const remove = useDeleteServer();
   const trust = useTrustHostKey();
-  const providers = useProviders();
-  const provider = server.providerId
-    ? (providers.data?.items.find((p) => p.id === server.providerId) ?? null)
-    : null;
+  const provider = useServerProvider(server);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [mismatch, setMismatch] = useState<{ offered: string } | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
@@ -316,12 +330,7 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
           <h2 className="line-clamp-2 font-heading text-[15px] leading-[1.25] font-bold tracking-[-0.01em]">
             {server.name}
           </h2>
-          <p className="mt-0.5 flex min-w-0 items-center gap-1.5 font-mono text-[11.5px] text-text-3">
-            {provider && <ProviderIcon provider={provider} size="sm" className="flex-none" />}
-            <span className="truncate">
-              {server.sshUser}@{server.host}:{server.port}
-            </span>
-          </p>
+          <AddressLine server={server} provider={provider} />
         </div>
         <div className="flex flex-none items-center gap-1">
           <DropdownMenu>
