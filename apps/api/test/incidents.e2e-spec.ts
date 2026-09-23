@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import {
   auditListResponseSchema,
   CSRF_HEADER,
+  incidentActionsResponseSchema,
   incidentSchema,
   incidentsListResponseSchema,
   serverSchema,
@@ -21,6 +22,8 @@ import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
+import { IncidentMetricsService } from '../src/modules/incidents/incident-metrics.service.js';
+import { IncidentRunnerService } from '../src/modules/incidents/incident-runner.service.js';
 import { IncidentsRepository } from '../src/modules/incidents/incidents.repository.js';
 import { IncidentsService } from '../src/modules/incidents/incidents.service.js';
 import { FakeSsh, SSH_PASSWORD, SSH_USER } from './fake-ssh.js';
@@ -121,7 +124,69 @@ describe('incidents e2e', () => {
     expect(resolved.items.some((i) => i.kind === 'agent_offline' && i.resolvedBy === 'auto')).toBe(true);
   });
 
-  it('автопочинка: пресет выполняется по SSH, кулдаун не пускает повтор', async () => {
+  /** Ждём, пока попытка по инциденту завершится (исполнитель работает в фоне). */
+  const settled = async (id: string) => {
+    await app.get(IncidentRunnerService).settle();
+    return incidentSchema.parse((await agent.get(`/api/incidents/${id}`).expect(200)).body);
+  };
+
+  it('действие T1 вручную: пред-проверка → SSH → пост-проверка помогла → инцидент закрыт', async () => {
+    const db = app.get<Db>(DB);
+    await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
+    const repo = app.get(IncidentsRepository);
+    const opened = await repo.open({
+      serverId,
+      serverName: 'inc-host',
+      kind: 'disk_high',
+      severity: 'warn',
+      title: 'Диск заполняется · inc-host',
+      detail: 'Диск держится выше порога.',
+      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+    });
+    const id = opened?.id ?? '';
+    // метрики: диск 94 % до действия, после — 60 % (пост-проверка увидит «ниже порога − 5»)
+    const metrics = app.get(IncidentMetricsService);
+    metrics.setForTest(serverId, { disk: 94 });
+    const before = ssh.execLog.length;
+    // T3 панель не выполняет
+    await agent.post(`/api/incidents/${id}/actions/disk_inspect/run`).set(CSRF_HEADER, csrf).expect(400);
+    const started = incidentSchema.parse(
+      (await agent.post(`/api/incidents/${id}/actions/free_disk/run`).set(CSRF_HEADER, csrf).expect(202))
+        .body,
+    );
+    expect(started.attempts[0]?.status).toBe('running');
+    expect(started.status).toBe('acknowledged');
+    // повторный запуск, пока идёт — 409
+    await agent.post(`/api/incidents/${id}/actions/free_disk/run`).set(CSRF_HEADER, csrf).expect(409);
+    metrics.setForTest(serverId, { disk: 60 });
+    const done = await settled(id);
+    const attempt = done.attempts[0];
+    expect(attempt?.status).toBe('helped');
+    expect(attempt?.steps.map((st) => `${st.key}:${st.status}`)).toEqual([
+      'precheck:ok',
+      'action:ok',
+      'postcheck:ok',
+      'rollback:skipped',
+    ]);
+    expect(attempt?.log).toContain('journalctl');
+    expect(done.status).toBe('resolved');
+    expect(done.resolvedBy).toBe('manual');
+    expect(done.timeline.some((e) => e.result === 'helped' && e.level === 'T1')).toBe(true);
+    expect(ssh.execLog.length).toBeGreaterThan(before);
+    expect(ssh.execLog.some((c) => c.includes('journalctl'))).toBe(true);
+    // закрытый инцидент — действие не запустить
+    await agent.post(`/api/incidents/${id}/actions/free_disk/run`).set(CSRF_HEADER, csrf).expect(409);
+
+    const audit = auditListResponseSchema.parse(
+      (await agent.get('/api/audit?category=server').expect(200)).body,
+    );
+    expect(audit.items.some((e) => e.action === 'incident.autofix')).toBe(true);
+    expect(audit.items.some((e) => e.action === 'incident.opened')).toBe(true);
+  });
+
+  it('не помогло → предложен следующий шаг T2 (ждёт «Да»); «Да» запускает его; пред-проверка не пройдена → понижение до T2', async () => {
+    const db = app.get<Db>(DB);
+    await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
     const repo = app.get(IncidentsRepository);
     const opened = await repo.open({
       serverId,
@@ -133,42 +198,125 @@ describe('incidents e2e', () => {
       timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
     });
     const id = opened?.id ?? '';
-    const before = ssh.execLog.length;
-    const fixed = incidentSchema.parse(
+    const metrics = app.get(IncidentMetricsService);
+    metrics.setForTest(serverId, { cpu: 97 });
+    // неподходящее действие — 400
+    await agent.post(`/api/incidents/${id}/actions/free_disk/run`).set(CSRF_HEADER, csrf).expect(400);
+    await agent.post(`/api/incidents/${id}/actions/restart_xray/run`).set(CSRF_HEADER, csrf).expect(202);
+    const after1 = await settled(id);
+    expect(after1.attempts[0]?.status).toBe('not_helped');
+    expect(after1.status).not.toBe('resolved');
+    expect(after1.proposal).toMatchObject({ action: 'restart_node', level: 'T2' });
+    expect(after1.timeline.some((e) => e.result === 'escalate' && e.level === 'T2')).toBe(true);
+
+    // «Да» на предложение: перезапуск контейнера помогает (CPU падает)
+    const p = agent.post(`/api/incidents/${id}/actions/restart_node/run`).set(CSRF_HEADER, csrf);
+    metrics.setForTest(serverId, { cpu: 40 });
+    await p.expect(202);
+    const after2 = await settled(id);
+    expect(after2.proposal).toBeNull();
+    expect(after2.attempts[1]?.status).toBe('helped');
+    expect(after2.status).toBe('resolved');
+
+    // пред-проверка не пройдена (агент офлайн) в авто → понижение до T2 и предложение
+    await db.execute(sql`update servers set agent_status = 'offline' where id = ${serverId}`);
+    const opened2 = await repo.open({
+      serverId,
+      serverName: 'inc-host',
+      kind: 'cpu_high',
+      severity: 'warn',
+      title: 'Высокая нагрузка на CPU · inc-host',
+      detail: 'снова',
+      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+    });
+    const id2 = opened2?.id ?? '';
+    await app.get(IncidentRunnerService).start(id2, 'restart_xray', 'auto');
+    const after3 = await settled(id2);
+    expect(after3.attempts[0]?.status).toBe('precheck_failed');
+    expect(after3.attempts[0]?.steps[0]?.note).toContain('агент не в сети');
+    expect(after3.proposal).toMatchObject({ action: 'restart_xray', level: 'T2' });
+    await agent.post(`/api/incidents/${id2}/resolve`).set(CSRF_HEADER, csrf).expect(200);
+    await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
+  });
+
+  it('вкладка «Автопочинка»: реестр со статистикой, тумблеры пишутся в настройки; автотик предлагает шаг', async () => {
+    const list = incidentActionsResponseSchema.parse(
+      (await agent.get('/api/incidents/actions').expect(200)).body,
+    );
+    expect(list.autofixEnabled).toBe(false);
+    const free = list.items.find((a) => a.key === 'free_disk');
+    expect(free?.level).toBe('T1');
+    expect(free?.enabled).toBe(false);
+    expect(free?.stats.runs).toBeGreaterThanOrEqual(1);
+    expect(free?.stats.helped).toBeGreaterThanOrEqual(1);
+    expect(list.items.find((a) => a.key === 'reboot')?.terminal).toBe(true);
+
+    const upd = incidentActionsResponseSchema.parse(
       (
         await agent
-          .post(`/api/incidents/${id}/autofix`)
+          .patch('/api/incidents/actions')
           .set(CSRF_HEADER, csrf)
-          .send({ preset: 'restart_xray' })
+          .send({ autofixEnabled: true, actions: { free_disk: true, restart_node: true } })
           .expect(200)
       ).body,
     );
-    expect(fixed.timeline.some((e) => e.result === 'applied')).toBe(true);
-    expect(ssh.execLog.length).toBeGreaterThan(before);
-    expect(ssh.execLog.some((c) => c.includes('xray') || c.includes('remnanode'))).toBe(true);
+    expect(upd.autofixEnabled).toBe(true);
+    expect(upd.items.find((a) => a.key === 'free_disk')?.enabled).toBe(true);
+    // T2 нельзя включить в авто
+    expect(upd.items.find((a) => a.key === 'restart_node')?.enabled).toBe(false);
 
-    // повтор сразу — кулдаун 429
+    // автотик: свежий инцидент памяти (первый шаг T2) → предложение, без выполнения
+    const repo = app.get(IncidentsRepository);
+    const opened = await repo.open({
+      serverId,
+      serverName: 'inc-host',
+      kind: 'mem_high',
+      severity: 'warn',
+      title: 'Память на пределе · inc-host',
+      detail: 'память выше порога',
+      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+    });
+    await app.get(IncidentRunnerService).autoTick();
+    const inc = await settled(opened?.id ?? '');
+    expect(inc.attempts).toHaveLength(0);
+    expect(inc.proposal).toMatchObject({ action: 'restart_node', level: 'T2' });
+    await agent.post(`/api/incidents/${opened?.id}/resolve`).set(CSRF_HEADER, csrf).expect(200);
+
+    // автотик: свежий инцидент диска с включённым T1 → выполняется само и закрывается
+    app.get(IncidentMetricsService).setForTest(serverId, { disk: 96 });
+    const opened2 = await repo.open({
+      serverId,
+      serverName: 'inc-host',
+      kind: 'disk_high',
+      severity: 'warn',
+      title: 'Диск заполняется · inc-host',
+      detail: 'диск выше порога',
+      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+    });
+    const tick = app.get(IncidentRunnerService).autoTick();
+    app.get(IncidentMetricsService).setForTest(serverId, { disk: 50 });
+    await tick;
+    const inc2 = await settled(opened2?.id ?? '');
+    expect(inc2.attempts[0]).toMatchObject({ by: 'auto', status: 'helped' });
+    expect(inc2.status).toBe('resolved');
+    expect(inc2.resolvedBy).toBe('auto');
     await agent
-      .post(`/api/incidents/${id}/autofix`)
+      .patch('/api/incidents/actions')
       .set(CSRF_HEADER, csrf)
-      .send({ preset: 'restart_xray' })
-      .expect(429);
-
-    // неподходящий пресет — 400
-    await agent
-      .post(`/api/incidents/${id}/autofix`)
-      .set(CSRF_HEADER, csrf)
-      .send({ preset: 'free_disk' })
-      .expect(400);
-
-    const audit = auditListResponseSchema.parse(
-      (await agent.get('/api/audit?category=server').expect(200)).body,
-    );
-    expect(audit.items.some((e) => e.action === 'incident.autofix')).toBe(true);
-    expect(audit.items.some((e) => e.action === 'incident.opened')).toBe(true);
+      .send({ autofixEnabled: false })
+      .expect(200);
   });
 
   it('ручное закрытие инцидента', async () => {
+    await app.get(IncidentsRepository).open({
+      serverId,
+      serverName: 'inc-host',
+      kind: 'cpu_high',
+      severity: 'warn',
+      title: 'Высокая нагрузка на CPU · inc-host',
+      detail: 'для ручного закрытия',
+      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+    });
     const list = incidentsListResponseSchema.parse(
       (await agent.get('/api/incidents?status=open').expect(200)).body,
     );

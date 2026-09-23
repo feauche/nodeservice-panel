@@ -77,9 +77,11 @@ const FIELDS: ReadonlyArray<{
   },
 ];
 
+/** Тумблеры по действиям (`actions`) живут на вкладке «Автопочинка» — здесь их не сравниваем и не сбрасываем. */
+const SCALAR_DEFAULTS = (({ actions: _a, ...rest }) => rest)(INCIDENTS_SETTINGS_DEFAULTS);
 const isDefaults = (s: IncidentsSettings) =>
-  (Object.keys(INCIDENTS_SETTINGS_DEFAULTS) as Array<keyof IncidentsSettings>).every(
-    (k) => s[k] === INCIDENTS_SETTINGS_DEFAULTS[k],
+  (Object.keys(SCALAR_DEFAULTS) as Array<keyof typeof SCALAR_DEFAULTS>).every(
+    (k) => s[k] === SCALAR_DEFAULTS[k],
   );
 
 /** Настройки → «Инциденты»: пороги, время реакции, автопочинка. */
@@ -120,7 +122,7 @@ export function IncidentsSettingsPage() {
 
   const resetToDefaults = async () => {
     try {
-      await update.mutateAsync(INCIDENTS_SETTINGS_DEFAULTS);
+      await update.mutateAsync(SCALAR_DEFAULTS);
       setErrors({});
       toast.success('Инциденты возвращены к значениям по умолчанию.');
     } catch (err) {
@@ -200,8 +202,8 @@ export function IncidentsSettingsPage() {
               <div className="min-w-0 flex-1 basis-[300px]">
                 <div className="text-[13.5px] font-medium">Автопочинка</div>
                 <div className="mt-0.5 text-[12px] leading-normal text-text-3">
-                  Панель сама применяет безопасный пресет (перезапуск Xray, очистка диска). По умолчанию
-                  выключено — сначала только заводит инцидент.
+                  Панель сама выполняет T1-действия, включённые на вкладке «Автопочинка» раздела «Инциденты».
+                  По умолчанию выключено — сначала только заводит инцидент.
                 </div>
               </div>
               <Toggle

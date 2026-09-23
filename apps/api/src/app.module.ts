@@ -20,6 +20,7 @@ import { CLS_REQUEST, requestInfo } from './modules/audit/audit.context.js';
 import { AuditModule } from './modules/audit/audit.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { HealthModule } from './modules/health/health.module.js';
+import { HousekeepingModule } from './modules/housekeeping/housekeeping.module.js';
 import { IncidentsModule } from './modules/incidents/incidents.module.js';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module.js';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module.js';
@@ -91,6 +92,7 @@ import { TerminalModule } from './modules/terminal/terminal.module.js';
     TerminalModule,
     MaintenanceModule,
     IncidentsModule,
+    HousekeepingModule,
     KnowledgeModule,
     AssistantModule,
   ],

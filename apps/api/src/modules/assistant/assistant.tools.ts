@@ -1,7 +1,7 @@
 import {
   type AssistantCitation,
   type AssistantProposal,
-  AUTOFIX_PRESETS,
+  INCIDENT_ACTIONS,
   VM_METRIC_NAMES,
 } from '@nodeservice/shared';
 
@@ -330,7 +330,7 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
 
   if (name === 'propose_action') {
     const preset = String(arg.preset ?? '');
-    if (!AUTOFIX_PRESETS.some((p) => p.key === preset))
+    if (!INCIDENT_ACTIONS.some((a) => a.key === preset && !a.terminal))
       return { ...empty, content: 'Неизвестный пресет — предложение отклонено.' };
     const proposal: AssistantProposal = {
       kind: 'autofix',

@@ -155,12 +155,17 @@ export const AUDIT_ACTIONS = {
   'incident.opened': { category: 'server', label: 'Инцидент заведён' },
   'incident.resolved': { category: 'server', label: 'Инцидент закрыт' },
   'incident.acknowledged': { category: 'server', label: 'Инцидент взят в работу' },
-  'incident.autofix': { category: 'server', label: 'Автопочинка инцидента' },
+  'incident.autofix': { category: 'server', label: 'Инцидент: попытка починки' },
+  'incident.action.proposed': { category: 'server', label: 'Инцидент: предложен следующий шаг' },
   'system.started': { category: 'system', label: 'Сервис запущен' },
   'system.audit.partition_created': { category: 'system', label: 'Журнал: создан раздел на месяц' },
   'system.audit.partition_dropped': {
     category: 'system',
     label: 'Журнал: удалён раздел старше срока хранения',
+  },
+  'system.retention.applied': {
+    category: 'system',
+    label: 'Хранение данных: удалены записи старше срока',
   },
 } as const satisfies Record<string, { category: AuditCategory; label: string }>;
 

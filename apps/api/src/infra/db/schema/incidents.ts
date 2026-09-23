@@ -1,4 +1,4 @@
-import type { IncidentEvent } from '@nodeservice/shared';
+import type { IncidentAttempt, IncidentEvent, IncidentProposal } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
@@ -17,6 +17,10 @@ export const incidents = pgTable(
     title: text('title').notNull(),
     detail: text('detail').notNull().default(''),
     timeline: jsonb('timeline').$type<IncidentEvent[]>().notNull().default([]),
+    /** Попытки починки с шагами и логом (R3, миграция 0022). */
+    attempts: jsonb('attempts').$type<IncidentAttempt[]>().notNull().default([]),
+    /** Предложенный следующий шаг, ждёт «Да» (T2) или показывается как команда (T3). */
+    proposal: jsonb('proposal').$type<IncidentProposal | null>(),
     lastAutofixAt: timestamp('last_autofix_at', { withTimezone: true }),
     openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),

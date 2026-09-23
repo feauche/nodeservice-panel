@@ -69,12 +69,11 @@ describe('OverviewPage (по демо)', () => {
     expect(screen.queryByTestId('areaspark')).not.toBeInTheDocument();
   });
 
-  it('баннер активных инцидентов виден, но без ссылки, пока раздел «Инциденты» закрыт', async () => {
-    renderPage(OverviewPage, '/');
+  it('баннер активных инцидентов ведёт в раздел «Инциденты» (R3 открыт)', async () => {
+    renderPage(OverviewPage, '/', ['/incidents']);
     const banner = await screen.findByText(/активных/);
     expect(banner).toBeInTheDocument();
-    expect(banner.closest('a')).toBeNull();
-    expect(screen.queryByText('Открыть →')).not.toBeInTheDocument();
+    expect(banner.closest('a')).toHaveAttribute('href', '/incidents');
   });
 
   it('«Требует внимания» согласован с карточками: агент не установлен — внимание, не норма', async () => {

@@ -1,30 +1,24 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Param,
-  ParseUUIDPipe,
-  Post,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
-  autofixRunRequestSchema,
+  type ActionKey,
+  actionKeySchema,
+  incidentActionsResponseSchema,
+  incidentActionsUpdateSchema,
   incidentSchema,
   incidentsListQuerySchema,
   incidentsListResponseSchema,
 } from '@nodeservice/shared';
 import { createZodDto } from 'nestjs-zod';
 
-import { StepUpGuard } from '../security/step-up.guard.js';
+import { Audit } from '../audit/audit.decorator.js';
 import { IncidentsService } from './incidents.service.js';
 
 export class IncidentsListQueryDto extends createZodDto(incidentsListQuerySchema) {}
 export class IncidentsListResponseDto extends createZodDto(incidentsListResponseSchema) {}
 export class IncidentDto extends createZodDto(incidentSchema) {}
-export class AutofixRunRequestDto extends createZodDto(autofixRunRequestSchema) {}
+export class IncidentActionsResponseDto extends createZodDto(incidentActionsResponseSchema) {}
+export class IncidentActionsUpdateDto extends createZodDto(incidentActionsUpdateSchema) {}
 
 @ApiTags('incidents')
 @ApiCookieAuth()
@@ -39,8 +33,26 @@ export class IncidentsController {
     return this.incidents.list(query.status);
   }
 
+  // Статический маршрут раньше `:id`, иначе ParseUUIDPipe отвергнет «actions».
+  @Get('actions')
+  @ApiOperation({ summary: 'Реестр действий автопочинки: уровни, тумблеры, статистика' })
+  @ApiOkResponse({ type: IncidentActionsResponseDto })
+  actions(): Promise<IncidentActionsResponseDto> {
+    return this.incidents.actions();
+  }
+
+  @Patch('actions')
+  @Audit('settings.incidents.updated', {
+    target: { type: 'settings', id: 'incidents', display: 'Инциденты' },
+  })
+  @ApiOperation({ summary: 'Тумблеры автопочинки: общий и по T1-действиям' })
+  @ApiOkResponse({ type: IncidentActionsResponseDto })
+  updateActions(@Body() body: IncidentActionsUpdateDto): Promise<IncidentActionsResponseDto> {
+    return this.incidents.updateActions(body);
+  }
+
   @Get(':id')
-  @ApiOperation({ summary: 'Один инцидент с таймлайном' })
+  @ApiOperation({ summary: 'Один инцидент с хронологией и попытками' })
   @ApiOkResponse({ type: IncidentDto })
   get(@Param('id', ParseUUIDPipe) id: string): Promise<IncidentDto> {
     return this.incidents.get(id);
@@ -62,12 +74,13 @@ export class IncidentsController {
     return this.incidents.resolveManual(id);
   }
 
-  @Post(':id/autofix')
-  @HttpCode(200)
-  @UseGuards(StepUpGuard)
-  @ApiOperation({ summary: 'Запустить пресет автопочинки по SSH (step-up)' })
+  @Post(':id/actions/:action/run')
+  @HttpCode(202)
+  @ApiOperation({
+    summary: 'Запустить действие реестра (T1/T2): попытка идёт в фоне, инцидент перечитывается',
+  })
   @ApiOkResponse({ type: IncidentDto })
-  autofix(@Param('id', ParseUUIDPipe) id: string, @Body() body: AutofixRunRequestDto): Promise<IncidentDto> {
-    return this.incidents.runAutofix(id, body.preset, 'manual');
+  run(@Param('id', ParseUUIDPipe) id: string, @Param('action') action: string): Promise<IncidentDto> {
+    return this.incidents.runAction(id, actionKeySchema.parse(action) as ActionKey);
   }
 }

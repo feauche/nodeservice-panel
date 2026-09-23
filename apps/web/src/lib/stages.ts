@@ -4,7 +4,7 @@ import { redirect } from '@tanstack/react-router';
  * Поэтапное открытие разделов панели.
  *
  * Панель доводится на реальных серверах поэтапно (план — `_dev/docs/master-plan.md`):
- * R1 открыл «Серверы» (и подпункт «Провайдеры»), R2 — «Обзор» и «Журнал». Остальные разделы остаются в меню, но с замком,
+ * R1 открыл «Серверы» (и подпункт «Провайдеры»), R2 — «Обзор» и «Журнал», R3 — «Инциденты». Остальные разделы остаются в меню, но с замком,
  * и недоступны по прямой ссылке: `requireSectionOpen` уводит на HOME_SECTION.
  * Чтобы открыть раздел на его этапе — добавь путь в OPEN_SECTIONS.
  */
@@ -15,9 +15,11 @@ export const OPEN_SECTIONS: ReadonlySet<string> = new Set<string>([
   '/servers',
   '/servers/providers',
   '/audit',
+  '/incidents',
 ]);
 
-export const LOCKED_HINT = 'Раздел откроется на своём этапе. Сейчас открыты «Обзор», «Серверы» и «Журнал».';
+export const LOCKED_HINT =
+  'Раздел откроется на своём этапе. Сейчас открыты «Обзор», «Серверы», «Инциденты» и «Журнал».';
 
 export function isSectionOpen(to: string): boolean {
   return OPEN_SECTIONS.has(to);

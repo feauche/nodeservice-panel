@@ -1,6 +1,7 @@
 import { setupWorker } from 'msw/browser';
 
 import { handlers, resetMockState } from '@/test/msw/handlers';
+import { mockIncidents } from '@/test/msw/incidents-mock';
 import { mockMaintenance } from '@/test/msw/maintenance-mock';
 import { mockProviders } from '@/test/msw/providers-mock';
 import { installMockTerminalSocket } from './terminal-ws';
@@ -15,6 +16,9 @@ export async function startMockWorker(): Promise<void> {
   // В браузере шаги обслуживания идут «как на живом» — видно прогресс.
   mockMaintenance.speedMs = 1400;
   mockProviders.iconDelayMs = 2500;
+  // Попытка починки в браузере идёт как на живой ноде — по шагу в секунду с небольшим.
+  mockIncidents.stepMs = 1200;
+  (window as unknown as { __nsMockIncidents: typeof mockIncidents }).__nsMockIncidents = mockIncidents;
   (window as unknown as { __nsMockMaintenance: typeof mockMaintenance }).__nsMockMaintenance =
     mockMaintenance;
   installMockTerminalSocket();

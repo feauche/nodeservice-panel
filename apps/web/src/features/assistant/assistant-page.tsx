@@ -1,4 +1,5 @@
 import {
+  type ActionKey,
   ASSISTANT_MODE_LABELS,
   ASSISTANT_MODES,
   ASSISTANT_SUGGESTIONS,
@@ -6,7 +7,6 @@ import {
   type AssistantMessage,
   type AssistantMode,
   type AssistantProposal,
-  type AutofixPresetKey,
   assistantMessageMax,
 } from '@nodeservice/shared';
 import { Link } from '@tanstack/react-router';
@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { useRunAutofix } from '@/features/incidents/incidents-api';
+import { useRunAction } from '@/features/incidents/incidents-api';
 import { Markdown } from '@/features/knowledge/markdown';
 import { StepUpCancelledError } from '@/features/security/step-up';
 import { apiErrorMessage } from '@/lib/api';
@@ -494,11 +494,11 @@ function Citation({ citation }: { citation: AssistantCitation }) {
 }
 
 function ProposalCard({ proposal }: { proposal: AssistantProposal }) {
-  const autofix = useRunAutofix();
+  const autofix = useRunAction();
   const apply = async () => {
     try {
-      await autofix.mutateAsync({ id: proposal.incidentId, preset: proposal.preset as AutofixPresetKey });
-      toast.success('Готово: автопочинка запущена.');
+      await autofix.mutateAsync({ id: proposal.incidentId, action: proposal.preset as ActionKey });
+      toast.success('Запущено: ход выполнения — в разделе «Инциденты».');
     } catch (err) {
       if (!(err instanceof StepUpCancelledError)) toast.error(apiErrorMessage(err));
     }

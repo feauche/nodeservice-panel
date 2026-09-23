@@ -76,6 +76,13 @@ export const envSchema = z.object({
     .transform((v) => v === 'true'),
   /** Журнал: сколько месяцев хранить записи; старые разделы удаляются целиком (DROP PARTITION). */
   AUDIT_RETENTION_MONTHS: z.coerce.number().int().min(1).max(120).default(12),
+  /**
+   * Срок хранения остальных растущих данных (дней), чистка ночью: записи веб-терминала (до 2 МБ
+   * каждая), запуски обслуживания с логами, решённые инциденты. Журнал — отдельно, по месяцам.
+   */
+  TERMINAL_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
+  MAINTENANCE_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
+  INCIDENTS_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(365),
   /** Применять миграции БД при старте (в проде — да, образ самодостаточен). */
   AUTO_MIGRATE: z
     .enum(['true', 'false'])
