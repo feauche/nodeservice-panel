@@ -30,10 +30,22 @@ const PNG = Buffer.from(
   'base64',
 );
 
+/** Запасной кэш иконок (аналог Google): включается только в своём тесте. */
+let fallbackOn = false;
+
 /** Сайт хостера: HTML с <link rel="icon">, сама иконка, и второй сайт без иконок вовсе. */
 function fakeSite(): Promise<{ server: HttpServer; url: string; bare: string }> {
   const server = createServer((req, res) => {
-    if (req.url === '/') {
+    if (req.url?.startsWith('/fallback/')) {
+      // как Google: картинка для известного хоста, 404 для неизвестного
+      if (fallbackOn && req.url === '/fallback/127.0.0.1') {
+        res.setHeader('content-type', 'image/png');
+        res.end(PNG);
+      } else {
+        res.statusCode = 404;
+        res.end();
+      }
+    } else if (req.url === '/') {
       res.setHeader('content-type', 'text/html');
       res.end(
         '<html><head><link rel="apple-touch-icon" href="/big.png"><link rel="icon" sizes="32x32" href="/i/fav.png"></head><body>Hoster</body></html>',
@@ -83,6 +95,7 @@ describe('providers e2e', () => {
 
   beforeAll(async () => {
     site = await fakeSite();
+    process.env.PROVIDER_ICON_FALLBACK_URL = `${site.url}fallback/{host}`;
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication<NestExpressApplication>({ bufferLogs: false, logger: false });
     setupHttp(app as NestExpressApplication);
@@ -199,6 +212,21 @@ describe('providers e2e', () => {
     expect(manual.iconDataUrl).toMatch(/^data:image\/png;base64,/);
     expect(manual.sourceUrl).toBe(`${site.url}i/fav.png`);
     expect((await preview('bare/', `${site.url}nope.png`)).iconDataUrl).toBeNull();
+  });
+
+  it('запасной кэш иконок: сайт без иконки получает её оттуда, источник — адрес кэша', async () => {
+    fallbackOn = true;
+    try {
+      const prev = await agent
+        .post('/api/providers/icon-preview')
+        .set(CSRF_HEADER, csrf)
+        .send({ siteUrl: site.bare })
+        .expect(200);
+      expect(prev.body.iconDataUrl).toMatch(/^data:image\/png;base64,/);
+      expect(prev.body.sourceUrl).toBe(`${site.url}fallback/127.0.0.1`);
+    } finally {
+      fallbackOn = false;
+    }
   });
 
   it('ручная ссылка на иконку сохраняется, сброс в null возвращает автопоиск', async () => {

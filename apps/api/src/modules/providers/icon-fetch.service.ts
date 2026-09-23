@@ -9,6 +9,8 @@ import type { Env } from '../../config/env.schema.js';
 const FETCH_TIMEOUT_MS = 6_000;
 const HTML_MAX_BYTES = 256 * 1024;
 const MAX_REDIRECTS = 3;
+/** Запасной кэш иконок по умолчанию; для неизвестных доменов отвечает 404, а не заглушкой. */
+const DEFAULT_FALLBACK = 'https://www.google.com/s2/favicons?sz=64&domain={host}';
 /**
  * Типы, которые отдаём с нашего origin. SVG принимаем, но чистим от скриптов и обработчиков
  * (sanitizeSvg); плюс эндпоинт иконки шлёт nosniff и CSP sandbox.
@@ -105,7 +107,9 @@ export class IconFetchService {
         }
       }
     }
-    candidates.push(new URL('/favicon.ico', page?.finalUrl ?? url));
+    // Сайт без <link rel=icon>: угадываем обычные адреса.
+    for (const guess of ['/favicon.ico', '/favicon.svg', '/favicon.png'])
+      candidates.push(new URL(guess, page?.finalUrl ?? url));
 
     const seen = new Set<string>();
     for (const c of candidates) {
@@ -116,7 +120,21 @@ export class IconFetchService {
       const icon = await this.image(c);
       if (icon) return icon;
     }
-    return null;
+    // Сайт закрыт защитой или иконки нет — пробуем запасной кэш (только имя хоста наружу).
+    const fallback = this.fallbackUrl(url.hostname);
+    return fallback ? this.image(fallback) : null;
+  }
+
+  private fallbackUrl(host: string): URL | null {
+    const raw = this.config.get('PROVIDER_ICON_FALLBACK_URL');
+    const template =
+      raw === undefined ? (this.config.get('NODE_ENV') === 'test' ? '' : DEFAULT_FALLBACK) : raw;
+    if (!template) return null;
+    try {
+      return new URL(template.replace('{host}', encodeURIComponent(host.replace(/^www\./, ''))));
+    } catch {
+      return null;
+    }
   }
 
   /** Иконка по ручной ссылке: только эта картинка, сайт не сканируется. */

@@ -1,4 +1,4 @@
-import { PROVIDER_NOTE_MAX, type Provider } from '@nodeservice/shared';
+import { isProviderIconServiceUrl, PROVIDER_NOTE_MAX, type Provider } from '@nodeservice/shared';
 import { Link } from '@tanstack/react-router';
 import {
   ExternalLinkIcon,
@@ -70,7 +70,13 @@ export function ProvidersPage() {
     if (!active) return;
     try {
       const p = await refresh.mutateAsync(active.id);
-      toast.success(p.hasIcon ? 'Иконка обновлена с сайта.' : 'На сайте иконки не нашлось, осталась буква.');
+      toast.success(
+        p.hasIcon
+          ? isProviderIconServiceUrl(p.iconSourceUrl)
+            ? 'На сайте иконки нет, взяли из кэша Google.'
+            : 'Иконка обновлена.'
+          : 'Иконки не нашлось ни на сайте, ни в кэше Google — осталась буква.',
+      );
     } catch (err) {
       toast.error(apiErrorMessage(err));
     }
@@ -256,10 +262,14 @@ function ProviderCard({
             <ExternalLinkIcon className="size-3" aria-hidden="true" />
           </a>
           {provider.iconSourceUrl ? (
-            <div className="truncate text-[11.5px] text-text-3" title={provider.iconSourceUrl}>
-              Иконка {provider.iconUrl ? 'по ссылке' : 'с сайта'}:{' '}
-              {provider.iconSourceUrl.replace(/^https?:\/\//, '')}
-            </div>
+            isProviderIconServiceUrl(provider.iconSourceUrl) ? (
+              <div className="text-[11.5px] text-text-3">Иконка из кэша Google: на сайте её не нашлось</div>
+            ) : (
+              <div className="truncate text-[11.5px] text-text-3" title={provider.iconSourceUrl}>
+                Иконка {provider.iconUrl ? 'по ссылке' : 'с сайта'}:{' '}
+                {provider.iconSourceUrl.replace(/^https?:\/\//, '')}
+              </div>
+            )
           ) : (
             <div className="text-[11.5px] text-text-3">Иконка не найдена — показываем букву</div>
           )}

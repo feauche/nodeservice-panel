@@ -1,5 +1,6 @@
 import {
   createProviderRequestSchema,
+  isProviderIconServiceUrl,
   PROVIDER_NAME_MAX,
   type Provider,
   providerIconUrlSchema,
@@ -158,21 +159,27 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
       ? preview.icon
         ? preview.manual
           ? 'по ссылке — нашли'
-          : 'нашли на сайте'
+          : isProviderIconServiceUrl(preview.source)
+            ? 'на сайте нет, нашли в кэше Google'
+            : 'нашли на сайте'
         : preview.manual
           ? 'по ссылке картинки нет — будет буква'
           : 'на сайте иконки нет — будет буква'
       : provider?.hasIcon
         ? provider.iconUrl
           ? 'по ручной ссылке'
-          : 'найдена на сайте'
+          : isProviderIconServiceUrl(provider.iconSourceUrl)
+            ? 'из кэша Google'
+            : 'найдена на сайте'
         : siteUrl.trim()
           ? 'не нашли — будет буква'
           : 'появится после ввода сайта';
   const iconHint = manualUrl
     ? 'Берём только эту картинку. Очистите поле — панель снова будет искать на сайте.'
     : iconUrl.trim()
-      ? 'Найдена на сайте автоматически. Замените, если нужна другая.'
+      ? isProviderIconServiceUrl(iconUrl)
+        ? 'На сайте иконки не нашлось, взята из кэша Google. Замените, если нужна другая.'
+        : 'Найдена на сайте автоматически. Замените, если нужна другая.'
       : 'Пусто — панель найдёт иконку на сайте сама.';
   const iconUrlValid = !iconUrl.trim() || providerIconUrlSchema.safeParse(iconUrl).success;
   const iconError =

@@ -35,6 +35,17 @@ export const envSchema = z.object({
     .regex(/^[0-9a-f]{32,128}$/i, 'PASSWORD_PEPPER: ожидается 32–128 hex-символов (openssl rand -hex 32)')
     .optional(),
 
+  /**
+   * Запасной источник иконок провайдеров, когда на сайте ничего не нашлось (сайт за DDoS-защитой,
+   * без <link rel=icon> и /favicon.ico). Шаблон с {host}; пустая строка — выключить. По умолчанию —
+   * кэш иконок Google (в test выключено). Наружу уходит только имя хоста провайдера.
+   */
+  PROVIDER_ICON_FALLBACK_URL: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v)),
+
   /** Доверяем X-Forwarded-For только от одного прокси (Caddy). */
   TRUST_PROXY: z.coerce.number().int().min(0).default(1),
   /** Сессия: сколько минут бездействия до выхода (скользящий TTL). */

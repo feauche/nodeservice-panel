@@ -106,6 +106,11 @@ export const providerIconPreviewResponseSchema = z.object({
 });
 export type ProviderIconPreviewResponse = z.infer<typeof providerIconPreviewResponseSchema>;
 
+/** Иконка взята не с сайта, а из запасного кэша иконок (Google): подпись «из кэша Google». */
+export function isProviderIconServiceUrl(sourceUrl: string | null | undefined): boolean {
+  return Boolean(sourceUrl && /^https:\/\/(www\.)?google\.com\/s2\/favicons\b/i.test(sourceUrl));
+}
+
 /** Хост из адреса сайта для подписи и запасной буквы-иконки. */
 export function providerSiteHost(siteUrl: string): string {
   const m = /^[a-z][a-z0-9+.-]*:\/\/([^/?#:]+)/i.exec(siteUrl.trim());

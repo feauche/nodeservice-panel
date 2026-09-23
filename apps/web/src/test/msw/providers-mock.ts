@@ -12,10 +12,12 @@ export const mockProviders: { items: Provider[]; iconHosts: Set<string> } = {
 let seq = 0;
 const withScheme = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
 /** Автопоиск «находит» иконку у известных хостов; ручная ссылка — если в ней есть favicon или icon. */
-const autoSource = (siteUrl: string) =>
-  mockProviders.iconHosts.has(providerSiteHost(siteUrl))
-    ? `${withScheme(siteUrl).replace(/\/$/, '')}/favicon.ico`
-    : null;
+/** rawi.host — сайт за DDoS-защитой: на сайте ничего нет, иконка приходит из кэша Google. */
+const autoSource = (siteUrl: string) => {
+  const host = providerSiteHost(siteUrl);
+  if (host === 'rawi.host') return `https://www.google.com/s2/favicons?sz=64&domain=${host}`;
+  return mockProviders.iconHosts.has(host) ? `${withScheme(siteUrl).replace(/\/$/, '')}/favicon.ico` : null;
+};
 const manualSource = (iconUrl: string) => (/favicon|icon/i.test(iconUrl) ? withScheme(iconUrl) : null);
 const resolveIcon = (siteUrl: string, iconUrl: string | null) =>
   iconUrl ? manualSource(iconUrl) : autoSource(siteUrl);

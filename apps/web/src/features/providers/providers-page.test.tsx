@@ -166,6 +166,29 @@ describe('ProvidersPage', () => {
     expect(mockProviders.items[0]?.iconUrl).toBeNull();
   });
 
+  it('сайт за защитой: иконка из кэша Google, подписи в форме и на карточке', async () => {
+    renderPage(ProvidersPage, '/servers/providers', ['/servers']);
+    await screen.findByRole('list', { name: 'Провайдеры' });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Добавить провайдера' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Новый провайдер' });
+    await user.type(within(dialog).getByLabelText('Название'), 'Rawi');
+    await user.type(within(dialog).getByLabelText('Сайт'), 'rawi.host');
+    await waitFor(() =>
+      expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent(
+        'на сайте нет, нашли в кэше Google',
+      ),
+    );
+    await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    const card = screen.getByTestId('provider-card');
+    expect(within(card).getByText(/Иконка из кэша Google/)).toBeInTheDocument();
+    await user.click(within(card).getByRole('button', { name: 'Изменить' }));
+    const edit = await screen.findByRole('dialog', { name: 'Изменить провайдера' });
+    expect(within(edit).getByTestId('provider-icon-state')).toHaveTextContent('из кэша Google');
+    expect(within(edit).getByText(/взята из кэша Google/)).toBeInTheDocument();
+  });
+
   it('пустой справочник: подсказка и кнопка добавления', async () => {
     mockProviders.items = [];
     renderPage(ProvidersPage, '/servers/providers', ['/servers']);
