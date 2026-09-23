@@ -26,6 +26,7 @@ import { Pill } from '@/features/settings/settings-ui';
 import { useTerminalStore } from '@/features/terminal/terminal-store';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
+import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
 import { AutofixTab } from './autofix-tab';
 import {
@@ -428,12 +429,7 @@ function AttemptBlock({ attempt, index }: { attempt: IncidentAttempt; index: num
   const action = actionMeta(attempt.action);
   const running = attempt.status === 'running';
   // Пока попытка идёт, секунды у текущего шага тикают сами, а не только при перечитывании.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!running) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [running]);
+  const now = useNow(running);
   const secs = (s: IncidentAttempt['steps'][number]) =>
     s.startedAt && s.finishedAt
       ? `${((new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime()) / 1000).toFixed(1)} с`

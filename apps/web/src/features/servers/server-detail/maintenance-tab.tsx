@@ -32,6 +32,7 @@ import { formatAgo, formatIn } from '@/features/security/security-format';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { plural } from '@/lib/plural';
+import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
 import { useMaintenance, useStartMaintenance } from '../maintenance-api';
 
@@ -285,9 +286,9 @@ function buildRows(c: MaintenanceCheck, server: Server): Row[] {
   return rows;
 }
 
-function stepSeconds(s: MaintenanceStep): string {
+function stepSeconds(s: MaintenanceStep, now: number): string {
   if (!s.startedAt) return '';
-  const end = s.finishedAt ? new Date(s.finishedAt).getTime() : Date.now();
+  const end = s.finishedAt ? new Date(s.finishedAt).getTime() : now;
   const sec = Math.max(0, Math.round((end - new Date(s.startedAt).getTime()) / 1000));
   return sec < 60 ? `${sec} с` : `${Math.floor(sec / 60)} мин ${sec % 60} с`;
 }
@@ -328,16 +329,17 @@ function RunCard({ run, live }: { run: MaintenanceRun; live: boolean }) {
   }, [run.log, showLog, live]);
 
   const Icon = run.kind === 'check' ? RefreshCwIcon : ACTION_ICON[run.kind];
+  // Секунды у идущего запуска и шага тикают сами, не только при перечитывании.
+  const now = useNow(live);
   const durationSec = Math.max(
     1,
     Math.round(
-      ((run.finishedAt ? new Date(run.finishedAt).getTime() : Date.now()) -
-        new Date(run.startedAt).getTime()) /
+      ((run.finishedAt ? new Date(run.finishedAt).getTime() : now) - new Date(run.startedAt).getTime()) /
         1000,
     ),
   );
   const result = live
-    ? 'идёт'
+    ? `идёт · ${durationSec} с`
     : run.status === 'ok'
       ? `успешно за ${durationSec} с`
       : `ошибка: ${run.error ?? 'неизвестно'}`;
@@ -413,7 +415,11 @@ function RunCard({ run, live }: { run: MaintenanceRun; live: boolean }) {
                   {s.detail && <span className="text-text-3"> · {s.detail}</span>}
                 </span>
                 <span className="text-[11.5px] text-text-3 tabular-nums">
-                  {s.status === 'ok' ? stepSeconds(s) : STEP_STATUS_LABEL[s.status]}
+                  {s.status === 'ok'
+                    ? stepSeconds(s, now)
+                    : s.status === 'running'
+                      ? `${STEP_STATUS_LABEL.running} · ${stepSeconds(s, now)}`
+                      : STEP_STATUS_LABEL[s.status]}
                 </span>
               </li>
             ))}

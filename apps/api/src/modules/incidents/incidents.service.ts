@@ -3,6 +3,7 @@ import {
   INCIDENT_ACTIONS,
   INCIDENT_CHAINS,
   INCIDENT_KIND_META,
+  INCIDENT_KINDS,
   type Incident,
   type IncidentActionsResponse,
   type IncidentActionsUpdate,
@@ -86,7 +87,9 @@ export class IncidentsService {
   }
 
   async list(status: 'all' | 'open' | 'resolved'): Promise<IncidentsListResponse> {
-    const rows = await this.repo.list(status);
+    // Вид, которого в контракте уже нет (после переименований), не должен ломать страницу целиком.
+    const known = new Set<string>(INCIDENT_KINDS);
+    const rows = (await this.repo.list(status)).filter((r) => known.has(r.kind));
     const open = (await this.repo.list('open')).length;
     const openRows = await this.repo.list('open');
     return {

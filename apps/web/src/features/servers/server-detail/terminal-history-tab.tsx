@@ -28,8 +28,8 @@ const PERIODS: Array<{ key: TerminalPeriod; label: string }> = [
 const HIGHLIGHT_MAX = 2000;
 const DEBOUNCE_MS = 300;
 
-function formatDuration(s: TerminalSessionInfo): string {
-  const end = s.endedAt ? new Date(s.endedAt).getTime() : Date.now();
+function formatDuration(s: TerminalSessionInfo, now = Date.now()): string {
+  const end = s.endedAt ? new Date(s.endedAt).getTime() : now;
   const sec = Math.max(0, Math.round((end - new Date(s.startedAt).getTime()) / 1000));
   if (sec < 60) return `${sec} с`;
   const m = Math.floor(sec / 60);
