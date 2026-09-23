@@ -1,6 +1,7 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import {
   INCIDENT_ACTIONS,
+  INCIDENT_CHAINS,
   INCIDENT_KIND_META,
   type Incident,
   type IncidentActionsResponse,
@@ -19,7 +20,7 @@ import { ServersRepository } from '../servers/servers.repository.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { IncidentMetricsService } from './incident-metrics.service.js';
-import { IncidentRunnerService } from './incident-runner.service.js';
+import { IncidentRunnerService, XRAY_PROBE } from './incident-runner.service.js';
 import { IncidentsRepository } from './incidents.repository.js';
 
 /** Гистерезис порогов: инцидент закрывается, когда метрика ушла ниже порога на столько процентов. */
@@ -247,6 +248,15 @@ export class IncidentsService {
     }
     const existing = await this.repo.findOpen(server.id, 'xray_down');
     if (value < 0.5) {
+      // Агент — быстрый сигнал, но процесс он может и не видеть (песочница, другое имя бинаря).
+      // Прежде чем заводить или держать инцидент, перепроверяем по SSH от root; не вышло — верим агенту.
+      const probe = await this.runner.sshProbe(server.id, XRAY_PROBE);
+      if (probe === '1') {
+        this.exceededSince.delete(key);
+        if (existing && !existing.attempts.some((a) => a.status === 'running'))
+          await this.autoResolve(existing);
+        return;
+      }
       const since = this.exceededSince.get(key) ?? Date.now();
       this.exceededSince.set(key, since);
       if (!existing && Date.now() - since >= XRAY_DOWN_FOR_MS)
@@ -320,7 +330,9 @@ export class IncidentsService {
       detail,
       timeline: [ev('auto', `Обнаружено: ${meta.label}`, 'detect')],
     });
-    if (row)
+    // Есть цепочка починки — уведомление пришлёт исполнитель одним сообщением («чиню» или «ждёт «Да»»),
+    // иначе было бы два подряд. Без цепочки (SSH недоступен) — сообщаем здесь.
+    if (row && INCIDENT_CHAINS[kind].length === 0)
       await this.notifications.push({
         severity: meta.severity === 'crit' ? 'crit' : 'warn',
         title: row.title,

@@ -2,6 +2,7 @@ import { screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetMockState } from '@/test/msw/handlers';
+import { mockIncidents } from '@/test/msw/incidents-mock';
 import { mockMetrics } from '@/test/msw/metrics-mock';
 import { mockServers, seedServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
@@ -33,6 +34,7 @@ describe('OverviewPage (по демо)', () => {
   });
 
   it('всё спокойно: центрированное пустое состояние, когда проблем нет', async () => {
+    mockIncidents.items = [];
     // Тот же классификатор, что на «Серверах»: спокойно только когда SSH в порядке и агент в сети.
     mockServers.items = mockServers.items.map((s) => ({ ...s, sshOk: true, agentStatus: 'online' as const }));
     renderPage(OverviewPage, '/');

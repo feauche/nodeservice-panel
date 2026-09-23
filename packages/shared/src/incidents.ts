@@ -47,10 +47,10 @@ export const INCIDENT_KIND_META: Record<
 export const ACTION_LEVELS = ['T0', 'T1', 'T2', 'T3'] as const;
 export type ActionLevel = (typeof ACTION_LEVELS)[number];
 export const ACTION_LEVEL_LABELS: Record<ActionLevel, string> = {
-  T0: 'наблюдение',
-  T1: 'безопасное авто',
-  T2: 'с подтверждением',
-  T3: 'только вручную',
+  T0: 'Наблюдение',
+  T1: 'Безопасное авто',
+  T2: 'С подтверждением',
+  T3: 'Только вручную',
 };
 
 /**
@@ -83,22 +83,22 @@ export const INCIDENT_ACTIONS = [
     terminal: false,
   },
   {
-    key: 'restart_xray',
-    title: 'Перезапустить Xray',
+    key: 'node_up',
+    title: 'Поднять контейнер ноды',
     level: 'T1',
-    kinds: ['xray_down', 'cpu_high'] as IncidentKind[],
-    summary: 'systemctl restart xray (иначе docker restart remnanode)',
-    consequence: 'соединения пользователей оборвутся на 1–2 с',
+    kinds: ['xray_down'] as IncidentKind[],
+    summary: 'docker start remnanode (если запущен, но xray нет — docker restart remnanode)',
+    consequence: null,
     preconditions: ['агент в сети', 'на ноде не идёт другое действие'],
-    postcheck: 'CPU ниже порога − 10 % три замера подряд (60 с); для «Xray не запущен» — процесс появился',
-    rollbackNote: 'не нужен: перезапуск обратим сам по себе',
+    postcheck: 'процесс xray появился (до 60 с)',
+    rollbackNote: 'не нужен: нода и так не работала',
     terminal: false,
   },
   {
     key: 'restart_node',
     title: 'Перезапустить контейнер ноды',
     level: 'T2',
-    kinds: ['xray_down', 'cpu_high', 'mem_high'] as IncidentKind[],
+    kinds: ['cpu_high', 'mem_high'] as IncidentKind[],
     summary: 'docker restart remnanode',
     consequence: 'соединения пользователей оборвутся на ~5 с и восстановятся сами',
     preconditions: ['агент в сети', 'на ноде не идёт другое действие'],
@@ -163,9 +163,9 @@ export const actionByKey = (key: ActionKey): IncidentAction =>
 
 /** Цепочка шагов по виду инцидента: следующий шаг предлагается, когда предыдущий не помог. */
 export const INCIDENT_CHAINS: Record<IncidentKind, ActionKey[]> = {
-  xray_down: ['restart_xray', 'restart_node', 'reboot'],
+  xray_down: ['node_up', 'reboot'],
   disk_high: ['free_disk', 'apt_clean', 'disk_inspect'],
-  cpu_high: ['restart_xray', 'restart_node', 'reboot'],
+  cpu_high: ['restart_node', 'reboot'],
   mem_high: ['restart_node', 'reboot'],
   agent_offline: ['agent_reinstall', 'agent_logs'],
   ssh_down: [],

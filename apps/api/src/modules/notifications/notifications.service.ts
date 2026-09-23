@@ -10,6 +10,7 @@ import {
 
 import { problem } from '../../common/filters/problem-details.filter.js';
 import type { NotificationRow } from '../../infra/db/schema/index.js';
+import { NotificationsEvents } from './notifications.events.js';
 import { NotificationsRepository } from './notifications.repository.js';
 
 export interface PushInput {
@@ -28,7 +29,10 @@ export interface PushInput {
 export class NotificationsService {
   private readonly log = new Logger(NotificationsService.name);
 
-  constructor(private readonly repo: NotificationsRepository) {}
+  constructor(
+    private readonly repo: NotificationsRepository,
+    private readonly events: NotificationsEvents,
+  ) {}
 
   toDto(row: NotificationRow): Notification {
     return {
@@ -50,13 +54,14 @@ export class NotificationsService {
   /** Серверное событие: тихо, без исключений наружу. */
   async push(input: PushInput): Promise<void> {
     try {
-      await this.repo.insert({
+      const row = await this.repo.insert({
         severity: input.severity,
         title: input.title.slice(0, 200),
         body: input.body ? input.body.slice(0, 1000) : null,
         linkTo: input.link?.to ?? null,
         linkLabel: input.link?.label ?? null,
       });
+      this.events.emit(this.toDto(row));
     } catch (err) {
       this.log.warn(`уведомление не записано: ${(err as Error).message}`);
     }
@@ -72,7 +77,9 @@ export class NotificationsService {
       linkTo: req.link?.to ?? null,
       linkLabel: req.link?.label ?? null,
     });
-    return this.toDto(row);
+    const dto = this.toDto(row);
+    this.events.emit(dto);
+    return dto;
   }
 
   async markAllRead(): Promise<{ unread: number }> {

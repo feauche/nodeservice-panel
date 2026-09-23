@@ -184,7 +184,7 @@ describe('incidents e2e', () => {
     expect(audit.items.some((e) => e.action === 'incident.opened')).toBe(true);
   });
 
-  it('не помогло → предложен следующий шаг T2 (ждёт «Да»); «Да» запускает его; пред-проверка не пройдена → понижение до T2', async () => {
+  it('не помогло → следующий шаг T3 (только вручную); «Да» на T2 помогает; пред-проверка не пройдена → понижение до T2', async () => {
     const db = app.get<Db>(DB);
     await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
     const repo = app.get(IncidentsRepository);
@@ -202,20 +202,32 @@ describe('incidents e2e', () => {
     metrics.setForTest(serverId, { cpu: 97 });
     // неподходящее действие — 400
     await agent.post(`/api/incidents/${id}/actions/free_disk/run`).set(CSRF_HEADER, csrf).expect(400);
-    await agent.post(`/api/incidents/${id}/actions/restart_xray/run`).set(CSRF_HEADER, csrf).expect(202);
+    await agent.post(`/api/incidents/${id}/actions/restart_node/run`).set(CSRF_HEADER, csrf).expect(202);
     const after1 = await settled(id);
     expect(after1.attempts[0]?.status).toBe('not_helped');
     expect(after1.status).not.toBe('resolved');
-    expect(after1.proposal).toMatchObject({ action: 'restart_node', level: 'T2' });
-    expect(after1.timeline.some((e) => e.result === 'escalate' && e.level === 'T2')).toBe(true);
+    // дальше по цепочке только перезагрузка — T3, панель не выполняет
+    expect(after1.proposal).toMatchObject({ action: 'reboot', level: 'T3' });
+    expect(after1.timeline.some((e) => e.result === 'escalate' && e.level === 'T3')).toBe(true);
+    await agent.post(`/api/incidents/${id}/resolve`).set(CSRF_HEADER, csrf).expect(200);
+    const opened1b = await repo.open({
+      serverId,
+      serverName: 'inc-host',
+      kind: 'cpu_high',
+      severity: 'warn',
+      title: 'Высокая нагрузка на CPU · inc-host',
+      detail: 'снова выше порога',
+      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+    });
+    const id1b = opened1b?.id ?? '';
 
     // «Да» на предложение: перезапуск контейнера помогает (CPU падает)
-    const p = agent.post(`/api/incidents/${id}/actions/restart_node/run`).set(CSRF_HEADER, csrf);
+    const p = agent.post(`/api/incidents/${id1b}/actions/restart_node/run`).set(CSRF_HEADER, csrf);
     metrics.setForTest(serverId, { cpu: 40 });
     await p.expect(202);
-    const after2 = await settled(id);
+    const after2 = await settled(id1b);
     expect(after2.proposal).toBeNull();
-    expect(after2.attempts[1]?.status).toBe('helped');
+    expect(after2.attempts[0]?.status).toBe('helped');
     expect(after2.status).toBe('resolved');
 
     // пред-проверка не пройдена (агент офлайн) в авто → понижение до T2 и предложение
@@ -230,11 +242,11 @@ describe('incidents e2e', () => {
       timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
     });
     const id2 = opened2?.id ?? '';
-    await app.get(IncidentRunnerService).start(id2, 'restart_xray', 'auto');
+    await app.get(IncidentRunnerService).start(id2, 'restart_node', 'auto');
     const after3 = await settled(id2);
     expect(after3.attempts[0]?.status).toBe('precheck_failed');
     expect(after3.attempts[0]?.steps[0]?.note).toContain('агент не в сети');
-    expect(after3.proposal).toMatchObject({ action: 'restart_xray', level: 'T2' });
+    expect(after3.proposal).toMatchObject({ action: 'restart_node', level: 'T2' });
     await agent.post(`/api/incidents/${id2}/resolve`).set(CSRF_HEADER, csrf).expect(200);
     await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
   });
@@ -317,10 +329,10 @@ describe('incidents e2e', () => {
     );
     const inc = list.items.find((i) => i.kind === 'xray_down');
     expect(inc?.severity).toBe('crit');
-    // авто выключено → предложение первого шага цепочки (T1 restart_xray)
-    expect(inc?.proposal).toMatchObject({ action: 'restart_xray', level: 'T1' });
+    // авто выключено → предложение первого шага цепочки (T1 node_up)
+    expect(inc?.proposal).toMatchObject({ action: 'node_up', level: 'T1' });
     const metrics = app.get(IncidentMetricsService);
-    const p = agent.post(`/api/incidents/${inc?.id}/actions/restart_xray/run`).set(CSRF_HEADER, csrf);
+    const p = agent.post(`/api/incidents/${inc?.id}/actions/node_up/run`).set(CSRF_HEADER, csrf);
     metrics.setForTest(serverId, { xray: 1 });
     await p.expect(202);
     const done = await settled(inc?.id ?? '');

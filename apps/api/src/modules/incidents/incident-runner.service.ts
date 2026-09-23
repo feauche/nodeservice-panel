@@ -31,8 +31,27 @@ import { IncidentsRepository } from './incidents.repository.js';
 const TEST = process.env.NODE_ENV === 'test';
 /** Тайминги: в проде — реальные секунды, в e2e — миллисекунды, чтобы тесты шли быстро. */
 const T = TEST
-  ? { pollMs: 40, diskTimeoutMs: 400, agentTimeoutMs: 400, execTimeoutMs: 5_000 }
-  : { pollMs: 20_000, diskTimeoutMs: 90_000, agentTimeoutMs: 120_000, execTimeoutMs: 180_000 };
+  ? {
+      pollMs: 40,
+      probeMs: 40,
+      diskTimeoutMs: 400,
+      agentTimeoutMs: 400,
+      xrayTimeoutMs: 400,
+      execTimeoutMs: 5_000,
+    }
+  : {
+      pollMs: 20_000,
+      /** Быстрые проверки по SSH (процесс, df) — не ждём следующую метрику агента. */
+      probeMs: 5_000,
+      diskTimeoutMs: 90_000,
+      agentTimeoutMs: 120_000,
+      xrayTimeoutMs: 60_000,
+      execTimeoutMs: 180_000,
+    };
+
+/** Есть ли процесс xray — по SSH от root, имя бинаря у сборок разное (xray, xray-core, Xray-linux-64). */
+export const XRAY_PROBE =
+  "ps -eo comm= -o args= | awk 'tolower($1) ~ /^xray/ || tolower($2) ~ /(^|\\/)xray/ {f=1} END {print f+0}'";
 
 const iso = () => new Date().toISOString();
 const ev = (
@@ -156,6 +175,12 @@ export class IncidentRunnerService {
           Date.now() - row.lastAutofixAt.getTime() < cfg.autofixCooldownMinutes * 60_000
         )
           continue;
+        await this.notifications.push({
+          severity: row.severity === 'crit' ? 'crit' : 'warn',
+          title: `${row.title}: чиню автоматически`,
+          body: `${row.detail} Запускаю «${action.title}» (T1).`,
+          link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
+        });
         await this.start(row.id, first, 'auto').catch((err) =>
           this.log.warn(`автопочинка ${row.id}: ${(err as Error).message}`),
         );
@@ -163,9 +188,7 @@ export class IncidentRunnerService {
         await this.propose(
           row,
           first,
-          action.level === 'T1'
-            ? 'авто для этого действия выключено'
-            : `первый шаг цепочки для «${row.title}»`,
+          action.level === 'T1' ? 'авто для этого действия выключено' : 'первый шаг цепочки',
         );
       }
     }
@@ -229,7 +252,7 @@ export class IncidentRunnerService {
     await this.repo.appendEvent(incidentId, ev(by, `Выполнено: ${action.title}`, 'applied', action.level));
 
     // 3. Пост-проверка
-    await this.step(incidentId, attemptId, 'postcheck', 'running');
+    await this.step(incidentId, attemptId, 'postcheck', 'running', `ждём: ${action.postcheck}`);
     const post = await this.postcheck(spec, kind, serverId, cfg);
     if (post.ok) {
       await this.step(incidentId, attemptId, 'postcheck', 'ok', post.note);
@@ -350,15 +373,20 @@ export class IncidentRunnerService {
   ): Promise<{ ok: boolean; note: string }> {
     const pc = spec.postcheck;
     if (pc.kind === 'none') return { ok: true, note: 'проверка не нужна' };
-    if (kind === 'xray_down') {
-      // Для «Xray не запущен» пост-проверка одна: процесс появился.
-      const deadline = Date.now() + T.agentTimeoutMs;
+    if (pc.kind === 'xray_up' || kind === 'xray_down') {
+      // Процесс xray появился: смотрим по SSH каждые probeMs (мгновенно), метрика агента — запасной путь.
+      const deadline = Date.now() + T.xrayTimeoutMs;
       while (Date.now() < deadline) {
-        const m = await this.metrics.latestFor(serverId);
-        if (m?.xray !== undefined && m.xray >= 0.5) return { ok: true, note: 'процесс xray запущен' };
-        await sleep(T.pollMs);
+        // Имя бинаря у сборок разное (xray, xray-core, Xray-linux-64) — ищем по началу имени без регистра.
+        const probe = await this.sshProbe(serverId, XRAY_PROBE);
+        if (probe === '1') return { ok: true, note: 'процесс xray запущен' };
+        if (probe === null) {
+          const m = await this.metrics.latestFor(serverId);
+          if (m?.xray !== undefined && m.xray >= 0.5) return { ok: true, note: 'процесс xray запущен' };
+        }
+        await sleep(T.probeMs);
       }
-      return { ok: false, note: `процесс xray не появился за ${Math.round(T.agentTimeoutMs / 1000)} с` };
+      return { ok: false, note: `процесс xray не появился за ${Math.round(T.xrayTimeoutMs / 1000)} с` };
     }
     if (pc.kind === 'agent_online') {
       const deadline = Date.now() + T.agentTimeoutMs;
@@ -377,14 +405,21 @@ export class IncidentRunnerService {
     let below = 0;
     const seen: number[] = [];
     while (Date.now() < deadline) {
-      const m = await this.metrics.latestFor(serverId);
-      const v = m?.[metric];
+      // Диск проверяем по SSH сразу (df), CPU/память — по метрикам агента (нужны замеры во времени).
+      let v: number | undefined;
+      if (metric === 'disk') {
+        const probe = await this.sshProbe(serverId, `df -P / | awk 'NR==2{gsub("%","",$5);print $5}'`);
+        const n = probe === null ? Number.NaN : Number(probe);
+        v = Number.isFinite(n) ? n : (await this.metrics.latestFor(serverId))?.disk;
+      } else {
+        v = (await this.metrics.latestFor(serverId))?.[metric];
+      }
       if (v !== undefined) {
         seen.push(Math.round(v));
         below = v < limit ? below + 1 : 0;
         if (below >= pc.samples) return { ok: true, note: `${label} ${seen.join(' % · ')} % < ${limit} %` };
       }
-      await sleep(T.pollMs);
+      await sleep(metric === 'disk' ? T.probeMs : T.pollMs);
     }
     return {
       ok: false,
@@ -392,6 +427,23 @@ export class IncidentRunnerService {
         ? `${label} ${seen.slice(-3).join(' % · ')} % — не ниже ${limit} %`
         : `нет свежей метрики: ${label}`,
     };
+  }
+
+  /** Короткая команда по SSH; вывод без пробелов или null, если не вышло (тогда решает метрика). */
+  async sshProbe(serverId: string, command: string): Promise<string | null> {
+    try {
+      const { target } = await this.servers.sshTargetFor(serverId);
+      const session = await this.ssh.connect(target);
+      try {
+        const res = await session.exec(command);
+        const out = res.stdout.trim();
+        return res.code === 0 && out ? out : null;
+      } finally {
+        session.end();
+      }
+    } catch {
+      return null;
+    }
   }
 
   private async rollback(
@@ -498,13 +550,14 @@ export class IncidentRunnerService {
         ),
       ],
     });
+    const first = fresh.attempts.length === 0;
     await this.notifications.push({
-      severity: level === 'T3' ? 'crit' : 'warn',
+      severity: level === 'T3' || row.severity === 'crit' ? 'crit' : 'warn',
       title: level === 'T3' ? `${row.title}: нужно вмешательство` : `${row.title}: ждёт «Да»`,
       body:
         level === 'T3'
           ? `${action.title} — только вручную. ${reason}.`
-          : `${action.title} (${level}). ${reason}.`,
+          : `${first ? `${row.detail} ` : ''}Предложено: ${action.title} (${level}), ${reason}. Нажмите «Да» в инциденте.`,
       link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
     });
     await this.audit.record({

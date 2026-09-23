@@ -99,7 +99,7 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   {
     name: 'propose_action',
     description:
-      'Предложить администратору безопасное действие для инцидента. НЕ выполняет — только предлагает. preset: restart_xray|restart_node|free_disk.',
+      'Предложить администратору безопасное действие для инцидента. НЕ выполняет — только предлагает. preset: node_up|restart_node|free_disk|apt_clean|agent_reinstall.',
     input_schema: {
       type: 'object',
       properties: {

@@ -13,6 +13,7 @@ import {
   useClearNotifications,
   useDeleteNotification,
   useNotifications,
+  useNotificationsStream,
   useReadAllNotifications,
 } from './notifications-api';
 
@@ -36,6 +37,7 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const notifications = useNotifications();
+  useNotificationsStream();
   const readAll = useReadAllNotifications();
   const remove = useDeleteNotification();
   const clear = useClearNotifications();

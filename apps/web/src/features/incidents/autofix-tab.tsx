@@ -11,7 +11,7 @@ import { LevelChip } from './level-chip';
 /**
  * Вкладка «Автопочинка» (витрина R3, вариант 2-2): общий тумблер и карточки действий реестра —
  * уровень, когда применяется, что проверяется до и после, откат, статистика за 30 дней.
- * T1 включаются по одному; T2 всегда ждут «Да»; T3 панель не выполняет.
+ * T1 включаются по одному; T2 всегда ждут подтверждения; T3 панель не выполняет.
  */
 export function AutofixTab() {
   const actions = useIncidentActions();
@@ -52,14 +52,14 @@ export function AutofixTab() {
         <div className="min-w-0 flex-1 basis-[280px]">
           <div className="text-[14px] font-semibold">Автопочинка</div>
           <div className="mt-0.5 text-[12.5px] leading-normal text-text-3">
-            Включено: панель сама выполняет T1-действия с включённым тумблером, T2 предлагает и ждёт «Да».
-            Выключено: только заводит инциденты и предлагает шаги. Повтор по одному инциденту не чаще раза в{' '}
-            {data.cooldownMinutes} мин.
+            Включено: панель сама выполняет действия T1 с включённым тумблером, действия T2 предлагает и ждёт
+            подтверждения. Выключено: только заводит инциденты и предлагает шаги. Повтор по одному инциденту
+            не чаще раза в {data.cooldownMinutes} мин.
           </div>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[12.5px] text-text-3">
-            {data.autofixEnabled ? `включена · авто-действий: ${enabledCount}` : 'выключена'}
+            {data.autofixEnabled ? `Включена · авто-действий: ${enabledCount}` : 'Выключена'}
           </span>
           <Toggle
             id="autofix-global"
@@ -89,8 +89,8 @@ export function AutofixTab() {
         ))}
       </div>
       <p className="px-1 text-[12px] leading-normal text-text-3">
-        Если перед запуском не выполняется хоть одно условие, действие само понижается до T2 и ждёт «Да».
-        Уровень зашит в реестре, из чата или настроек его не поднять.
+        Если перед запуском не выполняется хоть одно условие, действие само понижается до T2 и ждёт
+        подтверждения. Уровень зашит в реестре, из чата или настроек его не поднять.
       </p>
     </div>
   );
@@ -126,10 +126,10 @@ function ActionCard({
 }) {
   const kinds = a.kinds.map((k) => INCIDENT_KIND_META[k].label).join(', ');
   const stat = a.terminal
-    ? 'панель не выполняет'
+    ? 'Панель не выполняет — только команда для терминала'
     : a.stats.runs === 0
-      ? 'ещё не запускалось'
-      : `помогло ${a.stats.helped} из ${a.stats.runs}${a.stats.lastAt ? ` · последний ${formatWhen(a.stats.lastAt)}` : ''}`;
+      ? 'Ещё не запускалось'
+      : `Помогло ${a.stats.helped} из ${a.stats.runs}${a.stats.lastAt ? ` · последний ${formatWhen(a.stats.lastAt)}` : ''}`;
   return (
     <section
       data-testid="action-card"
@@ -149,7 +149,9 @@ function ActionCard({
             onChange={(v) => !busy && onToggle(v)}
           />
         ) : (
-          <span className="text-[11.5px] text-text-3">{a.level === 'T2' ? 'только с «Да»' : 'вручную'}</span>
+          <span className="text-[11.5px] text-text-3">
+            {a.level === 'T2' ? 'Только с подтверждением' : 'Только вручную'}
+          </span>
         )}
       </div>
       <div className="text-[12px] text-text-3">

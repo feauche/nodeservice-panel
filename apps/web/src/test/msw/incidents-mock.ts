@@ -37,7 +37,7 @@ export const mockIncidents: IncidentsMock = {
   items: [],
   settings: { ...INCIDENTS_SETTINGS_DEFAULTS },
   stepMs: 30,
-  helps: new Set<ActionKey>(['free_disk', 'restart_node', 'agent_reinstall', 'apt_clean']),
+  helps: new Set<ActionKey>(['free_disk', 'restart_node', 'node_up', 'agent_reinstall', 'apt_clean']),
 };
 
 let seq = 0;
@@ -141,29 +141,13 @@ export function seedIncidents(): void {
       resolvedBy: null,
       timeline: [
         ev(7, 'auto', 'Обнаружено: CPU 96 % дольше 5 мин', 'detect', 'T0'),
-        ev(6, 'auto', 'Выполнено: Перезапустить Xray', 'applied', 'T1'),
-        ev(5, 'auto', 'Пост-проверка: CPU 93 % · 95 % · 94 % — не ниже 80 % — не помогло', 'failed', 'T1'),
-        ev(5, 'auto', 'Предложено: Перезапустить контейнер ноды — ждёт «Да»', 'escalate', 'T2'),
+        ev(7, 'auto', 'Предложено: Перезапустить контейнер ноды — ждёт «Да»', 'escalate', 'T2'),
       ],
-      attempts: [
-        finishedAttempt(
-          6,
-          'restart_xray',
-          'auto',
-          'not_helped',
-          [
-            'агент в сети, нода свободна',
-            'выполнено за 0.8 с',
-            'CPU 93 % · 95 % · 94 % — не ниже 80 %',
-            'не нужен: перезапуск обратим сам по себе',
-          ],
-          "$ sh -c 'systemctl restart xray …'\n",
-        ),
-      ],
+      attempts: [],
       proposal: {
         action: 'restart_node',
         level: 'T2',
-        reason: '«Перезапустить Xray» не помогло',
+        reason: 'первый шаг цепочки',
         proposedAt: iso(5),
       },
     },

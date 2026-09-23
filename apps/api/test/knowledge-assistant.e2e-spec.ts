@@ -106,7 +106,7 @@ class FakeLlm implements LlmProvider {
             name: 'propose_action',
             input: {
               incidentId: FAKE_INCIDENT,
-              preset: 'restart_xray',
+              preset: 'restart_node',
               title: 'Перезапустить Xray',
               description: 'Снимет пиковую нагрузку на CPU.',
             },
@@ -268,7 +268,7 @@ describe('knowledge + assistant e2e', () => {
     expect(res.message.content).toContain('conntrack');
     // предложение действия — human-in-the-loop
     expect(res.message.proposals).toHaveLength(1);
-    expect(res.message.proposals[0]?.preset).toBe('restart_xray');
+    expect(res.message.proposals[0]?.preset).toBe('restart_node');
     // цитата на базу знаний
     expect(res.message.citations.some((c) => c.type === 'kb')).toBe(true);
 

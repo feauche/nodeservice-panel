@@ -27,7 +27,7 @@ describe('AssistantPage', () => {
     await user.type(input, 'Что с CPU?');
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
     // ответ ассистента с предложением автопочинки
-    expect(await screen.findByText('Перезапустить Xray')).toBeInTheDocument();
+    expect(await screen.findByText('Перезапустить контейнер ноды')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Применить' })).toBeInTheDocument();
     // цитата на базу знаний ведёт на конкретную статью (?open=<id>), а не просто в раздел
     const kbLink = screen.getByRole('link', { name: /Лимит conntrack/ });
@@ -43,7 +43,7 @@ describe('AssistantPage', () => {
     await waitFor(() =>
       expect(screen.getAllByText('Что сейчас требует внимания?').length).toBeGreaterThan(0),
     );
-    expect(await screen.findByText('Перезапустить Xray')).toBeInTheDocument();
+    expect(await screen.findByText('Перезапустить контейнер ноды')).toBeInTheDocument();
   });
 
   it('режим «Анализ»: собирает статью и показывает ссылку на неё', async () => {

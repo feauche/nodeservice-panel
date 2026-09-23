@@ -197,7 +197,7 @@ function summaryLine(inc: Incident): React.ReactNode {
     parts.push([
       'run',
       <span key="run" className="inline-flex items-center gap-1 text-brand">
-        <LevelChip level={running.level} /> {actionByKey(running.action).title.toLowerCase()} выполняется…
+        <LevelChip level={running.level} /> {actionByKey(running.action).title} выполняется…
       </span>,
     ]);
   else if (inc.status === 'resolved' && last?.status === 'helped')
@@ -205,7 +205,7 @@ function summaryLine(inc: Incident): React.ReactNode {
       'ok',
       <span key="ok" className="inline-flex items-center gap-1 text-ok">
         <LevelChip level={last.level} /> {last.by === 'auto' ? 'авто' : 'вручную'}, «
-        {actionByKey(last.action).title.toLowerCase()}» помогло
+        {actionByKey(last.action).title}» помогло
       </span>,
     ]);
   else if (inc.status === 'resolved')
@@ -215,7 +215,7 @@ function summaryLine(inc: Incident): React.ReactNode {
       parts.push([
         'last',
         <span key="last" className="inline-flex items-center gap-1">
-          <LevelChip level={last.level} /> {actionByKey(last.action).title.toLowerCase()}{' '}
+          <LevelChip level={last.level} /> {actionByKey(last.action).title}{' '}
           {ATTEMPT_STATUS_LABELS[last.status]}
         </span>,
       ]);
@@ -223,7 +223,7 @@ function summaryLine(inc: Incident): React.ReactNode {
       parts.push([
         'prop',
         <span key="prop" className="inline-flex items-center gap-1 font-medium text-warn">
-          <LevelChip level={inc.proposal.level} /> {actionByKey(inc.proposal.action).title.toLowerCase()}{' '}
+          <LevelChip level={inc.proposal.level} /> {actionByKey(inc.proposal.action).title}{' '}
           {inc.proposal.level === 'T3' ? 'только вручную' : 'ждёт «Да»'}
         </span>,
       ]);
@@ -407,11 +407,18 @@ function IncidentDetails({ incident }: { incident: Incident }) {
 function AttemptBlock({ attempt, index }: { attempt: IncidentAttempt; index: number }) {
   const action = actionByKey(attempt.action);
   const running = attempt.status === 'running';
+  // Пока попытка идёт, секунды у текущего шага тикают сами, а не только при перечитывании.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [running]);
   const secs = (s: IncidentAttempt['steps'][number]) =>
     s.startedAt && s.finishedAt
       ? `${((new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime()) / 1000).toFixed(1)} с`
       : s.status === 'running' && s.startedAt
-        ? `${Math.max(0, Math.round((Date.now() - new Date(s.startedAt).getTime()) / 1000))} с`
+        ? `${Math.max(0, Math.round((now - new Date(s.startedAt).getTime()) / 1000))} с`
         : '';
   return (
     <div

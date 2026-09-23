@@ -2,6 +2,7 @@ import {
   AUDIT_SOURCE_LABELS,
   type AuditCategory,
   auditActionLabel,
+  INCIDENT_KIND_META,
   type OverviewServerMetrics,
   type Server,
 } from '@nodeservice/shared';
@@ -16,7 +17,6 @@ import {
   ServerIcon,
   SlidersHorizontalIcon,
 } from 'lucide-react';
-
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuditList } from '@/features/audit/audit-api';
 import { formatWhen } from '@/features/audit/audit-format';
@@ -197,7 +197,38 @@ export function OverviewPage() {
   const warnCount = judged.filter((j) => j.health === 'warn').length;
   const offlineCount = judged.filter((j) => j.health === 'crit').length;
   const healthPct = items.length ? Math.round((okCount / items.length) * 100) : 100;
-  const attention = judged.filter((j) => j.health !== 'ok');
+  // «Требует внимания» = проблемы по здоровью серверов + открытые инциденты (например, «Xray не
+  // запущен» — сервер по метрикам в норме, но нода не работает).
+  const healthRows = judged
+    .filter((j) => j.health !== 'ok')
+    .map((j) => ({
+      key: `h:${j.server.id}`,
+      name: j.server.name,
+      reason: j.reason,
+      tone: j.health as 'warn' | 'crit',
+      pill: j.health === 'crit' ? 'офлайн' : 'внимание',
+      to: '/servers' as const,
+      search: { open: j.server.id },
+    }));
+  const incidentRows = (openIncidents.data?.items ?? [])
+    // Связь (агент/SSH) уже отражена строкой здоровья — не дублируем.
+    .filter(
+      (inc) =>
+        !(
+          (inc.kind === 'agent_offline' || inc.kind === 'ssh_down') &&
+          healthRows.some((h) => h.name === inc.serverName)
+        ),
+    )
+    .map((inc) => ({
+      key: `i:${inc.id}`,
+      name: inc.serverName,
+      reason: `${INCIDENT_KIND_META[inc.kind].label}${inc.proposal ? ' · ждёт «Да»' : ''}`,
+      tone: (inc.severity === 'crit' ? 'crit' : 'warn') as 'warn' | 'crit',
+      pill: 'инцидент',
+      to: '/incidents' as const,
+      search: { open: inc.id },
+    }));
+  const attention = [...incidentRows, ...healthRows];
 
   const noMetricsAtAll = items.length > 0 && items.every((s) => (byId.get(s.id)?.cpuPct ?? null) === null);
   const cpuAvg = avg(items.map((s) => byId.get(s.id)?.cpuPct ?? null));
@@ -315,28 +346,28 @@ export function OverviewPage() {
             </div>
           ) : (
             <ul className="flex flex-col">
-              {attention.slice(0, 5).map(({ server, health, reason }) => (
-                <li key={server.id} className="border-t border-border first:border-t-0">
+              {attention.slice(0, 5).map((row) => (
+                <li key={row.key} className="border-t border-border first:border-t-0">
                   <Link
-                    to="/servers"
-                    search={{ open: server.id }}
+                    to={row.to}
+                    search={row.search}
                     className="flex items-center gap-3 rounded-[10px] px-1.5 py-2.5 transition-colors hover:bg-surface-2"
                   >
                     <span
-                      className={cn('size-2 flex-none rounded-full', HEALTH_DOT[health])}
+                      className={cn('size-2 flex-none rounded-full', HEALTH_DOT[row.tone])}
                       aria-hidden="true"
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13.5px] font-semibold">{server.name}</span>
-                      <span className="block truncate text-[12px] text-text-3">{reason}</span>
+                      <span className="block truncate text-[13.5px] font-semibold">{row.name}</span>
+                      <span className="block truncate text-[12px] text-text-3">{row.reason}</span>
                     </span>
                     <span
                       className={cn(
                         'rounded-full px-2 py-0.5 text-[11.5px] font-semibold whitespace-nowrap',
-                        health === 'crit' ? 'bg-crit-soft text-crit' : 'bg-warn-soft text-warn',
+                        row.tone === 'crit' ? 'bg-crit-soft text-crit' : 'bg-warn-soft text-warn',
                       )}
                     >
-                      {health === 'crit' ? 'офлайн' : 'внимание'}
+                      {row.pill}
                     </span>
                     <ChevronRightIcon className="size-4 flex-none text-text-3" aria-hidden="true" />
                   </Link>

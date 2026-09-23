@@ -14,9 +14,8 @@ describe('IncidentsPage', () => {
     renderPage(IncidentsPage, '/incidents');
     expect(await screen.findByText('SSH недоступен · nl-ams-02')).toBeInTheDocument();
     expect(screen.getByText('Высокая нагрузка на CPU · de-fra-01')).toBeInTheDocument();
-    // строка под заголовком: что уже делали и что ждёт «Да»
-    expect(screen.getByText(/перезапустить xray не помогло/i)).toBeInTheDocument();
-    expect(screen.getByText(/перезапустить контейнер ноды ждёт «Да»/i)).toBeInTheDocument();
+    // строка под заголовком: что ждёт «Да»
+    expect(screen.getByText(/Перезапустить контейнер ноды ждёт «Да»/)).toBeInTheDocument();
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /^Решённые/ }));
     await waitFor(() => expect(screen.queryByText('SSH недоступен · nl-ams-02')).not.toBeInTheDocument());
@@ -30,12 +29,8 @@ describe('IncidentsPage', () => {
     await user.click(await screen.findByText('Высокая нагрузка на CPU · de-fra-01'));
     expect(await screen.findByText('Что происходило')).toBeInTheDocument();
     const timeline = screen.getByRole('list', { name: 'Хронология' });
-    expect(within(timeline).getAllByText('T1').length).toBeGreaterThan(0);
+    expect(within(timeline).getAllByText('T2').length).toBeGreaterThan(0);
     expect(within(timeline).getByText(/Предложено: Перезапустить контейнер ноды/)).toBeInTheDocument();
-    const attempt = screen.getByTestId('attempt-block');
-    expect(attempt).toHaveTextContent('Попытка 1 · Перезапустить Xray');
-    expect(attempt).toHaveTextContent('не помогло');
-    expect(attempt).toHaveTextContent('Пост-проверка: CPU 93 %');
     const proposal = screen.getByTestId('proposal-block');
     expect(proposal).toHaveTextContent('Следующий шаг требует подтверждения');
     expect(proposal).toHaveTextContent('T2');
@@ -51,7 +46,7 @@ describe('IncidentsPage', () => {
     await user.click(await screen.findByRole('button', { name: /Да, перезапустить контейнер ноды/ }));
     await waitFor(() =>
       expect(screen.getByTestId('attempt-block')).toHaveTextContent(
-        'Попытка 2 · Перезапустить контейнер ноды',
+        'Попытка 1 · Перезапустить контейнер ноды',
       ),
     );
     await waitFor(
@@ -103,12 +98,12 @@ describe('IncidentsPage', () => {
     const free = cards.find((c) => within(c).queryByText('Освободить диск'));
     if (!free) throw new Error('card');
     expect(free).toHaveTextContent('T1');
-    expect(free).toHaveTextContent('помогло 1 из 1');
+    expect(free).toHaveTextContent('Помогло 1 из 1');
     const node = cards.find((c) => within(c).queryByText('Перезапустить контейнер ноды'));
-    expect(node).toHaveTextContent('только с «Да»');
+    expect(node).toHaveTextContent('Только с подтверждением');
     const reboot = cards.find((c) => within(c).queryByText('Перезагрузить сервер'));
     expect(reboot).toHaveTextContent('T3');
-    expect(reboot).toHaveTextContent('панель не выполняет');
+    expect(reboot).toHaveTextContent('Панель не выполняет');
 
     await user.click(screen.getByRole('switch', { name: 'Автопочинка' }));
     await waitFor(() => expect(mockIncidents.settings.autofixEnabled).toBe(true));

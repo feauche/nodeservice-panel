@@ -9,6 +9,7 @@ export type Precheck = 'agent_online' | 'disk_not_full' | 'ssh_ok' | 'no_other_a
 export type Postcheck =
   | { kind: 'metric_below'; metric: 'cpu' | 'mem' | 'disk'; marginPct: number; samples: number }
   | { kind: 'agent_online' }
+  | { kind: 'xray_up' }
   | { kind: 'none' };
 
 export interface ActionSpec {
@@ -37,12 +38,15 @@ export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
     precheck: ['agent_online', 'disk_not_full', 'no_other_action'],
     postcheck: { kind: 'metric_below', metric: 'disk', marginPct: 5, samples: 1 },
   },
-  restart_xray: {
+  node_up: {
+    // Контейнер остановлен → start; запущен, но xray внутри нет → restart. Xray живёт в контейнере,
+    // отдельно перезапускать его бессмысленно.
     command: SH(
-      'systemctl restart xray 2>/dev/null || docker restart remnanode 2>/dev/null || docker restart $(docker ps -q -f name=xray 2>/dev/null) 2>/dev/null',
+      'if [ "$(docker inspect -f {{.State.Running}} remnanode 2>/dev/null)" = true ]; then docker restart remnanode 2>&1; else docker start remnanode 2>&1; fi',
     ),
+    containerCheck: "docker inspect -f '{{.State.Running}}' remnanode 2>/dev/null",
     precheck: ['agent_online', 'no_other_action'],
-    postcheck: { kind: 'metric_below', metric: 'cpu', marginPct: 10, samples: 3 },
+    postcheck: { kind: 'xray_up' },
   },
   restart_node: {
     command: SH('docker restart remnanode 2>&1'),

@@ -68,8 +68,8 @@ function buildReply(): AssistantMessage {
     proposals.push({
       kind: 'autofix',
       incidentId: cpu.id,
-      preset: 'restart_xray',
-      title: 'Перезапустить Xray',
+      preset: 'restart_node',
+      title: 'Перезапустить контейнер ноды',
       description: 'Снимет пиковую нагрузку на CPU на de-fra-01.',
     });
   }
