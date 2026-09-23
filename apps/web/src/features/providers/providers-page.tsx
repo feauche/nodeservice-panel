@@ -84,7 +84,7 @@ export function ProvidersPage() {
 
   if (providers.isPending) {
     return (
-      <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+      <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start">
         <Skeleton className="h-[320px] rounded-2xl" />
         <Skeleton className="h-[320px] rounded-2xl" />
       </div>
@@ -143,7 +143,7 @@ export function ProvidersPage() {
           </Button>
         </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start">
           <ul
             className="flex flex-col overflow-hidden rounded-2xl border border-border bg-surface"
             aria-label="Провайдеры"
