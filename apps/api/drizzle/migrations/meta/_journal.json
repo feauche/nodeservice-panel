@@ -169,6 +169,13 @@
       "when": 1789100400000,
       "tag": "0023_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1789100500000,
+      "tag": "0024_incident_actions_rename",
+      "breakpoints": true
     }
   ]
 }

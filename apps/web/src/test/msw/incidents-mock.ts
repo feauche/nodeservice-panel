@@ -1,6 +1,6 @@
 import {
   type ActionKey,
-  actionByKey,
+  actionMeta,
   INCIDENT_ACTIONS,
   INCIDENT_CHAINS,
   INCIDENTS_SETTINGS_DEFAULTS,
@@ -54,7 +54,7 @@ const finishedAttempt = (
   notes: [string, string, string, string],
   log: string,
 ): IncidentAttempt => {
-  const a = actionByKey(action);
+  const a = actionMeta(action);
   const ok = status === 'helped';
   return {
     id: uid(),
@@ -223,7 +223,7 @@ const problem = (status: number, detail: string) =>
 
 /** Имитация исполнителя: шаги идут по таймеру, исход — по mockIncidents.helps. */
 function runAttempt(inc: Incident, action: ActionKey, by: 'auto' | 'manual'): void {
-  const a = actionByKey(action);
+  const a = actionMeta(action);
   const attempt: IncidentAttempt = {
     id: uid(),
     action,
@@ -255,7 +255,7 @@ function runAttempt(inc: Incident, action: ActionKey, by: 'auto' | 'manual'): vo
     log: '',
   };
   inc.attempts = [...inc.attempts, attempt];
-  inc.proposal = null;
+  if (a.level !== 'T0') inc.proposal = null;
   if (inc.status === 'open' && by === 'manual') inc.status = 'acknowledged';
   const step = (i: number, patch: Partial<IncidentAttempt['steps'][number]>) => {
     const s = attempt.steps[i];
@@ -274,6 +274,15 @@ function runAttempt(inc: Incident, action: ActionKey, by: 'auto' | 'manual'): vo
     inc.timeline = [...inc.timeline, ev(0, by, `Выполнено: ${a.title}`, 'applied', a.level)];
   }, t * 2);
   setTimeout(() => {
+    if (a.level === 'T0') {
+      step(2, { status: 'skipped' });
+      step(3, { status: 'skipped' });
+      attempt.status = 'done';
+      attempt.finishedAt = iso(0);
+      attempt.log += 'remnanode  | INFO  xray started\nremnanode  | INFO  listening :443\n';
+      inc.timeline = [...inc.timeline, ev(0, by, `${a.title}: получены`, 'notify', 'T0')];
+      return;
+    }
     const helped = mockIncidents.helps.has(action);
     step(2, {
       status: helped ? 'ok' : 'failed',
@@ -300,7 +309,7 @@ function runAttempt(inc: Incident, action: ActionKey, by: 'auto' | 'manual'): vo
       const chain = INCIDENT_CHAINS[inc.kind as IncidentKind];
       const next = chain[chain.indexOf(action) + 1];
       if (next) {
-        const n = actionByKey(next);
+        const n = actionMeta(next);
         inc.proposal = {
           action: next,
           level: n.level,
@@ -380,7 +389,7 @@ export const incidentsHandlers = [
     if (parsed.data.autofixEnabled !== undefined)
       mockIncidents.settings.autofixEnabled = parsed.data.autofixEnabled;
     for (const [k, v] of Object.entries(parsed.data.actions ?? {}))
-      if (actionByKey(k as ActionKey).level === 'T1') mockIncidents.settings.actions[k] = v as boolean;
+      if (actionMeta(k as ActionKey).level === 'T1') mockIncidents.settings.actions[k] = v as boolean;
     return HttpResponse.json(actionsResponse());
   }),
   http.get('/api/incidents/:id', ({ params }) => {

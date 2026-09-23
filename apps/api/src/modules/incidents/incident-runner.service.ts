@@ -49,9 +49,8 @@ const T = TEST
       execTimeoutMs: 180_000,
     };
 
-/** Есть ли процесс xray — по SSH от root, имя бинаря у сборок разное (xray, xray-core, Xray-linux-64). */
-export const XRAY_PROBE =
-  "ps -eo comm= -o args= | awk 'tolower($1) ~ /^xray/ || tolower($2) ~ /(^|\\/)xray/ {f=1} END {print f+0}'";
+/** Запущен ли контейнер ноды — по SSH от root: `true` / `false` / `none` (контейнера нет). */
+export const NODE_PROBE = "docker inspect -f '{{.State.Running}}' remnanode 2>/dev/null || echo none";
 
 const iso = () => new Date().toISOString();
 const ev = (
@@ -139,7 +138,8 @@ export class IncidentRunnerService {
     };
     const updated = await this.repo.update(incidentId, {
       attempts: [...row.attempts, attempt],
-      proposal: null,
+      // T0 (логи) только смотрит — предложение следующего шага остаётся на месте.
+      ...(action.level === 'T0' ? {} : { proposal: null }),
       lastAutofixAt: new Date(),
       ...(row.status === 'open' && by === 'manual' ? { status: 'acknowledged' } : {}),
     });
@@ -249,6 +249,13 @@ export class IncidentRunnerService {
       return;
     }
     await this.step(incidentId, attemptId, 'action', 'ok', act.note);
+    if (action.level === 'T0') {
+      // Только посмотрели: логи в попытке, инцидент не трогаем.
+      await this.finish(incidentId, attemptId, 'done', ['postcheck', 'rollback']);
+      await this.repo.appendEvent(incidentId, ev(by, `${action.title}: получены`, 'notify', 'T0'));
+      await this.auditAttempt(row0, key, by, 'done', act.note);
+      return;
+    }
     await this.repo.appendEvent(incidentId, ev(by, `Выполнено: ${action.title}`, 'applied', action.level));
 
     // 3. Пост-проверка
@@ -373,20 +380,18 @@ export class IncidentRunnerService {
   ): Promise<{ ok: boolean; note: string }> {
     const pc = spec.postcheck;
     if (pc.kind === 'none') return { ok: true, note: 'проверка не нужна' };
-    if (pc.kind === 'xray_up' || kind === 'xray_down') {
-      // Процесс xray появился: смотрим по SSH каждые probeMs (мгновенно), метрика агента — запасной путь.
+    if (pc.kind === 'node_up') {
+      // Контейнер запущен: docker inspect по SSH каждые probeMs; SSH не вышло — состояние из зонда панели.
       const deadline = Date.now() + T.xrayTimeoutMs;
       while (Date.now() < deadline) {
-        // Имя бинаря у сборок разное (xray, xray-core, Xray-linux-64) — ищем по началу имени без регистра.
-        const probe = await this.sshProbe(serverId, XRAY_PROBE);
-        if (probe === '1') return { ok: true, note: 'процесс xray запущен' };
-        if (probe === null) {
-          const m = await this.metrics.latestFor(serverId);
-          if (m?.xray !== undefined && m.xray >= 0.5) return { ok: true, note: 'процесс xray запущен' };
-        }
+        const probe = await this.sshProbe(serverId, NODE_PROBE);
+        if (probe === 'true') return { ok: true, note: 'контейнер ноды запущен' };
+        if (probe === 'none') return { ok: false, note: 'контейнера remnanode на сервере нет' };
+        if (probe === null && this.metrics.nodeRunning(serverId) === true)
+          return { ok: true, note: 'контейнер ноды запущен' };
         await sleep(T.probeMs);
       }
-      return { ok: false, note: `процесс xray не появился за ${Math.round(T.xrayTimeoutMs / 1000)} с` };
+      return { ok: false, note: `контейнер не запустился за ${Math.round(T.xrayTimeoutMs / 1000)} с` };
     }
     if (pc.kind === 'agent_online') {
       const deadline = Date.now() + T.agentTimeoutMs;
@@ -638,18 +643,21 @@ export class IncidentRunnerService {
     note: string,
   ): Promise<void> {
     const action = actionByKey(key);
-    await this.notifications.push({
-      severity: result === 'helped' ? 'ok' : 'warn',
-      title:
-        result === 'helped'
-          ? `${row.title}: «${action.title}» помогло`
-          : `${row.title}: «${action.title}» — ${ATTEMPT_STATUS_LABELS[result]}`,
-      body: `${by === 'auto' ? 'Автоматически' : 'По вашей команде'} · ${note}`,
-      link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
-    });
+    if (result !== 'done')
+      await this.notifications.push({
+        severity: result === 'helped' ? 'ok' : 'warn',
+        title:
+          result === 'helped'
+            ? `${row.title}: «${action.title}» помогло`
+            : `${row.title}: «${action.title}» — ${ATTEMPT_STATUS_LABELS[result]}`,
+        body: `${by === 'auto' ? 'Автоматически' : 'По вашей команде'} · ${note}`,
+        link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
+      });
     await this.audit.record({
       action: 'incident.autofix',
-      ...(result === 'helped' ? {} : { result: 'failed' as const, severity: 'warn' as const }),
+      ...(result === 'helped' || result === 'done'
+        ? {}
+        : { result: 'failed' as const, severity: 'warn' as const }),
       ...(by === 'auto' ? { actor: SYSTEM_ACTOR, source: 'auto' as const } : {}),
       target: { type: 'incident', id: row.id, display: row.title },
       metadata: { action: key, level: action.level, result, note },

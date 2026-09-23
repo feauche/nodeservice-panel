@@ -78,6 +78,25 @@ describe('IncidentsPage', () => {
     expect(within(proposal).queryByRole('button', { name: /^Да,/ })).not.toBeInTheDocument();
   });
 
+  it('«Логи ноды» (T0): попытка «выполнено», вывод в карточке, предложение на месте', async () => {
+    renderPage(IncidentsPage, '/incidents');
+    const user = userEvent.setup();
+    await user.click(await screen.findByText('Высокая нагрузка на CPU · de-fra-01'));
+    await user.click(await screen.findByRole('button', { name: /Логи ноды/ }));
+    await waitFor(
+      () => expect(screen.getByTestId('attempt-block')).toHaveTextContent('Попытка 1 · Логи ноды'),
+      {
+        timeout: 4000,
+      },
+    );
+    await waitFor(() => expect(screen.getByTestId('attempt-block')).toHaveTextContent('выполнено'), {
+      timeout: 4000,
+    });
+    expect(screen.getByTestId('attempt-block')).toHaveTextContent('xray started');
+    expect(screen.getByTestId('proposal-block')).toBeInTheDocument();
+    expect(mockIncidents.items.find((i) => i.kind === 'cpu_high')?.status).not.toBe('resolved');
+  });
+
   it('ручное закрытие через подтверждение', async () => {
     renderPage(IncidentsPage, '/incidents');
     const user = userEvent.setup();

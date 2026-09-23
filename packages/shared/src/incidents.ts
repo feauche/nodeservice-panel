@@ -18,7 +18,7 @@ export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
 export const INCIDENT_KINDS = [
   'agent_offline',
   'ssh_down',
-  'xray_down',
+  'node_down',
   'cpu_high',
   'mem_high',
   'disk_high',
@@ -31,7 +31,7 @@ export const INCIDENT_KIND_META: Record<
 > = {
   agent_offline: { label: 'Агент не в сети', component: 'Связь', severity: 'crit' },
   ssh_down: { label: 'SSH недоступен', component: 'Связь', severity: 'crit' },
-  xray_down: { label: 'Xray не запущен', component: 'Нода', severity: 'crit' },
+  node_down: { label: 'Контейнер ноды не запущен', component: 'Нода', severity: 'crit' },
   cpu_high: { label: 'Высокая нагрузка на CPU', component: 'CPU', severity: 'warn' },
   mem_high: { label: 'Память на пределе', component: 'Память', severity: 'warn' },
   disk_high: { label: 'Диск заполняется', component: 'Диск', severity: 'warn' },
@@ -86,12 +86,24 @@ export const INCIDENT_ACTIONS = [
     key: 'node_up',
     title: 'Поднять контейнер ноды',
     level: 'T1',
-    kinds: ['xray_down'] as IncidentKind[],
-    summary: 'docker start remnanode (если запущен, но xray нет — docker restart remnanode)',
+    kinds: ['node_down'] as IncidentKind[],
+    summary: 'docker start remnanode',
     consequence: null,
-    preconditions: ['агент в сети', 'на ноде не идёт другое действие'],
-    postcheck: 'процесс xray появился (до 60 с)',
+    preconditions: ['SSH ключом панели отвечает', 'на ноде не идёт другое действие'],
+    postcheck: 'контейнер запущен по docker inspect (до 60 с)',
     rollbackNote: 'не нужен: нода и так не работала',
+    terminal: false,
+  },
+  {
+    key: 'node_logs',
+    title: 'Логи ноды',
+    level: 'T0',
+    kinds: ['node_down', 'cpu_high', 'mem_high'] as IncidentKind[],
+    summary: 'docker logs --tail 100 remnanode',
+    consequence: null,
+    preconditions: ['SSH ключом панели отвечает'],
+    postcheck: '—',
+    rollbackNote: null,
     terminal: false,
   },
   {
@@ -134,7 +146,7 @@ export const INCIDENT_ACTIONS = [
     key: 'reboot',
     title: 'Перезагрузить сервер',
     level: 'T3',
-    kinds: ['xray_down', 'cpu_high', 'mem_high'] as IncidentKind[],
+    kinds: ['node_down', 'cpu_high', 'mem_high'] as IncidentKind[],
     summary: 'reboot',
     consequence: 'нода недоступна 1–3 минуты',
     preconditions: [],
@@ -161,9 +173,30 @@ export const actionKeySchema = z.enum(INCIDENT_ACTIONS.map((a) => a.key) as [Act
 export const actionByKey = (key: ActionKey): IncidentAction =>
   INCIDENT_ACTIONS.find((a) => a.key === key) as IncidentAction;
 
+/**
+ * Описание действия для показа, в том числе по ключу, которого в реестре уже нет (старые
+ * инциденты в БД): такие показываем как есть, с уровнем T2, чтобы страница не ломалась.
+ */
+export function actionMeta(key: string): IncidentAction {
+  const known = INCIDENT_ACTIONS.find((a) => a.key === key);
+  if (known) return known;
+  return {
+    key: key as ActionKey,
+    title: key,
+    level: 'T2',
+    kinds: [] as IncidentKind[],
+    summary: '',
+    consequence: null,
+    preconditions: [],
+    postcheck: '—',
+    rollbackNote: null,
+    terminal: false,
+  } as unknown as IncidentAction;
+}
+
 /** Цепочка шагов по виду инцидента: следующий шаг предлагается, когда предыдущий не помог. */
 export const INCIDENT_CHAINS: Record<IncidentKind, ActionKey[]> = {
-  xray_down: ['node_up', 'reboot'],
+  node_down: ['node_up', 'reboot'],
   disk_high: ['free_disk', 'apt_clean', 'disk_inspect'],
   cpu_high: ['restart_node', 'reboot'],
   mem_high: ['restart_node', 'reboot'],
@@ -185,7 +218,14 @@ export const attemptStepSchema = z.object({
 });
 export type AttemptStep = z.infer<typeof attemptStepSchema>;
 
-export const ATTEMPT_STATUSES = ['running', 'helped', 'not_helped', 'precheck_failed', 'failed'] as const;
+export const ATTEMPT_STATUSES = [
+  'running',
+  'helped',
+  'not_helped',
+  'precheck_failed',
+  'failed',
+  'done',
+] as const;
 export type AttemptStatus = (typeof ATTEMPT_STATUSES)[number];
 export const ATTEMPT_STATUS_LABELS: Record<AttemptStatus, string> = {
   running: 'выполняется',
@@ -193,6 +233,8 @@ export const ATTEMPT_STATUS_LABELS: Record<AttemptStatus, string> = {
   not_helped: 'не помогло',
   precheck_failed: 'пред-проверка не пройдена',
   failed: 'ошибка выполнения',
+  /** T0: посмотрели (логи), инцидент не трогали. */
+  done: 'выполнено',
 };
 
 /** Лог попытки в БД ограничен, чтобы инцидент не раздувался. */
@@ -200,7 +242,8 @@ export const ATTEMPT_LOG_MAX = 20_000;
 
 export const incidentAttemptSchema = z.object({
   id: z.string(),
-  action: actionKeySchema,
+  /** Ключ действия; строка, а не enum — в БД могут лежать попытки действий, убранных из реестра. */
+  action: z.string(),
   level: z.enum(ACTION_LEVELS),
   by: z.enum(['auto', 'manual']),
   status: z.enum(ATTEMPT_STATUSES),
@@ -213,7 +256,7 @@ export type IncidentAttempt = z.infer<typeof incidentAttemptSchema>;
 
 /** Предложенный следующий шаг: T2 ждёт «Да», T3 — команда для терминала, T1 (авто выключено) — тоже «Да». */
 export const incidentProposalSchema = z.object({
-  action: actionKeySchema,
+  action: z.string(),
   level: z.enum(ACTION_LEVELS),
   reason: z.string(),
   proposedAt: z.iso.datetime(),

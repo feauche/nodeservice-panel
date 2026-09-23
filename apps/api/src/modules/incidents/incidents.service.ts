@@ -20,7 +20,7 @@ import { ServersRepository } from '../servers/servers.repository.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { IncidentMetricsService } from './incident-metrics.service.js';
-import { IncidentRunnerService, XRAY_PROBE } from './incident-runner.service.js';
+import { IncidentRunnerService } from './incident-runner.service.js';
 import { IncidentsRepository } from './incidents.repository.js';
 
 /** Гистерезис порогов: инцидент закрывается, когда метрика ушла ниже порога на столько процентов. */
@@ -30,8 +30,8 @@ export const INCIDENT_HYSTERESIS_PCT = 5;
  * «не в сети». Столько после старта состояния связи не оцениваем, чтобы не заводить ложные инциденты.
  */
 export const STARTUP_GRACE_MS = process.env.NODE_ENV === 'test' ? 0 : 3 * 60_000;
-/** «Xray не запущен» — если процесса нет дольше этого (перезапуск контейнера длится секунды). */
-export const XRAY_DOWN_FOR_MS = process.env.NODE_ENV === 'test' ? 0 : 60_000;
+/** «Контейнер ноды не запущен» — если контейнер не работает дольше этого (перезапуск длится секунды). */
+export const NODE_DOWN_FOR_MS = process.env.NODE_ENV === 'test' ? 0 : 45_000;
 /** «Агент не в сети» — только если молчит дольше этого (короткий обрыв при обновлении — не инцидент). */
 export const AGENT_OFFLINE_FOR_MS = process.env.NODE_ENV === 'test' ? 0 : 2 * 60_000;
 /** Статистика действий на вкладке «Автопочинка» — за последние N дней. */
@@ -52,6 +52,8 @@ export class IncidentsService {
   /** Момент первого превышения порога (server:kind) — для «времени реакции» без флаппинга. */
   private readonly exceededSince = new Map<string, number>();
   private readonly bootAt = Date.now();
+  /** Серверы, где панель хоть раз видела запущенный контейнер ноды: только для них его остановка — инцидент. */
+  private readonly nodeSeen = new Set<string>();
 
   constructor(
     private readonly repo: IncidentsRepository,
@@ -199,7 +201,6 @@ export class IncidentsService {
     cpu: Map<string, number>;
     mem: Map<string, number>;
     disk: Map<string, number>;
-    xray?: Map<string, number>;
   }): Promise<void> {
     const cfg = await this.settings.get();
     const rows = await this.serversRepo.list();
@@ -212,7 +213,7 @@ export class IncidentsService {
         await this.evalBinary(server, 'agent_offline', offlineLongEnough);
         await this.evalBinary(server, 'ssh_down', server.sshOk === false);
       }
-      await this.evalXray(server, latest.xray?.get(server.id));
+      await this.evalNode(server);
       await this.evalThreshold(
         server,
         'cpu_high',
@@ -235,35 +236,36 @@ export class IncidentsService {
         cfg.forDurationMinutes,
       );
     }
-    this.metrics.remember({ ...latest, xray: latest.xray ?? new Map() });
+    this.metrics.remember(latest);
     await this.runner.autoTick();
   }
 
-  /** Процесс xray пропал и не появился за XRAY_DOWN_FOR_MS → инцидент; вернулся → закрываем. Нет метрики (старый агент) — не судим. */
-  private async evalXray(server: ServerRow, value: number | undefined): Promise<void> {
-    const key = `${server.id}:xray_down`;
-    if (value === undefined) {
+  /** Зонд контейнера (NodeProbeJob или тест) сообщает состояние; отсюда решаем про инцидент. */
+  recordNodeState(serverId: string, running: boolean | undefined): void {
+    this.metrics.setNodeRunning(serverId, running);
+    if (running) this.nodeSeen.add(serverId);
+  }
+
+  /**
+   * Контейнер ноды не работает дольше NODE_DOWN_FOR_MS → инцидент; снова работает → закрываем.
+   * Судим только серверы, где контейнер хоть раз видели запущенным: на остальных его просто нет.
+   */
+  private async evalNode(server: ServerRow): Promise<void> {
+    const key = `${server.id}:node_down`;
+    const running = this.metrics.nodeRunning(server.id);
+    const existing = await this.repo.findOpen(server.id, 'node_down');
+    if (running === undefined || (!this.nodeSeen.has(server.id) && !existing)) {
       this.exceededSince.delete(key);
       return;
     }
-    const existing = await this.repo.findOpen(server.id, 'xray_down');
-    if (value < 0.5) {
-      // Агент — быстрый сигнал, но процесс он может и не видеть (песочница, другое имя бинаря).
-      // Прежде чем заводить или держать инцидент, перепроверяем по SSH от root; не вышло — верим агенту.
-      const probe = await this.runner.sshProbe(server.id, XRAY_PROBE);
-      if (probe === '1') {
-        this.exceededSince.delete(key);
-        if (existing && !existing.attempts.some((a) => a.status === 'running'))
-          await this.autoResolve(existing);
-        return;
-      }
+    if (!running) {
       const since = this.exceededSince.get(key) ?? Date.now();
       this.exceededSince.set(key, since);
-      if (!existing && Date.now() - since >= XRAY_DOWN_FOR_MS)
+      if (!existing && Date.now() - since >= NODE_DOWN_FOR_MS)
         await this.openIncident(
           server,
-          'xray_down',
-          'Процесса xray на сервере нет — контейнер ноды остановлен или упал.',
+          'node_down',
+          'Контейнер remnanode остановлен или упал — нода не работает.',
         );
     } else {
       this.exceededSince.delete(key);

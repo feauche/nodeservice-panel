@@ -319,32 +319,47 @@ describe('incidents e2e', () => {
       .expect(200);
   });
 
-  it('xray_down: процесс пропал → инцидент; «Перезапустить Xray» помог — процесс вернулся', async () => {
+  it('node_down: контейнер остановлен → инцидент; «Поднять контейнер» помог; T0 «Логи ноды» не трогает инцидент', async () => {
     const db = app.get<Db>(DB);
     await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
     const svc = app.get(IncidentsService);
-    await svc.evaluate({ ...noMetrics, xray: new Map([[serverId, 0]]) });
+    // контейнер на сервере ни разу не видели — не судим
+    svc.recordNodeState(serverId, false);
+    await svc.evaluate(noMetrics);
+    expect(
+      incidentsListResponseSchema
+        .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
+        .items.some((i) => i.kind === 'node_down'),
+    ).toBe(false);
+    // увидели запущенный контейнер → его остановка становится инцидентом
+    svc.recordNodeState(serverId, true);
+    await svc.evaluate(noMetrics);
+    svc.recordNodeState(serverId, false);
+    await svc.evaluate(noMetrics);
     const list = incidentsListResponseSchema.parse(
       (await agent.get('/api/incidents?status=open').expect(200)).body,
     );
-    const inc = list.items.find((i) => i.kind === 'xray_down');
+    const inc = list.items.find((i) => i.kind === 'node_down');
     expect(inc?.severity).toBe('crit');
-    // авто выключено → предложение первого шага цепочки (T1 node_up)
     expect(inc?.proposal).toMatchObject({ action: 'node_up', level: 'T1' });
-    const metrics = app.get(IncidentMetricsService);
+
+    // T0 «Логи ноды»: попытка «выполнено», инцидент открыт, предложение на месте
+    await agent.post(`/api/incidents/${inc?.id}/actions/node_logs/run`).set(CSRF_HEADER, csrf).expect(202);
+    const afterLogs = await settled(inc?.id ?? '');
+    expect(afterLogs.attempts[0]).toMatchObject({ action: 'node_logs', level: 'T0', status: 'done' });
+    expect(afterLogs.attempts[0]?.log).toContain('docker logs');
+    expect(afterLogs.status).not.toBe('resolved');
+    expect(afterLogs.proposal).toMatchObject({ action: 'node_up' });
+
+    // «Да» на «Поднять контейнер ноды»: зонд видит контейнер запущенным → помогло
     const p = agent.post(`/api/incidents/${inc?.id}/actions/node_up/run`).set(CSRF_HEADER, csrf);
-    metrics.setForTest(serverId, { xray: 1 });
+    svc.recordNodeState(serverId, true);
     await p.expect(202);
     const done = await settled(inc?.id ?? '');
-    expect(done.attempts[0]?.status).toBe('helped');
-    expect(done.attempts[0]?.steps[2]?.note).toContain('xray запущен');
+    expect(done.attempts[1]?.status).toBe('helped');
+    expect(done.attempts[1]?.steps[2]?.note).toContain('контейнер ноды запущен');
     expect(done.status).toBe('resolved');
-    // старый агент без метрики — не судим: инцидент не заводится
-    await svc.evaluate(noMetrics);
-    const after = incidentsListResponseSchema.parse(
-      (await agent.get('/api/incidents?status=open').expect(200)).body,
-    );
-    expect(after.items.some((i) => i.kind === 'xray_down')).toBe(false);
+    expect(ssh.execLog.some((c) => c.includes('docker start remnanode'))).toBe(true);
   });
 
   it('ручное закрытие инцидента', async () => {

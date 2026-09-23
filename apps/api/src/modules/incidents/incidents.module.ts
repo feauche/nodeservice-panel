@@ -10,6 +10,7 @@ import { IncidentsController } from './incidents.controller.js';
 import { IncidentsJob } from './incidents.job.js';
 import { IncidentsRepository } from './incidents.repository.js';
 import { IncidentsService } from './incidents.service.js';
+import { NodeProbeJob } from './node-probe.job.js';
 
 /** R3: инциденты, детекция с гистерезисом, реестр действий T0–T3 с пред-/пост-проверкой и откатом. */
 @Module({
@@ -19,6 +20,7 @@ import { IncidentsService } from './incidents.service.js';
     IncidentsRepository,
     IncidentsService,
     IncidentsJob,
+    NodeProbeJob,
     IncidentMetricsService,
     IncidentRunnerService,
   ],
