@@ -56,10 +56,10 @@ export class ProvidersController {
 
   @Post('icon-preview')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Превью иконки по адресу сайта — до сохранения' })
+  @ApiOperation({ summary: 'Превью иконки по адресу сайта или по ручной ссылке — до сохранения' })
   @ApiOkResponse({ type: ProviderIconPreviewResponseDto })
   preview(@Body() body: ProviderIconPreviewRequestDto): Promise<ProviderIconPreviewResponse> {
-    return this.providers.preview(body.siteUrl);
+    return this.providers.preview(body.siteUrl, body.iconUrl);
   }
 
   @Patch(':id')
@@ -78,7 +78,7 @@ export class ProvidersController {
 
   @Post(':id/icon/refresh')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Заново взять иконку с сайта' })
+  @ApiOperation({ summary: 'Заново взять иконку (по ручной ссылке или с сайта)' })
   @ApiOkResponse({ type: ProviderDto })
   refresh(@Param('id', ParseUUIDPipe) id: string): Promise<Provider> {
     return this.providers.refreshIcon(id);

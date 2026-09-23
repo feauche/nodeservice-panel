@@ -17,7 +17,7 @@ import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
-import { extractIconLinks, isPrivateHost } from '../src/modules/providers/icon-fetch.service.js';
+import { extractIconLinks, isPrivateHost, sanitizeSvg } from '../src/modules/providers/icon-fetch.service.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: DATABASE_URL должен указывать на nodeservice_test');
@@ -58,7 +58,9 @@ function fakeSite(): Promise<{ server: HttpServer; url: string; bare: string }> 
       res.end('<html><head><link rel="icon" href="/icon.svg"></head><body>svg only</body></html>');
     } else if (req.url === '/icon.svg') {
       res.setHeader('content-type', 'image/svg+xml');
-      res.end('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+      res.end(
+        '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script><circle r="4" fill="#09f"/></svg>',
+      );
     } else {
       res.statusCode = 404;
       res.end();
@@ -175,18 +177,68 @@ describe('providers e2e', () => {
     expect(none.body.iconDataUrl).toBeNull();
   });
 
-  it('иконка: редирект по одному шагу доходит до цели, петля обрывается, SVG не принимается', async () => {
-    const preview = async (path: string) =>
+  it('иконка: редирект по одному шагу доходит до цели, петля обрывается, SVG чистится от скриптов', async () => {
+    const preview = async (path: string, iconUrl?: string) =>
       (
         await agent
           .post('/api/providers/icon-preview')
           .set(CSRF_HEADER, csrf)
-          .send({ siteUrl: `${site.url}${path}` })
+          .send({ siteUrl: `${site.url}${path}`, ...(iconUrl ? { iconUrl } : {}) })
           .expect(200)
-      ).body.iconDataUrl as string | null;
-    expect(await preview('redir/')).toMatch(/^data:image\/png;base64,/);
-    expect(await preview('loop/')).toBeNull();
-    expect(await preview('svg/')).toBeNull();
+      ).body as { iconDataUrl: string | null; sourceUrl: string | null };
+    expect((await preview('redir/')).iconDataUrl).toMatch(/^data:image\/png;base64,/);
+    expect((await preview('redir/')).sourceUrl).toBe(`${site.url}i/fav.png`);
+    expect((await preview('loop/')).iconDataUrl).toBeNull();
+    const svg = await preview('svg/');
+    expect(svg.iconDataUrl).toMatch(/^data:image\/svg\+xml;base64,/);
+    const body = Buffer.from(svg.iconDataUrl?.split(',')[1] ?? '', 'base64').toString('utf8');
+    expect(body).toContain('<circle');
+    expect(body).not.toMatch(/script|onload/i);
+    // ручная ссылка: сайт без иконок, но картинка задана явно
+    const manual = await preview('bare/', `${site.url}i/fav.png`);
+    expect(manual.iconDataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(manual.sourceUrl).toBe(`${site.url}i/fav.png`);
+    expect((await preview('bare/', `${site.url}nope.png`)).iconDataUrl).toBeNull();
+  });
+
+  it('ручная ссылка на иконку сохраняется, сброс в null возвращает автопоиск', async () => {
+    const created = providerSchema.parse(
+      (
+        await agent
+          .post('/api/providers')
+          .set(CSRF_HEADER, csrf)
+          .send({ name: 'Manual', siteUrl: site.bare, iconUrl: `${site.url}i/fav.png` })
+          .expect(201)
+      ).body,
+    );
+    expect(created).toMatchObject({
+      hasIcon: true,
+      iconUrl: `${site.url}i/fav.png`,
+      iconSourceUrl: `${site.url}i/fav.png`,
+    });
+    const auto = providerSchema.parse(
+      (
+        await agent
+          .patch(`/api/providers/${created.id}`)
+          .set(CSRF_HEADER, csrf)
+          .send({ iconUrl: null })
+          .expect(200)
+      ).body,
+    );
+    expect(auto).toMatchObject({ hasIcon: false, iconUrl: null, iconSourceUrl: null });
+    await agent.delete(`/api/providers/${created.id}`).set(CSRF_HEADER, csrf).expect(204);
+  });
+
+  it('sanitizeSvg: скрипты, обработчики и внешние ссылки вырезаются, обычный SVG остаётся', () => {
+    expect(
+      sanitizeSvg(
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>x()</script><path d="M0 0" onclick="x()"/></svg>',
+      ),
+    ).toBe('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>');
+    expect(
+      sanitizeSvg('<svg><use xlink:href="https://evil/x.svg#a"/><image href="data:text/html,x"/></svg>'),
+    ).toBe('<svg><use/><image/></svg>');
+    expect(sanitizeSvg('<html>nope</html>')).toBeNull();
   });
 
   it('внутренние адреса не считаются публичными (в т.ч. IPv4 внутри IPv6 и localhost-домены)', () => {

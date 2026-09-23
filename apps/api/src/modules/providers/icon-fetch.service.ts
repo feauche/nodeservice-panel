@@ -9,8 +9,12 @@ import type { Env } from '../../config/env.schema.js';
 const FETCH_TIMEOUT_MS = 6_000;
 const HTML_MAX_BYTES = 256 * 1024;
 const MAX_REDIRECTS = 3;
-/** Растровые типы, которые безопасно отдавать с нашего origin. SVG — это документ со скриптами, его не берём. */
+/**
+ * Типы, которые отдаём с нашего origin. SVG принимаем, но чистим от скриптов и обработчиков
+ * (sanitizeSvg); плюс эндпоинт иконки шлёт nosniff и CSP sandbox.
+ */
 const IMAGE_TYPES = new Set([
+  'image/svg+xml',
   'image/png',
   'image/jpeg',
   'image/gif',
@@ -25,6 +29,8 @@ const UA = 'Mozilla/5.0 (compatible; NodeServicePanel/1.0; +https://github.com/f
 export interface FetchedIcon {
   type: string;
   data: Buffer;
+  /** Откуда взяли — показываем в форме «Изменить». */
+  sourceUrl: string;
 }
 
 /** Литеральные адреса внутренних сетей: панель не должна ходить туда по чужой ссылке. */
@@ -107,13 +113,35 @@ export class IconFetchService {
       seen.add(c.href);
       // href из чужого HTML может вести куда угодно — та же проверка, что и для самого сайта.
       if (!(await this.allowed(c))) continue;
-      const res = await this.get(c, PROVIDER_ICON_MAX_BYTES, 'image/');
-      if (res && res.data.length > 0) {
-        const type = normalizeType(res.type, c.pathname);
-        if (IMAGE_TYPES.has(type)) return { type, data: res.data };
-      }
+      const icon = await this.image(c);
+      if (icon) return icon;
     }
     return null;
+  }
+
+  /** Иконка по ручной ссылке: только эта картинка, сайт не сканируется. */
+  async fetchDirect(iconUrl: string): Promise<FetchedIcon | null> {
+    let url: URL;
+    try {
+      url = new URL(iconUrl);
+    } catch {
+      return null;
+    }
+    if (!(await this.allowed(url))) return null;
+    return this.image(url);
+  }
+
+  private async image(url: URL): Promise<FetchedIcon | null> {
+    const res = await this.get(url, PROVIDER_ICON_MAX_BYTES, 'image/');
+    if (!res || res.data.length === 0) return null;
+    const type = normalizeType(res.type, url.pathname);
+    if (!IMAGE_TYPES.has(type)) return null;
+    if (type === 'image/svg+xml') {
+      const clean = sanitizeSvg(res.data.toString('utf8'));
+      if (!clean) return null;
+      return { type, data: Buffer.from(clean, 'utf8'), sourceUrl: url.href };
+    }
+    return { type, data: res.data, sourceUrl: url.href };
   }
 
   /** Только http(s) и только публичные адреса (в e2e сайт — локальный http-сервер, там проверка адресов выключена). */
@@ -209,5 +237,31 @@ export function extractIconLinks(html: string): string[] {
 function normalizeType(type: string, pathname: string): string {
   if (type.startsWith('image/')) return type;
   if (pathname.endsWith('.ico')) return 'image/x-icon';
+  if (pathname.endsWith('.svg')) return 'image/svg+xml';
   return 'application/octet-stream';
+}
+
+/**
+ * SVG без активного содержимого: убираем <script>, <foreignObject>, обработчики on*, ссылки
+ * javascript: и внешние подгрузки (<use href="http…">, <image href="http…">). Внутри <img> браузер
+ * скрипты и так не выполняет, но картинку можно открыть по прямой ссылке — поэтому чистим.
+ * Не похоже на SVG — null.
+ */
+export function sanitizeSvg(src: string): string | null {
+  let s = src.replace(/^\uFEFF/, '');
+  if (!/<svg[\s>]/i.test(s)) return null;
+  s = s.replace(/<!DOCTYPE[^>]*(\[[\s\S]*?\])?[^>]*>/gi, '');
+  s = s.replace(/<!ENTITY[^>]*>/gi, '');
+  s = s.replace(/<script\b[\s\S]*?<\/script\s*>/gi, '').replace(/<script\b[^>]*\/?>/gi, '');
+  s = s.replace(/<foreignObject\b[\s\S]*?<\/foreignObject\s*>/gi, '');
+  s = s.replace(/<(?:iframe|object|embed|meta|link|base)\b[^>]*>/gi, '');
+  // атрибуты on* и javascript:/data: в ссылках
+  s = s.replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  s = s.replace(
+    /\s+(xlink:href|href)\s*=\s*("\s*(?:javascript|data|https?):[^"]*"|'\s*(?:javascript|data|https?):[^']*')/gi,
+    '',
+  );
+  s = s.replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, (m) => (/@import|url\s*\(/i.test(m) ? '' : m));
+  if (/<script|onload|onerror|javascript:/i.test(s)) return null;
+  return s;
 }

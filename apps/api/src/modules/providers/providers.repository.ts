@@ -57,12 +57,16 @@ export class ProvidersRepository {
     return row;
   }
 
-  async setIcon(id: string, icon: { type: string; data: string } | null): Promise<ProviderRow | undefined> {
+  async setIcon(
+    id: string,
+    icon: { type: string; data: string; sourceUrl: string } | null,
+  ): Promise<ProviderRow | undefined> {
     const [row] = await this.db
       .update(providers)
       .set({
         iconType: icon?.type ?? null,
         iconData: icon?.data ?? null,
+        iconSourceUrl: icon?.sourceUrl ?? null,
         iconVersion: sql`${providers.iconVersion} + 1`,
         updatedAt: new Date(),
       })

@@ -10,7 +10,11 @@ import { z } from 'zod';
  *  DELETE /api/providers/:id             → 204 (у серверов провайдер сбрасывается)
  *  GET    /api/providers/:id/icon        → картинка (404, если не нашли)
  *  POST   /api/providers/:id/icon/refresh→ Provider
- *  POST   /api/providers/icon-preview    → { iconDataUrl } — превью в форме до сохранения
+ *  POST   /api/providers/icon-preview    → { iconDataUrl, sourceUrl } — превью в форме до сохранения
+ *
+ * Иконка по умолчанию ищется на сайте (<link rel=icon>, /favicon.ico). Можно указать ссылку на
+ * картинку вручную (`iconUrl`) — тогда берётся только она; `iconSourceUrl` — откуда иконка взята
+ * фактически (для подсказки в форме «Изменить»).
  */
 
 export const PROVIDER_NAME_MAX = 64;
@@ -38,6 +42,15 @@ export const providerSiteUrlSchema = z
   .transform((v) => (/^https?:\/\//i.test(v) ? v : `https://${v}`))
   .pipe(z.url({ protocol: /^https?$/, hostname: z.regexes.domain }).or(z.url({ protocol: /^https?$/ })));
 
+/** Ссылка на картинку иконки, если задана вручную; без схемы — дописываем https. */
+export const providerIconUrlSchema = z
+  .string()
+  .trim()
+  .min(1, 'Введите ссылку на иконку')
+  .max(500)
+  .transform((v) => (/^https?:\/\//i.test(v) ? v : `https://${v}`))
+  .pipe(z.url({ protocol: /^https?$/ }));
+
 export const providerSchema = z.object({
   id: z.uuid(),
   name: z.string(),
@@ -45,6 +58,10 @@ export const providerSchema = z.object({
   /** Хост сайта без схемы — для подписи «hetzner.com». */
   siteHost: z.string(),
   hasIcon: z.boolean(),
+  /** Ссылка, заданная вручную; null — иконка ищется на сайте сама. */
+  iconUrl: z.string().nullable(),
+  /** Откуда иконка взята фактически (найдена на сайте или по ручной ссылке); null — не нашли. */
+  iconSourceUrl: z.string().nullable(),
   /** Меняется при каждом обновлении иконки — ломает кэш <img>. */
   iconVersion: z.number().int(),
   note: z.string().nullable(),
@@ -61,6 +78,7 @@ export const createProviderRequestSchema = z.object({
   name: providerNameSchema,
   siteUrl: providerSiteUrlSchema,
   note: z.string().trim().max(PROVIDER_NOTE_MAX).optional(),
+  iconUrl: providerIconUrlSchema.nullable().optional(),
 });
 export type CreateProviderRequest = z.input<typeof createProviderRequestSchema>;
 
@@ -68,15 +86,23 @@ export const updateProviderRequestSchema = z.object({
   name: providerNameSchema.optional(),
   siteUrl: providerSiteUrlSchema.optional(),
   note: z.string().trim().max(PROVIDER_NOTE_MAX).nullable().optional(),
+  /** null — вернуться к автоматическому поиску на сайте. */
+  iconUrl: providerIconUrlSchema.nullable().optional(),
 });
 export type UpdateProviderRequest = z.input<typeof updateProviderRequestSchema>;
 
-export const providerIconPreviewRequestSchema = z.object({ siteUrl: providerSiteUrlSchema });
+export const providerIconPreviewRequestSchema = z.object({
+  siteUrl: providerSiteUrlSchema,
+  /** Есть ссылка — превью только по ней, сайт не сканируется. */
+  iconUrl: providerIconUrlSchema.nullable().optional(),
+});
 export type ProviderIconPreviewRequest = z.input<typeof providerIconPreviewRequestSchema>;
 
 export const providerIconPreviewResponseSchema = z.object({
   /** data:image/…;base64,… либо null, если на сайте иконки не нашлось. */
   iconDataUrl: z.string().nullable(),
+  /** Откуда взята иконка превью. */
+  sourceUrl: z.string().nullable(),
 });
 export type ProviderIconPreviewResponse = z.infer<typeof providerIconPreviewResponseSchema>;
 

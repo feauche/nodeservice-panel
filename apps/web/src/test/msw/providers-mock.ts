@@ -10,15 +10,33 @@ export const mockProviders: { items: Provider[]; iconHosts: Set<string> } = {
 };
 
 let seq = 0;
-function make(name: string, siteUrl: string, note: string | null = null): Provider {
+const withScheme = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
+/** Автопоиск «находит» иконку у известных хостов; ручная ссылка — если в ней есть favicon или icon. */
+const autoSource = (siteUrl: string) =>
+  mockProviders.iconHosts.has(providerSiteHost(siteUrl))
+    ? `${withScheme(siteUrl).replace(/\/$/, '')}/favicon.ico`
+    : null;
+const manualSource = (iconUrl: string) => (/favicon|icon/i.test(iconUrl) ? withScheme(iconUrl) : null);
+const resolveIcon = (siteUrl: string, iconUrl: string | null) =>
+  iconUrl ? manualSource(iconUrl) : autoSource(siteUrl);
+
+function make(
+  name: string,
+  siteUrl: string,
+  note: string | null = null,
+  iconUrl: string | null = null,
+): Provider {
   seq += 1;
   const host = providerSiteHost(siteUrl);
+  const source = resolveIcon(siteUrl, iconUrl);
   return {
     id: `0192c000-1111-7000-8000-${String(seq).padStart(12, '0')}`,
     name,
     siteUrl,
     siteHost: host,
-    hasIcon: mockProviders.iconHosts.has(host),
+    hasIcon: source !== null,
+    iconUrl,
+    iconSourceUrl: source,
     iconVersion: 1,
     note,
     serversCount: 0,
@@ -59,7 +77,12 @@ const PNG_DATA_URL =
 export const providersHandlers = [
   http.get('/api/providers', () => HttpResponse.json({ items: withCounts() })),
   http.post('/api/providers', async ({ request }) => {
-    const body = (await request.json()) as { name: string; siteUrl: string; note?: string };
+    const body = (await request.json()) as {
+      name: string;
+      siteUrl: string;
+      note?: string;
+      iconUrl?: string | null;
+    };
     const name = body.name?.trim();
     if (!name)
       return problem(422, 'about:blank', 'Проверьте поля', {
@@ -74,27 +97,38 @@ export const providersHandlers = [
           errors: [{ path: 'name', message: 'Название уже занято' }],
         },
       );
-    const siteUrl = /^https?:\/\//i.test(body.siteUrl) ? body.siteUrl : `https://${body.siteUrl}`;
-    const p = make(name, siteUrl, body.note?.trim() || null);
+    const p = make(
+      name,
+      withScheme(body.siteUrl),
+      body.note?.trim() || null,
+      body.iconUrl ? withScheme(body.iconUrl) : null,
+    );
     mockProviders.items.push(p);
     return HttpResponse.json(p, { status: 201 });
   }),
   http.post('/api/providers/icon-preview', async ({ request }) => {
-    const body = (await request.json()) as { siteUrl: string };
-    const host = providerSiteHost(
-      /^https?:\/\//i.test(body.siteUrl) ? body.siteUrl : `https://${body.siteUrl}`,
-    );
-    return HttpResponse.json({ iconDataUrl: mockProviders.iconHosts.has(host) ? PNG_DATA_URL : null });
+    const body = (await request.json()) as { siteUrl: string; iconUrl?: string | null };
+    const source = resolveIcon(withScheme(body.siteUrl), body.iconUrl ? withScheme(body.iconUrl) : null);
+    return HttpResponse.json({ iconDataUrl: source ? PNG_DATA_URL : null, sourceUrl: source });
   }),
   http.patch('/api/providers/:id', async ({ params, request }) => {
     const p = mockProviders.items.find((x) => x.id === params.id);
     if (!p) return problem(404, 'urn:nodeservice:problem:provider-not-found', 'Провайдер не найден');
-    const body = (await request.json()) as { name?: string; siteUrl?: string; note?: string | null };
+    const body = (await request.json()) as {
+      name?: string;
+      siteUrl?: string;
+      note?: string | null;
+      iconUrl?: string | null;
+    };
     if (body.name !== undefined) p.name = body.name.trim();
     if (body.siteUrl !== undefined) {
-      p.siteUrl = /^https?:\/\//i.test(body.siteUrl) ? body.siteUrl : `https://${body.siteUrl}`;
+      p.siteUrl = withScheme(body.siteUrl);
       p.siteHost = providerSiteHost(p.siteUrl);
-      p.hasIcon = mockProviders.iconHosts.has(p.siteHost);
+    }
+    if (body.iconUrl !== undefined) p.iconUrl = body.iconUrl ? withScheme(body.iconUrl) : null;
+    if (body.siteUrl !== undefined || body.iconUrl !== undefined) {
+      p.iconSourceUrl = resolveIcon(p.siteUrl, p.iconUrl);
+      p.hasIcon = p.iconSourceUrl !== null;
       p.iconVersion += 1;
     }
     if (body.note !== undefined) p.note = body.note?.trim() || null;
@@ -111,7 +145,8 @@ export const providersHandlers = [
   http.post('/api/providers/:id/icon/refresh', ({ params }) => {
     const p = mockProviders.items.find((x) => x.id === params.id);
     if (!p) return problem(404, 'urn:nodeservice:problem:provider-not-found', 'Провайдер не найден');
-    p.hasIcon = mockProviders.iconHosts.has(p.siteHost);
+    p.iconSourceUrl = resolveIcon(p.siteUrl, p.iconUrl);
+    p.hasIcon = p.iconSourceUrl !== null;
     p.iconVersion += 1;
     return HttpResponse.json(withCounts().find((x) => x.id === p.id));
   }),

@@ -24,8 +24,12 @@ export const providersApi = {
   remove: (id: string): Promise<void> => request(`/providers/${id}`, { method: 'DELETE' }),
   refreshIcon: (id: string): Promise<Provider> =>
     api.post(`/providers/${id}/icon/refresh`, {}, providerSchema),
-  preview: (siteUrl: string): Promise<ProviderIconPreviewResponse> =>
-    api.post('/providers/icon-preview', { siteUrl }, providerIconPreviewResponseSchema),
+  preview: (siteUrl: string, iconUrl?: string | null): Promise<ProviderIconPreviewResponse> =>
+    api.post(
+      '/providers/icon-preview',
+      { siteUrl, ...(iconUrl ? { iconUrl } : {}) },
+      providerIconPreviewResponseSchema,
+    ),
   servers: (id: string, signal?: AbortSignal) =>
     api.get(`/providers/${id}/servers`, z.array(z.object({ id: z.uuid(), name: z.string() })), signal),
 };

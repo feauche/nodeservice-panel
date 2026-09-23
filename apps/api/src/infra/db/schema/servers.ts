@@ -30,6 +30,10 @@ export const providers = pgTable('providers', {
   iconType: text('icon_type'),
   iconData: text('icon_data'),
   iconVersion: integer('icon_version').notNull().default(0),
+  /** Ручная ссылка на иконку; null — ищем на сайте сами. */
+  iconUrl: text('icon_url'),
+  /** Откуда иконка взята фактически. */
+  iconSourceUrl: text('icon_source_url'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

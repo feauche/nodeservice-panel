@@ -255,6 +255,14 @@ function ProviderCard({
             {provider.siteHost}
             <ExternalLinkIcon className="size-3" aria-hidden="true" />
           </a>
+          {provider.iconSourceUrl ? (
+            <div className="truncate text-[11.5px] text-text-3" title={provider.iconSourceUrl}>
+              Иконка {provider.iconUrl ? 'по ссылке' : 'с сайта'}:{' '}
+              {provider.iconSourceUrl.replace(/^https?:\/\//, '')}
+            </div>
+          ) : (
+            <div className="text-[11.5px] text-text-3">Иконка не найдена — показываем букву</div>
+          )}
         </div>
         <div className="flex flex-none flex-wrap gap-2 max-sm:w-full">
           <Button

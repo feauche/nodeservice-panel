@@ -46,6 +46,8 @@ export class ProvidersService {
       siteUrl: row.siteUrl,
       siteHost: providerSiteHost(row.siteUrl),
       hasIcon: Boolean(row.iconData),
+      iconUrl: row.iconUrl,
+      iconSourceUrl: row.iconData ? row.iconSourceUrl : null,
       iconVersion: row.iconVersion,
       note: row.note,
       serversCount: row.serversCount,
@@ -71,12 +73,13 @@ export class ProvidersService {
       name: req.name,
       siteUrl: req.siteUrl,
       note: req.note?.trim() || null,
+      iconUrl: req.iconUrl ?? null,
     });
-    await this.refreshIcon(row.id, req.siteUrl);
+    await this.refreshIcon(row.id);
     await this.audit.record({
       action: 'provider.created',
       target: { type: 'provider', id: row.id, display: row.name },
-      metadata: { siteUrl: req.siteUrl },
+      metadata: { siteUrl: req.siteUrl, ...(req.iconUrl ? { iconUrl: req.iconUrl } : {}) },
     });
     return this.get(row.id);
   }
@@ -91,18 +94,21 @@ export class ProvidersService {
       (await this.repo.findByName(patch.name))
     )
       throw providerProblems.nameTaken(patch.name);
-    const before = { name: row.name, siteUrl: row.siteUrl, note: row.note };
+    const before = { name: row.name, siteUrl: row.siteUrl, note: row.note, iconUrl: row.iconUrl };
     await this.repo.update(id, {
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.siteUrl !== undefined ? { siteUrl: patch.siteUrl } : {}),
       ...(patch.note !== undefined ? { note: patch.note?.trim() || null } : {}),
+      ...(patch.iconUrl !== undefined ? { iconUrl: patch.iconUrl } : {}),
     });
-    if (patch.siteUrl !== undefined && patch.siteUrl !== row.siteUrl)
-      await this.refreshIcon(id, patch.siteUrl);
+    const siteChanged = patch.siteUrl !== undefined && patch.siteUrl !== row.siteUrl;
+    const iconChanged = patch.iconUrl !== undefined && patch.iconUrl !== row.iconUrl;
+    if (siteChanged || iconChanged) await this.refreshIcon(id);
     const after = {
       name: patch.name ?? row.name,
       siteUrl: patch.siteUrl ?? row.siteUrl,
       note: patch.note === undefined ? row.note : patch.note?.trim() || null,
+      iconUrl: patch.iconUrl === undefined ? row.iconUrl : patch.iconUrl,
     };
     await this.audit.record({
       action: 'provider.updated',
@@ -123,12 +129,20 @@ export class ProvidersService {
     });
   }
 
-  /** Заново взять иконку с сайта. Не нашли — иконка сбрасывается, это не ошибка. */
-  async refreshIcon(id: string, siteUrl?: string): Promise<Provider> {
+  /**
+   * Заново взять иконку: по ручной ссылке, если она задана, иначе поиском на сайте.
+   * Не нашли — иконка сбрасывается, это не ошибка.
+   */
+  async refreshIcon(id: string): Promise<Provider> {
     const row = await this.repo.findById(id);
     if (!row) throw providerProblems.notFound();
-    const icon = await this.icons.fetch(siteUrl ?? row.siteUrl);
-    await this.repo.setIcon(id, icon ? { type: icon.type, data: icon.data.toString('base64') } : null);
+    const icon = row.iconUrl
+      ? await this.icons.fetchDirect(row.iconUrl)
+      : await this.icons.fetch(row.siteUrl);
+    await this.repo.setIcon(
+      id,
+      icon ? { type: icon.type, data: icon.data.toString('base64'), sourceUrl: icon.sourceUrl } : null,
+    );
     return this.get(id);
   }
 
@@ -139,9 +153,12 @@ export class ProvidersService {
     return { type: row.iconType, data: Buffer.from(row.iconData, 'base64'), version: row.iconVersion };
   }
 
-  async preview(siteUrl: string): Promise<ProviderIconPreviewResponse> {
-    const icon = await this.icons.fetch(siteUrl);
-    return { iconDataUrl: icon ? `data:${icon.type};base64,${icon.data.toString('base64')}` : null };
+  async preview(siteUrl: string, iconUrl?: string | null): Promise<ProviderIconPreviewResponse> {
+    const icon = iconUrl ? await this.icons.fetchDirect(iconUrl) : await this.icons.fetch(siteUrl);
+    return {
+      iconDataUrl: icon ? `data:${icon.type};base64,${icon.data.toString('base64')}` : null,
+      sourceUrl: icon?.sourceUrl ?? null,
+    };
   }
 
   async serversOf(id: string): Promise<Array<{ id: string; name: string }>> {

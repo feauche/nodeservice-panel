@@ -108,6 +108,64 @@ describe('ProvidersPage', () => {
     ).toHaveLength(2);
   });
 
+  it('ручная ссылка на иконку: превью по ней, сохраняется; в «Изменить» поле заполнено источником', async () => {
+    renderPage(ProvidersPage, '/servers/providers', ['/servers']);
+    await screen.findByRole('list', { name: 'Провайдеры' });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Добавить провайдера' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Новый провайдер' });
+    await user.type(within(dialog).getByLabelText('Название'), '4VPS');
+    await user.type(within(dialog).getByLabelText('Сайт'), '4vps.su');
+    await waitFor(() =>
+      expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('на сайте иконки нет'),
+    );
+    // поле ссылки скрыто из порядка табуляции, пока не раскрыто
+    expect(within(dialog).getByLabelText('Ссылка на иконку')).toHaveAttribute('tabindex', '-1');
+    await user.click(within(dialog).getByRole('button', { name: 'Указать ссылку' }));
+    expect(within(dialog).getByRole('button', { name: 'Скрыть ссылку' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    await user.type(within(dialog).getByLabelText('Ссылка на иконку'), '4vps.su/assets/img/favicon_news.svg');
+    await waitFor(() =>
+      expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('по ссылке — нашли'),
+    );
+    await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    const created = mockProviders.items.find((p) => p.name === '4VPS');
+    expect(created?.iconUrl).toBe('https://4vps.su/assets/img/favicon_news.svg');
+    expect(created?.hasIcon).toBe(true);
+    const card = screen.getByTestId('provider-card');
+    expect(within(card).getByText(/Иконка по ссылке: 4vps\.su\/assets/)).toBeInTheDocument();
+
+    // «Изменить»: ссылка уже в поле, поле раскрыто; очистка возвращает автопоиск
+    await user.click(within(card).getByRole('button', { name: 'Изменить' }));
+    const edit = await screen.findByRole('dialog', { name: 'Изменить провайдера' });
+    const link = within(edit).getByLabelText('Ссылка на иконку');
+    expect(link).toHaveValue('https://4vps.su/assets/img/favicon_news.svg');
+    expect(link).not.toHaveAttribute('tabindex', '-1');
+    expect(within(edit).getByTestId('provider-icon-state')).toHaveTextContent('по ручной ссылке');
+    await user.clear(link);
+    expect(within(edit).getByText('Пусто — панель найдёт иконку на сайте сама.')).toBeInTheDocument();
+    await user.click(within(edit).getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(mockProviders.items.find((p) => p.name === '4VPS')?.iconUrl).toBeNull();
+  });
+
+  it('«Изменить» у провайдера с найденной иконкой показывает адрес источника, без правок режим не меняется', async () => {
+    renderPage(ProvidersPage, '/servers/providers', ['/servers']);
+    const card = await screen.findByTestId('provider-card');
+    expect(within(card).getByText(/Иконка с сайта: aeza\.net\/favicon\.ico/)).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(within(card).getByRole('button', { name: 'Изменить' }));
+    const edit = await screen.findByRole('dialog', { name: 'Изменить провайдера' });
+    expect(within(edit).getByLabelText('Ссылка на иконку')).toHaveValue('https://aeza.net/favicon.ico');
+    expect(within(edit).getByText(/Найдена на сайте автоматически/)).toBeInTheDocument();
+    await user.click(within(edit).getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(mockProviders.items[0]?.iconUrl).toBeNull();
+  });
+
   it('пустой справочник: подсказка и кнопка добавления', async () => {
     mockProviders.items = [];
     renderPage(ProvidersPage, '/servers/providers', ['/servers']);
