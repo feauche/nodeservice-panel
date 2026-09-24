@@ -5,10 +5,9 @@ import {
   INCIDENT_KIND_META,
   type Incident,
   type IncidentStatus,
-  NODE_STATE_LABELS,
 } from '@nodeservice/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { ArrowLeftIcon, CheckIcon, Loader2Icon, SparklesIcon, Trash2Icon } from 'lucide-react';
+import { ArrowLeftIcon, CheckIcon, SparklesIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -39,8 +38,9 @@ const STATUS_PILL: Record<IncidentStatus, { tone: 'ok' | 'warn' | 'crit' | 'mute
   resolved: { tone: 'ok', label: 'Решён' },
 };
 const SEV_LABEL: Record<Incident['severity'], string> = { crit: 'Критично', warn: 'Внимание', info: 'Инфо' };
+/** Кнопки шапки: одна высота, одна рамка, одинаковые отступы — ряд читается как один блок. */
 const BTN =
-  'inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3.5 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-default disabled:opacity-50';
+  'inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3.5 text-[12.5px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-default disabled:opacity-50';
 
 /**
  * Инцидент как страница-кейс (витрина v3, B1): шапка с действиями, слева хронология и попытки,
@@ -126,68 +126,59 @@ export function IncidentCasePage({ id }: { id: string }) {
       </Link>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-surface">
-        {/* Шапка кейса */}
-        <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
+        {/* Шапка кейса: слева название и мета, справа один ряд кнопок одной высоты */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-3 border-b border-border px-5 py-4">
           <span
             className={cn(
-              'size-2.5 flex-none rounded-full',
+              'mt-[7px] size-2.5 flex-none self-start rounded-full',
               inc.severity === 'crit' ? 'bg-crit' : inc.severity === 'warn' ? 'bg-warn' : 'bg-brand',
             )}
             aria-hidden="true"
           />
-          <div className="min-w-0 flex-1 basis-[280px]">
-            <h2 className="truncate font-heading text-[17px] font-bold tracking-[-0.01em]">{inc.title}</h2>
-            <p className="mt-0.5 text-[12.5px] text-text-3">
-              Открыт {formatWhen(inc.openedAt)} · {inc.status === 'resolved' ? 'длился' : 'длится'}{' '}
-              {durationText(inc, now).replace('…', '')} · {meta.component} · {SEV_LABEL[inc.severity]}
+          <div className="min-w-0 flex-1 basis-[320px]">
+            <h2 className="font-heading text-[17px] leading-[1.25] font-bold tracking-[-0.02em]">
+              {inc.title}
+            </h2>
+            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[12.5px] text-text-3">
+              <Pill tone={status.tone}>{status.label}</Pill>
+              <span>
+                Открыт {formatWhen(inc.openedAt)} · {inc.status === 'resolved' ? 'длился' : 'длится'}{' '}
+                {durationText(inc, now).replace('…', '')} · {meta.component} · {SEV_LABEL[inc.severity]}
+              </span>
             </p>
           </div>
-          <Pill tone={status.tone}>{status.label}</Pill>
-          {canAct && inc.proposal && inc.proposal.level !== 'T3' && !running && (
-            <button
-              type="button"
-              disabled={run.isPending}
-              onClick={() => void doRun(inc.proposal?.action ?? '')}
-              className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] bg-cta px-3.5 text-[12.5px] font-semibold text-cta-foreground hover:bg-(--ns-cta-hover) disabled:opacity-50"
-            >
-              {run.isPending ? (
-                <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />
-              ) : (
+          <div className="flex flex-none flex-wrap items-center gap-2">
+            {inc.status === 'open' && (
+              <button
+                type="button"
+                disabled={ack.isPending}
+                onClick={() => void ack.mutateAsync(inc.id)}
+                className={BTN}
+              >
+                Взять в работу
+              </button>
+            )}
+            {inc.status !== 'resolved' && (
+              <button
+                type="button"
+                disabled={resolve.isPending}
+                onClick={() => setConfirmResolve(true)}
+                className={BTN}
+              >
                 <CheckIcon className="size-3.5" aria-hidden="true" />
-              )}
-              Подтвердить: {actionMeta(inc.proposal.action).title.toLowerCase()}
-            </button>
-          )}
-          {inc.status === 'open' && (
+                Закрыть
+              </button>
+            )}
             <button
               type="button"
-              disabled={ack.isPending}
-              onClick={() => void ack.mutateAsync(inc.id)}
-              className={BTN}
+              disabled={remove.isPending}
+              onClick={() => setConfirmDelete(true)}
+              className={cn(BTN, 'hover:border-crit/40 hover:bg-crit-soft hover:text-crit')}
             >
-              Взять в работу
+              <Trash2Icon className="size-3.5" aria-hidden="true" />
+              Удалить
             </button>
-          )}
-          {inc.status !== 'resolved' && (
-            <button
-              type="button"
-              disabled={resolve.isPending}
-              onClick={() => setConfirmResolve(true)}
-              className={BTN}
-            >
-              Закрыть
-            </button>
-          )}
-          <button
-            type="button"
-            disabled={remove.isPending}
-            onClick={() => setConfirmDelete(true)}
-            aria-label="Удалить инцидент"
-            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] px-3 text-[12.5px] font-medium text-text-3 transition-colors hover:bg-crit-soft hover:text-crit disabled:opacity-50"
-          >
-            <Trash2Icon className="size-3.5" aria-hidden="true" />
-            Удалить
-          </button>
+          </div>
         </div>
 
         <div className="grid md:grid-cols-[minmax(0,1fr)_300px]">
@@ -219,27 +210,26 @@ export function IncidentCasePage({ id }: { id: string }) {
                 busy={run.isPending}
               />
             )}
-            <div className="rounded-[12px] border border-dashed border-brand/40 bg-brand-soft/40 px-3.5 py-3 text-[12.5px] text-text-2">
-              <span className="inline-flex items-center gap-1.5 font-semibold text-brand">
-                <SparklesIcon className="size-3.5" aria-hidden="true" />
-                Анализ
-              </span>{' '}
-              — здесь нейросеть объяснит причину по логам ноды и сигналам агента и предложит действие. Пока не
-              подключено.
+            <div className="flex items-start gap-2.5 rounded-[12px] border border-border bg-surface-2/40 px-3.5 py-3 text-[12.5px] leading-normal text-text-2">
+              <SparklesIcon className="mt-[2px] size-3.5 flex-none text-brand" aria-hidden="true" />
+              <span>
+                <b className="font-semibold text-foreground">Анализ.</b> Здесь нейросеть объяснит причину по
+                логам ноды и сигналам агента и предложит действие. Раздел пока не подключён.
+              </span>
             </div>
           </div>
 
-          {/* Правая колонка */}
-          <aside className="flex flex-col gap-5 bg-bg-2 px-5 py-4">
+          {/* Правая колонка: короткие значения, цепочка списком — ничего не переносится «в кашу» */}
+          <aside className="flex flex-col gap-5 border-t border-border bg-bg-2 px-5 py-4 md:border-t-0">
             <section>
-              <h3 className="mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
+              <h3 className="mb-2.5 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
                 Сигналы в момент сбоя
               </h3>
               {inc.snapshot ? (
                 <dl className="text-[12.5px]">
                   <Kv
                     k="Контейнер ноды"
-                    v={inc.snapshot.node ? NODE_STATE_LABELS[inc.snapshot.node] : 'не проверялся'}
+                    v={nodeShort(inc.snapshot.node)}
                     crit={inc.snapshot.node === 'stopped'}
                   />
                   <Kv
@@ -252,40 +242,51 @@ export function IncidentCasePage({ id }: { id: string }) {
                   <Kv k="Диск" v={pct(inc.snapshot.disk)} />
                 </dl>
               ) : (
-                <p className="text-[12.5px] text-text-3">
+                <p className="text-[12.5px] leading-snug text-text-3">
                   Снимок сигналов не сохранился: инцидент старше этой возможности.
                 </p>
               )}
             </section>
             <section>
-              <h3 className="mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
+              <h3 className="mb-2.5 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
                 Правило
               </h3>
               {rule ? (
-                <p className="text-[12.5px] leading-snug text-text-2">
-                  {rule.chain.length === 0 ? (
-                    'Панель ничего не может сделать без доступа — только уведомление.'
-                  ) : (
-                    <>
+                rule.chain.length === 0 ? (
+                  <p className="text-[12.5px] leading-snug text-text-2">
+                    Панель ничего не может сделать без доступа — только уведомление.
+                  </p>
+                ) : (
+                  <>
+                    <ol className="flex flex-col gap-1.5 text-[12.5px]">
                       {rule.chain.map((c, i) => (
-                        <span key={c.key}>
-                          {i > 0 && ' → '}
-                          {c.title} <LevelChip level={c.level} />
-                        </span>
+                        <li key={c.key} className="flex items-center gap-2">
+                          <span className="grid size-[18px] flex-none place-items-center rounded-[5px] bg-surface-3 text-[10.5px] font-bold text-text-3 tabular-nums">
+                            {i + 1}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-text-2">{c.title}</span>
+                          <LevelChip level={c.level} />
+                        </li>
                       ))}
-                      . Политика: {AUTOFIX_POLICY_LABELS[rule.policy].toLowerCase()}.
-                    </>
-                  )}{' '}
-                  <Link to="/incidents/autofix" className="text-brand hover:underline">
-                    Изменить
-                  </Link>
-                </p>
+                    </ol>
+                    <div className="mt-2.5 flex items-center gap-2 border-t border-border pt-2.5 text-[12.5px]">
+                      <span className="text-text-3">Политика</span>
+                      <span className="font-semibold">{AUTOFIX_POLICY_LABELS[rule.policy]}</span>
+                      <Link
+                        to="/incidents/autofix"
+                        className="ml-auto text-[12px] text-brand hover:underline"
+                      >
+                        Изменить
+                      </Link>
+                    </div>
+                  </>
+                )
               ) : (
-                <Skeleton className="h-[40px] rounded-[8px]" />
+                <Skeleton className="h-[64px] rounded-[8px]" />
               )}
             </section>
             <section>
-              <h3 className="mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
+              <h3 className="mb-2.5 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
                 Похожие
               </h3>
               <p className="text-[12.5px] leading-snug text-text-2">
@@ -383,6 +384,9 @@ export function IncidentCasePage({ id }: { id: string }) {
 
 const plural = (n: number) => (n === 1 ? 'раз' : n < 5 ? 'раза' : 'раз');
 const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v)} %`);
+/** Короткое состояние контейнера — длинная подпись из реестра ломает узкую колонку. */
+const nodeShort = (v: 'running' | 'stopped' | 'none' | null) =>
+  v === 'running' ? 'Работает' : v === 'stopped' ? 'Остановлен' : v === 'none' ? 'Не найден' : '—';
 const agentText = (status: string | null, version: string | null) => {
   if (!status) return '—';
   const label =
@@ -400,9 +404,11 @@ const agentText = (status: string | null, version: string | null) => {
 
 function Kv({ k, v, crit }: { k: string; v: string; crit?: boolean }) {
   return (
-    <div className="flex justify-between gap-3 border-t border-border py-1.5 first:border-t-0">
-      <dt className="text-text-3">{k}</dt>
-      <dd className={cn('m-0 font-semibold tabular-nums', crit && 'text-crit')}>{v}</dd>
+    <div className="flex items-baseline justify-between gap-3 border-t border-border py-[7px] first:border-t-0">
+      <dt className="flex-none text-text-3">{k}</dt>
+      <dd className={cn('m-0 min-w-0 truncate text-right font-semibold tabular-nums', crit && 'text-crit')}>
+        {v}
+      </dd>
     </div>
   );
 }
