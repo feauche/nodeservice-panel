@@ -208,8 +208,15 @@ describe('incidents e2e', () => {
     expect(done.attempts[1]?.log).toContain('du -xh');
     expect(done.status).not.toBe('resolved');
     expect(done.timeline.some((e) => e.action.includes('список получен'))).toBe(true);
-    // цепочка кончилась — дальше руками
-    expect(done.timeline.some((e) => e.result === 'escalate' && e.action.includes('исчерпаны'))).toBe(true);
+    // после осмотра — предложение убрать временные файлы, но только с подтверждением
+    expect(done.proposal).toMatchObject({ action: 'tmp_clean', level: 'T2' });
+
+    // подтверждаем: /tmp чистится, диск всё ещё занят → цепочка кончилась
+    await agent.post(`/api/incidents/${id}/actions/tmp_clean/run`).set(CSRF_HEADER, csrf).expect(202);
+    const after = await settled(id);
+    expect(after.attempts[2]).toMatchObject({ action: 'tmp_clean', status: 'not_helped' });
+    expect(ssh.execLog.some((c) => c.includes('/var/tmp') && c.includes('-mmin +60'))).toBe(true);
+    expect(after.timeline.some((e) => e.result === 'escalate' && e.action.includes('исчерпаны'))).toBe(true);
     await agent.post(`/api/incidents/${id}/resolve`).set(CSRF_HEADER, csrf).expect(200);
   });
 

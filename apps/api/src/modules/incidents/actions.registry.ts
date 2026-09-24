@@ -47,6 +47,22 @@ export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
     postcheck: { kind: 'metric_below', metric: 'disk', marginPct: 5, samples: 1 },
   },
   /** Осмотр (T0): только чтение — где лежат гигабайты. Ничего не удаляет. */
+  /**
+   * Чистка временных каталогов (T2, с подтверждением). Только /tmp и /var/tmp, только файлы старше
+   * часа — то, что создаётся прямо сейчас, не трогаем. Сокеты и каталоги остаются на месте.
+   */
+  tmp_clean: {
+    // awk — в одинарных кавычках, иначе внутренний sh подставит вместо $4 пустой параметр.
+    command: SH(
+      "before=$(df -P / | awk 'NR==2{print $4}'); " +
+        'find /tmp /var/tmp -xdev -mindepth 1 -type f -mmin +60 -delete 2>/dev/null; ' +
+        'find /tmp /var/tmp -xdev -mindepth 1 -type d -empty -delete 2>/dev/null; ' +
+        "after=$(df -P / | awk 'NR==2{print $4}'); " +
+        'echo "Освобождено: $(( (after - before) / 1024 )) МБ"; true',
+    ),
+    precheck: ['ssh_ok', 'no_other_action'],
+    postcheck: { kind: 'metric_below', metric: 'disk', marginPct: 5, samples: 1 },
+  },
   disk_inspect: {
     command: SH(
       'echo "== Самые тяжёлые каталоги =="; du -xh / --max-depth=2 2>/dev/null | sort -h | tail -20; ' +
