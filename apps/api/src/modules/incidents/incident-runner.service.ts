@@ -49,7 +49,8 @@ const T = TEST
       pollMs: 20_000,
       /** Быстрые проверки по SSH (процесс, df) — не ждём следующую метрику агента. */
       probeMs: 5_000,
-      diskTimeoutMs: 90_000,
+      /** df показывает освобождение сразу — ждать полторы минуты незачем: три замера по 5 с. */
+      diskTimeoutMs: 16_000,
       agentTimeoutMs: 120_000,
       xrayTimeoutMs: 60_000,
       execTimeoutMs: 180_000,
@@ -192,6 +193,14 @@ export class IncidentRunnerService implements OnModuleInit {
       ],
     });
     if (row.serverId && this.busy.get(row.serverId) === incidentId) this.busy.delete(row.serverId);
+  }
+
+  /** Взять фоновую задачу под присмотр: `settle()` дождётся и её. */
+  private track(p: Promise<void>): void {
+    const job = p.finally(() => {
+      this.inflight.delete(job);
+    });
+    this.inflight.add(job);
   }
 
   /** Дождаться всех идущих попыток — для тестов и корректного выключения. */
@@ -373,6 +382,14 @@ export class IncidentRunnerService implements OnModuleInit {
       return;
     }
     await this.step(incidentId, attemptId, 'action', 'ok', act.note);
+    if (action.level === 'T0') {
+      // Осмотр: ничего не меняли, пост-проверять нечего — результат виден в выводе попытки.
+      await this.finish(incidentId, attemptId, 'done', ['postcheck', 'rollback']);
+      await this.repo.appendEvent(incidentId, ev(by, `${action.title}: список получен`, 'notify', 'T0'));
+      await this.auditAttempt(row0, key, by, 'done', act.note);
+      await this.escalate(incidentId, key, by, `${action.title}: список получен`);
+      return;
+    }
     await this.repo.appendEvent(incidentId, ev(by, `Выполнено: ${action.title}`, 'applied', action.level));
 
     // 3. Пост-проверка
@@ -638,18 +655,25 @@ export class IncidentRunnerService implements OnModuleInit {
       );
       return;
     }
-    if (by === 'auto' && action.level === 'T1' && autofixActive(cfg) && policy === 'auto') {
+    // Осмотр (T0) запускаем сами всегда, кроме «Наблюдать»: он только читает и экономит вам заход по SSH.
+    if (
+      action.level === 'T0' ||
+      (by === 'auto' && action.level === 'T1' && autofixActive(cfg) && policy === 'auto')
+    ) {
       await this.repo.appendEvent(
         incidentId,
-        ev('auto', `${reason} — следующий шаг: ${action.title}`, 'escalate', 'T1'),
+        ev('auto', `${reason} — следующий шаг: ${action.title}`, 'escalate', action.level),
       );
       // Цепочка продолжается сама: занятость сервера снимет finally предыдущего запуска чуть позже,
-      // поэтому стартуем после него.
-      setTimeout(() => {
-        void this.start(incidentId, next, 'auto').catch((err) =>
-          this.log.warn(`цепочка ${incidentId}: ${(err as Error).message}`),
-        );
-      }, 0);
+      // поэтому стартуем после него. Задачу держим в inflight — иначе `settle()` решит, что всё кончилось.
+      this.track(
+        (async () => {
+          await sleep(0);
+          await this.start(incidentId, next, 'auto').catch((err) =>
+            this.log.warn(`цепочка ${incidentId}: ${(err as Error).message}`),
+          );
+        })(),
+      );
       return;
     }
     await this.propose(row, next, reason);

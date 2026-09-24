@@ -123,14 +123,15 @@ export const INCIDENT_ACTIONS = [
   {
     key: 'disk_inspect',
     title: 'Найти, что занимает диск',
-    level: 'T3',
+    /** Только чтение: панель выполняет сама и показывает список — решение, что удалять, за вами. */
+    level: 'T0',
     kinds: ['disk_high'] as IncidentKind[],
-    summary: 'du -xh / --max-depth=2 2>/dev/null | sort -h | tail -20',
+    summary: 'du -xh / --max-depth=2 | sort -h | tail -20, du -sh /tmp/* /var/log/*',
     consequence: null,
-    preconditions: [],
+    preconditions: ['SSH ключом панели отвечает'],
     postcheck: '—',
     rollbackNote: null,
-    terminal: true,
+    terminal: false,
   },
   {
     key: 'reboot',

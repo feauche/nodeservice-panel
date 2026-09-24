@@ -148,8 +148,8 @@ describe('incidents e2e', () => {
     const metrics = app.get(IncidentMetricsService);
     metrics.setForTest(serverId, { disk: 94 });
     const before = ssh.execLog.length;
-    // T3 панель не выполняет
-    await agent.post(`/api/incidents/${id}/actions/disk_inspect/run`).set(CSRF_HEADER, csrf).expect(400);
+    // действие не из этого вида инцидента — 400
+    await agent.post(`/api/incidents/${id}/actions/node_up/run`).set(CSRF_HEADER, csrf).expect(400);
     const started = incidentSchema.parse(
       (await agent.post(`/api/incidents/${id}/actions/free_disk/run`).set(CSRF_HEADER, csrf).expect(202))
         .body,
@@ -182,6 +182,35 @@ describe('incidents e2e', () => {
     );
     expect(audit.items.some((e) => e.action === 'incident.autofix')).toBe(true);
     expect(audit.items.some((e) => e.action === 'incident.opened')).toBe(true);
+  });
+
+  it('осмотр T0 «Найти, что занимает диск» выполняется сам, когда чистка не помогла', async () => {
+    const db = app.get<Db>(DB);
+    await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
+    const repo = app.get(IncidentsRepository);
+    const opened = await repo.open({
+      serverId,
+      serverName: 'inc-host',
+      kind: 'disk_high',
+      severity: 'warn',
+      title: 'Диск заполняется · inc-host',
+      detail: 'Диск держится выше порога.',
+      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+    });
+    const id = opened?.id ?? '';
+    // диск не падает: чистка не поможет
+    app.get(IncidentMetricsService).setForTest(serverId, { disk: 94 });
+    await agent.post(`/api/incidents/${id}/actions/apt_clean/run`).set(CSRF_HEADER, csrf).expect(202);
+    const done = await settled(id);
+    expect(done.attempts[0]).toMatchObject({ action: 'apt_clean', status: 'not_helped' });
+    // следующий шаг — осмотр: панель выполнила его сама, ничего не спрашивая
+    expect(done.attempts[1]).toMatchObject({ action: 'disk_inspect', level: 'T0', status: 'done' });
+    expect(done.attempts[1]?.log).toContain('du -xh');
+    expect(done.status).not.toBe('resolved');
+    expect(done.timeline.some((e) => e.action.includes('список получен'))).toBe(true);
+    // цепочка кончилась — дальше руками
+    expect(done.timeline.some((e) => e.result === 'escalate' && e.action.includes('исчерпаны'))).toBe(true);
+    await agent.post(`/api/incidents/${id}/resolve`).set(CSRF_HEADER, csrf).expect(200);
   });
 
   it('не помогло → следующий шаг T3 (только вручную); «Да» на T2 помогает; пред-проверка не пройдена → понижение до T2', async () => {

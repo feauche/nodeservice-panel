@@ -42,6 +42,17 @@ export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
     precheck: ['agent_online', 'disk_not_full', 'no_other_action'],
     postcheck: { kind: 'metric_below', metric: 'disk', marginPct: 5, samples: 1 },
   },
+  /** Осмотр (T0): только чтение — где лежат гигабайты. Ничего не удаляет. */
+  disk_inspect: {
+    command: SH(
+      "echo '— самые тяжёлые каталоги —'; du -xh / --max-depth=2 2>/dev/null | sort -h | tail -20; " +
+        "echo; echo '— крупные файлы в /tmp и /var —'; " +
+        "find /tmp /var -xdev -type f -size +200M -printf '%s\t%p\n' 2>/dev/null | sort -rn | head -20 | " +
+        "awk -F'\t' '{printf \"%.1f ГБ\\t%s\\n\", $1/1073741824, $2}'; true",
+    ),
+    precheck: ['ssh_ok'],
+    postcheck: { kind: 'none' },
+  },
   node_up: {
     command: `sh -c '${FIND_NODE.replace(/'/g, "'\\''")}; [ -n "$N" ] || { echo "контейнер ноды не найден"; exit 3; }; docker start "$N" 2>&1'`,
     precheck: ['ssh_ok', 'no_other_action'],
