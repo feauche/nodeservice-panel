@@ -1,13 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/golos-text";
-@import "@fontsource/ibm-plex-sans/400.css";
-@import "@fontsource/ibm-plex-sans/500.css";
-@import "@fontsource/ibm-plex-sans/600.css";
-@import "@fontsource/ibm-plex-mono/400.css";
-@import "@fontsource/ibm-plex-mono/500.css";
-@import "@fontsource/ibm-plex-mono/600.css";
+/* Шрифты панели: Wix Madefor Display для заголовков, Wix Madefor Text для текста,
+   JetBrains Mono для команд и адресов. Все переменные (одним файлом на семейство), с кириллицей. */
+@import "@fontsource-variable/wix-madefor-display";
+@import "@fontsource-variable/wix-madefor-text";
+@import "@fontsource-variable/jetbrains-mono";
 
 /*
   Темы NodeService: графит (по умолчанию, без атрибута), светлая, чёрная.
@@ -21,9 +19,9 @@
 );
 
 @theme inline {
-  --font-sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
-  --font-heading: "Golos Text Variable", system-ui, -apple-system, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+  --font-sans: "Wix Madefor Text Variable", system-ui, -apple-system, sans-serif;
+  --font-heading: "Wix Madefor Display Variable", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", monospace;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -341,7 +339,8 @@
   h4 {
     font-family: var(--font-heading);
     font-weight: 600;
-    letter-spacing: -0.01em;
+    /* Wix Madefor Display шире Golos: плотнее трекинг, чтобы длинные имена серверов не расползались. */
+    letter-spacing: -0.02em;
     text-wrap: balance;
   }
   ::selection {

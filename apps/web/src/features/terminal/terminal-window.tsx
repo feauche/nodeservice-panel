@@ -99,7 +99,7 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
     try {
       term = new Terminal({
         fontFamily:
-          'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+          '"JetBrains Mono Variable", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace',
         fontSize: 12,
         lineHeight: 1.35,
         cursorBlink: true,

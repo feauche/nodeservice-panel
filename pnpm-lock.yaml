@@ -213,13 +213,13 @@ importers:
       '@dnd-kit/utilities':
         specifier: ^3.2.2
         version: 3.2.2(react@19.2.8)
-      '@fontsource-variable/golos-text':
+      '@fontsource-variable/jetbrains-mono':
         specifier: ^5.3.0
         version: 5.3.0
-      '@fontsource/ibm-plex-mono':
+      '@fontsource-variable/wix-madefor-display':
         specifier: ^5.3.0
         version: 5.3.0
-      '@fontsource/ibm-plex-sans':
+      '@fontsource-variable/wix-madefor-text':
         specifier: ^5.3.0
         version: 5.3.0
       '@hookform/resolvers':
@@ -1272,14 +1272,14 @@ packages:
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
 
-  '@fontsource-variable/golos-text@5.3.0':
-    resolution: {integrity: sha512-D+Evz5yqXYh6tsalc537FS+cPDWn2FTdO8j/K1ZZuFAvA7ib6WnusTiihciq7mMnm6GBo6XTlh0JXPrhBsam2g==}
+  '@fontsource-variable/jetbrains-mono@5.3.0':
+    resolution: {integrity: sha512-F32xpS2NsGYoQi2ADSkKTgpJj7ozajsGgDJ8woTnqjmIB+dxDIqImjl4pXZVEExu8UFZ2ndhmX18EBS/hdz3Lw==}
 
-  '@fontsource/ibm-plex-mono@5.3.0':
-    resolution: {integrity: sha512-eTgnZjZEGk1QtD3ZstF+Vclo2HLAni8YMy34/DxllwZvyz1lR/1RF/xTiAquOBO7MvqBx8D2Ig2WCPMVfdZu7Q==}
+  '@fontsource-variable/wix-madefor-display@5.3.0':
+    resolution: {integrity: sha512-Qjo4/iJ7cIhm2cb6X4x5vgv5w5KxXrer2yVwEV6nEARm3roRYQ+AcYgf9S91nX/d52wLbjjv58jlBGzR0a8D0A==}
 
-  '@fontsource/ibm-plex-sans@5.3.0':
-    resolution: {integrity: sha512-CbE4CbbEEZJX860XyUiRpsksXIQR8Rp2XDva2VO53NJox9tVNtusrysd2x5YkUEY3ErQ66W1IiiQL8/wihhw5w==}
+  '@fontsource-variable/wix-madefor-text@5.3.0':
+    resolution: {integrity: sha512-p5zs3NakLybEkOyWMXROb6P9kAyIzsRJXgommBy0QC5RaFTb+Te2OdWikitQ+6KGBPMvACLUEIXgPOBQMK5NUg==}
 
   '@golevelup/nestjs-discovery@5.0.0':
     resolution: {integrity: sha512-NaIWLCLI+XvneUK05LH2idHLmLNITYT88YnpOuUQmllKtiJNIS3woSt7QXrMZ5k3qUWuZpehEVz1JtlX4I1KyA==}
@@ -7586,11 +7586,11 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
-  '@fontsource-variable/golos-text@5.3.0': {}
+  '@fontsource-variable/jetbrains-mono@5.3.0': {}
 
-  '@fontsource/ibm-plex-mono@5.3.0': {}
+  '@fontsource-variable/wix-madefor-display@5.3.0': {}
 
-  '@fontsource/ibm-plex-sans@5.3.0': {}
+  '@fontsource-variable/wix-madefor-text@5.3.0': {}
 
   '@golevelup/nestjs-discovery@5.0.0(@nestjs/common@11.2.3(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1))(@nestjs/core@11.2.3)':
     dependencies:
