@@ -295,7 +295,7 @@ export class IncidentRunnerService implements OnModuleInit {
     if (row.lastAutofixAt && Date.now() - row.lastAutofixAt.getTime() < cfg.autofixCooldownMinutes * 60_000)
       return 'waiting';
     await this.notifications.push({
-      severity: row.severity === 'crit' ? 'crit' : 'warn',
+      severity: 'info',
       title: `${row.title}: чиню автоматически`,
       body: `${row.detail} Запускаю «${action.title}» (T1).`,
       link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },

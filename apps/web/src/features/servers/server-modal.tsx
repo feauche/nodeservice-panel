@@ -40,15 +40,14 @@ import { ProviderSelect } from '@/features/providers/provider-select';
 import { useProviders } from '@/features/providers/providers-api';
 import { formatAgo } from '@/features/security/security-format';
 import { StepUpCancelledError } from '@/features/security/step-up';
-import { NodeWatchSelect, nodeStateLine } from '@/features/servers/node-watch-select';
-import { Pill } from '@/features/settings/settings-ui';
+import { NodeStatePill, NodeWatchSegments } from '@/features/servers/node-watch-select';
 import { useTerminalStore } from '@/features/terminal/terminal-store';
 import { apiErrorMessage, isApiError } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useMediaQuery } from '@/lib/use-media';
 import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
-import { HealthDot, osLine, SshPill } from './server-card';
+import { AgentPill, HealthDot, osLine, SshPill } from './server-card';
 import { JournalTab } from './server-detail/journal-tab';
 import { MaintenanceTab } from './server-detail/maintenance-tab';
 import { MetricsTab } from './server-detail/metrics-tab';
@@ -243,9 +242,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
   );
   const pills = (
     <>
-      <Pill tone={s.agentStatus === 'online' ? 'ok' : s.agentStatus === 'offline' ? 'crit' : 'muted'}>
-        {AGENT_STATUS_LABELS[s.agentStatus]}
-      </Pill>
+      <AgentPill server={s} />
       <SshPill server={s} />
     </>
   );
@@ -700,23 +697,13 @@ function ConnectionTab({ server }: { server: Server }) {
         </div>
       </section>
 
-      {/* Нода: заводить ли инциденты по контейнеру ноды на этом сервере */}
+      {/* Нода: заводить ли инциденты по контейнеру ноды на этом сервере (витрина «Нода», вариант 2) */}
       <section className="rounded-2xl border border-border bg-surface-2/40 p-4">
-        <div className="mb-3 flex items-baseline justify-between gap-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">Нода</h3>
-          <span className="text-[12px] text-text-3">{nodeStateLine({ node: server.node, nodeWatch })}</span>
+          <NodeStatePill server={{ node: server.node, nodeWatch }} />
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field id="sm-node-watch" label="Нода на сервере">
-            <NodeWatchSelect
-              id="sm-node-watch"
-              value={nodeWatch}
-              disabled={busy}
-              onChange={setNodeWatch}
-              className="bg-surface-2"
-            />
-          </Field>
-        </div>
+        <NodeWatchSegments value={nodeWatch} disabled={busy} onChange={setNodeWatch} />
       </section>
 
       {/* Доступ по SSH */}
@@ -841,7 +828,8 @@ function ConnectionTab({ server }: { server: Server }) {
           {errors.form}
         </p>
       )}
-      <div className="mt-auto flex items-center gap-3 border-t border-border pt-4 max-sm:flex-col max-sm:items-stretch">
+      {/* Панель «Сохранить» закреплена у нижнего края прокрутки: кнопка видна всегда (витрина, вариант A) */}
+      <div className="sticky -bottom-4 z-10 -mx-4 -mb-4 mt-auto flex items-center gap-3 border-t border-border bg-surface/90 px-4 py-3.5 backdrop-blur-md max-sm:flex-col max-sm:items-stretch md:-bottom-5 md:-mx-5 md:-mb-5 md:px-5">
         <p className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">
           {endpointChanged
             ? 'Смена адреса или пользователя сбросит отпечаток сервера: он запишется заново при первой проверке.'

@@ -27,6 +27,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useEventsStream } from '@/features/events/use-events-stream';
 import { useOpenIncidentsCount } from '@/features/incidents/incidents-api';
 import { NotificationBell } from '@/features/notifications/notification-bell';
 import { useSecurityOverview } from '@/features/security/security-api';
@@ -415,6 +416,8 @@ interface AppShellProps {
 }
 
 export function AppShell({ title, subtitle, actions, children }: AppShellProps) {
+  // Живой поток: серверы, инциденты и уведомления обновляются в момент изменения, без опроса.
+  useEventsStream();
   // Автоблокировка экрана при бездействии — по политике безопасности.
   const security = useSecurityOverview();
   useIdleLock(security.data?.policy.lockAfterMinutes ?? 0);

@@ -13,7 +13,6 @@ import {
   useClearNotifications,
   useDeleteNotification,
   useNotifications,
-  useNotificationsStream,
   useReadAllNotifications,
 } from './notifications-api';
 
@@ -37,7 +36,6 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const notifications = useNotifications();
-  useNotificationsStream();
   const readAll = useReadAllNotifications();
   const remove = useDeleteNotification();
   const clear = useClearNotifications();
@@ -114,7 +112,7 @@ export function NotificationBell() {
                   <BellIcon className="mx-auto size-6 text-text-3" aria-hidden="true" />
                   <p className="mt-2 text-[13px] font-semibold">Уведомлений нет</p>
                   <p className="mt-0.5 text-[12px] text-text-3">
-                    Сюда попадают всплывашки и события инцидентов.
+                    Сюда попадает только то, что требует внимания: инциденты, сбои, обновления безопасности.
                   </p>
                 </div>
               )}
@@ -130,8 +128,8 @@ export function NotificationBell() {
             <div className="flex items-center gap-2 border-t border-border bg-bg-2 px-3.5 py-2.5 text-[12px] text-text-3">
               <span className="min-w-0 flex-1 truncate">
                 {items.length === 0
-                  ? `Хранятся ${RETENTION_DAYS} дней`
-                  : `${items.length} · хранятся ${RETENTION_DAYS} дней`}
+                  ? `Только важное · хранятся ${RETENTION_DAYS} дней`
+                  : `${items.length} · только важное · ${RETENTION_DAYS} дней`}
               </span>
               <button
                 type="button"

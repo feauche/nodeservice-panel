@@ -78,11 +78,13 @@ export const NODE_STATE_LABELS: Record<NodeState, string> = {
 export const tagsSchema = z.array(tagSchema).max(SERVER_TAGS_MAX, `До ${SERVER_TAGS_MAX} тегов`).default([]);
 
 /* ---------- статусы ---------- */
-export const AGENT_STATUSES = ['not_installed', 'pending', 'online', 'offline'] as const;
+export const AGENT_STATUSES = ['not_installed', 'installing', 'pending', 'online', 'offline'] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
 
 export const AGENT_STATUS_LABELS: Record<AgentStatus, string> = {
   not_installed: 'Агент не установлен',
+  /** Панель ставит агента по SSH прямо сейчас (секунды). */
+  installing: 'Агент устанавливается…',
   pending: 'Ожидает агента',
   online: 'Агент в сети',
   offline: 'Агент не в сети',

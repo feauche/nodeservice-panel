@@ -1,16 +1,4 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Header,
-  HttpCode,
-  type MessageEvent,
-  Param,
-  ParseUUIDPipe,
-  Post,
-  Sse,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   createNotificationRequestSchema,
@@ -20,12 +8,8 @@ import {
   notificationsResponseSchema,
 } from '@nodeservice/shared';
 import { createZodDto } from 'nestjs-zod';
-import { interval, map, merge, Observable } from 'rxjs';
 
-import { NotificationsEvents } from './notifications.events.js';
 import { NotificationsService } from './notifications.service.js';
-
-const SSE_PING_MS = 20_000;
 
 export class NotificationDto extends createZodDto(notificationSchema) {}
 export class NotificationsResponseDto extends createZodDto(notificationsResponseSchema) {}
@@ -35,23 +19,12 @@ export class CreateNotificationRequestDto extends createZodDto(createNotificatio
 @ApiCookieAuth()
 @Controller('notifications')
 export class NotificationsController {
-  constructor(
-    private readonly notifications: NotificationsService,
-    private readonly events: NotificationsEvents,
-  ) {}
+  constructor(private readonly notifications: NotificationsService) {}
 
   /**
    * Живой поток: событие `notification` на каждое новое уведомление (сервер или другая вкладка),
    * `ping` каждые 20 с. Клиент по нему перечитывает колокольчик и инциденты — без ожидания опроса.
    */
-  @Sse('stream')
-  @Header('X-Accel-Buffering', 'no')
-  @ApiOperation({ summary: 'Уведомления: SSE-поток новых записей' })
-  stream(): Observable<MessageEvent> {
-    const live$ = new Observable<Notification>((subscriber) => this.events.on((n) => subscriber.next(n)));
-    const ping$ = interval(SSE_PING_MS).pipe(map((): MessageEvent => ({ type: 'ping', data: '' })));
-    return merge(live$.pipe(map((n): MessageEvent => ({ type: 'notification', data: n }))), ping$);
-  }
 
   @Get()
   @ApiOperation({ summary: 'Центр уведомлений: последние записи, число непрочитанных' })

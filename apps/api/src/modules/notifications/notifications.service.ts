@@ -10,7 +10,7 @@ import {
 
 import { problem } from '../../common/filters/problem-details.filter.js';
 import type { NotificationRow } from '../../infra/db/schema/index.js';
-import { NotificationsEvents } from './notifications.events.js';
+import { EventsService } from '../events/events.service.js';
 import { NotificationsRepository } from './notifications.repository.js';
 
 export interface PushInput {
@@ -25,13 +25,16 @@ export interface PushInput {
  * клиент дублирует свои всплывашки через POST. Ошибка записи уведомления не должна ронять
  * основную операцию — только в лог.
  */
+/** Уровни, которые попадают в колокольчик; ok/info показываются всплывашкой и остаются в Журнале. */
+const IMPORTANT = new Set<NotificationSeverity>(['warn', 'crit']);
+
 @Injectable()
 export class NotificationsService {
   private readonly log = new Logger(NotificationsService.name);
 
   constructor(
     private readonly repo: NotificationsRepository,
-    private readonly events: NotificationsEvents,
+    private readonly events: EventsService,
   ) {}
 
   toDto(row: NotificationRow): Notification {
@@ -53,6 +56,8 @@ export class NotificationsService {
 
   /** Серверное событие: тихо, без исключений наружу. */
   async push(input: PushInput): Promise<void> {
+    // В колокольчик — только то, что требует внимания. Остальное есть в Журнале.
+    if (!IMPORTANT.has(input.severity)) return;
     try {
       const row = await this.repo.insert({
         severity: input.severity,
@@ -61,7 +66,7 @@ export class NotificationsService {
         linkTo: input.link?.to ?? null,
         linkLabel: input.link?.label ?? null,
       });
-      this.events.emit(this.toDto(row));
+      this.events.emit({ type: 'notification', data: this.toDto(row) });
     } catch (err) {
       this.log.warn(`уведомление не записано: ${(err as Error).message}`);
     }
@@ -78,7 +83,7 @@ export class NotificationsService {
       linkLabel: req.link?.label ?? null,
     });
     const dto = this.toDto(row);
-    this.events.emit(dto);
+    this.events.emit({ type: 'notification', data: dto });
     return dto;
   }
 

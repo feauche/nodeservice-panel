@@ -94,6 +94,8 @@
   --animate-modin: ns-modin 0.32s var(--ease-ns);
   --animate-shake: ns-shake 0.36s var(--ease-ns);
   --animate-fade: ns-fade 0.25s var(--ease-ns);
+  /* бегущая полоса под статусом «Агент устанавливается…» */
+  --animate-slide: ns-slide 1.4s ease-in-out infinite;
 
   @keyframes ns-modin {
     from {
@@ -124,6 +126,14 @@
     }
     to {
       background-color: transparent;
+    }
+  }
+  @keyframes ns-slide {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(260%);
     }
   }
   @keyframes ns-fade {

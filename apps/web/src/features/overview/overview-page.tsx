@@ -49,6 +49,7 @@ function healthOf(s: Server, m: OverviewServerMetrics | undefined): { health: He
   }
   if (health === 'warn') {
     if (s.agentStatus === 'not_installed') return { health, reason: 'Агент не установлен' };
+    if (s.agentStatus === 'installing') return { health, reason: 'Агент устанавливается' };
     if (s.agentStatus === 'pending') return { health, reason: 'Ожидает агента' };
     if (s.sshOk === null) return { health, reason: 'SSH ещё не проверялся' };
     if ((m?.cpuPct ?? 0) >= CPU_WARN_PCT) return { health, reason: `CPU ${Math.round(m?.cpuPct ?? 0)}%` };
@@ -381,7 +382,7 @@ export function OverviewPage() {
           title="Трафик парка"
           right={
             <Link to="/servers" className="text-[12.5px] text-brand transition-colors hover:text-foreground">
-              все серверы →
+              Все серверы →
             </Link>
           }
         >

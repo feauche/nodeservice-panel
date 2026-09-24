@@ -1,6 +1,8 @@
 import { isProviderIconServiceUrl, PROVIDER_NOTE_MAX, type Provider } from '@nodeservice/shared';
 import { Link } from '@tanstack/react-router';
 import {
+  ArrowDownAZIcon,
+  ArrowDownWideNarrowIcon,
   ExternalLinkIcon,
   Loader2Icon,
   PencilIcon,
@@ -40,6 +42,8 @@ export function ProvidersPage() {
   const remove = useDeleteProvider();
   const refresh = useRefreshProviderIcon();
   const [q, setQ] = useState('');
+  // По умолчанию сверху те, у кого больше серверов (так отдаёт API); «по имени» — алфавит.
+  const [sort, setSort] = useState<'servers' | 'name'>('servers');
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<Provider | null>(null);
   const [adding, setAdding] = useState(false);
@@ -48,8 +52,11 @@ export function ProvidersPage() {
   const items = providers.data?.items ?? [];
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return needle ? items.filter((p) => `${p.name} ${p.siteHost}`.toLowerCase().includes(needle)) : items;
-  }, [items, q]);
+    const list = needle
+      ? items.filter((p) => `${p.name} ${p.siteHost}`.toLowerCase().includes(needle))
+      : items;
+    return sort === 'name' ? [...list].sort((a, b) => a.name.localeCompare(b.name, 'ru')) : list;
+  }, [items, q, sort]);
   const activeId = (selected && items.some((p) => p.id === selected) ? selected : filtered[0]?.id) ?? null;
   const active = items.find((p) => p.id === activeId) ?? null;
 
@@ -118,6 +125,21 @@ export function ProvidersPage() {
         </div>
         <Button
           type="button"
+          variant="outline"
+          aria-label={sort === 'servers' ? 'Сортировка: по числу серверов' : 'Сортировка: по имени'}
+          title="Сменить сортировку"
+          onClick={() => setSort((v) => (v === 'servers' ? 'name' : 'servers'))}
+          className="h-9 rounded-[10px] bg-surface-2 px-3 text-[12.5px] text-text-2"
+        >
+          {sort === 'servers' ? (
+            <ArrowDownWideNarrowIcon className="size-4" aria-hidden="true" />
+          ) : (
+            <ArrowDownAZIcon className="size-4" aria-hidden="true" />
+          )}
+          {sort === 'servers' ? 'По серверам' : 'По имени'}
+        </Button>
+        <Button
+          type="button"
           onClick={() => setAdding(true)}
           className="h-9 rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover)"
         >
@@ -142,9 +164,11 @@ export function ProvidersPage() {
           </Button>
         </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start">
+        // Витрина «Провайдеры», вариант 1: колонки одной высоты, страница не прокручивается,
+        // список слева и карточка справа живут в собственной прокрутке.
+        <div className="grid gap-4 lg:h-[calc(100dvh-15.5rem)] lg:min-h-[420px] lg:grid-cols-[300px_minmax(0,1fr)]">
           <ul
-            className="flex flex-col overflow-hidden rounded-2xl border border-border bg-surface"
+            className="flex min-h-0 flex-col overflow-y-auto overscroll-contain rounded-2xl border border-border bg-surface"
             aria-label="Провайдеры"
           >
             {filtered.length === 0 && (
@@ -244,7 +268,7 @@ function ProviderCard({
 
   return (
     <section
-      className="flex min-w-0 flex-col rounded-2xl border border-border bg-surface"
+      className="flex min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain rounded-2xl border border-border bg-surface"
       data-testid="provider-card"
     >
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">

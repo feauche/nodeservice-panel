@@ -52,7 +52,7 @@ export function useIncidents(status: IncidentsFilter) {
   return useQuery({
     queryKey: incidentsKeys.list(status),
     queryFn: ({ signal }) => incidentsApi.list(status, signal),
-    refetchInterval: (q) => (hasRunningAttempt(q.state.data?.items) ? 2_000 : 20_000),
+    refetchInterval: (q) => (hasRunningAttempt(q.state.data?.items) ? 2_000 : 60_000),
   });
 }
 
@@ -61,7 +61,7 @@ export function useOpenIncidentsCount(): number {
   const q = useQuery({
     queryKey: incidentsKeys.list('open'),
     queryFn: ({ signal }) => incidentsApi.list('open', signal),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
   return q.data?.counts.open ?? 0;
 }

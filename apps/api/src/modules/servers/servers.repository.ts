@@ -9,10 +9,17 @@ import {
   type ServerRow,
   servers,
 } from '../../infra/db/schema/index.js';
+import { EventsService } from '../events/events.service.js';
+
+/** Поля, смена которых не меняет карточку: живой поток о них молчит (heartbeat агента идёт часто). */
+const SILENT_KEYS = new Set(['agentLastSeenAt', 'lastSshCheckAt', 'updatedAt']);
 
 @Injectable()
 export class ServersRepository {
-  constructor(@Inject(DB) private readonly db: Db) {}
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    private readonly events: EventsService,
+  ) {}
 
   async list(): Promise<ServerRow[]> {
     return this.db.select().from(servers).orderBy(asc(servers.sortOrder), asc(servers.name));
@@ -67,6 +74,7 @@ export class ServersRepository {
   async insert(values: typeof servers.$inferInsert): Promise<ServerRow> {
     const [row] = await this.db.insert(servers).values(values).returning();
     if (!row) throw new Error('Не удалось создать сервер');
+    this.events.emit({ type: 'server', data: { id: row.id } });
     return row;
   }
 
@@ -76,11 +84,14 @@ export class ServersRepository {
       .set({ ...patch, updatedAt: new Date() })
       .where(eq(servers.id, id))
       .returning();
+    if (row && Object.keys(patch).some((k) => !SILENT_KEYS.has(k)))
+      this.events.emit({ type: 'server', data: { id } });
     return row;
   }
 
   async delete(id: string): Promise<boolean> {
     const rows = await this.db.delete(servers).where(eq(servers.id, id)).returning({ id: servers.id });
+    if (rows.length > 0) this.events.emit({ type: 'server', data: { id } });
     return rows.length > 0;
   }
 

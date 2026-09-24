@@ -76,10 +76,12 @@ export function seedProviders(): void {
 }
 
 const withCounts = (): Provider[] =>
-  mockProviders.items.map((p) => ({
-    ...p,
-    serversCount: mockServers.items.filter((s) => s.providerId === p.id).length,
-  }));
+  mockProviders.items
+    .map((p) => ({
+      ...p,
+      serversCount: mockServers.items.filter((s) => s.providerId === p.id).length,
+    }))
+    .sort((a, b) => b.serversCount - a.serversCount || a.name.localeCompare(b.name, 'ru'));
 
 const problem = (status: number, type: string, detail: string, extra: Record<string, unknown> = {}) =>
   HttpResponse.json(

@@ -59,16 +59,12 @@ describe('NotificationBell', () => {
     expect(await screen.findByText('Уведомлений нет')).toBeInTheDocument();
   });
 
-  it('всплывашка клиента попадает в центр уведомлений', async () => {
+  it('всплывашка клиента в центр уведомлений не попадает — там только важное', async () => {
     renderPage(Page, '/');
     await screen.findByTestId('notification-bell');
     const before = mockNotifications.items.length;
     toast.success('Провайдер «Contabo» добавлен', { description: 'иконку подтянем в фоне' });
-    await waitFor(() => expect(mockNotifications.items).toHaveLength(before + 1));
-    expect(mockNotifications.items[0]).toMatchObject({
-      severity: 'ok',
-      title: 'Провайдер «Contabo» добавлен',
-      body: 'иконку подтянем в фоне',
-    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockNotifications.items).toHaveLength(before);
   });
 });

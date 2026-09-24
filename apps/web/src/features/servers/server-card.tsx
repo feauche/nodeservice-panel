@@ -137,16 +137,38 @@ function CardSpark({
   );
 }
 
+/** Статус агента. Пока панель ставит агента по SSH — пульсирующая пилюля (витрина, вариант II). */
+export function AgentPill({ server }: { server: Server }) {
+  if (server.agentStatus === 'installing')
+    return (
+      <span
+        data-testid="agent-installing"
+        className="inline-flex h-[22px] animate-pulse items-center gap-1.5 rounded-full bg-brand-soft px-2.5 text-[11.5px] font-semibold text-brand motion-reduce:animate-none"
+      >
+        <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+        {AGENT_STATUS_LABELS.installing}
+      </span>
+    );
+  return (
+    <Pill tone={server.agentStatus === 'online' ? 'ok' : server.agentStatus === 'offline' ? 'crit' : 'muted'}>
+      {AGENT_STATUS_LABELS[server.agentStatus]}
+    </Pill>
+  );
+}
+
 function StatusPills({ server }: { server: Server }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <Pill
-        tone={server.agentStatus === 'online' ? 'ok' : server.agentStatus === 'offline' ? 'crit' : 'muted'}
-      >
-        {AGENT_STATUS_LABELS[server.agentStatus]}
-      </Pill>
-      <SshPill server={server} />
-      <NodePill server={server} />
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <AgentPill server={server} />
+        <SshPill server={server} />
+        <NodePill server={server} />
+      </div>
+      {server.agentStatus === 'installing' && (
+        <div aria-hidden="true" className="h-[3px] overflow-hidden rounded-full bg-surface-3">
+          <div className="h-full w-2/5 animate-slide rounded-full bg-brand motion-reduce:animate-none" />
+        </div>
+      )}
     </div>
   );
 }

@@ -25,7 +25,10 @@ export class ProvidersRepository {
       this.db.select().from(providers).orderBy(asc(providers.name)),
       this.counts(),
     ]);
-    return rows.map((r) => ({ ...r, serversCount: counts.get(r.id) ?? 0 }));
+    // Сначала те, у кого больше серверов, при равенстве — по имени: рабочие хостеры всегда сверху.
+    return rows
+      .map((r) => ({ ...r, serversCount: counts.get(r.id) ?? 0 }))
+      .sort((a, b) => b.serversCount - a.serversCount || a.name.localeCompare(b.name, 'ru'));
   }
 
   async findById(id: string): Promise<ProviderWithCount | undefined> {

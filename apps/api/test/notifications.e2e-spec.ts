@@ -67,7 +67,7 @@ describe('notifications e2e', () => {
         await agent
           .post('/api/notifications')
           .set(CSRF_HEADER, csrf)
-          .send({ severity: 'ok', title: 'Провайдер «4VPS» добавлен' })
+          .send({ severity: 'warn', title: 'Провайдер «4VPS» добавлен' })
           .expect(201)
       ).body,
     );
@@ -79,6 +79,9 @@ describe('notifications e2e', () => {
       .send({ severity: 'ok', title: '' })
       .expect(400);
 
+    // ok/info в колокольчик не попадают — только «внимание» и «критично» (остальное есть в Журнале)
+    await app.get(NotificationsService).push({ severity: 'ok', title: 'Инцидент закрыт сам' });
+    await app.get(NotificationsService).push({ severity: 'info', title: 'Чиню автоматически' });
     const list = notificationsResponseSchema.parse((await agent.get('/api/notifications').expect(200)).body);
     expect(list.unread).toBe(2);
     expect(list.total).toBe(2);

@@ -51,7 +51,8 @@ export const serversListQuery = queryOptions({
   staleTime: 15_000,
   refetchOnMount: 'always',
   // Агент ставится и подключается в фоне после добавления — статусы должны доезжать без действий пользователя.
-  refetchInterval: 15_000,
+  // Живой поток приносит изменения сразу; опрос — страховка на случай обрыва.
+  refetchInterval: 60_000,
 });
 
 export function useServers() {

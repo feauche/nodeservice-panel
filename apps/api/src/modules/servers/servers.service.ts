@@ -539,8 +539,11 @@ export class ServersService {
     const row = await this.repo.findById(id);
     if (!row) throw serverProblems.notFound();
     const issued = await this.issueEnrollmentToken(id);
-    const session = await this.ssh.connect(await this.storedTarget(row));
+    // Пока идёт установка — карточка показывает «Агент устанавливается…» (по живому потоку).
+    if (row.agentStatus !== 'online') await this.repo.update(id, { agentStatus: 'installing' });
+    let session: Awaited<ReturnType<SshService['connect']>> | undefined;
     try {
+      session = await this.ssh.connect(await this.storedTarget(row));
       const res = await session.exec(issued.installCommand);
       if (res.code !== 0)
         throw serverProblems.sshCommand(
@@ -548,6 +551,7 @@ export class ServersService {
           (res.stderr || res.stdout).slice(-300) || `код ${res.code}`,
         );
     } catch (err) {
+      if (row.agentStatus !== 'online') await this.repo.update(id, { agentStatus: row.agentStatus });
       await this.audit.record({
         action: 'server.agent.install',
         result: 'failed',
@@ -557,7 +561,7 @@ export class ServersService {
       });
       throw err;
     } finally {
-      session.end();
+      session?.end();
     }
     const updated = await this.repo.update(id, {
       agentStatus: row.agentStatus === 'online' ? 'online' : 'pending',

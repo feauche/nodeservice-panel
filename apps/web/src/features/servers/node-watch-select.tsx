@@ -1,58 +1,70 @@
 import { NODE_WATCH_LABELS, NODE_WATCH_MODES, type NodeWatch, type Server } from '@nodeservice/shared';
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Pill } from '@/features/settings/settings-ui';
 import { cn } from '@/lib/utils';
 
-const HINT: Record<NodeWatch, string> = {
-  auto: 'Панель судит только найденный контейнер: нет контейнера — сервер не нода.',
-  on: 'Нода здесь должна быть: остановлена или не найдена — инцидент.',
-  off: 'Сервер без ноды или нода выключена намеренно: инцидентов по ней не будет.',
+const SUB: Record<NodeWatch, string> = {
+  auto: 'судим, если контейнер найден',
+  on: 'нет контейнера — тоже инцидент',
+  off: 'сервер без ноды',
 };
 
-/** Что зонд видел в последний раз, одной строкой для подсказки под полем. */
-export function nodeStateLine(server: Pick<Server, 'node' | 'nodeWatch'>): string {
-  if (server.nodeWatch === 'off') return 'Слежение выключено.';
-  if (server.node === 'running') return 'Сейчас: контейнер найден, работает.';
-  if (server.node === 'stopped') return 'Сейчас: контейнер найден, остановлен.';
-  if (server.node === 'none') return 'Сейчас: контейнер не найден.';
-  return 'Сейчас: ещё не проверяли.';
+const HINT: Record<NodeWatch, string> = {
+  auto: 'Зонд по SSH раз в 15 с. Остановка контейнера — инцидент сразу, автопочинка ждёт 60 с.',
+  on: 'Нода здесь обязана быть: остановлена или не найдена — инцидент сразу.',
+  off: 'Инцидентов по ноде на этом сервере не будет. Для серверов без ноды или когда нода выключена намеренно.',
+};
+
+/** Пилюля «что зонд видел в последний раз» для шапки блока «Нода». */
+export function NodeStatePill({ server }: { server: Pick<Server, 'node' | 'nodeWatch'> }) {
+  if (server.nodeWatch === 'off') return <Pill tone="muted">слежение выключено</Pill>;
+  if (server.node === 'running') return <Pill tone="ok">контейнер работает</Pill>;
+  if (server.node === 'stopped') return <Pill tone="crit">контейнер остановлен</Pill>;
+  if (server.node === 'none')
+    return <Pill tone={server.nodeWatch === 'on' ? 'crit' : 'muted'}>контейнер не найден</Pill>;
+  return <Pill tone="muted">ещё не проверяли</Pill>;
 }
 
-/** Поле «Нода на сервере»: следить ли за контейнером `*remna*` и заводить ли по нему инциденты. */
-export function NodeWatchSelect({
-  id,
+/**
+ * «Нода на сервере» — три режима одной полосой (витрина «Нода», вариант 2): выбор в один клик,
+ * подпись под каждым режимом, пояснение выбранного под полосой.
+ */
+export function NodeWatchSegments({
   value,
   onChange,
   disabled,
-  className,
 }: {
-  id: string;
   value: NodeWatch;
   onChange: (v: NodeWatch) => void;
   disabled?: boolean;
-  className?: string;
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <Select
-        value={value}
-        disabled={disabled}
-        onValueChange={(v) => {
-          if (v) onChange(v as NodeWatch);
-        }}
-      >
-        <SelectTrigger id={id} aria-label="Нода на сервере" className={cn('h-10 rounded-[10px]', className)}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {NODE_WATCH_MODES.map((m) => (
-            <SelectItem key={m} value={m}>
-              {NODE_WATCH_LABELS[m]}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <p className="text-[12px] leading-snug text-text-3">{HINT[value]}</p>
+    <div>
+      <fieldset className="m-0 flex gap-[3px] rounded-[11px] border border-border bg-surface-2 p-[3px] max-sm:flex-col">
+        <legend className="sr-only">Нода на сервере</legend>
+        {NODE_WATCH_MODES.map((m) => {
+          const on = m === value;
+          return (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={on}
+              disabled={disabled}
+              onClick={() => onChange(m)}
+              className={cn(
+                'flex flex-1 cursor-pointer flex-col items-center gap-[2px] rounded-[8px] px-3 py-2 text-center transition-[background,box-shadow,color] duration-150 disabled:cursor-default disabled:opacity-60',
+                on
+                  ? 'bg-surface text-foreground shadow-[0_0_0_1px_var(--ns-border-2)]'
+                  : 'text-text-2 hover:text-foreground',
+              )}
+            >
+              <span className="text-[12.5px] font-medium">{NODE_WATCH_LABELS[m]}</span>
+              <span className={cn('text-[11px]', on ? 'text-text-2' : 'text-text-3')}>{SUB[m]}</span>
+            </button>
+          );
+        })}
+      </fieldset>
+      <p className="mt-2.5 text-[12px] leading-snug text-text-3">{HINT[value]}</p>
     </div>
   );
 }
