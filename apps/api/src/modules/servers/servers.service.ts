@@ -52,6 +52,8 @@ export class ServersService {
       tags: row.tags ?? [],
       notes: row.notes,
       providerId: row.providerId ?? null,
+      nodeWatch: row.nodeWatch as Server['nodeWatch'],
+      node: row.nodeWatch === 'off' ? null : ((row.nodeState as Server['node']) ?? null),
       facts: {
         hostname: row.hostname,
         os: row.os,
@@ -131,6 +133,7 @@ export class ServersService {
         tags: req.tags,
         notes: req.notes?.trim() ? req.notes.trim() : null,
         providerId: await this.resolveProvider(req.providerId),
+        nodeWatch: req.nodeWatch,
         agentStatus: 'not_installed',
         sshOk: null,
       });
@@ -190,6 +193,7 @@ export class ServersService {
       tags: req.tags,
       notes: req.notes?.trim() ? req.notes.trim() : null,
       providerId: await this.resolveProvider(req.providerId),
+      nodeWatch: req.nodeWatch,
       ...facts,
       hostKeyFp,
       agentStatus: 'not_installed',
@@ -241,6 +245,7 @@ export class ServersService {
       cpuCores: row.cpuCores,
       memoryMb: row.memoryMb,
       hostKeyFp: row.hostKeyFp,
+      nodeWatch: row.nodeWatch,
       // Агент привязан к конкретной записи — копия начинает без него.
       agentStatus: 'not_installed',
       sshOk: row.sshOk,
@@ -343,6 +348,7 @@ export class ServersService {
       ...(patch.tags !== undefined ? { tags: patch.tags } : {}),
       ...(patch.notes !== undefined ? { notes: patch.notes?.trim() ? patch.notes.trim() : null } : {}),
       ...(patch.providerId !== undefined ? { providerId: await this.resolveProvider(patch.providerId) } : {}),
+      ...(patch.nodeWatch !== undefined ? { nodeWatch: patch.nodeWatch } : {}),
       ...(endpointChanged && !patch.auth
         ? { hostKeyFp: null, sshOk: null, lastSshCheckAt: null, lastSshOkAt: null }
         : {}),

@@ -7,6 +7,7 @@ import {
   incidentActionsResponseSchema,
   incidentSchema,
   incidentsListResponseSchema,
+  type ResolveIncidentRequest,
 } from '@nodeservice/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
@@ -22,7 +23,8 @@ export const incidentsApi = {
     api.get(`/incidents/${id}`, incidentSchema, signal),
   acknowledge: (id: string): Promise<Incident> =>
     api.post(`/incidents/${id}/acknowledge`, {}, incidentSchema),
-  resolve: (id: string): Promise<Incident> => api.post(`/incidents/${id}/resolve`, {}, incidentSchema),
+  resolve: (id: string, body: ResolveIncidentRequest = {}): Promise<Incident> =>
+    api.post(`/incidents/${id}/resolve`, body, incidentSchema),
   /** Запуск действия реестра (T1/T2): попытка идёт в фоне, инцидент перечитывается, пока она идёт. */
   run: (id: string, action: ActionKey): Promise<Incident> =>
     api.post(`/incidents/${id}/actions/${action}/run`, {}, incidentSchema),
@@ -96,8 +98,16 @@ export function useDeleteResolvedIncidents() {
 export function useAcknowledgeIncident() {
   return useIncidentAction(incidentsApi.acknowledge);
 }
+/** Ручное закрытие; с «больше не следить за нодой» меняется и сервер — перечитываем и его. */
 export function useResolveIncident() {
-  return useIncidentAction(incidentsApi.resolve);
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & ResolveIncidentRequest) => incidentsApi.resolve(id, body),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: incidentsKeys.all });
+      if (vars.stopNodeWatch) void qc.invalidateQueries({ queryKey: ['servers'] });
+    },
+  });
 }
 
 /** подтверждение предложения или ручной запуск действия. Пароль не спрашивается — решение владельца. */

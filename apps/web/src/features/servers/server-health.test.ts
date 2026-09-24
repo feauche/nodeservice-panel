@@ -13,6 +13,8 @@ const base: Server = {
   tags: [],
   notes: null,
   providerId: null,
+  nodeWatch: 'auto',
+  node: null,
   facts: EMPTY_FACTS,
   hostKeyFingerprint: null,
   agentStatus: 'online',

@@ -47,12 +47,6 @@ export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
     precheck: ['ssh_ok', 'no_other_action'],
     postcheck: { kind: 'node_up' },
   },
-  node_logs: {
-    // T0: только читаем; результат — в лог попытки, инцидент не меняется.
-    command: `sh -c '${FIND_NODE.replace(/'/g, "'\\''")}; [ -n "$N" ] || { echo "контейнер ноды не найден"; exit 3; }; timeout -k 5 30 docker logs --tail 100 "$N" 2>&1 || true'`,
-    precheck: ['ssh_ok'],
-    postcheck: { kind: 'none' },
-  },
   restart_node: {
     command: `sh -c '${FIND_NODE.replace(/'/g, "'\\''")}; [ -n "$N" ] || { echo "контейнер ноды не найден"; exit 3; }; docker restart "$N" 2>&1'`,
     containerCheck: `${FIND_NODE}; docker inspect -f '{{.State.Running}}' "$N" 2>/dev/null`,

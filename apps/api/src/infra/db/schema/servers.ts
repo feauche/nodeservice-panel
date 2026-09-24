@@ -54,6 +54,10 @@ export const servers = pgTable('servers', {
   notes: text('notes'),
   /** Хостер из справочника providers; при удалении провайдера сбрасывается в NULL (миграция 0019). */
   providerId: uuid('provider_id').references(() => providers.id, { onDelete: 'set null' }),
+  /** Слежение за контейнером ноды: auto / on / off (миграция 0027). */
+  nodeWatch: text('node_watch').notNull().default('auto'),
+  /** Последнее состояние контейнера по зонду: running / stopped / none. */
+  nodeState: text('node_state'),
   /* факты (обновляются при каждой успешной проверке SSH) */
   hostname: text('hostname'),
   os: text('os'),

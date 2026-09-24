@@ -65,6 +65,7 @@ export const NODE_FIND =
   "N=$(docker ps -a --format '{{.Names}}|{{.Image}}' 2>/dev/null | awk -F'|' 'tolower($1) ~ /remna/ || tolower($2) ~ /remnawave\\/node/ {print $1; exit}')";
 export const NODE_PROBE = `${NODE_FIND}; [ -n "$N" ] && docker inspect -f '{{.State.Running}}' "$N" 2>/dev/null || echo none`;
 
+const NUL_RE = new RegExp(String.fromCharCode(0), 'g');
 const iso = () => new Date().toISOString();
 
 /** Что сделано с открытым инцидентом: ждём паузу автопочинки, предложили шаг, запустили, ничего. */
@@ -231,8 +232,7 @@ export class IncidentRunnerService implements OnModuleInit {
     };
     const updated = await this.repo.update(incidentId, {
       attempts: [...row.attempts, attempt],
-      // T0 (логи) только смотрит — предложение следующего шага остаётся на месте.
-      ...(action.level === 'T0' ? {} : { proposal: null }),
+      proposal: null,
       lastAutofixAt: new Date(),
       ...(row.status === 'open' && by === 'manual' ? { status: 'acknowledged' } : {}),
     });
@@ -361,13 +361,6 @@ export class IncidentRunnerService implements OnModuleInit {
       return;
     }
     await this.step(incidentId, attemptId, 'action', 'ok', act.note);
-    if (action.level === 'T0') {
-      // Только посмотрели: логи в попытке, инцидент не трогаем.
-      await this.finish(incidentId, attemptId, 'done', ['postcheck', 'rollback']);
-      await this.repo.appendEvent(incidentId, ev(by, `${action.title}: получены`, 'notify', 'T0'));
-      await this.auditAttempt(row0, key, by, 'done', act.note);
-      return;
-    }
     await this.repo.appendEvent(incidentId, ev(by, `Выполнено: ${action.title}`, 'applied', action.level));
 
     // 3. Пост-проверка
@@ -718,7 +711,7 @@ export class IncidentRunnerService implements OnModuleInit {
     status: IncidentAttempt['status'],
     skip: AttemptStepKey[],
   ): Promise<void> {
-    await (this.logChains.get(attemptId) ?? Promise.resolve()).catch(() => undefined);
+    await this.logChains.get(attemptId);
     this.logChains.delete(attemptId);
     await this.patchAttempt(incidentId, attemptId, (a) => ({
       ...a,
@@ -730,17 +723,25 @@ export class IncidentRunnerService implements OnModuleInit {
     }));
   }
 
+  /**
+   * Куски вывода пишутся по очереди. Цепочка никогда не отклоняется: вызовы из onData не ждут её,
+   * а необработанный reject роняет процесс. Вывод чистим от ANSI, нулевых байтов и битого UTF-16 —
+   * jsonb в Postgres такое не принимает.
+   */
   private appendLog(incidentId: string, attemptId: string, chunk: string): Promise<void> {
-    const clean = stripAnsi(chunk);
+    const clean = sanitizeOutput(chunk);
     const prev = this.logChains.get(attemptId) ?? Promise.resolve();
     const next = prev
-      .catch(() => undefined)
       .then(() =>
         this.patchAttempt(incidentId, attemptId, (a) => ({
           ...a,
           log: (a.log + clean).slice(-ATTEMPT_LOG_MAX),
         })),
-      );
+      )
+      .catch((err) => {
+        if (!(err instanceof AttemptAborted))
+          this.log.warn(`лог попытки ${attemptId}: ${(err as Error).message}`);
+      });
     this.logChains.set(attemptId, next);
     return next;
   }
@@ -796,3 +797,6 @@ const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
 const ANSI_RE = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]|${ESC}\\][^${BEL}]*${BEL}|\\r`, 'g');
 const stripAnsi = (s: string) => s.replace(ANSI_RE, '');
+/** Вывод команды для jsonb: без ANSI, без NUL, без одиноких суррогатов. */
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+const sanitizeOutput = (s: string) => stripAnsi(s).replace(NUL_RE, '').replace(LONE_SURROGATE_RE, '');

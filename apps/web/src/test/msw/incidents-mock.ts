@@ -12,6 +12,7 @@ import {
   type IncidentsSettings,
   incidentActionsUpdateSchema,
   incidentsSettingsUpdateSchema,
+  resolveIncidentRequestSchema,
 } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
 import { mockServers } from './servers-mock';
@@ -255,7 +256,7 @@ function runAttempt(inc: Incident, action: ActionKey, by: 'auto' | 'manual'): vo
     log: '',
   };
   inc.attempts = [...inc.attempts, attempt];
-  if (a.level !== 'T0') inc.proposal = null;
+  inc.proposal = null;
   if (inc.status === 'open' && by === 'manual') inc.status = 'acknowledged';
   const step = (i: number, patch: Partial<IncidentAttempt['steps'][number]>) => {
     const s = attempt.steps[i];
@@ -274,15 +275,6 @@ function runAttempt(inc: Incident, action: ActionKey, by: 'auto' | 'manual'): vo
     inc.timeline = [...inc.timeline, ev(0, by, `Выполнено: ${a.title}`, 'applied', a.level)];
   }, t * 2);
   setTimeout(() => {
-    if (a.level === 'T0') {
-      step(2, { status: 'skipped' });
-      step(3, { status: 'skipped' });
-      attempt.status = 'done';
-      attempt.finishedAt = iso(0);
-      attempt.log += 'remnanode  | INFO  xray started\nremnanode  | INFO  listening :443\n';
-      inc.timeline = [...inc.timeline, ev(0, by, `${a.title}: получены`, 'notify', 'T0')];
-      return;
-    }
     const helped = mockIncidents.helps.has(action);
     step(2, {
       status: helped ? 'ok' : 'failed',
@@ -416,9 +408,22 @@ export const incidentsHandlers = [
     }
     return HttpResponse.json(inc);
   }),
-  http.post('/api/incidents/:id/resolve', ({ params }) => {
+  http.post('/api/incidents/:id/resolve', async ({ params, request }) => {
     const inc = mockIncidents.items.find((i) => i.id === params.id);
     if (!inc) return problem(404, 'Инцидент не найден.');
+    const body = resolveIncidentRequestSchema.safeParse(await request.json().catch(() => ({})));
+    const stopWatch = body.success && body.data.stopNodeWatch === true && inc.kind === 'node_down';
+    if (stopWatch) {
+      const srv = mockServers.items.find((s) => s.id === inc.serverId);
+      if (srv) {
+        srv.nodeWatch = 'off';
+        srv.node = null;
+      }
+      inc.timeline = [
+        ...inc.timeline,
+        ev(0, 'manual', 'Слежение за нодой на этом сервере выключено', 'notify'),
+      ];
+    }
     inc.status = 'resolved';
     inc.resolvedAt = iso(0);
     inc.resolvedBy = 'manual';

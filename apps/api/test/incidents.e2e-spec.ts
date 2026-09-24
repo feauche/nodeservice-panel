@@ -319,12 +319,12 @@ describe('incidents e2e', () => {
       .expect(200);
   });
 
-  it('node_down: контейнер остановлен → инцидент; «Поднять контейнер» помог; T0 «Логи ноды» не трогает инцидент', async () => {
+  it('node_down: контейнер остановлен → инцидент; «Поднять контейнер» помог', async () => {
     const db = app.get<Db>(DB);
     await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
     const svc = app.get(IncidentsService);
     // контейнера нет (зонд: none) — не судим
-    await svc.probeNodeState(serverId, undefined);
+    await svc.probeNodeState(serverId, null);
     await svc.evaluate(noMetrics);
     expect(
       incidentsListResponseSchema
@@ -332,7 +332,7 @@ describe('incidents e2e', () => {
         .items.some((i) => i.kind === 'node_down'),
     ).toBe(false);
     // зонд увидел остановленный контейнер → инцидент в тот же момент, без тика
-    await svc.probeNodeState(serverId, false);
+    await svc.probeNodeState(serverId, 'stopped');
     expect(
       incidentsListResponseSchema
         .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
@@ -347,11 +347,11 @@ describe('incidents e2e', () => {
     expect(inc0?.severity).toBe('crit');
     expect(inc0?.proposal).toMatchObject({ action: 'node_up', level: 'T1' });
     // контейнер вернулся сам → инцидент закрывается зондом сразу; упал снова → новый инцидент
-    await svc.probeNodeState(serverId, true);
+    await svc.probeNodeState(serverId, 'running');
     expect(
       incidentSchema.parse((await agent.get(`/api/incidents/${inc0?.id}`).expect(200)).body).status,
     ).toBe('resolved');
-    await svc.probeNodeState(serverId, false);
+    await svc.probeNodeState(serverId, 'stopped');
     await svc.evaluate(noMetrics);
     const inc2 = incidentsListResponseSchema
       .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
@@ -359,23 +359,64 @@ describe('incidents e2e', () => {
     expect(inc2?.id).not.toBe(inc0?.id);
     const inc = inc2;
 
-    // T0 «Логи ноды»: попытка «выполнено», инцидент открыт, предложение на месте
-    await agent.post(`/api/incidents/${inc?.id}/actions/node_logs/run`).set(CSRF_HEADER, csrf).expect(202);
-    const afterLogs = await settled(inc?.id ?? '');
-    expect(afterLogs.attempts[0]).toMatchObject({ action: 'node_logs', level: 'T0', status: 'done' });
-    expect(afterLogs.attempts[0]?.log).toContain('docker logs');
-    expect(afterLogs.status).not.toBe('resolved');
-    expect(afterLogs.proposal).toMatchObject({ action: 'node_up' });
-
     // «Да» на «Поднять контейнер ноды»: зонд видит контейнер запущенным → помогло
     const p = agent.post(`/api/incidents/${inc?.id}/actions/node_up/run`).set(CSRF_HEADER, csrf);
-    svc.recordNodeState(serverId, true);
+    svc.recordNodeState(serverId, 'running');
     await p.expect(202);
     const done = await settled(inc?.id ?? '');
-    expect(done.attempts[1]?.status).toBe('helped');
-    expect(done.attempts[1]?.steps[2]?.note).toContain('контейнер ноды запущен');
+    expect(done.attempts[0]?.status).toBe('helped');
+    expect(done.attempts[0]?.steps[2]?.note).toContain('контейнер ноды запущен');
     expect(done.status).toBe('resolved');
     expect(ssh.execLog.some((c) => c.includes('docker start'))).toBe(true);
+  });
+
+  it('нода на сервере: «Нет, не следить» — остановленный контейнер не инцидент; «Есть» — «не найден» инцидент; галочка при закрытии выключает слежение', async () => {
+    const svc = app.get(IncidentsService);
+    const openNode = async () =>
+      incidentsListResponseSchema
+        .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
+        .items.find((i) => i.kind === 'node_down');
+    await agent
+      .patch(`/api/servers/${serverId}`)
+      .set(CSRF_HEADER, csrf)
+      .send({ nodeWatch: 'off' })
+      .expect(200);
+    await svc.probeNodeState(serverId, 'stopped');
+    expect(await openNode()).toBeUndefined();
+
+    await agent
+      .patch(`/api/servers/${serverId}`)
+      .set(CSRF_HEADER, csrf)
+      .send({ nodeWatch: 'on' })
+      .expect(200);
+    await svc.probeNodeState(serverId, 'none');
+    const inc = await openNode();
+    expect(inc?.detail).toContain('не найден');
+    const srv = serverSchema.parse((await agent.get(`/api/servers/${serverId}`).expect(200)).body);
+    expect(srv.node).toBe('none');
+
+    const resolved = incidentSchema.parse(
+      (
+        await agent
+          .post(`/api/incidents/${inc?.id}/resolve`)
+          .set(CSRF_HEADER, csrf)
+          .send({ stopNodeWatch: true })
+          .expect(200)
+      ).body,
+    );
+    expect(resolved.timeline.some((e) => e.action.includes('Слежение за нодой'))).toBe(true);
+    const srv2 = serverSchema.parse((await agent.get(`/api/servers/${serverId}`).expect(200)).body);
+    expect(srv2.nodeWatch).toBe('off');
+    expect(srv2.node).toBeNull();
+    // слежение выключено — тот же сбой инцидент больше не заводит
+    await svc.probeNodeState(serverId, 'stopped');
+    expect(await openNode()).toBeUndefined();
+    await agent
+      .patch(`/api/servers/${serverId}`)
+      .set(CSRF_HEADER, csrf)
+      .send({ nodeWatch: 'auto' })
+      .expect(200);
+    await svc.probeNodeState(serverId, 'running');
   });
 
   it('ручное закрытие инцидента', async () => {
@@ -403,8 +444,8 @@ describe('incidents e2e', () => {
   /** Попытка «выполняется», которую некому завершить — как после перезапуска панели. */
   const orphanAttempt = (ageMs: number) => ({
     id: crypto.randomUUID(),
-    action: 'node_logs',
-    level: 'T0' as const,
+    action: 'node_up',
+    level: 'T1' as const,
     by: 'manual' as const,
     status: 'running' as const,
     startedAt: new Date(Date.now() - ageMs).toISOString(),
@@ -420,7 +461,7 @@ describe('incidents e2e', () => {
       },
       {
         key: 'action' as const,
-        label: 'Логи ноды',
+        label: 'Поднять контейнер ноды',
         status: 'running' as const,
         startedAt: null,
         finishedAt: null,
@@ -443,7 +484,7 @@ describe('incidents e2e', () => {
         note: null,
       },
     ],
-    log: '$ docker logs',
+    log: '$ docker start',
   });
   const openWithOrphan = async (ageMs: number) => {
     const repo = app.get(IncidentsRepository);
@@ -473,7 +514,7 @@ describe('incidents e2e', () => {
       note: expect.stringContaining('закрыт администратором'),
     });
     expect(resolved.attempts[0]?.steps[2]?.status).toBe('skipped');
-    expect(resolved.timeline.some((e) => e.action.includes('Логи ноды: прервано'))).toBe(true);
+    expect(resolved.timeline.some((e) => e.action.includes('Поднять контейнер ноды: прервано'))).toBe(true);
   });
 
   it('после перезапуска панели осиротевшие попытки закрываются, новое действие снова можно запустить', async () => {

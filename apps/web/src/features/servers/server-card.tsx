@@ -146,8 +146,18 @@ function StatusPills({ server }: { server: Server }) {
         {AGENT_STATUS_LABELS[server.agentStatus]}
       </Pill>
       <SshPill server={server} />
+      <NodePill server={server} />
     </div>
   );
+}
+
+/** Нода на сервере: зелёная «Нода», красная «Нода остановлена / не найдена»; без ноды — ничего. */
+function NodePill({ server }: { server: Server }) {
+  if (server.nodeWatch === 'off') return null;
+  if (server.node === 'running') return <Pill tone="ok">Нода</Pill>;
+  if (server.node === 'stopped') return <Pill tone="crit">Нода остановлена</Pill>;
+  if (server.node === 'none' && server.nodeWatch === 'on') return <Pill tone="crit">Нода не найдена</Pill>;
+  return null;
 }
 
 /** Система и ресурсы одной строкой, ниже — теги (и место под ручку перетаскивания справа). */

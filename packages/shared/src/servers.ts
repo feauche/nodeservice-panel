@@ -53,6 +53,28 @@ export const tagSchema = z
   .min(1)
   .max(24, 'Тег — до 24 символов')
   .regex(/^[\p{L}\p{N}_-]+$/u, 'Тег — буквы, цифры, дефис');
+/**
+ * Нода на сервере: следить ли за контейнером `*remna*`. auto — судим, только если контейнер найден;
+ * on — нода должна быть (нет контейнера — тоже инцидент); off — не следим (сервер без ноды или нода отключена намеренно).
+ */
+export const NODE_WATCH_MODES = ['auto', 'on', 'off'] as const;
+export const nodeWatchSchema = z.enum(NODE_WATCH_MODES);
+export type NodeWatch = z.infer<typeof nodeWatchSchema>;
+export const NODE_WATCH_LABELS: Record<NodeWatch, string> = {
+  auto: 'Определять автоматически',
+  on: 'Есть, следить',
+  off: 'Нет, не следить',
+};
+/** Что зонд видел в последний раз: контейнер работает / остановлен / не найден. */
+export const NODE_STATES = ['running', 'stopped', 'none'] as const;
+export const nodeStateSchema = z.enum(NODE_STATES);
+export type NodeState = z.infer<typeof nodeStateSchema>;
+export const NODE_STATE_LABELS: Record<NodeState, string> = {
+  running: 'контейнер найден, работает',
+  stopped: 'контейнер найден, остановлен',
+  none: 'контейнер не найден',
+};
+
 export const tagsSchema = z.array(tagSchema).max(SERVER_TAGS_MAX, `До ${SERVER_TAGS_MAX} тегов`).default([]);
 
 /* ---------- статусы ---------- */
@@ -121,6 +143,9 @@ export const serverSchema = z.object({
   notes: z.string().nullable(),
   /** Хостер из справочника провайдеров; null — не указан. */
   providerId: z.uuid().nullable(),
+  nodeWatch: nodeWatchSchema,
+  /** Последнее, что видел зонд контейнера; null — ещё не проверяли или слежение выключено. */
+  node: nodeStateSchema.nullable(),
   facts: serverFactsSchema,
   /** SHA256-отпечаток host key (формат OpenSSH: «SHA256:…»). */
   hostKeyFingerprint: z.string().nullable(),
@@ -163,6 +188,7 @@ export const createServerRequestSchema = z.object({
   tags: tagsSchema,
   notes: z.string().trim().max(SERVER_NOTES_MAX).optional(),
   providerId: z.uuid().nullable().optional(),
+  nodeWatch: nodeWatchSchema.default('auto'),
   /**
    * Поставить ключ панели в authorized_keys и дальше ходить только по нему (по умолчанию).
    * false — остаться на своём ключе (для пароля всегда true: пароль не сохраняется).
@@ -185,6 +211,7 @@ export const updateServerRequestSchema = z.object({
   tags: z.array(tagSchema).max(SERVER_TAGS_MAX, `До ${SERVER_TAGS_MAX} тегов`).optional(),
   notes: z.string().trim().max(SERVER_NOTES_MAX).nullable().optional(),
   providerId: z.uuid().nullable().optional(),
+  nodeWatch: nodeWatchSchema.optional(),
   /** Новые доступы SSH: панель проверит их реальным подключением (пароль, как и при добавлении, не сохраняется). */
   auth: sshAuthSchema.optional(),
 });

@@ -29,7 +29,8 @@ export class NodeProbeJob {
     if (this.busy) return;
     this.busy = true;
     try {
-      const rows = (await this.servers.list()).filter((r) => r.sshOk !== false);
+      // Слежение выключено — не тратим SSH-сессию.
+      const rows = (await this.servers.list()).filter((r) => r.sshOk !== false && r.nodeWatch !== 'off');
       // По несколько серверов параллельно: у каждого свой SSH-коннект, ждать по очереди долго.
       const queue = [...rows];
       const worker = async () => {
@@ -37,7 +38,7 @@ export class NodeProbeJob {
           const probe = await this.runner.sshProbe(row.id, NODE_PROBE);
           await this.incidents.probeNodeState(
             row.id,
-            probe === 'true' ? true : probe === 'false' ? false : undefined,
+            probe === 'true' ? 'running' : probe === 'false' ? 'stopped' : probe === 'none' ? 'none' : null,
           );
         }
       };

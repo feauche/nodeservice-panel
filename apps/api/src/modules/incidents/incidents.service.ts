@@ -10,6 +10,8 @@ import {
   type IncidentEvent,
   type IncidentKind,
   type IncidentsListResponse,
+  type NodeState,
+  type ResolveIncidentRequest,
 } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
@@ -120,25 +122,32 @@ export class IncidentsService {
   }
 
   /** Ручное закрытие администратором. */
-  async resolveManual(id: string): Promise<Incident> {
+  async resolveManual(id: string, opts: ResolveIncidentRequest = {}): Promise<Incident> {
     const row0 = await this.repo.findById(id);
     if (!row0) throw problem(HttpStatus.NOT_FOUND, { detail: 'Инцидент не найден.' });
     if (row0.status === 'resolved') return this.toDto(row0);
     // Идущую попытку обрываем (она дописывает хронологию) и перечитываем, чтобы не затереть.
     await this.runner.cancelRunning(id, 'Прервано: инцидент закрыт администратором');
     const row = (await this.repo.findById(id)) ?? row0;
+    // «Больше не следить за нодой на этом сервере»: без этого тот же инцидент откроется снова.
+    const stopWatch = opts.stopNodeWatch === true && row.kind === 'node_down' && row.serverId !== null;
+    if (stopWatch && row.serverId) await this.serversRepo.update(row.serverId, { nodeWatch: 'off' });
     const updated = await this.repo.update(id, {
       status: 'resolved',
       resolvedAt: new Date(),
       resolvedBy: 'manual',
       proposal: null,
-      timeline: [...row.timeline, ev('manual', 'Закрыт администратором', 'resolved')],
+      timeline: [
+        ...row.timeline,
+        ...(stopWatch ? [ev('manual', 'Слежение за нодой на этом сервере выключено', 'notify')] : []),
+        ev('manual', 'Закрыт администратором', 'resolved'),
+      ],
     });
     if (row.serverId) this.exceededSince.delete(`${row.serverId}:${row.kind}`);
     await this.audit.record({
       action: 'incident.resolved',
       target: { type: 'incident', id, display: row.title },
-      metadata: { by: 'manual' },
+      metadata: { by: 'manual', ...(stopWatch ? { stopNodeWatch: true, server: row.serverName } : {}) },
     });
     return this.toDto(updated ?? row);
   }
@@ -165,7 +174,7 @@ export class IncidentsService {
     const deleted = await this.repo.deleteResolved();
     if (deleted > 0)
       await this.audit.record({
-        action: 'incidents.resolved.deleted',
+        action: 'incident.resolved.deleted',
         target: { type: 'incident', id: 'resolved', display: 'Решённые инциденты' },
         metadata: { deleted },
       });
@@ -273,39 +282,51 @@ export class IncidentsService {
   }
 
   /** Зонд контейнера (NodeProbeJob или тест) сообщает состояние; отсюда решаем про инцидент. */
-  recordNodeState(serverId: string, running: boolean | undefined): void {
-    this.metrics.setNodeRunning(serverId, running);
+  recordNodeState(serverId: string, state: NodeState | null): void {
+    this.metrics.setNodeState(serverId, state);
   }
 
   /**
    * Зонд увидел другое состояние контейнера — судим сразу, не дожидаясь тика: инцидент
-   * открывается в момент сбоя, а после возврата контейнера закрывается сам.
+   * открывается в момент сбоя, а после возврата контейнера закрывается сам. Состояние
+   * запоминаем и в записи сервера — для значка на карточке и подсказки в настройке «Нода».
    */
-  async probeNodeState(serverId: string, running: boolean | undefined): Promise<void> {
-    const changed = this.metrics.nodeRunning(serverId) !== running;
-    this.recordNodeState(serverId, running);
+  async probeNodeState(serverId: string, state: NodeState | null): Promise<void> {
+    const changed = (this.metrics.nodeState(serverId) ?? null) !== state;
+    this.recordNodeState(serverId, state);
     if (!changed) return;
     const server = await this.serversRepo.findById(serverId);
-    if (server) await this.evalNode(server);
+    if (!server) return;
+    if ((server.nodeState ?? null) !== state) await this.serversRepo.update(serverId, { nodeState: state });
+    await this.evalNode(server);
   }
 
   /**
-   * `false` — контейнер есть, но не работает → инцидент сразу; `true` → закрываем; `undefined`
-   * (контейнера нет или зонд не ответил) → сервер не судим. Ждать здесь нечего: пауза «вдруг
-   * поднимется само» — у автопочинки (AUTOFIX_GRACE_SECONDS), а не у детекции.
+   * Настройка сервера «Нода»: off — не судим и закрываем открытое; on — нода должна быть, и «контейнер
+   * не найден» тоже сбой; auto — судим только найденный контейнер. Ждать здесь нечего: пауза
+   * «вдруг поднимется само» — у автопочинки (AUTOFIX_GRACE_SECONDS), а не у детекции.
    */
   private async evalNode(server: ServerRow): Promise<void> {
-    const running = this.metrics.nodeRunning(server.id);
-    if (running === undefined) return;
     const existing = await this.repo.findOpen(server.id, 'node_down');
-    if (!running) {
+    const quiet = existing && !existing.attempts.some((a) => a.status === 'running');
+    if (server.nodeWatch === 'off') {
+      if (quiet)
+        await this.autoResolve(existing, 'Слежение за нодой на этом сервере выключено — инцидент закрыт');
+      return;
+    }
+    const state = this.metrics.nodeState(server.id);
+    if (state === undefined) return;
+    const down = state === 'stopped' || (state === 'none' && server.nodeWatch === 'on');
+    if (down) {
       if (!existing)
         await this.openIncident(
           server,
           'node_down',
-          'Контейнер ноды остановлен или упал — нода не работает.',
+          state === 'none'
+            ? 'Контейнер ноды не найден, хотя нода на этом сервере должна быть.'
+            : 'Контейнер ноды остановлен или упал — нода не работает.',
         );
-    } else if (existing && !existing.attempts.some((a) => a.status === 'running')) {
+    } else if (quiet) {
       await this.autoResolve(existing);
     }
   }
@@ -392,18 +413,18 @@ export class IncidentsService {
     });
   }
 
-  private async autoResolve(row: IncidentRow): Promise<void> {
+  private async autoResolve(row: IncidentRow, reason?: string): Promise<void> {
     await this.notifications.push({
       severity: 'ok',
-      title: `${row.title} — проблема исчезла`,
-      body: 'Инцидент закрыт автоматически.',
+      title: reason ? `${row.title} — закрыт` : `${row.title} — проблема исчезла`,
+      body: reason ?? 'Инцидент закрыт автоматически.',
       link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
     });
     await this.repo.update(row.id, {
       status: 'resolved',
       resolvedAt: new Date(),
       resolvedBy: 'auto',
-      timeline: [...row.timeline, ev('auto', 'Проблема исчезла — инцидент закрыт', 'resolved')],
+      timeline: [...row.timeline, ev('auto', reason ?? 'Проблема исчезла — инцидент закрыт', 'resolved')],
     });
     await this.audit.record({
       action: 'incident.resolved',

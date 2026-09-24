@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { NodeState } from '@nodeservice/shared';
 import { VM_METRIC_NAMES } from '@nodeservice/shared';
 
 import { VmReaderService } from '../metrics/vm-reader.service.js';
@@ -23,15 +24,21 @@ export interface ServerMetrics {
 export class IncidentMetricsService {
   private readonly lastKnown = new Map<string, ServerMetrics>();
   /** Состояние контейнера ноды по зонду SSH (NodeProbeJob): true/false; undefined — не проверяли/контейнера нет. */
-  private readonly node = new Map<string, boolean>();
+  /** Состояние контейнера ноды по зонду (в памяти; после старта заполняется первым же зондом). */
+  private readonly node = new Map<string, NodeState>();
 
-  nodeRunning(serverId: string): boolean | undefined {
+  nodeState(serverId: string): NodeState | undefined {
     return this.node.get(serverId);
   }
 
-  setNodeRunning(serverId: string, running: boolean | undefined): void {
-    if (running === undefined) this.node.delete(serverId);
-    else this.node.set(serverId, running);
+  nodeRunning(serverId: string): boolean | undefined {
+    const st = this.node.get(serverId);
+    return st === undefined ? undefined : st === 'running';
+  }
+
+  setNodeState(serverId: string, state: NodeState | null): void {
+    if (state === null) this.node.delete(serverId);
+    else this.node.set(serverId, state);
   }
 
   constructor(private readonly vm: VmReaderService) {}

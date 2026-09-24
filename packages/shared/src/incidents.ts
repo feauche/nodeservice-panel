@@ -95,18 +95,6 @@ export const INCIDENT_ACTIONS = [
     terminal: false,
   },
   {
-    key: 'node_logs',
-    title: 'Логи ноды',
-    level: 'T0',
-    kinds: ['node_down', 'cpu_high', 'mem_high'] as IncidentKind[],
-    summary: 'docker logs --tail 100 remnanode',
-    consequence: null,
-    preconditions: ['SSH ключом панели отвечает'],
-    postcheck: '—',
-    rollbackNote: null,
-    terminal: false,
-  },
-  {
     key: 'restart_node',
     title: 'Перезапустить контейнер ноды',
     level: 'T2',
@@ -177,12 +165,18 @@ export const actionByKey = (key: ActionKey): IncidentAction =>
  * Описание действия для показа, в том числе по ключу, которого в реестре уже нет (старые
  * инциденты в БД): такие показываем как есть, с уровнем T2, чтобы страница не ломалась.
  */
+/** Действия, убранные из реестра: старые попытки и хронология должны остаться читаемыми. */
+const RETIRED_ACTION_TITLES: Record<string, string> = {
+  node_logs: 'Логи ноды',
+  restart_xray: 'Перезапустить Xray',
+};
+
 export function actionMeta(key: string): IncidentAction {
   const known = INCIDENT_ACTIONS.find((a) => a.key === key);
   if (known) return known;
   return {
     key: key as ActionKey,
-    title: key,
+    title: RETIRED_ACTION_TITLES[key] ?? key,
     level: 'T2',
     kinds: [] as IncidentKind[],
     summary: '',
@@ -386,3 +380,7 @@ export const INCIDENTS_SETTINGS_DEFAULTS: IncidentsSettings = {
 
 export const incidentsSettingsUpdateSchema = incidentsSettingsSchema.partial();
 export type IncidentsSettingsUpdate = z.infer<typeof incidentsSettingsUpdateSchema>;
+
+/** Ручное закрытие: для «Контейнер ноды не запущен» можно заодно выключить слежение за нодой на сервере. */
+export const resolveIncidentRequestSchema = z.object({ stopNodeWatch: z.boolean().optional() });
+export type ResolveIncidentRequest = z.infer<typeof resolveIncidentRequestSchema>;

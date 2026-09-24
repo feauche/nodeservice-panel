@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatWhen } from '@/features/audit/audit-format';
 import { useServers } from '@/features/servers/servers-api';
@@ -219,6 +220,9 @@ export function IncidentsPage({ openId }: { openId?: string | undefined } = {}) 
   );
 }
 
+/** Номер попытки среди настоящих починок: наблюдение (T0) не считается. */
+const fixAttempts = (inc: Incident): number => inc.attempts.filter((a) => a.level !== 'T0').length;
+
 /** Сколько секунд автопочинка ещё выжидает по свежему инциденту; null — пауза не идёт. */
 function graceLeftS(inc: Incident, now: number): number | null {
   if (inc.status === 'resolved' || inc.attempts.length > 0 || inc.proposal) return null;
@@ -348,7 +352,9 @@ function IncidentDetails({ incident }: { incident: Incident }) {
   const remove = useDeleteIncident();
   const run = useRunAction();
   const [confirmResolve, setConfirmResolve] = useState(false);
+  const [stopNodeWatch, setStopNodeWatch] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const canStopNodeWatch = incident.kind === 'node_down' && incident.serverId !== null;
   const running = incident.attempts.find((a) => a.status === 'running');
   const lastAttempt = running ?? incident.attempts.at(-1);
   const canAct = incident.status !== 'resolved' && incident.serverId !== null;
@@ -417,19 +423,6 @@ function IncidentDetails({ incident }: { incident: Incident }) {
 
       {incident.status !== 'resolved' && (
         <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-border pt-3.5">
-          {canAct && !running && actionMeta('node_logs').kinds.includes(incident.kind) && (
-            <button
-              type="button"
-              disabled={run.isPending}
-              onClick={() => void doRun('node_logs')}
-              title="Прочитать последние 100 строк docker logs remnanode — только чтение"
-              className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-3.5 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-50"
-            >
-              <TerminalIcon className="size-3.5" aria-hidden="true" />
-              Логи ноды
-              <LevelChip level="T0" />
-            </button>
-          )}
           {incident.status === 'open' && (
             <button
               type="button"
@@ -458,7 +451,7 @@ function IncidentDetails({ incident }: { incident: Incident }) {
             <p className="min-w-0 flex-1 text-[12px] text-text-3">
               Чинилось {lastAttempt.by === 'auto' ? 'автоматически' : 'по вашей команде'}: «
               {actionMeta(lastAttempt.action).title}» <LevelChip level={lastAttempt.level} /> · помогло{' '}
-              {incident.attempts.length === 1 ? 'с первой попытки' : `с попытки ${incident.attempts.length}`}
+              {fixAttempts(incident) === 1 ? 'с первой попытки' : `с попытки ${fixAttempts(incident)}`}
             </p>
           ) : (
             <span className="flex-1" />
@@ -493,16 +486,49 @@ function IncidentDetails({ incident }: { incident: Incident }) {
 
       <ConfirmDialog
         open={confirmResolve}
-        onOpenChange={setConfirmResolve}
+        onOpenChange={(o) => {
+          setConfirmResolve(o);
+          if (!o) setStopNodeWatch(false);
+        }}
         title="Закрыть инцидент?"
-        description="Инцидент будет отмечен как решённый вручную. Если проблема вернётся — панель заведёт новый."
+        description={
+          <>
+            Инцидент будет отмечен как решённый вручную. Если проблема вернётся — панель заведёт новый.
+            {canStopNodeWatch && (
+              <label
+                htmlFor="inc-stop-node-watch"
+                className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-[10px] border border-border bg-surface-2/60 px-3 py-2.5 text-left text-[12.5px] leading-snug text-text-2"
+              >
+                <Checkbox
+                  id="inc-stop-node-watch"
+                  checked={stopNodeWatch}
+                  onCheckedChange={(v) => setStopNodeWatch(v === true)}
+                  className="mt-0.5"
+                  aria-label="Больше не следить за нодой на этом сервере"
+                />
+                <span>
+                  <span className="font-medium text-foreground">
+                    Больше не следить за нодой на этом сервере
+                  </span>
+                  <br />
+                  Для серверов без ноды или когда нода выключена намеренно. Вернуть можно в карточке сервера.
+                </span>
+              </label>
+            )}
+          </>
+        }
         yesLabel="Закрыть"
         loading={resolve.isPending}
         onConfirm={async () => {
           try {
-            await resolve.mutateAsync(incident.id);
+            await resolve.mutateAsync({ id: incident.id, ...(stopNodeWatch ? { stopNodeWatch: true } : {}) });
             setConfirmResolve(false);
-            toast.success('Инцидент закрыт.');
+            setStopNodeWatch(false);
+            toast.success(
+              stopNodeWatch
+                ? 'Инцидент закрыт, за нодой на этом сервере больше не следим.'
+                : 'Инцидент закрыт.',
+            );
           } catch (err) {
             setConfirmResolve(false);
             toast.error(apiErrorMessage(err));

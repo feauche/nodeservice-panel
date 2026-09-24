@@ -8,6 +8,12 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { SHARED_VERSION } from '@nodeservice/shared';
 import { apiReference } from '@scalar/nestjs-api-reference';
+
+// Необработанный reject в фоновой задаче не должен ронять панель целиком — пишем в лог и живём дальше.
+process.on('unhandledRejection', (reason) => {
+  new NestLogger('process').error(`необработанный reject: ${(reason as Error)?.stack ?? String(reason)}`);
+});
+
 import express from 'express';
 import { Logger } from 'nestjs-pino';
 import { cleanupOpenApiDoc } from 'nestjs-zod';

@@ -19,6 +19,7 @@ import {
   incidentSchema,
   incidentsListQuerySchema,
   incidentsListResponseSchema,
+  resolveIncidentRequestSchema,
 } from '@nodeservice/shared';
 import { createZodDto } from 'nestjs-zod';
 
@@ -95,8 +96,9 @@ export class IncidentsController {
   @HttpCode(200)
   @ApiOperation({ summary: 'Закрыть инцидент вручную' })
   @ApiOkResponse({ type: IncidentDto })
-  resolve(@Param('id', ParseUUIDPipe) id: string): Promise<IncidentDto> {
-    return this.incidents.resolveManual(id);
+  resolve(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown): Promise<IncidentDto> {
+    // Тело необязательно: без него — обычное закрытие.
+    return this.incidents.resolveManual(id, resolveIncidentRequestSchema.parse(body ?? {}));
   }
 
   @Post(':id/actions/:action/run')

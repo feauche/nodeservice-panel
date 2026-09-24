@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetMockState } from '@/test/msw/handlers';
 import { mockIncidents } from '@/test/msw/incidents-mock';
+import { mockServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
 import { IncidentsPage } from './incidents-page';
 
@@ -80,25 +81,6 @@ describe('IncidentsPage', () => {
     expect(within(proposal).queryByRole('button', { name: /^Подтвердить:/ })).not.toBeInTheDocument();
   });
 
-  it('«Логи ноды» (T0): попытка «выполнено», вывод в карточке, предложение на месте', async () => {
-    renderPage(IncidentsPage, '/incidents');
-    const user = userEvent.setup();
-    await user.click(await screen.findByText('Высокая нагрузка на CPU · de-fra-01'));
-    await user.click(await screen.findByRole('button', { name: /Логи ноды/ }));
-    await waitFor(
-      () => expect(screen.getByTestId('attempt-block')).toHaveTextContent('Попытка 1 · Логи ноды'),
-      {
-        timeout: 4000,
-      },
-    );
-    await waitFor(() => expect(screen.getByTestId('attempt-block')).toHaveTextContent('выполнено'), {
-      timeout: 4000,
-    });
-    expect(screen.getByTestId('attempt-block')).toHaveTextContent('xray started');
-    expect(screen.getByTestId('proposal-block')).toBeInTheDocument();
-    expect(mockIncidents.items.find((i) => i.kind === 'cpu_high')?.status).not.toBe('resolved');
-  });
-
   it('ручное закрытие через подтверждение', async () => {
     renderPage(IncidentsPage, '/incidents');
     const user = userEvent.setup();
@@ -164,6 +146,30 @@ describe('IncidentsPage', () => {
     ];
     renderPage(IncidentsPage, '/incidents');
     expect(await screen.findByText(/ждём ещё \d+ с — возможно, поднимется само/)).toBeInTheDocument();
+  });
+
+  it('закрытие «Контейнер ноды не запущен» с галочкой выключает слежение за нодой на сервере', async () => {
+    const [base] = mockIncidents.items;
+    if (!base) throw new Error('нет мок-инцидента');
+    mockIncidents.items = [
+      {
+        ...base,
+        id: '7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3c4e',
+        kind: 'node_down',
+        title: 'Контейнер ноды не запущен · nl-ams-02',
+        openedAt: new Date(Date.now() - 600_000).toISOString(),
+        attempts: [],
+        proposal: null,
+      },
+    ];
+    renderPage(IncidentsPage, '/incidents');
+    const user = userEvent.setup();
+    await user.click(await screen.findByText('Контейнер ноды не запущен · nl-ams-02'));
+    await user.click(await screen.findByRole('button', { name: /Закрыть вручную/ }));
+    await user.click(await screen.findByRole('checkbox', { name: /Больше не следить/ }));
+    await user.click(await screen.findByRole('button', { name: 'Закрыть' }));
+    await waitFor(() => expect(mockServers.items.find((s) => s.id === base.serverId)?.nodeWatch).toBe('off'));
+    expect(mockIncidents.items[0]?.status).toBe('resolved');
   });
 
   it('пустое состояние, когда инцидентов нет', async () => {

@@ -51,6 +51,8 @@ function makeServer(patch: Partial<Server>): Server {
     tags: [],
     notes: null,
     providerId: null,
+    nodeWatch: 'auto',
+    node: null,
     facts: { ...FACTS },
     hostKeyFingerprint: MOCK_SSH.fingerprint,
     agentStatus: 'not_installed',
@@ -197,6 +199,7 @@ export const serversHandlers = [
       sshUser: req.sshUser,
       tags: req.tags,
       providerId: req.providerId ?? null,
+      nodeWatch: req.nodeWatch,
       ...(req.verify
         ? {}
         : {
