@@ -21,6 +21,7 @@ import { problem } from '../../common/filters/problem-details.filter.js';
 import type { IncidentRow, ServerRow } from '../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
+import { MaintenanceService } from '../maintenance/maintenance.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ServersRepository } from '../servers/servers.repository.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
@@ -66,6 +67,7 @@ export class IncidentsService {
     private readonly runner: IncidentRunnerService,
     private readonly metrics: IncidentMetricsService,
     private readonly notifications: NotificationsService,
+    private readonly maintenance: MaintenanceService,
   ) {}
 
   toDto(row: IncidentRow): Incident {
@@ -411,6 +413,9 @@ export class IncidentsService {
       },
     });
     if (!row) return;
+    // Проверку обслуживания запускаем сразу: к моменту, когда вы откроете инцидент, в нём уже
+    // видно, сколько занято и что можно убрать.
+    this.recheckMaintenance(server.id, kind);
     // Решаем сразу: предложение шага уходит своим уведомлением, автопочинка выжидает паузу —
     // тогда сообщаем об обнаружении и о том, что ждём. Без цепочки — просто сообщаем.
     const decision = await this.runner.onOpened(row);
@@ -434,6 +439,18 @@ export class IncidentsService {
     });
   }
 
+  /**
+   * Сигналы, по которым полезна свежая проверка обслуживания: она показывает, что именно занимает
+   * место и что можно почистить. Ждать суточного расписания в такой момент бессмысленно.
+   */
+  private static readonly RECHECK_KINDS = new Set<IncidentKind>(['disk_high']);
+
+  /** Проверка обслуживания вне расписания: только чтение, ошибки и занятость игнорируем. */
+  private recheckMaintenance(serverId: string | null, kind: IncidentKind): void {
+    if (!serverId || !IncidentsService.RECHECK_KINDS.has(kind)) return;
+    void this.maintenance.scheduledCheck(serverId).catch(() => undefined);
+  }
+
   private async autoResolve(row: IncidentRow, reason?: string): Promise<void> {
     await this.notifications.push({
       severity: 'ok',
@@ -454,5 +471,7 @@ export class IncidentsService {
       target: { type: 'incident', id: row.id, display: row.title },
       metadata: { by: 'auto' },
     });
+    // Место освободилось — обновим карточку обслуживания, иначе там останется старое «диск 92 %».
+    this.recheckMaintenance(row.serverId, row.kind as IncidentKind);
   }
 }
