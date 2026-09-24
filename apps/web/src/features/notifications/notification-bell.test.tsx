@@ -20,7 +20,7 @@ describe('NotificationBell', () => {
   beforeEach(() => resetMockState({ authenticated: true }));
 
   it('счётчик непрочитанных, список с точками, ссылка на инцидент, прочитано после открытия', async () => {
-    const { router } = renderPage(Page, '/', ['/incidents', '/servers/providers']);
+    const { router } = renderPage(Page, '/', ['/incidents', '/incidents/$id', '/servers/providers']);
     const bell = await screen.findByTestId('notification-bell');
     expect(await screen.findByTestId('notification-badge')).toHaveTextContent('4');
     const user = userEvent.setup();
@@ -38,8 +38,7 @@ describe('NotificationBell', () => {
     await waitFor(() => expect(screen.queryByTestId('notification-badge')).not.toBeInTheDocument());
     // ссылка ведёт в инцидент и закрывает список
     await user.click(within(rows[0] as HTMLElement).getByRole('link', { name: /Открыть инцидент/ }));
-    await waitFor(() => expect(router.state.location.pathname).toBe('/incidents'));
-    expect(router.state.location.search).toMatchObject({ open: expect.any(String) });
+    await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/incidents\/[0-9a-f-]+$/));
   });
 
   it('удалить одно и «Очистить все» через подтверждение', async () => {

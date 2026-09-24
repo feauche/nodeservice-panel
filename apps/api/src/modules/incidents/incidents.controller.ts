@@ -14,8 +14,8 @@ import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 import {
   type ActionKey,
   actionKeySchema,
-  incidentActionsResponseSchema,
-  incidentActionsUpdateSchema,
+  incidentPolicyResponseSchema,
+  incidentPolicyUpdateSchema,
   incidentSchema,
   incidentsListQuerySchema,
   incidentsListResponseSchema,
@@ -29,8 +29,8 @@ import { IncidentsService } from './incidents.service.js';
 export class IncidentsListQueryDto extends createZodDto(incidentsListQuerySchema) {}
 export class IncidentsListResponseDto extends createZodDto(incidentsListResponseSchema) {}
 export class IncidentDto extends createZodDto(incidentSchema) {}
-export class IncidentActionsResponseDto extends createZodDto(incidentActionsResponseSchema) {}
-export class IncidentActionsUpdateDto extends createZodDto(incidentActionsUpdateSchema) {}
+export class IncidentPolicyResponseDto extends createZodDto(incidentPolicyResponseSchema) {}
+export class IncidentPolicyUpdateDto extends createZodDto(incidentPolicyUpdateSchema) {}
 
 @ApiTags('incidents')
 @ApiCookieAuth()
@@ -45,22 +45,22 @@ export class IncidentsController {
     return this.incidents.list(query.status);
   }
 
-  // Статический маршрут раньше `:id`, иначе ParseUUIDPipe отвергнет «actions».
-  @Get('actions')
-  @ApiOperation({ summary: 'Реестр действий автопочинки: уровни, тумблеры, статистика' })
-  @ApiOkResponse({ type: IncidentActionsResponseDto })
-  actions(): Promise<IncidentActionsResponseDto> {
-    return this.incidents.actions();
+  // Статический маршрут раньше `:id`, иначе ParseUUIDPipe отвергнет «policy».
+  @Get('policy')
+  @ApiOperation({ summary: 'Автопочинка: политика по сигналам, цепочки шагов, статистика' })
+  @ApiOkResponse({ type: IncidentPolicyResponseDto })
+  policy(): Promise<IncidentPolicyResponseDto> {
+    return this.incidents.policy();
   }
 
-  @Patch('actions')
+  @Patch('policy')
   @Audit('settings.incidents.updated', {
     target: { type: 'settings', id: 'incidents', display: 'Инциденты' },
   })
-  @ApiOperation({ summary: 'Тумблеры автопочинки: общий и по T1-действиям' })
-  @ApiOkResponse({ type: IncidentActionsResponseDto })
-  updateActions(@Body() body: IncidentActionsUpdateDto): Promise<IncidentActionsResponseDto> {
-    return this.incidents.updateActions(body);
+  @ApiOperation({ summary: 'Автопочинка: общий тумблер, политика по сигналам, пауза' })
+  @ApiOkResponse({ type: IncidentPolicyResponseDto })
+  updatePolicy(@Body() body: IncidentPolicyUpdateDto): Promise<IncidentPolicyResponseDto> {
+    return this.incidents.updatePolicy(body);
   }
 
   @Delete('resolved')

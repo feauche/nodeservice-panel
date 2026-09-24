@@ -76,8 +76,8 @@ const FIELDS: ReadonlyArray<{
   },
 ];
 
-/** Тумблеры по действиям (`actions`) живут на вкладке «Автопочинка» — здесь их не сравниваем и не сбрасываем. */
-const SCALAR_DEFAULTS = (({ actions: _a, ...rest }) => rest)(INCIDENTS_SETTINGS_DEFAULTS);
+/** Политика по сигналам и пауза живут на странице «Автопочинка» — здесь их не сравниваем и не сбрасываем. */
+const SCALAR_DEFAULTS = (({ policy: _p, pausedUntil: _u, ...rest }) => rest)(INCIDENTS_SETTINGS_DEFAULTS);
 const isDefaults = (s: IncidentsSettings) =>
   (Object.keys(SCALAR_DEFAULTS) as Array<keyof typeof SCALAR_DEFAULTS>).every(
     (k) => s[k] === SCALAR_DEFAULTS[k],
@@ -201,8 +201,8 @@ export function IncidentsSettingsPage() {
               <div className="min-w-0 flex-1 basis-[300px]">
                 <div className="text-[13.5px] font-medium">Автопочинка</div>
                 <div className="mt-0.5 text-[12px] leading-normal text-text-3">
-                  Панель сама выполняет T1-действия, включённые на вкладке «Автопочинка» раздела «Инциденты».
-                  По умолчанию выключено — сначала только заводит инцидент.
+                  Панель сама выполняет безопасные шаги для сигналов с политикой «Само». Настроить — в разделе
+                  «Инциденты» → «Автопочинка». По умолчанию выключено — сначала только заводит инцидент.
                 </div>
               </div>
               <Toggle

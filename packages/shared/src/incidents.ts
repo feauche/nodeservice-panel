@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { nodeStateSchema } from './servers.js';
+
 /**
  * Инциденты (этап 8): панель сама замечает проблемы серверов (агент офлайн, SSH недоступен,
  * CPU/память/диск выше порога дольше «времени реакции»), заводит инцидент с таймлайном,
@@ -285,6 +287,17 @@ export const incidentEventSchema = z.object({
 });
 export type IncidentEvent = z.infer<typeof incidentEventSchema>;
 
+/** Сигналы в момент сбоя: метрики агента и состояние контейнера. Ничего нет — null. */
+export const incidentSnapshotSchema = z.object({
+  cpu: z.number().nullable(),
+  mem: z.number().nullable(),
+  disk: z.number().nullable(),
+  node: nodeStateSchema.nullable(),
+  agentStatus: z.string().nullable(),
+  agentVersion: z.string().nullable(),
+});
+export type IncidentSnapshot = z.infer<typeof incidentSnapshotSchema>;
+
 export const incidentSchema = z.object({
   id: z.uuid(),
   serverId: z.uuid().nullable(),
@@ -300,6 +313,8 @@ export const incidentSchema = z.object({
   timeline: z.array(incidentEventSchema),
   attempts: z.array(incidentAttemptSchema),
   proposal: incidentProposalSchema.nullable(),
+  /** Что видел агент в момент открытия — для правой колонки кейса и будущего анализа ИИ. */
+  snapshot: incidentSnapshotSchema.nullable(),
 });
 export type Incident = z.infer<typeof incidentSchema>;
 
@@ -314,40 +329,53 @@ export const incidentsListResponseSchema = z.object({
 });
 export type IncidentsListResponse = z.infer<typeof incidentsListResponseSchema>;
 
-/* ---------- вкладка «Автопочинка»: реестр с тумблерами и статистикой ---------- */
+/* ---------- «Автопочинка»: политика по сигналам (витрина v3, C1) ---------- */
+
+/**
+ * Что панель делает при сигнале: `auto` — безопасные шаги (T1) выполняет сама, остальное предлагает;
+ * `ask` — всё предлагает и ждёт подтверждения; `watch` — только заводит инцидент и уведомляет.
+ */
+export const AUTOFIX_POLICIES = ['auto', 'ask', 'watch'] as const;
+export const autofixPolicySchema = z.enum(AUTOFIX_POLICIES);
+export type AutofixPolicy = z.infer<typeof autofixPolicySchema>;
+export const AUTOFIX_POLICY_LABELS: Record<AutofixPolicy, string> = {
+  auto: 'Само',
+  ask: 'Спросить',
+  watch: 'Наблюдать',
+};
+export const DEFAULT_AUTOFIX_POLICY: AutofixPolicy = 'ask';
 
 export const actionStatsSchema = z.object({
   runs: z.number().int().min(0),
   helped: z.number().int().min(0),
   lastAt: z.iso.datetime().nullable(),
 });
-export const incidentActionInfoSchema = z.object({
-  key: actionKeySchema,
-  title: z.string(),
-  level: z.enum(ACTION_LEVELS),
-  kinds: z.array(z.enum(INCIDENT_KINDS)),
-  summary: z.string(),
-  consequence: z.string().nullable(),
-  preconditions: z.array(z.string()),
-  postcheck: z.string(),
-  rollbackNote: z.string().nullable(),
-  terminal: z.boolean(),
-  /** T1: включено ли авто; для T2/T3 всегда false. */
-  enabled: z.boolean(),
+export const incidentPolicyItemSchema = z.object({
+  kind: z.enum(INCIDENT_KINDS),
+  label: z.string(),
+  component: z.string(),
+  policy: autofixPolicySchema,
+  /** Есть ли в цепочке безопасный шаг, который панель может делать сама. */
+  autoAvailable: z.boolean(),
+  chain: z.array(z.object({ key: actionKeySchema, title: z.string(), level: z.enum(ACTION_LEVELS) })),
   stats: actionStatsSchema,
 });
-export type IncidentActionInfo = z.infer<typeof incidentActionInfoSchema>;
-export const incidentActionsResponseSchema = z.object({
+export type IncidentPolicyItem = z.infer<typeof incidentPolicyItemSchema>;
+export const incidentPolicyResponseSchema = z.object({
   autofixEnabled: z.boolean(),
+  /** Пауза автопочинки (например, на время работ); null — не на паузе. */
+  pausedUntil: z.iso.datetime().nullable(),
   cooldownMinutes: z.number().int(),
-  items: z.array(incidentActionInfoSchema),
+  items: z.array(incidentPolicyItemSchema),
 });
-export type IncidentActionsResponse = z.infer<typeof incidentActionsResponseSchema>;
-export const incidentActionsUpdateSchema = z.object({
+export type IncidentPolicyResponse = z.infer<typeof incidentPolicyResponseSchema>;
+export const incidentPolicyUpdateSchema = z.object({
   autofixEnabled: z.boolean().optional(),
-  actions: z.partialRecord(actionKeySchema, z.boolean()).optional(),
+  policy: z.partialRecord(z.enum(INCIDENT_KINDS), autofixPolicySchema).optional(),
+  /** Поставить на паузу на N минут; 0 — снять паузу. */
+  pauseMinutes: z.number().int().min(0).max(1440).optional(),
 });
-export type IncidentActionsUpdate = z.infer<typeof incidentActionsUpdateSchema>;
+export type IncidentPolicyUpdate = z.infer<typeof incidentPolicyUpdateSchema>;
 
 /* ---------- настройки инцидентов (Настройки → Инциденты) ---------- */
 
@@ -363,8 +391,10 @@ export const incidentsSettingsSchema = z.object({
   autofixEnabled: z.boolean(),
   /** Не повторять автопочинку одного инцидента чаще, чем раз в N минут. */
   autofixCooldownMinutes: z.coerce.number().int().min(1).max(240),
-  /** Какие T1-действия разрешены в авто (включаются по одному после наблюдений). */
-  actions: z.record(z.string(), z.boolean()).default({}),
+  /** Политика по сигналам: само / спросить / наблюдать. Нет записи — «спросить». */
+  policy: z.record(z.string(), autofixPolicySchema).default({}),
+  /** Автопочинка на паузе до этого момента (UTC ISO); null — нет паузы. */
+  pausedUntil: z.iso.datetime().nullable().default(null),
 });
 export type IncidentsSettings = z.infer<typeof incidentsSettingsSchema>;
 
@@ -375,7 +405,8 @@ export const INCIDENTS_SETTINGS_DEFAULTS: IncidentsSettings = {
   diskPct: 85,
   autofixEnabled: false,
   autofixCooldownMinutes: 30,
-  actions: {},
+  policy: {},
+  pausedUntil: null,
 };
 
 export const incidentsSettingsUpdateSchema = incidentsSettingsSchema.partial();

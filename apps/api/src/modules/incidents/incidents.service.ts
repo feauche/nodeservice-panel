@@ -1,14 +1,17 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import {
   AUTOFIX_GRACE_SECONDS,
-  INCIDENT_ACTIONS,
+  type AutofixPolicy,
+  actionByKey,
+  DEFAULT_AUTOFIX_POLICY,
+  INCIDENT_CHAINS,
   INCIDENT_KIND_META,
   INCIDENT_KINDS,
   type Incident,
-  type IncidentActionsResponse,
-  type IncidentActionsUpdate,
   type IncidentEvent,
   type IncidentKind,
+  type IncidentPolicyResponse,
+  type IncidentPolicyUpdate,
   type IncidentsListResponse,
   type NodeState,
   type ResolveIncidentRequest,
@@ -81,6 +84,7 @@ export class IncidentsService {
       timeline: row.timeline,
       attempts: row.attempts,
       proposal: row.proposal ?? null,
+      snapshot: row.snapshot ?? null,
     };
   }
 
@@ -187,53 +191,61 @@ export class IncidentsService {
     return this.toDto(row);
   }
 
-  /** Вкладка «Автопочинка»: реестр с тумблерами и статистикой за STATS_DAYS дней. */
-  async actions(): Promise<IncidentActionsResponse> {
+  /** «Автопочинка»: политика по сигналам, цепочка шагов и статистика за STATS_DAYS дней. */
+  async policy(): Promise<IncidentPolicyResponse> {
     const cfg = await this.settings.get();
     const since = Date.now() - STATS_DAYS * 86_400_000;
     const stats = new Map<string, { runs: number; helped: number; lastAt: string | null }>();
     for (const row of await this.repo.list('all'))
       for (const a of row.attempts) {
         if (new Date(a.startedAt).getTime() < since) continue;
-        const st = stats.get(a.action) ?? { runs: 0, helped: 0, lastAt: null };
+        const st = stats.get(row.kind) ?? { runs: 0, helped: 0, lastAt: null };
         st.runs += 1;
         if (a.status === 'helped') st.helped += 1;
         if (!st.lastAt || a.startedAt > st.lastAt) st.lastAt = a.startedAt;
-        stats.set(a.action, st);
+        stats.set(row.kind, st);
       }
+    const paused =
+      cfg.pausedUntil && new Date(cfg.pausedUntil).getTime() > Date.now() ? cfg.pausedUntil : null;
     return {
       autofixEnabled: cfg.autofixEnabled,
+      pausedUntil: paused,
       cooldownMinutes: cfg.autofixCooldownMinutes,
-      items: INCIDENT_ACTIONS.map((a) => ({
-        key: a.key,
-        title: a.title,
-        level: a.level,
-        kinds: [...a.kinds],
-        summary: a.summary,
-        consequence: a.consequence,
-        preconditions: [...a.preconditions],
-        postcheck: a.postcheck,
-        rollbackNote: a.rollbackNote,
-        terminal: a.terminal,
-        enabled: a.level === 'T1' && cfg.actions[a.key] === true,
-        stats: stats.get(a.key) ?? { runs: 0, helped: 0, lastAt: null },
-      })),
+      items: INCIDENT_KINDS.map((kind) => {
+        const chain = INCIDENT_CHAINS[kind].map((key) => {
+          const a = actionByKey(key);
+          return { key, title: a.title, level: a.level };
+        });
+        return {
+          kind,
+          label: INCIDENT_KIND_META[kind].label,
+          component: INCIDENT_KIND_META[kind].component,
+          policy: (cfg.policy[kind] as AutofixPolicy | undefined) ?? DEFAULT_AUTOFIX_POLICY,
+          autoAvailable: chain.some((c) => c.level === 'T1'),
+          chain,
+          stats: stats.get(kind) ?? { runs: 0, helped: 0, lastAt: null },
+        };
+      }),
     };
   }
 
-  /** Тумблеры вкладки: общий «автопочинка» и по T1-действиям. Пишется через настройки (diff в Журнале). */
-  async updateActions(patch: IncidentActionsUpdate): Promise<IncidentActionsResponse> {
+  /** Политика по сигналам, общий тумблер и пауза. Пишется через настройки (diff в Журнале). */
+  async updatePolicy(patch: IncidentPolicyUpdate): Promise<IncidentPolicyResponse> {
     const cfg = await this.settings.get();
-    const actions = { ...cfg.actions };
-    for (const [k, v] of Object.entries(patch.actions ?? {})) {
-      const meta = INCIDENT_ACTIONS.find((a) => a.key === k);
-      if (meta?.level === 'T1') actions[k] = v;
-    }
+    const policy = { ...cfg.policy, ...(patch.policy ?? {}) };
     await this.settingsService.updateIncidents({
       ...(patch.autofixEnabled !== undefined ? { autofixEnabled: patch.autofixEnabled } : {}),
-      actions,
+      ...(patch.policy ? { policy } : {}),
+      ...(patch.pauseMinutes !== undefined
+        ? {
+            pausedUntil:
+              patch.pauseMinutes > 0
+                ? new Date(Date.now() + patch.pauseMinutes * 60_000).toISOString()
+                : null,
+          }
+        : {}),
     });
-    return this.actions();
+    return this.policy();
   }
 
   /* ---------- детекция (джоба) ---------- */
@@ -380,6 +392,7 @@ export class IncidentsService {
 
   private async openIncident(server: ServerRow, kind: IncidentKind, detail: string): Promise<void> {
     const meta = INCIDENT_KIND_META[kind];
+    const m = await this.metrics.latestFor(server.id).catch(() => undefined);
     const row = await this.repo.open({
       serverId: server.id,
       serverName: server.name,
@@ -388,6 +401,14 @@ export class IncidentsService {
       title: `${meta.label} · ${server.name}`,
       detail,
       timeline: [ev('auto', `Обнаружено: ${meta.label}`, 'detect')],
+      snapshot: {
+        cpu: m?.cpu ?? null,
+        mem: m?.mem ?? null,
+        disk: m?.disk ?? null,
+        node: this.metrics.nodeState(server.id) ?? null,
+        agentStatus: server.agentStatus,
+        agentVersion: server.agentVersion,
+      },
     });
     if (!row) return;
     // Решаем сразу: предложение шага уходит своим уведомлением, автопочинка выжидает паузу —
@@ -401,7 +422,7 @@ export class IncidentsService {
           decision === 'waiting'
             ? `${detail} Ждём ${AUTOFIX_GRACE_SECONDS} с — возможно, поднимется само, иначе починим автоматически.`
             : detail,
-        link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
+        link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
       });
     await this.audit.record({
       action: 'incident.opened',
@@ -418,7 +439,7 @@ export class IncidentsService {
       severity: 'ok',
       title: reason ? `${row.title} — закрыт` : `${row.title} — проблема исчезла`,
       body: reason ?? 'Инцидент закрыт автоматически.',
-      link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
+      link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
     });
     await this.repo.update(row.id, {
       status: 'resolved',

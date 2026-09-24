@@ -1,47 +1,17 @@
-import {
-  ATTEMPT_STATUS_LABELS,
-  AUTOFIX_GRACE_SECONDS,
-  actionKeySchema,
-  actionMeta,
-  INCIDENT_CHAINS,
-  INCIDENT_KIND_META,
-  type Incident,
-  type IncidentAttempt,
-  type IncidentEvent,
-  type IncidentStatus,
-} from '@nodeservice/shared';
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  CopyIcon,
-  Loader2Icon,
-  ShieldCheckIcon,
-  TerminalIcon,
-  Trash2Icon,
-  WrenchIcon,
-} from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { INCIDENT_KIND_META, type Incident, type IncidentStatus } from '@nodeservice/shared';
+import { Link } from '@tanstack/react-router';
+import { ChevronRightIcon, Trash2Icon, WrenchIcon } from 'lucide-react';
+import { useMemo, useState } from 'react';
+
 import { ConfirmDialog } from '@/components/confirm-dialog';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatWhen } from '@/features/audit/audit-format';
-import { useServers } from '@/features/servers/servers-api';
 import { Pill } from '@/features/settings/settings-ui';
-import { useTerminalStore } from '@/features/terminal/terminal-store';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
-import { AutofixTab } from './autofix-tab';
-import {
-  type IncidentsFilter,
-  useAcknowledgeIncident,
-  useDeleteIncident,
-  useDeleteResolvedIncidents,
-  useIncidents,
-  useResolveIncident,
-  useRunAction,
-} from './incidents-api';
+import { dayLabel, durationText, hhmm, outcomeSentence, weekStats } from './incident-format';
+import { type IncidentsFilter, useDeleteResolvedIncidents, useIncidents } from './incidents-api';
 import { LevelChip } from './level-chip';
 
 const FILTERS: ReadonlyArray<{ key: IncidentsFilter; label: string }> = [
@@ -49,698 +19,261 @@ const FILTERS: ReadonlyArray<{ key: IncidentsFilter; label: string }> = [
   { key: 'open', label: 'Открытые' },
   { key: 'resolved', label: 'Решённые' },
 ];
-const SEV_DOT: Record<Incident['severity'], string> = {
-  crit: 'bg-crit',
-  warn: 'bg-warn',
-  info: 'bg-brand',
-};
-const SEV_LABEL: Record<Incident['severity'], string> = { crit: 'критично', warn: 'внимание', info: 'инфо' };
 const STATUS_PILL: Record<IncidentStatus, { tone: 'ok' | 'warn' | 'crit' | 'muted'; label: string }> = {
   open: { tone: 'crit', label: 'Открыт' },
   acknowledged: { tone: 'warn', label: 'В работе' },
   resolved: { tone: 'ok', label: 'Решён' },
 };
-const RESULT_DOT: Record<IncidentEvent['result'], string> = {
-  detect: 'bg-brand',
-  notify: 'bg-text-3',
-  applied: 'bg-brand',
-  helped: 'bg-ok',
-  failed: 'bg-crit',
-  escalate: 'bg-warn',
-  resolved: 'bg-ok',
-};
-const STEP_ICON: Record<IncidentAttempt['steps'][number]['status'], { cls: string; mark: string }> = {
-  pending: { cls: 'bg-surface-3 text-text-3', mark: '·' },
-  running: { cls: 'bg-brand-soft text-brand', mark: '…' },
-  ok: { cls: 'bg-ok-soft text-ok', mark: '✓' },
-  failed: { cls: 'bg-crit-soft text-crit', mark: '✕' },
-  skipped: { cls: 'bg-surface-3 text-text-3', mark: '–' },
-};
 
-type Tab = 'incidents' | 'autofix';
+/** Цвет полоски слева: итог инцидента одним взглядом. */
+function barTone(inc: Incident): string {
+  if (inc.status !== 'resolved') return inc.severity === 'crit' ? 'bg-crit' : 'bg-warn';
+  const helped = inc.attempts.some((a) => a.status === 'helped');
+  if (helped || inc.resolvedBy === 'auto') return 'bg-ok';
+  return 'bg-border-2';
+}
 
-/** Инциденты (R3): хронология с уровнями T0–T3, попытки починки на месте, предложения «ждёт подтверждения», вкладка «Автопочинка». */
-export function IncidentsPage({ openId }: { openId?: string | undefined } = {}) {
-  const [tab, setTab] = useState<Tab>('incidents');
+/**
+ * «Инциденты» (витрина v3, A1): полоса итога за 7 дней и реестр по дням — время, сервер, что случилось
+ * и чем кончилось одним предложением, статус, длительность. Строка ведёт на страницу-кейс.
+ */
+export function IncidentsPage() {
   const [filter, setFilter] = useState<IncidentsFilter>('all');
-  const [expanded, setExpanded] = useState<string | null>(openId ?? null);
-  // Пришли по ссылке из уведомления — раскрываем нужный инцидент.
-  useEffect(() => {
-    if (openId) setExpanded(openId);
-  }, [openId]);
-  const incidents = useIncidents(filter);
-  const items = incidents.data?.items ?? [];
-  const openCount = incidents.data?.counts.open ?? 0;
+  const incidents = useIncidents('all');
+  const all = incidents.data?.items ?? [];
+  const anyOpen = all.some((i) => i.status !== 'resolved');
+  const now = useNow(anyOpen, 1000);
   const deleteResolved = useDeleteResolvedIncidents();
   const [confirmClear, setConfirmClear] = useState(false);
-  const resolvedShown = filter === 'resolved' && items.length > 0;
+
+  const items = useMemo(
+    () =>
+      filter === 'open'
+        ? all.filter((i) => i.status !== 'resolved')
+        : filter === 'resolved'
+          ? all.filter((i) => i.status === 'resolved')
+          : all,
+    [all, filter],
+  );
+  const openCount = all.filter((i) => i.status !== 'resolved').length;
+  const stats = useMemo(() => weekStats(all, now), [all, now]);
+
+  // Группы: открытые под «Сейчас», решённые — по дню открытия.
+  const groups = useMemo(() => {
+    const out: Array<{ key: string; label: string; note?: string; items: Incident[] }> = [];
+    const open = items.filter((i) => i.status !== 'resolved');
+    if (open.length > 0) out.push({ key: 'now', label: 'Сейчас', items: open });
+    const byDay = new Map<string, Incident[]>();
+    for (const inc of items.filter((i) => i.status === 'resolved')) {
+      const label = dayLabel(inc.openedAt, now);
+      byDay.set(label, [...(byDay.get(label) ?? []), inc]);
+    }
+    for (const [label, list] of byDay) {
+      const auto = list.filter((i) =>
+        i.attempts.some((a) => a.status === 'helped' && a.by === 'auto'),
+      ).length;
+      const n = list.length;
+      const word = n === 1 ? 'сбой' : n < 5 ? 'сбоя' : 'сбоев';
+      out.push({
+        key: label,
+        label,
+        note: auto === n ? `${n} ${word} · все починились сами` : `${n} ${word}`,
+        items: list,
+      });
+    }
+    return out;
+  }, [items, now]);
+
+  if (incidents.isPending)
+    return (
+      <div className="flex flex-col gap-4">
+        <Skeleton className="h-[60px] rounded-2xl" />
+        <Skeleton className="h-[320px] rounded-2xl" />
+      </div>
+    );
+  if (incidents.isError)
+    return (
+      <p
+        role="alert"
+        className="rounded-[12px] border border-crit/30 bg-crit-soft px-4 py-3 text-[13px] text-crit"
+      >
+        {apiErrorMessage(incidents.error)}
+      </p>
+    );
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <fieldset className="m-0 flex h-9 w-fit items-center rounded-[10px] border border-border bg-surface p-[3px]">
-          <legend className="sr-only">Раздел</legend>
-          {(
-            [
-              ['incidents', 'Инциденты'],
-              ['autofix', 'Автопочинка'],
-            ] as Array<[Tab, string]>
-          ).map(([key, label]) => (
+          <legend className="sr-only">Фильтр инцидентов</legend>
+          {FILTERS.map((f) => (
             <button
-              key={key}
+              key={f.key}
               type="button"
-              aria-pressed={tab === key}
-              onClick={() => setTab(key)}
+              aria-pressed={filter === f.key}
+              onClick={() => setFilter(f.key)}
               className={cn(
-                'h-full cursor-pointer rounded-[7px] px-3.5 text-[12.5px] font-medium text-text-3 transition-colors hover:text-foreground',
-                tab === key && 'bg-surface-3 text-foreground',
+                'flex h-full cursor-pointer items-center gap-1.5 rounded-[7px] px-3.5 text-[12.5px] font-medium text-text-3 transition-colors hover:text-foreground',
+                filter === f.key && 'bg-surface-3 text-foreground',
               )}
             >
-              {label}
+              {f.label}
+              {f.key === 'open' && openCount > 0 && (
+                <span className="inline-flex min-w-[16px] justify-center rounded-full bg-crit px-1 text-[10.5px] font-bold text-white tabular-nums">
+                  {openCount}
+                </span>
+              )}
             </button>
           ))}
         </fieldset>
-        {tab === 'incidents' && (
-          <fieldset className="m-0 flex h-9 w-fit items-center rounded-[10px] border border-border bg-surface p-[3px]">
-            <legend className="sr-only">Фильтр инцидентов</legend>
-            {FILTERS.map((f) => (
-              <button
-                key={f.key}
-                type="button"
-                aria-pressed={filter === f.key}
-                onClick={() => setFilter(f.key)}
-                className={cn(
-                  'flex h-full cursor-pointer items-center gap-1.5 rounded-[7px] px-3.5 text-[12.5px] font-medium text-text-3 transition-colors hover:text-foreground',
-                  filter === f.key && 'bg-surface-3 text-foreground',
-                )}
-              >
-                {f.label}
-                {f.key === 'open' && openCount > 0 && (
-                  <span className="inline-flex min-w-[16px] justify-center rounded-full bg-crit px-1 text-[10.5px] font-bold text-white tabular-nums">
-                    {openCount}
-                  </span>
-                )}
-              </button>
-            ))}
-          </fieldset>
-        )}
-        {tab === 'incidents' && resolvedShown && (
+        <span className="flex-1" />
+        {filter === 'resolved' && items.length > 0 && (
           <button
             type="button"
             disabled={deleteResolved.isPending}
             onClick={() => setConfirmClear(true)}
-            className="ml-auto inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3.5 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-50"
+            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3.5 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-50"
           >
             <Trash2Icon className="size-3.5" aria-hidden="true" />
             Удалить решённые
           </button>
         )}
-        <ConfirmDialog
-          open={confirmClear}
-          onOpenChange={setConfirmClear}
-          kind="crit"
-          title="Удалить все решённые инциденты?"
-          description="История починок по ним пропадёт, статистика «помогло N из M» пересчитается. Открытые инциденты останутся. Записи Журнала не трогаем."
-          yesLabel="Удалить"
-          loading={deleteResolved.isPending}
-          onConfirm={async () => {
-            try {
-              const { deleted } = await deleteResolved.mutateAsync();
-              setConfirmClear(false);
-              toast.success(deleted > 0 ? `Удалено инцидентов: ${deleted}.` : 'Решённых инцидентов не было.');
-            } catch (err) {
-              setConfirmClear(false);
-              toast.error(apiErrorMessage(err));
-            }
-          }}
-        />
-      </div>
-
-      {tab === 'autofix' && <AutofixTab />}
-
-      {tab === 'incidents' && incidents.isPending && (
-        <div className="flex flex-col gap-3">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-[76px] rounded-2xl" />
-          ))}
-        </div>
-      )}
-      {tab === 'incidents' && incidents.isError && (
-        <p className="rounded-[12px] border border-crit/30 bg-crit-soft px-4 py-3 text-[13px]">
-          {apiErrorMessage(incidents.error)}{' '}
-          <button type="button" className="cursor-pointer underline" onClick={() => void incidents.refetch()}>
-            Повторить
-          </button>
-        </p>
-      )}
-      {tab === 'incidents' && incidents.data && items.length === 0 && (
-        <div className="grid place-items-center rounded-2xl border border-dashed border-border px-6 py-16 text-center">
-          <span className="grid size-11 place-items-center rounded-full bg-ok-soft text-ok">
-            <ShieldCheckIcon className="size-6" aria-hidden="true" />
-          </span>
-          <h2 className="mt-3 font-heading text-[16px] font-bold">Пока спокойно</h2>
-          <p className="mt-1 text-[13px] text-text-2">
-            {filter === 'resolved' ? 'Решённых инцидентов нет.' : 'Инцидентов не найдено.'}
-          </p>
-        </div>
-      )}
-      {tab === 'incidents' && (
-        <div className="flex flex-col gap-3">
-          {items.map((inc) => (
-            <IncidentCard
-              key={inc.id}
-              incident={inc}
-              expanded={expanded === inc.id}
-              onToggle={() => setExpanded((cur) => (cur === inc.id ? null : inc.id))}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Номер попытки среди настоящих починок: наблюдение (T0) не считается. */
-const fixAttempts = (inc: Incident): number => inc.attempts.filter((a) => a.level !== 'T0').length;
-
-/** Сколько секунд автопочинка ещё выжидает по свежему инциденту; null — пауза не идёт. */
-function graceLeftS(inc: Incident, now: number): number | null {
-  if (inc.status === 'resolved' || inc.attempts.length > 0 || inc.proposal) return null;
-  if (INCIDENT_CHAINS[inc.kind].length === 0) return null;
-  const left = Math.ceil((new Date(inc.openedAt).getTime() + AUTOFIX_GRACE_SECONDS * 1000 - now) / 1000);
-  return left > 0 ? left : null;
-}
-
-/** Одна строка под заголовком: что делается и чем кончилось (витрина 4-1). */
-function summaryLine(inc: Incident, now: number): React.ReactNode {
-  const meta = INCIDENT_KIND_META[inc.kind];
-  const when =
-    inc.status === 'resolved' && inc.resolvedAt
-      ? `${formatWhen(inc.openedAt)} → ${formatWhen(inc.resolvedAt)}`
-      : `открыт ${formatWhen(inc.openedAt)}`;
-  const parts: Array<[string, React.ReactNode]> = [
-    ['component', meta.component],
-    ['server', inc.serverName],
-    ['when', when],
-  ];
-  const running = inc.attempts.find((a) => a.status === 'running');
-  const last = [...inc.attempts].reverse().find((a) => a.level !== 'T0');
-  if (running)
-    parts.push([
-      'run',
-      <span key="run" className="inline-flex items-center gap-1 text-brand">
-        <LevelChip level={running.level} /> {actionMeta(running.action).title} выполняется…
-      </span>,
-    ]);
-  else if (inc.status === 'resolved' && last?.status === 'helped')
-    parts.push([
-      'ok',
-      <span key="ok" className="inline-flex items-center gap-1 text-ok">
-        <LevelChip level={last.level} /> {last.by === 'auto' ? 'авто' : 'вручную'}, «
-        {actionMeta(last.action).title}» помогло
-      </span>,
-    ]);
-  else if (inc.status === 'resolved')
-    parts.push(['res', inc.resolvedBy === 'manual' ? 'закрыт вручную' : 'проблема исчезла сама']);
-  else {
-    if (last && last.status !== 'helped')
-      parts.push([
-        'last',
-        <span key="last" className="inline-flex items-center gap-1">
-          <LevelChip level={last.level} /> {actionMeta(last.action).title}{' '}
-          {ATTEMPT_STATUS_LABELS[last.status]}
-        </span>,
-      ]);
-    if (inc.proposal)
-      parts.push([
-        'prop',
-        <span key="prop" className="inline-flex items-center gap-1 font-medium text-warn">
-          <LevelChip level={inc.proposal.level} /> {actionMeta(inc.proposal.action).title}{' '}
-          {inc.proposal.level === 'T3' ? 'только вручную' : 'ждёт подтверждения'}
-        </span>,
-      ]);
-    if (!last && !inc.proposal && inc.kind === 'ssh_down') parts.push(['none', 'автопочинки нет']);
-    const waitS = graceLeftS(inc, now);
-    if (waitS !== null)
-      parts.push([
-        'wait',
-        <span key="wait" className="text-text-2">
-          {`ждём ещё ${waitS} с — возможно, поднимется само`}
-        </span>,
-      ]);
-  }
-  return parts.map(([key, node], i) => (
-    <span key={key} className="inline-flex items-center gap-1">
-      {i > 0 && <span aria-hidden="true">·</span>}
-      {node}
-    </span>
-  ));
-}
-
-function IncidentCard({
-  incident,
-  expanded,
-  onToggle,
-}: {
-  incident: Incident;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const status = STATUS_PILL[incident.status];
-  const now = useNow(graceLeftS(incident, Date.now()) !== null);
-  return (
-    <section
-      className={cn(
-        'overflow-hidden rounded-2xl border border-border bg-surface transition-colors',
-        expanded && 'border-border-2',
-      )}
-    >
-      <button
-        type="button"
-        data-testid="incident-card"
-        aria-expanded={expanded}
-        onClick={onToggle}
-        className="flex w-full cursor-pointer items-center gap-3 px-4 py-3.5 text-left hover:bg-surface-2/50"
-      >
-        <span
-          className={cn('size-2.5 flex-none rounded-full', SEV_DOT[incident.severity])}
-          aria-hidden="true"
-        />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-heading text-[14.5px] font-bold tracking-[-0.01em]">
-            {incident.title}
-          </span>
-          <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[12px] text-text-3">
-            {summaryLine(incident, now)}
-          </span>
-        </span>
-        <span className="hidden text-[11.5px] text-text-3 sm:inline">{SEV_LABEL[incident.severity]}</span>
-        <Pill tone={status.tone}>{status.label}</Pill>
-        <ChevronDownIcon
-          className={cn('size-4 flex-none text-text-3 transition-transform', expanded && 'rotate-180')}
-          aria-hidden="true"
-        />
-      </button>
-      {expanded && <IncidentDetails incident={incident} />}
-    </section>
-  );
-}
-
-function IncidentDetails({ incident }: { incident: Incident }) {
-  const ack = useAcknowledgeIncident();
-  const resolve = useResolveIncident();
-  const remove = useDeleteIncident();
-  const run = useRunAction();
-  const [confirmResolve, setConfirmResolve] = useState(false);
-  const [stopNodeWatch, setStopNodeWatch] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const canStopNodeWatch = incident.kind === 'node_down' && incident.serverId !== null;
-  const running = incident.attempts.find((a) => a.status === 'running');
-  const lastAttempt = running ?? incident.attempts.at(-1);
-  const canAct = incident.status !== 'resolved' && incident.serverId !== null;
-
-  const doRun = async (raw: string) => {
-    const parsed = actionKeySchema.safeParse(raw);
-    if (!parsed.success) {
-      toast.error('Этого действия больше нет в реестре — закройте инцидент вручную.');
-      return;
-    }
-    const action = parsed.data;
-    try {
-      await run.mutateAsync({ id: incident.id, action });
-      toast.success(`«${actionMeta(action).title}» запущено — ход выполнения ниже.`);
-    } catch (err) {
-      toast.error(apiErrorMessage(err));
-    }
-  };
-
-  return (
-    <div className="border-t border-border bg-surface-2/30 px-4 py-4">
-      <p className="text-[13px] text-text-2">{incident.detail}</p>
-
-      <h3 className="mt-4 mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
-        Что происходило
-      </h3>
-      <ol className="flex flex-col gap-0" aria-label="Хронология">
-        {incident.timeline.map((e, i) => (
-          <li key={`${e.at}-${e.result}-${e.action}`} className="relative flex items-start gap-3 py-1.5">
-            {i < incident.timeline.length - 1 && (
-              <span
-                aria-hidden="true"
-                className="absolute top-[18px] left-[75px] h-[calc(100%-6px)] border-l border-border"
-              />
-            )}
-            <span className="w-[64px] flex-none pt-0.5 text-[11.5px] text-text-3 tabular-nums">
-              {formatWhen(e.at)}
-            </span>
-            <span className="mt-1.5 flex-none">
-              <span
-                className={cn('block size-2 rounded-full ring-4 ring-surface', RESULT_DOT[e.result])}
-                aria-hidden="true"
-              />
-            </span>
-            <span className="min-w-0 flex-1 text-[12.5px]">{e.action}</span>
-            <span className="flex flex-none items-center gap-1.5 text-[11.5px] text-text-3">
-              {e.level && <LevelChip level={e.level} />}
-              {e.by === 'auto' ? 'авто' : 'вручную'}
-            </span>
-          </li>
-        ))}
-      </ol>
-
-      {lastAttempt && (
-        <AttemptBlock attempt={lastAttempt} index={incident.attempts.indexOf(lastAttempt) + 1} />
-      )}
-
-      {canAct && incident.proposal && !running && (
-        <ProposalBlock
-          incident={incident}
-          onRun={() => void doRun(incident.proposal?.action ?? 'free_disk')}
-          busy={run.isPending}
-          onResolve={() => setConfirmResolve(true)}
-        />
-      )}
-
-      {incident.status !== 'resolved' && (
-        <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-border pt-3.5">
-          {incident.status === 'open' && (
-            <button
-              type="button"
-              disabled={ack.isPending}
-              onClick={() => void ack.mutateAsync(incident.id)}
-              className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-3.5 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-50"
-            >
-              Взять в работу
-            </button>
-          )}
-          <button
-            type="button"
-            disabled={resolve.isPending}
-            onClick={() => setConfirmResolve(true)}
-            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-3.5 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-50"
-          >
-            <CheckIcon className="size-3.5" aria-hidden="true" />
-            Закрыть вручную
-          </button>
-          <DeleteButton onClick={() => setConfirmDelete(true)} disabled={remove.isPending} />
-        </div>
-      )}
-      {incident.status === 'resolved' && (
-        <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-border pt-3">
-          {lastAttempt?.status === 'helped' ? (
-            <p className="min-w-0 flex-1 text-[12px] text-text-3">
-              Чинилось {lastAttempt.by === 'auto' ? 'автоматически' : 'по вашей команде'}: «
-              {actionMeta(lastAttempt.action).title}» <LevelChip level={lastAttempt.level} /> · помогло{' '}
-              {fixAttempts(incident) === 1 ? 'с первой попытки' : `с попытки ${fixAttempts(incident)}`}
-            </p>
-          ) : (
-            <span className="flex-1" />
-          )}
-          <DeleteButton onClick={() => setConfirmDelete(true)} disabled={remove.isPending} />
-        </div>
-      )}
-
-      <ConfirmDialog
-        open={confirmDelete}
-        onOpenChange={setConfirmDelete}
-        kind="crit"
-        title="Удалить инцидент?"
-        description={
-          incident.status === 'resolved'
-            ? 'Хронология и попытки починки по нему пропадут, статистика «помогло N из M» пересчитается. Записи Журнала остаются.'
-            : 'Идущая попытка будет прервана, хронология пропадёт. Если проблема не ушла, панель заведёт новый инцидент.'
-        }
-        yesLabel="Удалить"
-        loading={remove.isPending}
-        onConfirm={async () => {
-          try {
-            await remove.mutateAsync(incident.id);
-            setConfirmDelete(false);
-            toast.success('Инцидент удалён.');
-          } catch (err) {
-            setConfirmDelete(false);
-            toast.error(apiErrorMessage(err));
-          }
-        }}
-      />
-
-      <ConfirmDialog
-        open={confirmResolve}
-        onOpenChange={(o) => {
-          setConfirmResolve(o);
-          if (!o) setStopNodeWatch(false);
-        }}
-        title="Закрыть инцидент?"
-        description={
-          <>
-            Инцидент будет отмечен как решённый вручную. Если проблема вернётся — панель заведёт новый.
-            {canStopNodeWatch && (
-              <label
-                htmlFor="inc-stop-node-watch"
-                className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-[10px] border border-border bg-surface-2/60 px-3 py-2.5 text-left text-[12.5px] leading-snug text-text-2"
-              >
-                <Checkbox
-                  id="inc-stop-node-watch"
-                  checked={stopNodeWatch}
-                  onCheckedChange={(v) => setStopNodeWatch(v === true)}
-                  className="mt-0.5"
-                  aria-label="Больше не следить за нодой на этом сервере"
-                />
-                <span>
-                  <span className="font-medium text-foreground">
-                    Больше не следить за нодой на этом сервере
-                  </span>
-                  <br />
-                  Для серверов без ноды или когда нода выключена намеренно. Вернуть можно в карточке сервера.
-                </span>
-              </label>
-            )}
-          </>
-        }
-        yesLabel="Закрыть"
-        loading={resolve.isPending}
-        onConfirm={async () => {
-          try {
-            await resolve.mutateAsync({ id: incident.id, ...(stopNodeWatch ? { stopNodeWatch: true } : {}) });
-            setConfirmResolve(false);
-            setStopNodeWatch(false);
-            toast.success(
-              stopNodeWatch
-                ? 'Инцидент закрыт, за нодой на этом сервере больше не следим.'
-                : 'Инцидент закрыт.',
-            );
-          } catch (err) {
-            setConfirmResolve(false);
-            toast.error(apiErrorMessage(err));
-          }
-        }}
-      />
-    </div>
-  );
-}
-
-/** Попытка на месте (витрина 3-3): шаги с отметками, секунды, вывод команды в раскрытии. */
-function AttemptBlock({ attempt, index }: { attempt: IncidentAttempt; index: number }) {
-  const action = actionMeta(attempt.action);
-  const running = attempt.status === 'running';
-  // Пока попытка идёт, секунды у текущего шага тикают сами, а не только при перечитывании.
-  const now = useNow(running);
-  const secs = (s: IncidentAttempt['steps'][number]) =>
-    s.startedAt && s.finishedAt
-      ? `${((new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime()) / 1000).toFixed(1)} с`
-      : s.status === 'running' && s.startedAt
-        ? `${Math.max(0, Math.round((now - new Date(s.startedAt).getTime()) / 1000))} с`
-        : '';
-  return (
-    <div
-      data-testid="attempt-block"
-      className={cn(
-        'mt-3 rounded-[12px] border p-3.5',
-        running
-          ? 'border-brand/40 bg-[linear-gradient(180deg,var(--ns-brand-soft),transparent_70%)]'
-          : attempt.status === 'helped'
-            ? 'border-ok/30 bg-surface'
-            : attempt.status === 'done'
-              ? 'border-brand/30 bg-surface'
-              : 'border-border bg-surface',
-      )}
-    >
-      <div className="flex flex-wrap items-center gap-2 text-[12.5px] font-semibold">
-        {running ? (
-          <Loader2Icon className="size-4 animate-spin text-brand" aria-hidden="true" />
-        ) : (
-          <WrenchIcon className="size-4 text-text-3" aria-hidden="true" />
-        )}
-        Попытка {index} · {action.title}
-        <LevelChip level={attempt.level} />
-        <span className="ml-auto text-[11.5px] font-normal text-text-3">
-          {attempt.by === 'auto' ? 'авто' : 'вручную'} · {ATTEMPT_STATUS_LABELS[attempt.status]}
-        </span>
-      </div>
-      <ol className="mt-2.5 flex flex-col gap-1.5">
-        {attempt.steps.map((s) => {
-          const ic = STEP_ICON[s.status];
-          return (
-            <li
-              key={s.key}
-              className={cn(
-                'grid grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-[9px] border border-border bg-surface px-2.5 py-1.5 text-[12.5px]',
-                s.status === 'pending' && 'opacity-55',
-              )}
-            >
-              <span
-                aria-hidden="true"
-                className={cn('grid size-4 place-items-center rounded-[5px] text-[10px] font-bold', ic.cls)}
-              >
-                {ic.mark}
-              </span>
-              <span className={cn('min-w-0', s.status === 'failed' && 'text-crit')}>
-                {s.label}
-                {s.note && <span className="text-text-3">: {s.note}</span>}
-              </span>
-              <span className="text-[11.5px] text-text-3 tabular-nums">{secs(s)}</span>
-            </li>
-          );
-        })}
-      </ol>
-      {attempt.log && (
-        <details className="mt-2" open={running}>
-          <summary className="cursor-pointer text-[12px] text-text-3">
-            Вывод команды ({attempt.log.split('\n').filter(Boolean).length} стр.)
-          </summary>
-          <pre className="mt-1.5 max-h-[220px] overflow-auto rounded-[9px] border border-border bg-bg-2 px-3 py-2 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-text-2">
-            {attempt.log}
-          </pre>
-        </details>
-      )}
-    </div>
-  );
-}
-
-/** Предложенный следующий шаг: T2/T1 — подтверждение без пароля; T3 — команда для терминала. */
-function ProposalBlock({
-  incident,
-  onRun,
-  busy,
-  onResolve,
-}: {
-  incident: Incident;
-  onRun: () => void;
-  busy: boolean;
-  onResolve: () => void;
-}) {
-  const proposal = incident.proposal;
-  const servers = useServers();
-  const openTerminal = useTerminalStore((st) => st.open);
-  if (!proposal) return null;
-  const action = actionMeta(proposal.action);
-  const server = servers.data?.items.find((s) => s.id === incident.serverId);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(action.summary);
-      toast.success('Команда скопирована.');
-    } catch {
-      toast.error('Не удалось скопировать — выделите команду вручную.');
-    }
-  };
-  return (
-    <div
-      data-testid="proposal-block"
-      className={cn(
-        'mt-3 rounded-[12px] border p-3.5',
-        proposal.level === 'T3'
-          ? 'border-crit/30 bg-surface'
-          : 'border-warn/40 bg-[linear-gradient(180deg,var(--ns-warn-soft),transparent_70%)]',
-      )}
-    >
-      <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold">
-        <WrenchIcon className="size-4 text-warn" aria-hidden="true" />
-        {proposal.level === 'T3' ? 'Следующий шаг только вручную' : 'Следующий шаг требует подтверждения'}
-        <LevelChip level={proposal.level} />
-      </div>
-      <p className="mt-1.5 text-[13px] leading-normal">
-        <b>{action.title}</b>
-        {action.consequence && <span className="text-text-2"> — {action.consequence}</span>}. Причина:{' '}
-        {proposal.reason}.
-      </p>
-      {proposal.level !== 'T3' && (
-        <ul className="mt-2 flex flex-col gap-1 text-[12px] text-text-2">
-          <li>Перед запуском проверим: {action.preconditions.join(', ')}.</li>
-          <li>После: {action.postcheck}.</li>
-          <li>Откат: {action.rollbackNote ?? 'нет'}.</li>
-        </ul>
-      )}
-      <div className="mt-2.5 rounded-[9px] bg-bg-2 px-3 py-2 font-mono text-[12px] break-all text-text-2">
-        {action.summary}
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {proposal.level === 'T3' ? (
-          <>
-            <button
-              type="button"
-              onClick={() => void copy()}
-              className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:bg-surface-3 hover:text-foreground"
-            >
-              <CopyIcon className="size-3.5" aria-hidden="true" />
-              Копировать команду
-            </button>
-            {server && (
-              <button
-                type="button"
-                onClick={() =>
-                  openTerminal({
-                    id: server.id,
-                    name: server.name,
-                    host: server.host,
-                    port: server.port,
-                    sshUser: server.sshUser,
-                  })
-                }
-                className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] bg-cta px-3 text-[12.5px] font-semibold text-cta-foreground hover:bg-(--ns-cta-hover)"
-              >
-                <TerminalIcon className="size-3.5" aria-hidden="true" />
-                Открыть терминал
-              </button>
-            )}
-          </>
-        ) : (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onRun}
-            className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] bg-cta px-3.5 text-[12.5px] font-semibold text-cta-foreground hover:bg-(--ns-cta-hover) disabled:opacity-50"
-          >
-            {busy ? (
-              <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />
-            ) : (
-              <CheckIcon className="size-3.5" aria-hidden="true" />
-            )}
-            Подтвердить: {action.title.toLowerCase()}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onResolve}
-          className="inline-flex h-8 cursor-pointer items-center rounded-[9px] px-2.5 text-[12.5px] font-medium text-text-3 hover:text-foreground"
+        <Link
+          to="/incidents/autofix"
+          className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3.5 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground"
         >
-          Закрыть инцидент вручную
-        </button>
+          <WrenchIcon className="size-3.5" aria-hidden="true" />
+          Автопочинка
+        </Link>
+      </div>
+
+      <StatsStrip stats={stats} />
+
+      {items.length === 0 ? (
+        <div className="grid place-items-center rounded-2xl border border-dashed border-border-2 px-6 py-16 text-center">
+          <div className="text-[14px] font-semibold">Пока спокойно</div>
+          <div className="mt-1 text-[12.5px] text-text-3">
+            {filter === 'resolved'
+              ? 'Решённых инцидентов нет.'
+              : 'Сбоев не зафиксировано. Как только что-то случится, оно появится здесь.'}
+          </div>
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-2xl border border-border bg-surface">
+          {groups.map((g) => (
+            <section key={g.key} aria-label={g.label}>
+              <h2 className="flex items-baseline gap-2.5 border-t border-border px-4 pt-2.5 pb-1.5 text-[12px] text-text-3 first:border-t-0">
+                <span className="text-[12.5px] font-semibold text-text-2">{g.label}</span>
+                {g.note && <span>{g.note}</span>}
+              </h2>
+              {g.items.map((inc) => (
+                <IncidentRow key={inc.id} inc={inc} now={now} />
+              ))}
+            </section>
+          ))}
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={confirmClear}
+        onOpenChange={setConfirmClear}
+        kind="crit"
+        title="Удалить все решённые инциденты?"
+        description="История починок по ним пропадёт, статистика «помогло N из M» пересчитается. Открытые инциденты останутся. Записи Журнала не трогаем."
+        yesLabel="Удалить"
+        loading={deleteResolved.isPending}
+        onConfirm={async () => {
+          try {
+            const { deleted } = await deleteResolved.mutateAsync();
+            setConfirmClear(false);
+            toast.success(deleted > 0 ? `Удалено инцидентов: ${deleted}.` : 'Решённых инцидентов не было.');
+          } catch (err) {
+            setConfirmClear(false);
+            toast.error(apiErrorMessage(err));
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+/** Полоса итога за 7 дней: числа словами, без KPI-плиток. */
+function StatsStrip({ stats }: { stats: ReturnType<typeof weekStats> }) {
+  const resolved = stats.auto + stats.waited + stats.manual;
+  const pct = (n: number) => (resolved > 0 ? `${(n / resolved) * 100}%` : '0%');
+  const avg =
+    stats.avgFixS === null
+      ? null
+      : stats.avgFixS < 60
+        ? `${stats.avgFixS} с`
+        : `${Math.round(stats.avgFixS / 60)} мин`;
+  return (
+    <div
+      data-testid="incidents-stats"
+      className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-border bg-surface px-4 py-3"
+    >
+      <Stat n={stats.total} label="сбоев за 7 дней" />
+      <span className="hidden h-7 w-px bg-border sm:block" aria-hidden="true" />
+      <Stat n={stats.auto} label="починились сами" cls="text-ok" />
+      <Stat n={stats.waited} label="ждали подтверждения" cls="text-warn" />
+      <Stat n={stats.manual} label="закрыты вручную" />
+      {stats.open > 0 && <Stat n={stats.open} label="открыто сейчас" cls="text-crit" />}
+      <div className="flex min-w-[120px] flex-1 items-center gap-3">
+        <div className="flex h-2 flex-1 overflow-hidden rounded-full bg-surface-3" aria-hidden="true">
+          <span className="h-full bg-ok" style={{ width: pct(stats.auto) }} />
+          <span className="h-full bg-warn" style={{ width: pct(stats.waited) }} />
+          <span className="h-full bg-border-2" style={{ width: pct(stats.manual) }} />
+        </div>
+        {avg && (
+          <span className="text-[12px] whitespace-nowrap text-text-3">Среднее время починки {avg}</span>
+        )}
       </div>
     </div>
   );
 }
 
-/** Кнопка удаления в подвале карточки: тихая, справа, краснеет только при наведении. */
-function DeleteButton({ onClick, disabled }: { onClick: () => void; disabled: boolean }) {
+function Stat({ n, label, cls }: { n: number; label: string; cls?: string }) {
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className="ml-auto inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] px-3 text-[12.5px] font-medium text-text-3 transition-colors hover:bg-crit-soft hover:text-crit disabled:opacity-50"
+    <div className="flex flex-col leading-tight">
+      <b className={cn('font-heading text-[19px] font-bold tracking-[-0.02em] tabular-nums', cls)}>{n}</b>
+      <span className="text-[11.5px] text-text-3">{label}</span>
+    </div>
+  );
+}
+
+function IncidentRow({ inc, now }: { inc: Incident; now: number }) {
+  const status = STATUS_PILL[inc.status];
+  const level =
+    inc.attempts.find((a) => a.status === 'running')?.level ??
+    inc.proposal?.level ??
+    inc.attempts.at(-1)?.level;
+  return (
+    <Link
+      to="/incidents/$id"
+      params={{ id: inc.id }}
+      data-testid="incident-row"
+      className="grid grid-cols-[3px_52px_minmax(0,1fr)_auto] items-center gap-x-3 border-t border-border py-2.5 pr-3 transition-colors hover:bg-surface-2 md:grid-cols-[3px_56px_170px_minmax(0,1fr)_auto_84px] md:gap-x-4"
     >
-      <Trash2Icon className="size-3.5" aria-hidden="true" />
-      Удалить
-    </button>
+      <span className={cn('h-full min-h-9 w-[3px] rounded-r-[2px]', barTone(inc))} aria-hidden="true" />
+      <span className="text-[12.5px] text-text-3 tabular-nums">{hhmm(inc.openedAt)}</span>
+      <span className="hidden truncate text-[13px] font-semibold md:block">{inc.serverName}</span>
+      <span className="min-w-0">
+        <span className="block text-[13px] font-semibold max-md:line-clamp-2 md:truncate">
+          {INCIDENT_KIND_META[inc.kind].label}
+        </span>
+        <span className="block text-[12.5px] text-text-3 md:hidden">{inc.serverName}</span>
+        <span className="block text-[12.5px] text-text-2 max-md:line-clamp-2 md:truncate">
+          {outcomeSentence(inc, now)}
+        </span>
+      </span>
+      <span className="flex items-center gap-1.5 max-md:self-start">
+        <Pill tone={status.tone}>{status.label}</Pill>
+        {level && <LevelChip level={level} />}
+        <ChevronRightIcon className="size-4 text-text-3 md:hidden" aria-hidden="true" />
+      </span>
+      <span className="hidden text-right text-[12.5px] text-text-3 tabular-nums md:block">
+        {durationText(inc, now)}
+      </span>
+    </Link>
   );
 }

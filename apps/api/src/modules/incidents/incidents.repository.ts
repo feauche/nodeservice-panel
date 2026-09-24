@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { IncidentEvent, IncidentKind, IncidentSeverity } from '@nodeservice/shared';
+import type { IncidentEvent, IncidentKind, IncidentSeverity, IncidentSnapshot } from '@nodeservice/shared';
 import { and, desc, eq, ne } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
@@ -47,6 +47,7 @@ export class IncidentsRepository {
     title: string;
     detail: string;
     timeline: IncidentEvent[];
+    snapshot?: IncidentSnapshot | null;
   }): Promise<IncidentRow | undefined> {
     // onConflictDoNothing по частичному индексу: гонка двух тиков не заведёт дубль.
     const [row] = await this.db.insert(incidents).values(values).onConflictDoNothing().returning();

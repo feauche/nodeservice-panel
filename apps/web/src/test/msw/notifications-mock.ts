@@ -42,14 +42,14 @@ export function seedNotifications(): void {
       'warn',
       'Высокая нагрузка на CPU · de-fra-01: ждёт подтверждения',
       'CPU держится на 96% дольше 5 мин (порог 90%). Предложено: Перезапустить контейнер ноды (T2), первый шаг цепочки. Подтвердите запуск в инциденте.',
-      cpu ? { to: `/incidents?open=${cpu.id}`, label: 'Открыть инцидент' } : null,
+      cpu ? { to: `/incidents/${cpu.id}`, label: 'Открыть инцидент' } : null,
     ),
     make(
       176,
       'ok',
       'Диск заполняется · de-fra-01: «Освободить диск» помогло',
       'Автоматически · диск 71 % < 80 %',
-      disk ? { to: `/incidents?open=${disk.id}`, label: 'Открыть инцидент' } : null,
+      disk ? { to: `/incidents/${disk.id}`, label: 'Открыть инцидент' } : null,
     ),
     make(200, 'info', 'Провайдер «4VPS» добавлен, иконку подтянем в фоне', null),
     make(

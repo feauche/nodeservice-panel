@@ -4,7 +4,7 @@ import { Test } from '@nestjs/testing';
 import {
   auditListResponseSchema,
   CSRF_HEADER,
-  incidentActionsResponseSchema,
+  incidentPolicyResponseSchema,
   incidentSchema,
   incidentsListResponseSchema,
   serverSchema,
@@ -251,31 +251,32 @@ describe('incidents e2e', () => {
     await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
   });
 
-  it('вкладка «Автопочинка»: реестр со статистикой, тумблеры пишутся в настройки; автотик предлагает шаг', async () => {
-    const list = incidentActionsResponseSchema.parse(
-      (await agent.get('/api/incidents/actions').expect(200)).body,
+  it('автопочинка: политика по сигналам со статистикой; «Само» выполняет T1, «Спросить» предлагает, «Наблюдать» молчит', async () => {
+    const list = incidentPolicyResponseSchema.parse(
+      (await agent.get('/api/incidents/policy').expect(200)).body,
     );
     expect(list.autofixEnabled).toBe(false);
-    const free = list.items.find((a) => a.key === 'free_disk');
-    expect(free?.level).toBe('T1');
-    expect(free?.enabled).toBe(false);
-    expect(free?.stats.runs).toBeGreaterThanOrEqual(1);
-    expect(free?.stats.helped).toBeGreaterThanOrEqual(1);
-    expect(list.items.find((a) => a.key === 'reboot')?.terminal).toBe(true);
+    expect(list.pausedUntil).toBeNull();
+    const disk = list.items.find((a) => a.kind === 'disk_high');
+    expect(disk?.policy).toBe('ask');
+    expect(disk?.autoAvailable).toBe(true);
+    expect(disk?.chain[0]).toMatchObject({ key: 'free_disk', level: 'T1' });
+    expect(disk?.stats.runs).toBeGreaterThanOrEqual(1);
+    expect(disk?.stats.helped).toBeGreaterThanOrEqual(1);
+    expect(list.items.find((a) => a.kind === 'ssh_down')?.autoAvailable).toBe(false);
 
-    const upd = incidentActionsResponseSchema.parse(
+    const upd = incidentPolicyResponseSchema.parse(
       (
         await agent
-          .patch('/api/incidents/actions')
+          .patch('/api/incidents/policy')
           .set(CSRF_HEADER, csrf)
-          .send({ autofixEnabled: true, actions: { free_disk: true, restart_node: true } })
+          .send({ autofixEnabled: true, policy: { disk_high: 'auto', mem_high: 'ask', cpu_high: 'watch' } })
           .expect(200)
       ).body,
     );
     expect(upd.autofixEnabled).toBe(true);
-    expect(upd.items.find((a) => a.key === 'free_disk')?.enabled).toBe(true);
-    // T2 нельзя включить в авто
-    expect(upd.items.find((a) => a.key === 'restart_node')?.enabled).toBe(false);
+    expect(upd.items.find((a) => a.kind === 'disk_high')?.policy).toBe('auto');
+    expect(upd.items.find((a) => a.kind === 'cpu_high')?.policy).toBe('watch');
 
     // автотик: свежий инцидент памяти (первый шаг T2) → предложение, без выполнения
     const repo = app.get(IncidentsRepository);
@@ -312,10 +313,39 @@ describe('incidents e2e', () => {
     expect(inc2.attempts[0]).toMatchObject({ by: 'auto', status: 'helped' });
     expect(inc2.status).toBe('resolved');
     expect(inc2.resolvedBy).toBe('auto');
+    // «Наблюдать»: инцидент CPU без предложения и без попыток
+    const opened3 = await repo.open({
+      serverId,
+      serverName: 'inc-host',
+      kind: 'cpu_high',
+      severity: 'warn',
+      title: 'Высокая нагрузка на CPU · inc-host',
+      detail: 'cpu выше порога',
+      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+    });
+    await app.get(IncidentRunnerService).autoTick();
+    const inc3 = await settled(opened3?.id ?? '');
+    expect(inc3.attempts).toHaveLength(0);
+    expect(inc3.proposal).toBeNull();
+    await agent.post(`/api/incidents/${opened3?.id}/resolve`).set(CSRF_HEADER, csrf).expect(200);
+
+    // пауза: с «Само» ничего не выполняется, пока пауза не снята
+    const paused = incidentPolicyResponseSchema.parse(
+      (
+        await agent
+          .patch('/api/incidents/policy')
+          .set(CSRF_HEADER, csrf)
+          .send({ pauseMinutes: 60 })
+          .expect(200)
+      ).body,
+    );
+    expect(paused.pausedUntil).not.toBeNull();
+    await agent.patch('/api/incidents/policy').set(CSRF_HEADER, csrf).send({ pauseMinutes: 0 }).expect(200);
+
     await agent
-      .patch('/api/incidents/actions')
+      .patch('/api/incidents/policy')
       .set(CSRF_HEADER, csrf)
-      .send({ autofixEnabled: false })
+      .send({ autofixEnabled: false, policy: { cpu_high: 'ask', disk_high: 'ask' } })
       .expect(200);
   });
 

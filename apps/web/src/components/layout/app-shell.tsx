@@ -70,6 +70,9 @@ const NAV_AUTOMATION = [
   { to: '/assistant', label: 'Ассистент', icon: SparklesIcon },
   { to: '/knowledge', label: 'База знаний', icon: BookOpenIcon },
 ] as const;
+/** Версия панели из сборки; в тестах и dev без define — «dev». */
+const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
+
 /** Нижняя группа меню — служебное: Журнал внизу, рядом с «Свернуть меню». */
 const NAV_BOTTOM = [{ to: '/audit', label: 'Журнал', icon: ListIcon }] as const;
 
@@ -473,6 +476,17 @@ export function AppShell({ title, subtitle, actions, children }: AppShellProps) 
               aria-hidden="true"
             />
             <span className={cn(collapsed && 'hidden')}>Свернуть меню</span>
+            <span className="flex-1" />
+            <span
+              data-testid="app-version"
+              title={`NodeService ${APP_VERSION}`}
+              className={cn(
+                'rounded-full border border-border px-2 py-[1px] font-mono text-[10.5px] text-text-3',
+                collapsed && 'hidden',
+              )}
+            >
+              v{APP_VERSION}
+            </span>
           </button>
         </nav>
       </aside>

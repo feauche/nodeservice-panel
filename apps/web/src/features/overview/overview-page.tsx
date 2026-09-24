@@ -6,7 +6,7 @@ import {
   type OverviewServerMetrics,
   type Server,
 } from '@nodeservice/shared';
-import { Link } from '@tanstack/react-router';
+import { Link, type LinkProps } from '@tanstack/react-router';
 import {
   ActivityIcon,
   AlertTriangleIcon,
@@ -208,8 +208,7 @@ export function OverviewPage() {
       reason: j.reason,
       tone: j.health as 'warn' | 'crit',
       pill: j.health === 'crit' ? 'офлайн' : 'внимание',
-      to: '/servers' as const,
-      search: { open: j.server.id },
+      link: { to: '/servers', search: { open: j.server.id } } as LinkProps,
     }));
   const incidentRows = (openIncidents.data?.items ?? [])
     // Связь (агент/SSH) уже отражена строкой здоровья — не дублируем.
@@ -226,8 +225,7 @@ export function OverviewPage() {
       reason: `${INCIDENT_KIND_META[inc.kind].label}${inc.proposal ? ' · ждёт подтверждения' : ''}`,
       tone: (inc.severity === 'crit' ? 'crit' : 'warn') as 'warn' | 'crit',
       pill: 'инцидент',
-      to: '/incidents' as const,
-      search: { open: inc.id },
+      link: { to: '/incidents/$id', params: { id: inc.id } } as LinkProps,
     }));
   const attention = [...incidentRows, ...healthRows];
 
@@ -350,8 +348,7 @@ export function OverviewPage() {
               {attention.slice(0, 5).map((row) => (
                 <li key={row.key} className="border-t border-border first:border-t-0">
                   <Link
-                    to={row.to}
-                    search={row.search}
+                    {...row.link}
                     className="flex items-center gap-3 rounded-[10px] px-1.5 py-2.5 transition-colors hover:bg-surface-2"
                   >
                     <span

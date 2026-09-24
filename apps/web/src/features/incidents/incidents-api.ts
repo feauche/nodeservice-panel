@@ -1,10 +1,10 @@
 import {
   type ActionKey,
   type Incident,
-  type IncidentActionsResponse,
-  type IncidentActionsUpdate,
+  type IncidentPolicyResponse,
+  type IncidentPolicyUpdate,
   type IncidentsListResponse,
-  incidentActionsResponseSchema,
+  incidentPolicyResponseSchema,
   incidentSchema,
   incidentsListResponseSchema,
   type ResolveIncidentRequest,
@@ -25,26 +25,27 @@ export const incidentsApi = {
     api.post(`/incidents/${id}/acknowledge`, {}, incidentSchema),
   resolve: (id: string, body: ResolveIncidentRequest = {}): Promise<Incident> =>
     api.post(`/incidents/${id}/resolve`, body, incidentSchema),
-  /** Запуск действия реестра (T1/T2): попытка идёт в фоне, инцидент перечитывается, пока она идёт. */
-  run: (id: string, action: ActionKey): Promise<Incident> =>
-    api.post(`/incidents/${id}/actions/${action}/run`, {}, incidentSchema),
   remove: (id: string): Promise<void> => request(`/incidents/${id}`, { method: 'DELETE' }),
   removeResolved: (): Promise<{ deleted: number }> =>
     request('/incidents/resolved', { method: 'DELETE', schema: z.object({ deleted: z.number().int() }) }),
-  actions: (signal?: AbortSignal): Promise<IncidentActionsResponse> =>
-    api.get('/incidents/actions', incidentActionsResponseSchema, signal),
-  updateActions: (body: IncidentActionsUpdate): Promise<IncidentActionsResponse> =>
-    request('/incidents/actions', { method: 'PATCH', body, schema: incidentActionsResponseSchema }),
+  /** Запуск действия реестра (T1/T2): попытка идёт в фоне, инцидент перечитывается, пока она идёт. */
+  run: (id: string, action: ActionKey): Promise<Incident> =>
+    api.post(`/incidents/${id}/actions/${action}/run`, {}, incidentSchema),
+  policy: (signal?: AbortSignal): Promise<IncidentPolicyResponse> =>
+    api.get('/incidents/policy', incidentPolicyResponseSchema, signal),
+  updatePolicy: (body: IncidentPolicyUpdate): Promise<IncidentPolicyResponse> =>
+    request('/incidents/policy', { method: 'PATCH', body, schema: incidentPolicyResponseSchema }),
 };
 
 export const incidentsKeys = {
   all: ['incidents'] as const,
   lists: ['incidents', 'list'] as const,
   list: (status: IncidentsFilter) => ['incidents', 'list', status] as const,
-  actions: ['incidents', 'actions'] as const,
+  item: (id: string) => ['incidents', 'item', id] as const,
+  policy: ['incidents', 'policy'] as const,
 };
 
-/** Идёт ли по какому-то инциденту попытка — тогда список перечитывается часто. */
+/** Идёт ли по какому-то инциденту попытка — тогда данные перечитываются часто. */
 export const hasRunningAttempt = (items: Incident[] | undefined): boolean =>
   Boolean(items?.some((i) => i.attempts.some((a) => a.status === 'running')));
 
@@ -52,7 +53,17 @@ export function useIncidents(status: IncidentsFilter) {
   return useQuery({
     queryKey: incidentsKeys.list(status),
     queryFn: ({ signal }) => incidentsApi.list(status, signal),
+    // Живой поток приносит изменения сразу; опрос — страховка. Пока идёт попытка — чаще.
     refetchInterval: (q) => (hasRunningAttempt(q.state.data?.items) ? 2_000 : 60_000),
+  });
+}
+
+/** Один инцидент для страницы-кейса. */
+export function useIncident(id: string) {
+  return useQuery({
+    queryKey: incidentsKeys.item(id),
+    queryFn: ({ signal }) => incidentsApi.get(id, signal),
+    refetchInterval: (q) => (hasRunningAttempt(q.state.data ? [q.state.data] : undefined) ? 2_000 : 60_000),
   });
 }
 
@@ -66,15 +77,7 @@ export function useOpenIncidentsCount(): number {
   return q.data?.counts.open ?? 0;
 }
 
-function useIncidentAction(fn: (id: string) => Promise<Incident>) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: fn,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: incidentsKeys.all }),
-  });
-}
-
-/** Удаление одного инцидента: убираем из кэша сразу, потом перечитываем. */
+/** Удаление одного инцидента: убираем из кэша списков сразу, потом перечитываем. */
 export function useDeleteIncident() {
   const qc = useQueryClient();
   return useMutation({
@@ -96,8 +99,13 @@ export function useDeleteResolvedIncidents() {
 }
 
 export function useAcknowledgeIncident() {
-  return useIncidentAction(incidentsApi.acknowledge);
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: incidentsApi.acknowledge,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: incidentsKeys.all }),
+  });
 }
+
 /** Ручное закрытие; с «больше не следить за нодой» меняется и сервер — перечитываем и его. */
 export function useResolveIncident() {
   const qc = useQueryClient();
@@ -110,7 +118,7 @@ export function useResolveIncident() {
   });
 }
 
-/** подтверждение предложения или ручной запуск действия. Пароль не спрашивается — решение владельца. */
+/** Подтверждение предложения или ручной запуск действия. Пароль не спрашивается — решение владельца. */
 export function useRunAction() {
   const qc = useQueryClient();
   return useMutation({
@@ -119,20 +127,20 @@ export function useRunAction() {
   });
 }
 
-export function useIncidentActions() {
+export function useIncidentPolicy() {
   return useQuery({
-    queryKey: incidentsKeys.actions,
-    queryFn: ({ signal }) => incidentsApi.actions(signal),
+    queryKey: incidentsKeys.policy,
+    queryFn: ({ signal }) => incidentsApi.policy(signal),
     staleTime: 15_000,
   });
 }
 
-export function useUpdateIncidentActions() {
+export function useUpdateIncidentPolicy() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: incidentsApi.updateActions,
+    mutationFn: incidentsApi.updatePolicy,
     onSuccess: (data) => {
-      qc.setQueryData(incidentsKeys.actions, data);
+      qc.setQueryData(incidentsKeys.policy, data);
       void qc.invalidateQueries({ queryKey: ['settings', 'incidents'] });
     },
   });

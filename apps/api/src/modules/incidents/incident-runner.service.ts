@@ -8,8 +8,10 @@ import {
   type AttemptStep,
   type AttemptStepKey,
   AUTOFIX_GRACE_SECONDS,
+  type AutofixPolicy,
   actionByKey,
   actionMeta,
+  DEFAULT_AUTOFIX_POLICY,
   INCIDENT_CHAINS,
   type IncidentAttempt,
   type IncidentEvent,
@@ -67,6 +69,13 @@ export const NODE_PROBE = `${NODE_FIND}; [ -n "$N" ] && docker inspect -f '{{.St
 
 const NUL_RE = new RegExp(String.fromCharCode(0), 'g');
 const iso = () => new Date().toISOString();
+
+/** Политика сигнала из настроек; нет записи — «спросить». */
+const policyFor = (cfg: { policy: Record<string, string> }, kind: string): AutofixPolicy =>
+  (cfg.policy[kind] as AutofixPolicy | undefined) ?? DEFAULT_AUTOFIX_POLICY;
+/** Автопочинка включена и не на паузе. */
+const autofixActive = (cfg: { autofixEnabled: boolean; pausedUntil: string | null }): boolean =>
+  cfg.autofixEnabled && !(cfg.pausedUntil && new Date(cfg.pausedUntil).getTime() > Date.now());
 
 /** Что сделано с открытым инцидентом: ждём паузу автопочинки, предложили шаг, запустили, ничего. */
 export type Decision = 'waiting' | 'proposed' | 'started' | 'none';
@@ -281,12 +290,15 @@ export class IncidentRunnerService implements OnModuleInit {
     const first = INCIDENT_CHAINS[row.kind as IncidentKind][0];
     if (!first) return 'none';
     const action = actionByKey(first);
-    const autoAllowed = cfg.autofixEnabled && action.level === 'T1' && cfg.actions[first] === true;
+    const policy = policyFor(cfg, row.kind);
+    // «Наблюдать»: инцидент и уведомление есть, шагов панель не предлагает.
+    if (policy === 'watch') return 'none';
+    const autoAllowed = autofixActive(cfg) && policy === 'auto' && action.level === 'T1';
     if (!autoAllowed) {
       await this.propose(
         row,
         first,
-        action.level === 'T1' ? 'авто для этого действия выключено' : 'первый шаг цепочки',
+        action.level === 'T1' ? 'для этого сигнала выбрано «Спросить»' : 'первый шаг цепочки',
       );
       return 'proposed';
     }
@@ -298,7 +310,7 @@ export class IncidentRunnerService implements OnModuleInit {
       severity: 'info',
       title: `${row.title}: чиню автоматически`,
       body: `${row.detail} Запускаю «${action.title}» (T1).`,
-      link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
+      link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
     });
     await this.start(row.id, first, 'auto').catch((err) =>
       this.log.warn(`автопочинка ${row.id}: ${(err as Error).message}`),
@@ -618,7 +630,15 @@ export class IncidentRunnerService implements OnModuleInit {
     }
     const action = actionByKey(next);
     const cfg = await this.settings.get();
-    if (by === 'auto' && action.level === 'T1' && cfg.autofixEnabled && cfg.actions[next] === true) {
+    const policy = policyFor(cfg, row.kind);
+    if (policy === 'watch') {
+      await this.repo.appendEvent(
+        incidentId,
+        ev(by, `${reason}. Для этого сигнала выбрано «Наблюдать»`, 'escalate'),
+      );
+      return;
+    }
+    if (by === 'auto' && action.level === 'T1' && autofixActive(cfg) && policy === 'auto') {
       await this.repo.appendEvent(
         incidentId,
         ev('auto', `${reason} — следующий шаг: ${action.title}`, 'escalate', 'T1'),
@@ -668,7 +688,7 @@ export class IncidentRunnerService implements OnModuleInit {
         level === 'T3'
           ? `${action.title} — только вручную. ${reason}.`
           : `${first ? `${row.detail} ` : ''}Предложено: ${action.title} (${level}), ${reason}. Подтвердите запуск в инциденте.`,
-      link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
+      link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
     });
     await this.audit.record({
       action: 'incident.action.proposed',
@@ -776,7 +796,7 @@ export class IncidentRunnerService implements OnModuleInit {
             ? `${row.title}: «${action.title}» помогло`
             : `${row.title}: «${action.title}» — ${ATTEMPT_STATUS_LABELS[result]}`,
         body: `${by === 'auto' ? 'Автоматически' : 'По вашей команде'} · ${note}`,
-        link: { to: `/incidents?open=${row.id}`, label: 'Открыть инцидент' },
+        link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
       });
     await this.audit.record({
       action: 'incident.autofix',

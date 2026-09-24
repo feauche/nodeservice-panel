@@ -120,7 +120,7 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
     bindSink({ write: (d) => term.write(d) });
     const disp = term.onData((d) => sendInput(d));
 
-    const ro = new ResizeObserver(() => {
+    const refit = () => {
       try {
         fit.fit();
         sendResize(term.cols, term.rows);
@@ -129,10 +129,23 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
       } catch {
         /* размер ещё не готов */
       }
-    });
+    };
+    const ro = new ResizeObserver(refit);
     ro.observe(el);
+    // Первый fit считает строки по метрикам запасного шрифта: моноширинный ещё грузится, строк выходит
+    // больше, чем влезает, и низ обрезается до первого ввода. Пересчитываем, когда шрифты готовы и
+    // когда закончилась анимация появления окна.
+    const fontsReady = document.fonts?.ready;
+    let alive = true;
+    void fontsReady?.then(() => alive && refit());
+    const onAnimEnd = () => refit();
+    el.parentElement?.parentElement?.addEventListener('animationend', onAnimEnd);
+    const late = setTimeout(refit, 350);
 
     return () => {
+      alive = false;
+      clearTimeout(late);
+      el.parentElement?.parentElement?.removeEventListener('animationend', onAnimEnd);
       ro.disconnect();
       disp.dispose();
       bindSink(null);
@@ -198,6 +211,12 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
         data-terminal-window=""
         aria-label={`Терминал ${server.name}`}
         className="animate-[ns-term-in_0.24s_ease] flex h-full w-full flex-col overflow-hidden rounded-[14px] border border-border-2 bg-surface shadow-float"
+        // Скрытое поле ввода xterm при фокусе «подтягивает» себя в видимую область и прокручивает
+        // окно вместе с шапкой. Окно прокручиваться не должно никогда.
+        onScroll={(e) => {
+          e.currentTarget.scrollTop = 0;
+          e.currentTarget.scrollLeft = 0;
+        }}
       >
         {/* Шапка-ручка */}
         <div className="ns-term-drag flex flex-none cursor-grab touch-none items-center gap-2.5 border-b border-border bg-surface-2 px-[13px] py-2.5 select-none active:cursor-grabbing">
@@ -285,7 +304,7 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
 
         {/* Тело: xterm + оверлеи состояний */}
         <div className="relative min-h-0 flex-1 bg-surface">
-          <div ref={bodyRef} className="absolute inset-0 px-[15px] py-[13px]" />
+          <div ref={bodyRef} className="absolute inset-0 overflow-hidden px-[15px] py-[13px]" />
           {(status === 'auth' || status === 'connecting') && <ConnectingOverlay server={server} />}
           {(status === 'closed' || status === 'error') && <EndedOverlay error={error} onReopen={reopen} />}
         </div>

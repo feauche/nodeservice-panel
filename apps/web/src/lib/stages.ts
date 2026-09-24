@@ -16,6 +16,7 @@ export const OPEN_SECTIONS: ReadonlySet<string> = new Set<string>([
   '/servers/providers',
   '/audit',
   '/incidents',
+  '/incidents/autofix',
 ]);
 
 export const LOCKED_HINT =

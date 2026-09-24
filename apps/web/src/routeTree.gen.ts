@@ -19,6 +19,8 @@ import { Route as LoginRouteImport } from './routes/login';
 import { Route as ServersRouteImport } from './routes/servers';
 import { Route as SettingsRouteImport } from './routes/settings';
 import { Route as SetupRouteImport } from './routes/setup';
+import { Route as IncidentsIdRouteImport } from './routes/incidents_.$id';
+import { Route as IncidentsAutofixRouteImport } from './routes/incidents_.autofix';
 import { Route as Login2faRouteImport } from './routes/login_.2fa';
 import { Route as LoginRecoveryRouteImport } from './routes/login_.recovery';
 import { Route as ServersProvidersRouteImport } from './routes/servers_.providers';
@@ -79,6 +81,16 @@ const SetupRoute = SetupRouteImport.update({
   path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any);
+const IncidentsIdRoute = IncidentsIdRouteImport.update({
+  id: '/incidents_/$id',
+  path: '/incidents/$id',
+  getParentRoute: () => rootRouteImport,
+} as any);
+const IncidentsAutofixRoute = IncidentsAutofixRouteImport.update({
+  id: '/incidents_/autofix',
+  path: '/incidents/autofix',
+  getParentRoute: () => rootRouteImport,
+} as any);
 const Login2faRoute = Login2faRouteImport.update({
   id: '/login_/2fa',
   path: '/login/2fa',
@@ -136,6 +148,8 @@ export interface FileRoutesByFullPath {
   '/servers': typeof ServersRoute;
   '/settings': typeof SettingsRouteWithChildren;
   '/setup': typeof SetupRoute;
+  '/incidents/$id': typeof IncidentsIdRoute;
+  '/incidents/autofix': typeof IncidentsAutofixRoute;
   '/login/2fa': typeof Login2faRoute;
   '/login/recovery': typeof LoginRecoveryRoute;
   '/servers/providers': typeof ServersProvidersRoute;
@@ -156,6 +170,8 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute;
   '/servers': typeof ServersRoute;
   '/setup': typeof SetupRoute;
+  '/incidents/$id': typeof IncidentsIdRoute;
+  '/incidents/autofix': typeof IncidentsAutofixRoute;
   '/login/2fa': typeof Login2faRoute;
   '/login/recovery': typeof LoginRecoveryRoute;
   '/servers/providers': typeof ServersProvidersRoute;
@@ -178,6 +194,8 @@ export interface FileRoutesById {
   '/servers': typeof ServersRoute;
   '/settings': typeof SettingsRouteWithChildren;
   '/setup': typeof SetupRoute;
+  '/incidents_/$id': typeof IncidentsIdRoute;
+  '/incidents_/autofix': typeof IncidentsAutofixRoute;
   '/login_/2fa': typeof Login2faRoute;
   '/login_/recovery': typeof LoginRecoveryRoute;
   '/servers_/providers': typeof ServersProvidersRoute;
@@ -201,6 +219,8 @@ export interface FileRouteTypes {
     | '/servers'
     | '/settings'
     | '/setup'
+    | '/incidents/$id'
+    | '/incidents/autofix'
     | '/login/2fa'
     | '/login/recovery'
     | '/servers/providers'
@@ -221,6 +241,8 @@ export interface FileRouteTypes {
     | '/login'
     | '/servers'
     | '/setup'
+    | '/incidents/$id'
+    | '/incidents/autofix'
     | '/login/2fa'
     | '/login/recovery'
     | '/servers/providers'
@@ -242,6 +264,8 @@ export interface FileRouteTypes {
     | '/servers'
     | '/settings'
     | '/setup'
+    | '/incidents_/$id'
+    | '/incidents_/autofix'
     | '/login_/2fa'
     | '/login_/recovery'
     | '/servers_/providers'
@@ -264,6 +288,8 @@ export interface RootRouteChildren {
   ServersRoute: typeof ServersRoute;
   SettingsRoute: typeof SettingsRouteWithChildren;
   SetupRoute: typeof SetupRoute;
+  IncidentsIdRoute: typeof IncidentsIdRoute;
+  IncidentsAutofixRoute: typeof IncidentsAutofixRoute;
   Login2faRoute: typeof Login2faRoute;
   LoginRecoveryRoute: typeof LoginRecoveryRoute;
   ServersProvidersRoute: typeof ServersProvidersRoute;
@@ -339,6 +365,20 @@ declare module '@tanstack/react-router' {
       path: '/setup';
       fullPath: '/setup';
       preLoaderRoute: typeof SetupRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    '/incidents_/$id': {
+      id: '/incidents_/$id';
+      path: '/incidents/$id';
+      fullPath: '/incidents/$id';
+      preLoaderRoute: typeof IncidentsIdRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    '/incidents_/autofix': {
+      id: '/incidents_/autofix';
+      path: '/incidents/autofix';
+      fullPath: '/incidents/autofix';
+      preLoaderRoute: typeof IncidentsAutofixRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     '/login_/2fa': {
@@ -440,6 +480,8 @@ const rootRouteChildren: RootRouteChildren = {
   ServersRoute: ServersRoute,
   SettingsRoute: SettingsRouteWithChildren,
   SetupRoute: SetupRoute,
+  IncidentsIdRoute: IncidentsIdRoute,
+  IncidentsAutofixRoute: IncidentsAutofixRoute,
   Login2faRoute: Login2faRoute,
   LoginRecoveryRoute: LoginRecoveryRoute,
   ServersProvidersRoute: ServersProvidersRoute,

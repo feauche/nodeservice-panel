@@ -1,16 +1,21 @@
 import {
   type ActionKey,
+  type AutofixPolicy,
+  actionByKey,
   actionMeta,
+  DEFAULT_AUTOFIX_POLICY,
   INCIDENT_ACTIONS,
   INCIDENT_CHAINS,
+  INCIDENT_KIND_META,
+  INCIDENT_KINDS,
   INCIDENTS_SETTINGS_DEFAULTS,
   type Incident,
-  type IncidentActionsResponse,
   type IncidentAttempt,
   type IncidentEvent,
   type IncidentKind,
+  type IncidentPolicyResponse,
   type IncidentsSettings,
-  incidentActionsUpdateSchema,
+  incidentPolicyUpdateSchema,
   incidentsSettingsUpdateSchema,
   resolveIncidentRequestSchema,
 } from '@nodeservice/shared';
@@ -127,6 +132,7 @@ export function seedIncidents(): void {
       ],
       attempts: [],
       proposal: null,
+      snapshot: { cpu: 12, mem: 41, disk: 20, node: 'running', agentStatus: 'online', agentVersion: '0.6.1' },
     },
     {
       id: uid(),
@@ -151,6 +157,7 @@ export function seedIncidents(): void {
         reason: 'первый шаг цепочки',
         proposedAt: iso(5),
       },
+      snapshot: { cpu: 96, mem: 71, disk: 63, node: 'running', agentStatus: 'online', agentVersion: '0.6.1' },
     },
     {
       id: uid(),
@@ -186,6 +193,7 @@ export function seedIncidents(): void {
         ),
       ],
       proposal: null,
+      snapshot: { cpu: 22, mem: 55, disk: 94, node: 'running', agentStatus: 'online', agentVersion: '0.6.1' },
     },
     {
       id: uid(),
@@ -205,6 +213,7 @@ export function seedIncidents(): void {
       ],
       attempts: [],
       proposal: null,
+      snapshot: { cpu: 12, mem: 41, disk: 20, node: 'running', agentStatus: 'online', agentVersion: '0.6.1' },
     },
   ];
 }
@@ -330,32 +339,37 @@ function runAttempt(inc: Incident, action: ActionKey, by: 'auto' | 'manual'): vo
   }, t * 3);
 }
 
-function actionsResponse(): IncidentActionsResponse {
+function policyResponse(): IncidentPolicyResponse {
   const since = Date.now() - 30 * 86_400_000;
+  const paused =
+    mockIncidents.settings.pausedUntil && new Date(mockIncidents.settings.pausedUntil).getTime() > Date.now()
+      ? mockIncidents.settings.pausedUntil
+      : null;
   return {
     autofixEnabled: mockIncidents.settings.autofixEnabled,
+    pausedUntil: paused,
     cooldownMinutes: mockIncidents.settings.autofixCooldownMinutes,
-    items: INCIDENT_ACTIONS.map((a) => {
-      const runs = mockIncidents.items
+    items: INCIDENT_KINDS.map((kind) => {
+      const attempts = mockIncidents.items
+        .filter((i) => i.kind === kind)
         .flatMap((i) => i.attempts)
-        .filter((at) => at.action === a.key && new Date(at.startedAt).getTime() > since);
+        .filter((at) => new Date(at.startedAt).getTime() > since);
+      const chain = INCIDENT_CHAINS[kind].map((key) => {
+        const a = actionByKey(key);
+        return { key, title: a.title, level: a.level };
+      });
       return {
-        key: a.key,
-        title: a.title,
-        level: a.level,
-        kinds: [...a.kinds],
-        summary: a.summary,
-        consequence: a.consequence,
-        preconditions: [...a.preconditions],
-        postcheck: a.postcheck,
-        rollbackNote: a.rollbackNote,
-        terminal: a.terminal,
-        enabled: a.level === 'T1' && mockIncidents.settings.actions[a.key] === true,
+        kind,
+        label: INCIDENT_KIND_META[kind].label,
+        component: INCIDENT_KIND_META[kind].component,
+        policy: (mockIncidents.settings.policy[kind] as AutofixPolicy | undefined) ?? DEFAULT_AUTOFIX_POLICY,
+        autoAvailable: chain.some((c) => c.level === 'T1'),
+        chain,
         stats: {
-          runs: runs.length,
-          helped: runs.filter((r) => r.status === 'helped').length,
-          lastAt: runs.length
-            ? (runs
+          runs: attempts.length,
+          helped: attempts.filter((r) => r.status === 'helped').length,
+          lastAt: attempts.length
+            ? (attempts
                 .map((r) => r.startedAt)
                 .sort()
                 .at(-1) ?? null)
@@ -374,15 +388,20 @@ export const incidentsHandlers = [
     );
     return HttpResponse.json({ items, counts: counts() });
   }),
-  http.get('/api/incidents/actions', () => HttpResponse.json(actionsResponse())),
-  http.patch('/api/incidents/actions', async ({ request }) => {
-    const parsed = incidentActionsUpdateSchema.safeParse(await request.json());
+  http.get('/api/incidents/policy', () => HttpResponse.json(policyResponse())),
+  http.patch('/api/incidents/policy', async ({ request }) => {
+    const parsed = incidentPolicyUpdateSchema.safeParse(await request.json());
     if (!parsed.success) return problem(400, 'Данные не прошли проверку');
     if (parsed.data.autofixEnabled !== undefined)
       mockIncidents.settings.autofixEnabled = parsed.data.autofixEnabled;
-    for (const [k, v] of Object.entries(parsed.data.actions ?? {}))
-      if (actionMeta(k as ActionKey).level === 'T1') mockIncidents.settings.actions[k] = v as boolean;
-    return HttpResponse.json(actionsResponse());
+    for (const [k, v] of Object.entries(parsed.data.policy ?? {}))
+      mockIncidents.settings.policy[k] = v as AutofixPolicy;
+    if (parsed.data.pauseMinutes !== undefined)
+      mockIncidents.settings.pausedUntil =
+        parsed.data.pauseMinutes > 0
+          ? new Date(Date.now() + parsed.data.pauseMinutes * 60_000).toISOString()
+          : null;
+    return HttpResponse.json(policyResponse());
   }),
   http.delete('/api/incidents/resolved', () => {
     const before = mockIncidents.items.length;
