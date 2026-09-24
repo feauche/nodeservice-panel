@@ -27,7 +27,11 @@ export interface ActionSpec {
   rollback?: string;
 }
 
-const SH = (body: string) => `sh -c '${body}'`;
+/**
+ * Обёртка `sh -c '…'`. Одинарные кавычки внутри тела экранируем: без этого строка рвётся и шелл
+ * получает мусор (код возврата 127 «команда не найдена»).
+ */
+export const SH = (body: string) => `sh -c '${body.replace(/'/g, "'\\''")}'`;
 
 export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
   free_disk: {
@@ -45,21 +49,25 @@ export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
   /** Осмотр (T0): только чтение — где лежат гигабайты. Ничего не удаляет. */
   disk_inspect: {
     command: SH(
-      "echo '— самые тяжёлые каталоги —'; du -xh / --max-depth=2 2>/dev/null | sort -h | tail -20; " +
-        "echo; echo '— крупные файлы в /tmp и /var —'; " +
-        "find /tmp /var -xdev -type f -size +200M -printf '%s\t%p\n' 2>/dev/null | sort -rn | head -20 | " +
-        "awk -F'\t' '{printf \"%.1f ГБ\\t%s\\n\", $1/1073741824, $2}'; true",
+      'echo "== Самые тяжёлые каталоги =="; du -xh / --max-depth=2 2>/dev/null | sort -h | tail -20; ' +
+        'echo; echo "== Файлы больше 200 МБ =="; ' +
+        'timeout -k 5 60 find / -xdev -type f -size +200M -exec du -h {} + 2>/dev/null | sort -h | tail -20; ' +
+        'true',
     ),
     precheck: ['ssh_ok'],
     postcheck: { kind: 'none' },
   },
   node_up: {
-    command: `sh -c '${FIND_NODE.replace(/'/g, "'\\''")}; [ -n "$N" ] || { echo "контейнер ноды не найден"; exit 3; }; docker start "$N" 2>&1'`,
+    command: SH(
+      `${FIND_NODE}; [ -n "$N" ] || { echo "контейнер ноды не найден"; exit 3; }; docker start "$N" 2>&1`,
+    ),
     precheck: ['ssh_ok', 'no_other_action'],
     postcheck: { kind: 'node_up' },
   },
   restart_node: {
-    command: `sh -c '${FIND_NODE.replace(/'/g, "'\\''")}; [ -n "$N" ] || { echo "контейнер ноды не найден"; exit 3; }; docker restart "$N" 2>&1'`,
+    command: SH(
+      `${FIND_NODE}; [ -n "$N" ] || { echo "контейнер ноды не найден"; exit 3; }; docker restart "$N" 2>&1`,
+    ),
     containerCheck: `${FIND_NODE}; docker inspect -f '{{.State.Running}}' "$N" 2>/dev/null`,
     precheck: ['agent_online', 'no_other_action'],
     // Метрика выбирается по виду инцидента (cpu_high → cpu, mem_high → mem) в исполнителе.
