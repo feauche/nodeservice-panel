@@ -5,9 +5,10 @@ import {
   INCIDENT_KIND_META,
   type Incident,
   type IncidentStatus,
+  isAnalysisStale,
 } from '@nodeservice/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { ArrowLeftIcon, CheckIcon, ServerIcon, SparklesIcon, Trash2Icon } from 'lucide-react';
+import { ArrowLeftIcon, CheckIcon, ServerIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -20,6 +21,7 @@ import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
+import { IncidentAnalysis } from './incident-analysis';
 import { AttemptsAccordion, ProposalBlock, Timeline } from './incident-blocks';
 import { durationText, outcomeSentence } from './incident-format';
 import {
@@ -45,7 +47,7 @@ const BTN =
 
 /**
  * Инцидент как страница-кейс (витрина v3, B1): шапка с действиями, слева хронология и попытки,
- * справа сигналы в момент сбоя, правило и похожие случаи. «Анализ» — место для ИИ.
+ * справа сигналы в момент сбоя, правило и похожие случаи. Сверху разбор ассистента (R4.2).
  */
 export function IncidentCasePage({ id }: { id: string }) {
   const q = useIncident(id);
@@ -102,6 +104,14 @@ export function IncidentCasePage({ id }: { id: string }) {
     ? [...lastSimilar.attempts].reverse().find((a) => a.status === 'helped')
     : undefined;
 
+  // Шаг из разбора и предложение панели совпали — показываем один блок, в разборе.
+  const proposalInAnalysis =
+    inc.proposal !== null &&
+    inc.proposal.level !== 'T3' &&
+    inc.analysis?.status === 'done' &&
+    inc.analysis.nextAction === inc.proposal.action &&
+    !isAnalysisStale(inc.analysis, { attempts: inc.attempts.length, resolved: inc.status === 'resolved' });
+
   const doRun = async (raw: string) => {
     const parsed = actionKeySchema.safeParse(raw);
     if (!parsed.success) {
@@ -148,7 +158,7 @@ export function IncidentCasePage({ id }: { id: string }) {
               </span>
             </p>
           </div>
-          <div className="flex flex-none flex-wrap items-center gap-2">
+          <div className="flex max-w-full flex-wrap items-center gap-2">
             {inc.serverId && (
               <button type="button" onClick={() => openServer(inc.serverId ?? '')} className={BTN}>
                 <ServerIcon className="size-3.5" aria-hidden="true" />
@@ -188,9 +198,16 @@ export function IncidentCasePage({ id }: { id: string }) {
           </div>
         </div>
 
-        <div className="grid md:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,1fr)_300px]">
           {/* Основная колонка */}
           <div className="flex flex-col gap-4 px-5 py-4 md:border-r md:border-border">
+            <IncidentAnalysis
+              incident={inc}
+              canAct={canAct}
+              attemptRunning={Boolean(running)}
+              runBusy={run.isPending}
+              onRun={(action) => void doRun(action)}
+            />
             <p className="text-[13.5px] leading-normal">
               {inc.detail} <span className="text-text-2">{outcomeSentence(inc, now)}.</span>
             </p>
@@ -208,20 +225,13 @@ export function IncidentCasePage({ id }: { id: string }) {
                 <AttemptsAccordion attempts={inc.attempts} />
               </section>
             )}
-            {canAct && inc.proposal && !running && (
+            {canAct && inc.proposal && !running && !proposalInAnalysis && (
               <ProposalBlock
                 incident={inc}
                 onRun={() => void doRun(inc.proposal?.action ?? '')}
                 busy={run.isPending}
               />
             )}
-            <div className="flex items-start gap-2.5 rounded-[12px] border border-border bg-surface-2/40 px-3.5 py-3 text-[12.5px] leading-normal text-text-2">
-              <SparklesIcon className="mt-[2px] size-3.5 flex-none text-brand" aria-hidden="true" />
-              <span>
-                <b className="font-semibold text-foreground">Анализ.</b> Здесь нейросеть объяснит причину по
-                логам ноды и сигналам агента и предложит действие. Раздел пока не подключён.
-              </span>
-            </div>
           </div>
 
           {/* Правая колонка: короткие значения, цепочка списком — ничего не переносится «в кашу» */}

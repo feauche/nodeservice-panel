@@ -12,6 +12,8 @@ import { AssistantController } from './assistant.controller.js';
 import { AssistantRepository } from './assistant.repository.js';
 import { AssistantService } from './assistant.service.js';
 import { AssistantSettingsModule } from './assistant-settings.module.js';
+import { IncidentAnalysisController } from './incident-analysis.controller.js';
+import { IncidentAnalysisService } from './incident-analysis.service.js';
 import { KbReviewService } from './kb-review.service.js';
 import { LLM_PROVIDER } from './llm.provider.js';
 import { ZvenoProvider } from './zveno.provider.js';
@@ -29,9 +31,10 @@ import { ZvenoProvider } from './zveno.provider.js';
     AssistantSettingsModule,
     SettingsModule,
   ],
-  controllers: [AssistantController],
+  controllers: [AssistantController, IncidentAnalysisController],
   providers: [
     AssistantService,
+    IncidentAnalysisService,
     AssistantRepository,
     KbReviewService,
     { provide: LLM_PROVIDER, useClass: ZvenoProvider },

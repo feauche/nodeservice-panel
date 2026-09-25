@@ -314,6 +314,87 @@ export const incidentSnapshotSchema = z.object({
 });
 export type IncidentSnapshot = z.infer<typeof incidentSnapshotSchema>;
 
+/* ---------- разбор ассистентом (R4.2) ---------- */
+
+export const ANALYSIS_STATUSES = ['running', 'done', 'failed'] as const;
+export type AnalysisStatus = (typeof ANALYSIS_STATUSES)[number];
+
+export const ANALYSIS_CONFIDENCE = ['high', 'medium', 'low'] as const;
+export type AnalysisConfidence = (typeof ANALYSIS_CONFIDENCE)[number];
+export const ANALYSIS_CONFIDENCE_LABELS: Record<AnalysisConfidence, string> = {
+  high: 'Уверенность высокая',
+  medium: 'Уверенность средняя',
+  low: 'Уверенность низкая',
+};
+
+/** Откуда взято утверждение: источник рядом с каждым доказательством, чтобы его можно было проверить. */
+export const ANALYSIS_EVIDENCE_SOURCES = [
+  'metric',
+  'inspect',
+  'attempt',
+  'agent',
+  'history',
+  'other',
+] as const;
+export type AnalysisEvidenceSource = (typeof ANALYSIS_EVIDENCE_SOURCES)[number];
+export const ANALYSIS_EVIDENCE_LABELS: Record<AnalysisEvidenceSource, string> = {
+  metric: 'Метрика',
+  inspect: 'Осмотр',
+  attempt: 'Попытки',
+  agent: 'Агент',
+  history: 'История',
+  other: 'Данные',
+};
+
+/** Сколько вопросов по разбору хранится в самом инциденте; старые вытесняются. */
+export const ANALYSIS_THREAD_MAX = 8;
+export const ANALYSIS_QUESTION_MAX = 500;
+
+export const incidentAnalysisSchema = z.object({
+  status: z.enum(ANALYSIS_STATUSES),
+  startedAt: z.iso.datetime(),
+  finishedAt: z.iso.datetime().nullable(),
+  /** Что ассистент делает или сделал («Смотрю историю диска»): идёт разбор — видно ход работы. */
+  steps: z.array(z.string()),
+  verdict: z.string().nullable(),
+  confidence: z.enum(ANALYSIS_CONFIDENCE).nullable(),
+  evidence: z.array(z.object({ source: z.enum(ANALYSIS_EVIDENCE_SOURCES), text: z.string() })),
+  /** Чего в данных не хватило для уверенного вывода. */
+  unknown: z.string().nullable(),
+  /** Ключ шага из цепочки правил инцидента; запускает только администратор. */
+  nextAction: z.string().nullable(),
+  /** Состояние инцидента на момент разбора: по расхождению видно, что разбор устарел. */
+  basedOn: z.object({ attempts: z.number().int().min(0), resolved: z.boolean() }),
+  model: z.string().nullable(),
+  error: z.string().nullable(),
+  thread: z.array(z.object({ question: z.string(), answer: z.string(), at: z.iso.datetime() })),
+});
+export type IncidentAnalysis = z.infer<typeof incidentAnalysisSchema>;
+
+export const analysisAskRequestSchema = z.object({
+  question: z.string().trim().min(2, 'Введите вопрос').max(ANALYSIS_QUESTION_MAX, 'Слишком длинный вопрос'),
+});
+export type AnalysisAskRequest = z.infer<typeof analysisAskRequestSchema>;
+
+/** Метрика для графика-доказательства: только у инцидентов, которые про нагрузку или место. */
+export const INCIDENT_CHART_METRIC: Partial<Record<IncidentKind, 'cpuPct' | 'memPct' | 'diskPct'>> = {
+  cpu_high: 'cpuPct',
+  mem_high: 'memPct',
+  disk_high: 'diskPct',
+};
+export const INCIDENT_CHART_LABELS = { cpuPct: 'CPU', memPct: 'Память', diskPct: 'Диск' } as const;
+
+/** Разбор устарел, если после него появились попытки или инцидент закрыли. */
+export function isAnalysisStale(
+  a: IncidentAnalysis,
+  current: { attempts: number; resolved: boolean },
+): boolean {
+  return (
+    a.status === 'done' &&
+    (a.basedOn.attempts !== current.attempts || a.basedOn.resolved !== current.resolved)
+  );
+}
+
 export const incidentSchema = z.object({
   id: z.uuid(),
   serverId: z.uuid().nullable(),
@@ -331,6 +412,8 @@ export const incidentSchema = z.object({
   proposal: incidentProposalSchema.nullable(),
   /** Что видел агент в момент открытия — для правой колонки кейса и будущего анализа ИИ. */
   snapshot: incidentSnapshotSchema.nullable(),
+  /** Разбор ассистентом: вывод, доказательства, шаг, вопросы; null — ещё не разбирали. */
+  analysis: incidentAnalysisSchema.nullable(),
 });
 export type Incident = z.infer<typeof incidentSchema>;
 

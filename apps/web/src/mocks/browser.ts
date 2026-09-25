@@ -1,5 +1,5 @@
 import { setupWorker } from 'msw/browser';
-
+import { mockAnalysis } from '@/test/msw/analysis-mock';
 import { handlers, resetMockState } from '@/test/msw/handlers';
 import { mockIncidents } from '@/test/msw/incidents-mock';
 import { mockMaintenance } from '@/test/msw/maintenance-mock';
@@ -18,6 +18,8 @@ export async function startMockWorker(): Promise<void> {
   mockProviders.iconDelayMs = 2500;
   // Попытка починки в браузере идёт как на живой ноде — по шагу в секунду с небольшим.
   mockIncidents.stepMs = 1200;
+  mockAnalysis.stepMs = 1500;
+  (window as unknown as { __nsMockAnalysis: typeof mockAnalysis }).__nsMockAnalysis = mockAnalysis;
   (window as unknown as { __nsMockIncidents: typeof mockIncidents }).__nsMockIncidents = mockIncidents;
   (window as unknown as { __nsMockMaintenance: typeof mockMaintenance }).__nsMockMaintenance =
     mockMaintenance;

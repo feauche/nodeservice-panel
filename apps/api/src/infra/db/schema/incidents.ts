@@ -1,4 +1,10 @@
-import type { IncidentAttempt, IncidentEvent, IncidentProposal, IncidentSnapshot } from '@nodeservice/shared';
+import type {
+  IncidentAnalysis,
+  IncidentAttempt,
+  IncidentEvent,
+  IncidentProposal,
+  IncidentSnapshot,
+} from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
@@ -23,6 +29,8 @@ export const incidents = pgTable(
     proposal: jsonb('proposal').$type<IncidentProposal | null>(),
     /** Сигналы в момент открытия (миграция 0029). */
     snapshot: jsonb('snapshot').$type<IncidentSnapshot | null>(),
+    /** Разбор ассистентом (R4.2, миграция 0031). */
+    analysis: jsonb('analysis').$type<IncidentAnalysis | null>(),
     lastAutofixAt: timestamp('last_autofix_at', { withTimezone: true }),
     openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),

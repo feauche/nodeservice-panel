@@ -146,8 +146,8 @@ describe('IncidentCasePage', () => {
     // правая колонка: сигналы
     expect(screen.getByText('Сигналы в момент сбоя')).toBeInTheDocument();
     expect(screen.getByText('Контейнер ноды')).toBeInTheDocument();
-    // блок «Анализ» зарезервирован под ИИ
-    expect(screen.getByText(/здесь нейросеть объяснит причину/i)).toBeInTheDocument();
+    // блок «Анализ»: ассистент выключен — подсказка, куда идти
+    expect(await screen.findByText(/Чтобы разбирать инциденты, задайте провайдера/)).toBeInTheDocument();
     // подтверждение шага запускает попытку
     const user = userEvent.setup();
     await user.click(screen.getAllByRole('button', { name: /^Подтвердить:/ })[0] as HTMLElement);

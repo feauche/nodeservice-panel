@@ -140,6 +140,7 @@ export function seedIncidents(): void {
       attempts: [],
       proposal: null,
       snapshot: { cpu: 12, mem: 41, disk: 20, node: 'running', agentStatus: 'online', agentVersion: '0.6.1' },
+      analysis: null,
     },
     {
       id: uid(),
@@ -165,6 +166,7 @@ export function seedIncidents(): void {
         proposedAt: iso(5),
       },
       snapshot: { cpu: 96, mem: 71, disk: 63, node: 'running', agentStatus: 'online', agentVersion: '0.6.1' },
+      analysis: null,
     },
     {
       id: uid(),
@@ -201,6 +203,7 @@ export function seedIncidents(): void {
       ],
       proposal: null,
       snapshot: { cpu: 22, mem: 55, disk: 94, node: 'running', agentStatus: 'online', agentVersion: '0.6.1' },
+      analysis: null,
     },
     {
       id: uid(),
@@ -297,6 +300,7 @@ export function seedIncidents(): void {
       ],
       proposal: null,
       snapshot: { cpu: 9, mem: 30, disk: 87, node: 'running', agentStatus: 'online', agentVersion: '0.6.1' },
+      analysis: null,
     },
     {
       id: uid(),
@@ -317,6 +321,7 @@ export function seedIncidents(): void {
       attempts: [],
       proposal: null,
       snapshot: { cpu: 12, mem: 41, disk: 20, node: 'running', agentStatus: 'online', agentVersion: '0.6.1' },
+      analysis: null,
     },
   ];
 }

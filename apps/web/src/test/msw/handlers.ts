@@ -1,5 +1,6 @@
 import { AUTH_PROBLEM, BRAND_NAME_DEFAULT, type Me } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
+import { analysisHandlers, seedAnalysis } from './analysis-mock';
 import { assistantHandlers, seedAssistant } from './assistant-mock';
 import { auditHandlers, mockAudit, seedAudit } from './audit-mock';
 import { autochecksHandlers, seedAutochecks } from './autochecks-mock';
@@ -74,6 +75,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
   seedNotifications();
   seedKnowledge();
   seedAssistant();
+  seedAnalysis();
   mockSnippets.items = [];
   Object.assign(mockState, {
     setupRequired: false,
@@ -159,6 +161,7 @@ export const handlers = [
   ...maintenanceHandlers,
   ...providersHandlers,
   ...metricsHandlers,
+  ...analysisHandlers,
   ...incidentsHandlers,
   ...notificationsHandlers,
   ...knowledgeHandlers,

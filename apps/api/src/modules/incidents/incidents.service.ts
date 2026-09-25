@@ -8,6 +8,7 @@ import {
   INCIDENT_KIND_META,
   INCIDENT_KINDS,
   type Incident,
+  type IncidentAnalysis,
   type IncidentEvent,
   type IncidentKind,
   type IncidentPolicyResponse,
@@ -88,6 +89,7 @@ export class IncidentsService {
       attempts: row.attempts,
       proposal: row.proposal ?? null,
       snapshot: row.snapshot ?? null,
+      analysis: row.analysis ?? null,
     };
   }
 
@@ -105,6 +107,21 @@ export class IncidentsService {
         warn: openRows.filter((r) => r.severity === 'warn').length,
       },
     };
+  }
+
+  /** Записать разбор ассистента; false — инцидента уже нет (удалили во время разбора). */
+  async saveAnalysis(id: string, analysis: IncidentAnalysis): Promise<boolean> {
+    return (await this.repo.update(id, { analysis })) !== undefined;
+  }
+
+  /** После перезапуска панели разбор «идёт» вечно: помечаем такие оборванными. */
+  async failRunningAnalyses(reason: string): Promise<number> {
+    const rows = (await this.repo.list('all')).filter((r) => r.analysis?.status === 'running');
+    for (const r of rows)
+      await this.repo.update(r.id, {
+        analysis: { ...(r.analysis as IncidentAnalysis), status: 'failed', finishedAt: now(), error: reason },
+      });
+    return rows.length;
   }
 
   async get(id: string): Promise<Incident> {

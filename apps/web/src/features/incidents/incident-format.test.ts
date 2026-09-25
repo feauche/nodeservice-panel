@@ -22,6 +22,7 @@ const base = (over: Partial<Incident>): Incident => ({
   attempts: [],
   proposal: null,
   snapshot: null,
+  analysis: null,
   ...over,
 });
 

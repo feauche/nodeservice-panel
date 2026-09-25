@@ -73,6 +73,8 @@
   --color-warn-soft: var(--ns-warn-soft);
   --color-crit: var(--ns-crit);
   --color-crit-soft: var(--ns-crit-soft);
+  --color-ai: var(--ns-ai);
+  --color-ai-soft: var(--ns-ai-soft);
   --color-cta: var(--ns-cta);
   --color-cta-foreground: var(--ns-cta-fg);
   --color-chart-base: var(--ns-chart-base);
@@ -190,6 +192,8 @@
   --ns-ok-soft: rgba(70, 207, 139, 0.14);
   --ns-warn-soft: rgba(230, 181, 82, 0.14);
   --ns-crit-soft: rgba(240, 97, 109, 0.15);
+  --ns-ai: #a78bfa;
+  --ns-ai-soft: rgba(167, 139, 250, 0.14);
   /* главная кнопка — синяя, с синим свечением */
   --ns-cta: #6ea8fe;
   --ns-cta-fg: #0b1220;
@@ -228,6 +232,8 @@
   --ns-ok-soft: rgba(31, 174, 107, 0.12);
   --ns-warn-soft: rgba(199, 138, 26, 0.12);
   --ns-crit-soft: rgba(220, 71, 86, 0.12);
+  --ns-ai: #7c5cd6;
+  --ns-ai-soft: rgba(124, 92, 214, 0.12);
   --ns-cta: #111419;
   --ns-cta-fg: #ffffff;
   --ns-cta-hover: #2a2f38;
@@ -266,6 +272,8 @@
   --ns-ok-soft: rgba(63, 207, 135, 0.13);
   --ns-warn-soft: rgba(230, 181, 82, 0.13);
   --ns-crit-soft: rgba(240, 97, 109, 0.14);
+  --ns-ai: #b9a6ff;
+  --ns-ai-soft: rgba(185, 166, 255, 0.13);
   /* главная кнопка — белая, с мятным свечением */
   --ns-cta: #ffffff;
   --ns-cta-fg: #000000;
