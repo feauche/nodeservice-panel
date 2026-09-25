@@ -183,7 +183,15 @@ function NodePill({ server }: { server: Server }) {
 }
 
 /** Система и ресурсы одной строкой, ниже — теги (и место под ручку перетаскивания справа). */
-function CardFooter({ server, handle }: { server: Server; handle?: ReactNode }) {
+function CardFooter({
+  server,
+  provider,
+  handle,
+}: {
+  server: Server;
+  provider: Provider | null;
+  handle?: ReactNode;
+}) {
   const resources = [
     server.facts.cpuCores ? `${server.facts.cpuCores} CPU` : null,
     server.facts.memoryMb ? `${Math.round(server.facts.memoryMb / 1024)} ГБ` : null,
@@ -191,10 +199,17 @@ function CardFooter({ server, handle }: { server: Server; handle?: ReactNode }) 
     .filter(Boolean)
     .join(' · ');
   const line = resources ? `${osLine(server)} · ${resources}` : osLine(server);
+  const title = provider ? `${provider.name} · ${line}` : line;
   return (
     <div className="flex flex-col gap-2">
-      <div className="truncate text-[12px] text-text-3" title={line}>
-        {line}
+      {/* Провайдер — часть описания железа (витрина «Карточка сервера», V3): «[иконка] Time Web · Ubuntu … » */}
+      <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-text-3" title={title}>
+        {provider && <ProviderIcon provider={provider} size="sm" className="flex-none" />}
+        <span className="truncate">
+          {provider && <b className="font-semibold text-text-2">{provider.name}</b>}
+          {provider && ' · '}
+          {line}
+        </span>
       </div>
       {(server.tags.length > 0 || handle) && (
         <div className="flex min-h-6 items-center gap-1.5">
@@ -215,20 +230,17 @@ function CardFooter({ server, handle }: { server: Server; handle?: ReactNode }) 
   );
 }
 
-/** Провайдер сервера из справочника (иконка у адреса) — общий для карточки и её «призрака». */
+/** Провайдер сервера из справочника — общий для карточки и её «призрака». */
 function useServerProvider(server: Server): Provider | null {
   const providers = useProviders();
   return server.providerId ? (providers.data?.items.find((p) => p.id === server.providerId) ?? null) : null;
 }
 
-/** Адрес SSH с иконкой провайдера. */
-function AddressLine({ server, provider }: { server: Server; provider: Provider | null }) {
+/** Адрес SSH. Провайдер живёт в нижней строке карточки, а не здесь: адрес — про подключение. */
+function AddressLine({ server }: { server: Server }) {
   return (
-    <p className="mt-0.5 flex min-w-0 items-center gap-1.5 font-mono text-[11.5px] text-text-3">
-      {provider && <ProviderIcon provider={provider} size="sm" className="flex-none" />}
-      <span className="truncate">
-        {server.sshUser}@{server.host}:{server.port}
-      </span>
+    <p className="mt-0.5 min-w-0 truncate font-mono text-[11.5px] text-text-3">
+      {server.sshUser}@{server.host}:{server.port}
     </p>
   );
 }
@@ -251,13 +263,13 @@ export function ServerCardGhost({
           <h2 className="line-clamp-2 font-heading text-[15px] leading-[1.25] font-bold tracking-[-0.01em]">
             {server.name}
           </h2>
-          <AddressLine server={server} provider={provider} />
+          <AddressLine server={server} />
         </div>
       </div>
       <StatusPills server={server} />
       <Gauges metrics={metrics} offline={health === 'crit'} />
       <CardSpark metrics={metrics} health={health} />
-      <CardFooter server={server} />
+      <CardFooter server={server} provider={provider} />
     </div>
   );
 }
@@ -362,7 +374,7 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
           <h2 className="line-clamp-2 font-heading text-[15px] leading-[1.25] font-bold tracking-[-0.01em]">
             {server.name}
           </h2>
-          <AddressLine server={server} provider={provider} />
+          <AddressLine server={server} />
         </div>
         <div className="flex flex-none items-center gap-1">
           <DropdownMenu>
@@ -412,6 +424,7 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
       <CardSpark metrics={metrics} health={health} />
       <CardFooter
         server={server}
+        provider={provider}
         handle={
           // Ручка перетаскивания в правом нижнем углу: порядок карточек можно менять, сетка сохраняется
           <button

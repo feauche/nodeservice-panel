@@ -23,6 +23,12 @@ export const MAINTENANCE_KINDS = [
 ] as const;
 export type MaintenanceKind = (typeof MAINTENANCE_KINDS)[number];
 
+/**
+ * С какой заполненности диска панель предлагает очистку. Ниже чистить нечего: при 11 % кнопка
+ * «Очистить» только шумит и приучает нажимать не глядя.
+ */
+export const DISK_CLEANUP_OFFER_PCT = 70;
+
 export type MaintenanceTier = 'T0' | 'T1' | 'T2' | 'T3';
 
 export const MAINTENANCE_TIERS: Record<MaintenanceKind, MaintenanceTier> = {

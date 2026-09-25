@@ -7,7 +7,7 @@ import {
   type IncidentStatus,
 } from '@nodeservice/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { ArrowLeftIcon, CheckIcon, SparklesIcon, Trash2Icon } from 'lucide-react';
+import { ArrowLeftIcon, CheckIcon, ServerIcon, SparklesIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -19,7 +19,7 @@ import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
-import { AttemptBlock, ProposalBlock, Timeline } from './incident-blocks';
+import { AttemptsAccordion, ProposalBlock, Timeline } from './incident-blocks';
 import { durationText, outcomeSentence } from './incident-format';
 import {
   useAcknowledgeIncident,
@@ -148,6 +148,12 @@ export function IncidentCasePage({ id }: { id: string }) {
             </p>
           </div>
           <div className="flex flex-none flex-wrap items-center gap-2">
+            {inc.serverId && (
+              <Link to="/servers" search={{ open: inc.serverId }} className={BTN}>
+                <ServerIcon className="size-3.5" aria-hidden="true" />
+                Сервер
+              </Link>
+            )}
             {inc.status === 'open' && (
               <button
                 type="button"
@@ -194,13 +200,11 @@ export function IncidentCasePage({ id }: { id: string }) {
               <Timeline events={inc.timeline} />
             </section>
             {inc.attempts.length > 0 && (
-              <section className="flex flex-col gap-3">
-                <h3 className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
-                  Попытки починки
+              <section>
+                <h3 className="mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
+                  Попытки починки · {inc.attempts.length}
                 </h3>
-                {inc.attempts.map((a, i) => (
-                  <AttemptBlock key={a.id} attempt={a} index={i + 1} />
-                ))}
+                <AttemptsAccordion attempts={inc.attempts} />
               </section>
             )}
             {canAct && inc.proposal && !running && (

@@ -63,7 +63,7 @@ describe('IncidentsPage', () => {
     await waitFor(() => expect(screen.queryByText('Диск заполняется')).not.toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: /^Решённые/ }));
     await waitFor(() => expect(screen.queryByText('SSH недоступен')).not.toBeInTheDocument());
-    expect(screen.getByText('Диск заполняется')).toBeInTheDocument();
+    expect(screen.getAllByText('Диск заполняется').length).toBeGreaterThan(0);
   });
 
   it('строка ведёт на страницу-кейс, кнопка — на «Автопочинку»', async () => {
@@ -120,8 +120,11 @@ describe('IncidentCasePage', () => {
     const { IncidentCasePage } = await import('./incident-case-page');
     const id = openId();
     const Page = () => <IncidentCasePage id={id} />;
-    renderPage(Page, '/incidents/$id', ['/incidents', '/incidents/autofix'], `/incidents/${id}`);
+    renderPage(Page, '/incidents/$id', ['/incidents', '/incidents/autofix', '/servers'], `/incidents/${id}`);
     expect(await screen.findByText('Высокая нагрузка на CPU · de-fra-01')).toBeInTheDocument();
+    // B2: кнопка «Сервер» ведёт на карточку сервера этого инцидента
+    const serverLink = screen.getByRole('link', { name: 'Сервер' });
+    expect(serverLink.getAttribute('href')).toMatch(/^\/servers\?open=/);
     // правая колонка: сигналы
     expect(screen.getByText('Сигналы в момент сбоя')).toBeInTheDocument();
     expect(screen.getByText('Контейнер ноды')).toBeInTheDocument();
@@ -157,6 +160,58 @@ describe('IncidentCasePage', () => {
     await user.click(await screen.findByRole('checkbox', { name: /Больше не следить/ }));
     await user.click(await screen.findByRole('button', { name: 'Закрыть' }));
     await waitFor(() => expect(mockServers.items.find((s) => s.id === inc.serverId)?.nodeWatch).toBe('off'));
+  });
+});
+
+describe('AttemptsAccordion', () => {
+  it('раскрыта только последняя попытка, остальные — по клику', async () => {
+    const { AttemptsAccordion } = await import('./incident-blocks');
+    const step = (
+      key: 'precheck' | 'action' | 'postcheck' | 'rollback',
+      label: string,
+      status: 'ok' | 'skipped',
+    ) => ({
+      key,
+      label,
+      status,
+      startedAt: null,
+      finishedAt: null,
+      note: null,
+    });
+    const mk = (n: number, action: string, status: 'not_helped' | 'helped') => ({
+      id: `7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3c0${n}`,
+      action,
+      level: 'T1' as const,
+      by: 'manual' as const,
+      status,
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      finishedAt: new Date(Date.now() - 40_000).toISOString(),
+      steps: [step('precheck', `Пред-проверка ${n}`, 'ok'), step('rollback', `Откат ${n}`, 'skipped')],
+      log: '',
+    });
+    const Page = () => (
+      <AttemptsAccordion
+        attempts={[
+          mk(1, 'free_disk', 'not_helped'),
+          mk(2, 'apt_clean', 'not_helped'),
+          mk(3, 'free_disk', 'helped'),
+        ]}
+      />
+    );
+    renderPage(Page, '/x');
+    const user = userEvent.setup();
+    const buttons = await screen.findAllByRole('button', { name: /Освободить диск|Очистить кэш apt/ });
+    // последняя раскрыта, первые две свёрнуты
+    expect(buttons[2]).toHaveAttribute('aria-expanded', 'true');
+    expect(buttons[0]).toHaveAttribute('aria-expanded', 'false');
+    expect(buttons[1]).toHaveAttribute('aria-expanded', 'false');
+    // клик раскрывает вторую, третья остаётся открытой
+    await user.click(buttons[1] as HTMLElement);
+    expect(buttons[1]).toHaveAttribute('aria-expanded', 'true');
+    expect(buttons[2]).toHaveAttribute('aria-expanded', 'true');
+    // итог виден и у свёрнутой строки
+    expect(buttons[0]).toHaveTextContent('не помогло');
+    expect(buttons[2]).toHaveTextContent('помогло');
   });
 });
 

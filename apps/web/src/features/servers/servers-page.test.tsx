@@ -140,7 +140,7 @@ describe('ServersPage', () => {
       expect(within(list).getByText('65 обновлений, из них 1 безопасности')).toBeInTheDocument();
       expect(within(list).getByText('Перезагрузка не требуется')).toBeInTheDocument();
       expect(within(list).getByText('Агент v0.5.4, доступна v0.6.0')).toBeInTheDocument();
-      expect(within(list).getByText('Диск: 16% занято')).toBeInTheDocument();
+      expect(within(list).getByText('Диск: 86% занято')).toBeInTheDocument();
       expect(within(list).getByText('Автообновления безопасности выключены')).toBeInTheDocument();
       expect(within(list).getAllByRole('button', { name: 'Обновить' })).toHaveLength(2);
       expect(within(list).getByRole('button', { name: 'Очистить' })).toBeInTheDocument();
@@ -170,6 +170,24 @@ describe('ServersPage', () => {
       expect(within(list).getByText('T3')).toBeInTheDocument();
       expect(within(list).getByText(/только вручную: reboot/)).toBeInTheDocument();
       expect(within(list).queryByRole('button', { name: 'Перезагрузить' })).not.toBeInTheDocument();
+    });
+
+    it('просторный диск: очистку не предлагаем — «в норме» без кнопки; после очистки кнопка пропадает', async () => {
+      const { user, dialog } = await openTab();
+      const list = await within(dialog).findByRole('list', { name: 'Чек-лист сервера' });
+      // 86 % — предлагаем
+      await user.click(within(list).getByRole('button', { name: 'Очистить' }));
+      await user.click(
+        within(await screen.findByRole('alertdialog', { name: 'Очистить диск на «de-fra-01»?' })).getByRole(
+          'button',
+          { name: 'Да, очистить' },
+        ),
+      );
+      expect(await within(dialog).findByText(/успешно за/, {}, { timeout: 4000 })).toBeInTheDocument();
+      // теперь 14 % — чистить нечего
+      await waitFor(() => expect(within(list).getByText('Диск: 14% занято')).toBeInTheDocument());
+      expect(within(list).queryByRole('button', { name: 'Очистить' })).not.toBeInTheDocument();
+      expect(within(list).getByText(/Свободно 66 ГБ/)).toBeInTheDocument();
     });
 
     it('T1: агент обновляется без подтверждения; ошибка шага — карточка с логом и пропущенными шагами', async () => {

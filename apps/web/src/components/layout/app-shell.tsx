@@ -15,7 +15,7 @@ import {
   XIcon,
 } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useState } from 'react';
 
 import { BrandLogo, BrandName } from '@/components/brand-logo';
 import { ThemeMenu } from '@/components/theme-menu';
@@ -178,6 +178,98 @@ function GroupLabel({ children, hidden }: { children: ReactNode; hidden?: boolea
   );
 }
 
+/* ---------- состояние группы «Серверы» ---------- */
+
+const NAV_OPEN_KEY = 'ns-nav-servers-open';
+
+/**
+ * Каждый раздел рисует свой AppShell, поэтому при переходе меню создаётся заново. Состояние группы
+ * поэтому живёт здесь, вне компонента: `shown` — что меню показывало в последний раз, `want` — что
+ * хочет пользователь (раскрыл руками или пришёл в раздел). Новое меню рисуется в прежнем виде и
+ * догоняет желаемое на следующем кадре — так раскрытие идёт плавно, а уход в другой раздел группу не
+ * схлопывает.
+ */
+const navGroup = {
+  shown: null as boolean | null,
+  want: false,
+  wasInSection: false,
+  mounted: false,
+};
+
+function readStoredOpen(): boolean {
+  try {
+    return localStorage.getItem(NAV_OPEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function storeOpen(v: boolean): void {
+  navGroup.want = v;
+  try {
+    localStorage.setItem(NAV_OPEN_KEY, v ? '1' : '0');
+  } catch {
+    /* нет хранилища — живём без запоминания */
+  }
+}
+
+/** Только для тестов: сбросить запомненное состояние группы. */
+export function resetNavGroupState(): void {
+  navGroup.shown = null;
+  navGroup.want = false;
+  navGroup.wasInSection = false;
+  navGroup.mounted = false;
+  try {
+    localStorage.removeItem(NAV_OPEN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function useGroupOpen(
+  inSection: boolean,
+  pathname: string,
+): { open: boolean; setOpen: (v: boolean) => void } {
+  const [open, setOpenState] = useState(() => {
+    if (navGroup.shown === null) navGroup.want = readStoredOpen();
+    // Самый первый показ за сессию — без анимации: сразу в нужном виде.
+    if (!navGroup.mounted) return navGroup.want || inSection;
+    return navGroup.shown ?? navGroup.want;
+  });
+  const setOpen = useCallback((v: boolean) => {
+    storeOpen(v);
+    setOpenState(v);
+  }, []);
+
+  // Что на экране — запоминаем, чтобы следующее меню (после перехода) стартовало с того же.
+  useEffect(() => {
+    navGroup.shown = open;
+  }, [open]);
+
+  // Сменился адрес (меню создано заново или осталось на месте): догоняем желаемое состояние на
+  // следующем кадре, чтобы сработал плавный переход. Пришли в раздел — раскрываем и запоминаем.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: реагируем только на смену адреса
+  useEffect(() => {
+    const entering = inSection && !navGroup.wasInSection;
+    navGroup.wasInSection = inSection;
+    const first = !navGroup.mounted;
+    navGroup.mounted = true;
+    if (entering || (first && inSection)) storeOpen(true);
+    const want = navGroup.want;
+    if (want === open) return;
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => setOpenState(want));
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [pathname]);
+
+  return { open, setOpen };
+}
+
 /**
  * Группа «Серверы» с подпунктами. Подпункты раскрываются плавно (grid-rows 0fr→1fr + прозрачность),
  * без прыжков высоты; при `prefers-reduced-motion` — мгновенно. В свёрнутом рейле группа
@@ -195,11 +287,7 @@ function NavGroup({
   const { to, label, icon: Icon, items } = SERVERS_GROUP;
   const pathname = useRouterState({ select: (st) => st.location.pathname });
   const inSection = pathname === to || pathname.startsWith(`${to}/`);
-  const [open, setOpen] = useState(inSection);
-  // Пришли в раздел (по ссылке или из меню) — подпункты показываем сразу.
-  useEffect(() => {
-    if (inSection) setOpen(true);
-  }, [inSection]);
+  const { open, setOpen } = useGroupOpen(inSection, pathname);
   const iconOnly = mode === 'rail' && collapsed;
   const isItemActive = (item: (typeof items)[number]) =>
     item.to === to ? pathname === to : pathname === item.to || pathname.startsWith(`${item.to}/`);
@@ -258,7 +346,9 @@ function NavGroup({
         <Link
           to={to}
           onClick={() => {
-            setOpen(true);
+            // Переход создаёт меню заново — оно раскроет группу плавно само; стоим на месте — раскрываем здесь.
+            if (pathname === to) setOpen(true);
+            else storeOpen(true);
             onNavigate?.();
           }}
           className={cn(
@@ -274,7 +364,7 @@ function NavGroup({
           aria-label={open ? 'Скрыть подпункты «Серверы»' : 'Показать подпункты «Серверы»'}
           aria-expanded={open}
           aria-controls="nav-servers-items"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => setOpen(!open)}
           className={cn(
             'mr-1 grid size-7 flex-none cursor-pointer place-items-center rounded-[8px] text-text-3 transition-colors outline-none hover:bg-surface-3 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
             railOnPhone && 'max-md:hidden',
@@ -481,13 +571,13 @@ export function AppShell({ title, subtitle, actions, children }: AppShellProps) 
               className={cn('size-4 flex-none transition-transform', collapsed && 'rotate-180')}
               aria-hidden="true"
             />
-            <span className={cn(collapsed && 'hidden')}>Свернуть меню</span>
+            <span className={cn('whitespace-nowrap', collapsed && 'hidden')}>Свернуть меню</span>
             <span className="flex-1" />
             <span
               data-testid="app-version"
               title={`NodeService ${APP_VERSION}${APP_BUILD ? ` · ${APP_BUILD}` : ''}`}
               className={cn(
-                'rounded-full border border-border px-2 py-[1px] font-mono text-[10.5px] text-text-3',
+                'shrink-0 rounded-full border border-border px-1.5 py-[1px] font-mono text-[10px] text-text-3',
                 collapsed && 'hidden',
               )}
             >

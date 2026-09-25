@@ -43,7 +43,8 @@ export function makeCheck(patch: Partial<MaintenanceCheck> = {}): MaintenanceChe
     kernel: { running: '6.8.0-84-generic', installed: '6.8.0-84-generic' },
     unattended: false,
     agent: { installed: 'v0.5.4', latest: 'v0.6.0', service: 'active' },
-    disk: { usedPct: 16, freeMb: 66_000 },
+    // Диск заполнен настолько, что очистку стоит предложить (порог — DISK_CLEANUP_OFFER_PCT).
+    disk: { usedPct: 86, freeMb: 11_000 },
     warnings: [],
     ...patch,
   };

@@ -7,7 +7,7 @@ import { useAuthStore } from '@/features/auth/store';
 import { mockMe, resetMockState } from '@/test/msw/handlers';
 import { server } from '@/test/msw/server';
 import { renderPage } from '@/test/render';
-import { AppShell } from './app-shell';
+import { AppShell, resetNavGroupState } from './app-shell';
 
 function Page() {
   return (
@@ -21,6 +21,7 @@ describe('AppShell · меню пользователя', () => {
   beforeEach(() => {
     resetMockState({ authenticated: true });
     useAuthStore.setState({ me: mockMe, hydrated: true });
+    resetNavGroupState();
   });
 
   it('в рейле открыты «Обзор», «Серверы», «Инциденты» и «Журнал», остальные — под замком без перехода', async () => {
@@ -51,6 +52,32 @@ describe('AppShell · меню пользователя', () => {
     expect(screen.getByRole('link', { name: 'Провайдеры' })).toHaveAttribute('href', '/servers/providers');
     await user.click(screen.getByRole('link', { name: 'Провайдеры' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/servers/providers'));
+  });
+
+  it('клик по самому пункту «Серверы» раскрывает подпункты, переход в другой раздел их не сворачивает', async () => {
+    // Каждый раздел рисует свой AppShell — меню создаётся заново при переходе, как в приложении.
+    const pages = { '/servers': Page, '/incidents': Page };
+    const { router } = renderPage(Page, '/', ['/servers', '/incidents'], '/', pages);
+    const user = userEvent.setup();
+    const toggle = () => screen.getByRole('button', { name: /подпункты «Серверы»/ });
+    expect(await screen.findByRole('button', { name: 'Показать подпункты «Серверы»' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    // не на шеврон, а на сам пункт
+    await user.click(screen.getByRole('link', { name: 'Серверы' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/servers'));
+    await waitFor(() => expect(toggle()).toHaveAttribute('aria-expanded', 'true'));
+    // уходим в «Инциденты» — группа остаётся раскрытой
+    await user.click(screen.getByRole('link', { name: /Инциденты/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/incidents'));
+    await waitFor(() => expect(toggle()).toHaveAttribute('aria-expanded', 'true'));
+    // свернули руками — и это тоже запоминается при следующем переходе
+    await user.click(toggle());
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false');
+    await user.click(screen.getByRole('link', { name: 'Обзор' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/'));
+    await waitFor(() => expect(toggle()).toHaveAttribute('aria-expanded', 'false'));
   });
 
   it('в свёрнутом рейле «Серверы» — всплывающее меню с подпунктами', async () => {

@@ -1,5 +1,6 @@
 import {
   compareVersions,
+  DISK_CLEANUP_OFFER_PCT,
   MAINTENANCE_KIND_LABELS,
   MAINTENANCE_TIERS,
   type MaintenanceCheck,
@@ -246,12 +247,17 @@ function buildRows(c: MaintenanceCheck, server: Server): Row[] {
     rows.push({ key: 'disk', tone: 'muted', title: 'Диск: нет данных', subtitle: '—', note: '—' });
   } else {
     const pct = Math.round(c.disk.usedPct);
+    // Очистку предлагаем, когда есть смысл; на просторном диске — просто «в норме» без кнопки.
+    const offerCleanup = c.supported && pct >= DISK_CLEANUP_OFFER_PCT;
+    const free = c.disk.freeMb !== null ? `Свободно ${fmtGb(c.disk.freeMb)}.` : '';
     rows.push({
       key: 'disk',
       tone: pct >= 90 ? 'crit' : pct >= 80 ? 'warn' : 'ok',
       title: `Диск: ${pct}% занято`,
-      subtitle: `${c.disk.freeMb !== null ? `Свободно ${fmtGb(c.disk.freeMb)}. ` : ''}Очистка убирает ненужные пакеты, старые ядра, кеш apt и лишний журнал.`,
-      ...(c.supported
+      subtitle: offerCleanup
+        ? `${free} Очистка убирает ненужные пакеты, старые ядра, кеш apt и лишний журнал.`.trim()
+        : free || 'Места достаточно.',
+      ...(offerCleanup
         ? { action: { kind: 'cleanup' as const }, tier: MAINTENANCE_TIERS.cleanup }
         : { note: 'в норме' }),
     });

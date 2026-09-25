@@ -23,6 +23,8 @@ export function renderPage(
   extraPaths: string[] = [],
   /** Реальный адрес для маршрутов с параметрами: renderPage(Page, '/servers/$serverId', [], '/servers/<id>'). */
   initialUrl: string = path,
+  /** Настоящие страницы на дополнительных путях (вместо пустышек) — например, чтобы AppShell пересоздавался при переходе. */
+  extraPages: Record<string, FunctionComponent> = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -33,7 +35,7 @@ export function renderPage(
     createRoute({
       getParentRoute: () => rootRoute,
       path: p,
-      component: () => <div data-testid={`page:${p}`} />,
+      component: extraPages[p] ?? (() => <div data-testid={`page:${p}`} />),
     }),
   );
   const router = createRouter({
