@@ -35,7 +35,11 @@ export const SH = (body: string) => `sh -c '${body.replace(/'/g, "'\\''")}'`;
 
 export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
   free_disk: {
-    command: SH('journalctl --vacuum-size=200M 2>&1; docker system prune -f 2>&1; true'),
+    // Только журнал, «висячие» образы и кэш сборки. НЕ `docker system prune`: он удаляет и остановленные
+    // контейнеры — а остановленный контейнер ноды это ровно тот случай, когда его нужно поднять, а не стереть.
+    command: SH(
+      'journalctl --vacuum-size=200M 2>&1; docker image prune -f 2>&1; docker builder prune -f 2>&1; true',
+    ),
     precheck: ['agent_online', 'disk_not_full', 'no_other_action'],
     postcheck: { kind: 'metric_below', metric: 'disk', marginPct: 5, samples: 1 },
   },
@@ -55,8 +59,9 @@ export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
     // awk — в одинарных кавычках, иначе внутренний sh подставит вместо $4 пустой параметр.
     command: SH(
       "before=$(df -P / | awk 'NR==2{print $4}'); " +
-        'find /tmp /var/tmp -xdev -mindepth 1 -type f -mmin +60 -delete 2>/dev/null; ' +
-        'find /tmp /var/tmp -xdev -mindepth 1 -type d -empty -delete 2>/dev/null; ' +
+        // Только крупные (> 10 МБ) файлы старше часа: мелкие pid/lock/сокеты живых сервисов не трогаем,
+        // места они не освобождают. Каталоги остаются на месте.
+        'find /tmp /var/tmp -xdev -mindepth 1 -type f -size +10M -mmin +60 -delete 2>/dev/null; ' +
         "after=$(df -P / | awk 'NR==2{print $4}'); " +
         'echo "Освобождено: $(( (after - before) / 1024 )) МБ"; true',
     ),
@@ -68,9 +73,9 @@ export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
       'echo "== Самые тяжёлые каталоги =="; du -xh / --max-depth=2 2>/dev/null | sort -h | tail -20; ' +
         'echo; echo "== Файлы больше 200 МБ =="; ' +
         'timeout -k 5 60 find / -xdev -type f -size +200M -exec du -h {} + 2>/dev/null | sort -h | tail -20; ' +
-        'echo; echo "== Что удалит очистка временных файлов (старше часа) =="; ' +
-        'timeout -k 5 30 find /tmp /var/tmp -xdev -type f -mmin +60 -size +5M -exec du -h {} + 2>/dev/null | sort -h | tail -15; ' +
-        "find /tmp /var/tmp -xdev -type f -mmin +60 -printf '%s\\n' 2>/dev/null | " +
+        'echo; echo "== Что удалит очистка временных файлов (крупнее 10 МБ, старше часа) =="; ' +
+        'timeout -k 5 30 find /tmp /var/tmp -xdev -type f -mmin +60 -size +10M -exec du -h {} + 2>/dev/null | sort -h | tail -15; ' +
+        "find /tmp /var/tmp -xdev -type f -mmin +60 -size +10M -printf '%s\\n' 2>/dev/null | " +
         'awk \'{s+=$1} END {printf "Временных файлов старше часа: %.1f ГБ\\n", s/1073741824}\'; ' +
         'true',
     ),
