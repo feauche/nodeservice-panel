@@ -1,4 +1,4 @@
-import type { Incident, Server } from '@nodeservice/shared';
+import { ASSISTANT_PERMISSIONS_DEFAULT, type Incident, type Server } from '@nodeservice/shared';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -80,6 +80,7 @@ function deps(over: Partial<Record<keyof ReadDeps, unknown>> = {}): ReadDeps {
         lastRun: null,
       }),
     },
+    permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT, nodeLogs: true },
     ...over,
   } as unknown as ReadDeps;
 }
@@ -335,6 +336,50 @@ describe('check_reachability, inspect_processes, get_playbook', () => {
       })),
     );
     expect(ok.json().cpu[0].name).toBe('xray');
+  });
+  it('логи ноды: маскируются секреты, нет контейнера и ошибка SSH — честные сообщения', async () => {
+    const mk = (fn: () => Promise<unknown>) =>
+      deps({ probe: { reachability: async () => ({}), processes: async () => ({}), nodeLogs: fn } });
+    const ok = await call(
+      'inspect_node_logs',
+      { serverId: 'de-1' },
+      mk(async () => ({ found: true, lines: 2, masked: 1, text: 'started\nerror: timeout' })),
+    );
+    expect(ok.json().logs).toContain('error: timeout');
+    expect(ok.out.citations[0]).toMatchObject({ type: 'server', label: 'de-1' });
+    expect(
+      (
+        await call(
+          'inspect_node_logs',
+          { serverId: 'de-1' },
+          mk(async () => ({ found: false, lines: 0, masked: 0, text: '' })),
+        )
+      ).out.content,
+    ).toContain('не найден контейнер ноды');
+    expect(
+      (
+        await call(
+          'inspect_node_logs',
+          { serverId: 'de-1' },
+          mk(async () => {
+            throw new Error('ssh');
+          }),
+        )
+      ).out.content,
+    ).toContain('не ответил по SSH');
+  });
+  it('без разрешения чтения по SSH не выполняются и в сервер не ходят', async () => {
+    const spy = vi.fn(async () => ({}));
+    const d = deps({
+      probe: { reachability: spy, processes: spy, nodeLogs: spy },
+      permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT, reach: false, processes: false, nodeLogs: false },
+    });
+    for (const name of ['check_reachability', 'inspect_processes', 'inspect_node_logs']) {
+      const r = await call(name, { serverId: 'de-1' }, d);
+      expect(r.out.content).toContain('выключен');
+      expect(r.out.content).toContain('Разрешения');
+    }
+    expect(spy).not.toHaveBeenCalled();
   });
   it('плейбук: список без id, текст по id, подсказка по неверному id', async () => {
     const list = await call('get_playbook', {});

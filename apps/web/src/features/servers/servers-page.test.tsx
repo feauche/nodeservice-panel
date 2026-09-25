@@ -362,7 +362,7 @@ describe('ServersPage', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Пароль' }));
 
     await user.click(within(dialog).getByRole('combobox', { name: 'Провайдер' }));
-    await user.click(await screen.findByRole('option', { name: 'Добавить провайдера…' }));
+    await user.click(await screen.findByRole('button', { name: 'Добавить провайдера…' }));
     const provDialog = await screen.findByRole('dialog', { name: 'Новый провайдер' });
     await user.type(within(provDialog).getByLabelText('Название'), 'Contabo');
     await user.type(within(provDialog).getByLabelText('Сайт'), 'contabo.com');

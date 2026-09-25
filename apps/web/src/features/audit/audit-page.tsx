@@ -41,7 +41,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useServers } from '@/features/servers/servers-api';
 import { apiErrorMessage } from '@/lib/api';
 import { useMediaQuery } from '@/lib/use-media';
-import { cn } from '@/lib/utils';
+import { capFirst, cn } from '@/lib/utils';
 import { auditExportUrl, auditListQuery, useAuditList, useAuditStream } from './audit-api';
 import { AuditRow } from './audit-row';
 import {
@@ -389,7 +389,7 @@ function Toolbar({ search, onSearch, live, streamStatus, exportFilter }: Toolbar
             )}
             onClick={() => onSearch({ source: s as AuditSource | undefined, page: undefined })}
           >
-            {s ? AUDIT_SOURCE_LABELS[s] : 'все'}
+            {s ? capFirst(AUDIT_SOURCE_LABELS[s]) : 'Все'}
           </button>
         ))}
       </fieldset>

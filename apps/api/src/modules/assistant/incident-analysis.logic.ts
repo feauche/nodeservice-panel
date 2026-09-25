@@ -5,6 +5,7 @@ import {
   actionMeta,
   INCIDENT_CHAINS,
   INCIDENT_CHART_LABELS,
+  type Incident,
   type IncidentAnalysis,
   type IncidentKind,
 } from '@nodeservice/shared';
@@ -64,6 +65,7 @@ const ANALYSIS_READ = new Set([
   'list_incidents',
   'check_reachability',
   'inspect_processes',
+  'inspect_node_logs',
   'get_playbook',
 ]);
 export const ANALYSIS_TOOLS: LlmToolDef[] = [
@@ -109,7 +111,7 @@ export const dataBlock = (caseJson: unknown, metricText: string | null): string 
     metricText ? `\n\nИстория метрики за период:\n${metricText}` : ''
   }\n</данные>`;
 
-/** Подпись шага для хода разбора: администратор видит, чем занят ассистент. */
+/** Подпись шага для хода разбора: администратор видит, чем занят Джарвис. */
 export function stepLabel(tool: string, input: unknown, kind: IncidentKind): string {
   const arg = (input ?? {}) as Record<string, unknown>;
   if (tool === 'get_metrics_history') {
@@ -123,6 +125,7 @@ export function stepLabel(tool: string, input: unknown, kind: IncidentKind): str
   if (tool === 'get_incident') return 'Перечитываю дело инцидента';
   if (tool === 'check_reachability') return 'Проверяю доступность снаружи';
   if (tool === 'inspect_processes') return 'Смотрю, какие процессы грузят сервер';
+  if (tool === 'inspect_node_logs') return 'Читаю последние строки журнала ноды';
   if (tool === 'get_playbook') return 'Сверяюсь с плейбуком';
   if (tool === 'submit_analysis') return 'Формулирую вывод';
   return `Проверяю: ${kind}`;
@@ -177,4 +180,31 @@ export function parseSubmission(
       nextAction: action && chain.includes(action) && actionMeta(action).key === action ? action : null,
     },
   };
+}
+
+/** Автоматический разбор: не больше стольких запусков в час и только по свежим открытым инцидентам. */
+export const AUTO_ANALYSIS_PER_HOUR = 5;
+export const AUTO_ANALYSIS_MAX_AGE_MS = 6 * 60 * 60_000;
+
+/**
+ * Какие инциденты разобрать сами: открытые, ещё без разбора, старше паузы автопочинки (минута) и не
+ * старше шести часов; сначала самые давние. Сколько именно — не больше остатка почасового лимита.
+ */
+export function pickAutoAnalysis(
+  items: ReadonlyArray<Pick<Incident, 'id' | 'status' | 'openedAt' | 'analysis' | 'severity'>>,
+  nowMs: number,
+  startedLastHour: number,
+  graceMs: number,
+): string[] {
+  const room = AUTO_ANALYSIS_PER_HOUR - startedLastHour;
+  if (room <= 0) return [];
+  return items
+    .filter((i) => {
+      if (i.status === 'resolved' || i.analysis) return false;
+      const age = nowMs - Date.parse(i.openedAt);
+      return age >= graceMs && age <= AUTO_ANALYSIS_MAX_AGE_MS;
+    })
+    .sort((a, b) => Date.parse(a.openedAt) - Date.parse(b.openedAt))
+    .slice(0, room)
+    .map((i) => i.id);
 }

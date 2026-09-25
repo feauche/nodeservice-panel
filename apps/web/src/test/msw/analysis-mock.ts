@@ -34,7 +34,7 @@ const BODIES: Record<IncidentKind, Body> = {
       { source: 'agent', text: 'Нода работает, CPU 5 %: сбой не в нагрузке.' },
     ],
     unknown:
-      'Не видно, кто пишет в /tmp/export: логи ноды и процессов ассистент пока не читает. Если файлы появляются снова, причину стоит искать в самом сервисе.',
+      'Не видно, кто пишет в /tmp/export: логи ноды и процессов Джарвис пока не читает. Если файлы появляются снова, причину стоит искать в самом сервисе.',
     nextAction: 'tmp_clean',
   },
   cpu_high: {
@@ -44,7 +44,7 @@ const BODIES: Record<IncidentKind, Body> = {
       { source: 'metric', text: 'CPU выше 90 % весь период наблюдения, спадов нет.' },
       { source: 'agent', text: 'Агент в сети, память 41 %: нехватки памяти нет.' },
     ],
-    unknown: 'Не видно, какой именно процесс грузит процессор: список процессов ассистент пока не читает.',
+    unknown: 'Не видно, какой именно процесс грузит процессор: список процессов Джарвис пока не читает.',
     nextAction: 'restart_node',
   },
   mem_high: {
@@ -61,7 +61,7 @@ const BODIES: Record<IncidentKind, Body> = {
       { source: 'agent', text: 'Агент в сети, SSH отвечает.' },
       { source: 'other', text: 'Зонд видит контейнер остановленным.' },
     ],
-    unknown: 'Логи ноды ассистент пока не читает, поэтому причину остановки назвать нельзя.',
+    unknown: 'Логи ноды Джарвис пока не читает, поэтому причину остановки назвать нельзя.',
     nextAction: 'node_up',
   },
   agent_offline: {
@@ -99,7 +99,7 @@ export const analysisHandlers = [
     const inc = find(params.id);
     if (!inc) return problem(404, 'Инцидент не найден.');
     if (!mockAssistant.enabled)
-      return problem(409, 'Ассистент выключен: задайте провайдера, ключ и модель в «Настройки → Ассистент».');
+      return problem(409, 'Джарвис выключен: задайте провайдера, ключ и модель в «Настройки → Джарвис».');
     if (inc.analysis?.status === 'running') return problem(409, 'Разбор уже идёт.');
     const list = steps(inc);
     const base: IncidentAnalysis = {

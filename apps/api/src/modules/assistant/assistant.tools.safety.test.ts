@@ -1,6 +1,7 @@
-import type { Incident } from '@nodeservice/shared';
+import { ASSISTANT_PERMISSIONS_DEFAULT, type AssistantPermissions, type Incident } from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
 
+import { toolsFor } from './assistant.read-tools.js';
 import { ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
 
 const INC_ID = '0192c000-0000-7000-8000-0000000000e1';
@@ -26,7 +27,7 @@ const incident = (over: Partial<Incident> = {}): Incident =>
     ...over,
   }) as Incident;
 
-const deps = (inc: Incident | Error = incident()): ToolDeps =>
+const deps = (inc: Incident | Error = incident(), perms: Partial<AssistantPermissions> = {}): ToolDeps =>
   ({
     incidents: {
       get: async () => {
@@ -34,13 +35,14 @@ const deps = (inc: Incident | Error = incident()): ToolDeps =>
         return inc;
       },
     },
-    assistant: { level: 'intermediate', permissions: {} },
+    assistant: { level: 'intermediate' },
+    permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT, ...perms },
   }) as unknown as ToolDeps;
 
 const propose = (arg: Record<string, unknown>, d = deps()) =>
   runTool('propose_action', { incidentId: INC_ID, reason: 'Потому что.', ...arg }, d);
 
-describe('набор инструментов ассистента', () => {
+describe('набор инструментов Джарвиса', () => {
   it('исполняющих инструментов нет: любое новое имя требует осознанного решения', () => {
     // Если добавляете инструмент, добавьте его сюда только после проверки, что он не меняет серверы сам (T2/T3).
     expect(ASSISTANT_TOOLS.map((t) => t.name).sort()).toEqual(
@@ -54,6 +56,7 @@ describe('набор инструментов ассистента', () => {
         'get_playbook',
         'get_server_detail',
         'get_settings',
+        'inspect_node_logs',
         'inspect_processes',
         'list_incidents',
         'propose_action',
@@ -69,6 +72,18 @@ describe('набор инструментов ассистента', () => {
 });
 
 describe('propose_action', () => {
+  it('без разрешения «Карточки предложений» карточки нет, шаг называется текстом', async () => {
+    const r = await propose({ preset: 'tmp_clean' }, deps(incident(), { proposals: false }));
+    expect(r.proposals).toEqual([]);
+    expect(r.content).toContain('выключены в разрешениях');
+  });
+  it('карточки предложений выключены — инструмент не попадает к модели', () => {
+    const names = toolsFor(ASSISTANT_TOOLS, { ...ASSISTANT_PERMISSIONS_DEFAULT, proposals: false }).map(
+      (t) => t.name,
+    );
+    expect(names).not.toContain('propose_action');
+    expect(names).toContain('get_incident');
+  });
   it('T2 из цепочки — карточка; название и последствия берутся из реестра, а не от модели', async () => {
     const r = await propose({
       preset: 'tmp_clean',

@@ -16,11 +16,14 @@ import {
   MessageSquarePlusIcon,
   SendIcon,
   ServerIcon,
-  SparklesIcon,
   WandSparklesIcon,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { Markdown } from '@/features/knowledge/markdown';
+import { type ComponentType, type SVGProps, useEffect, useMemo, useRef, useState } from 'react';
+import { JarvisIcon } from '@/components/jarvis-icon';
+import { Markdown, ServerHealthContext } from '@/features/knowledge/markdown';
+import { type ServerHealth, serverHealth } from '@/features/servers/server-health';
+import { openServer } from '@/features/servers/server-modal-store';
+import { useServers } from '@/features/servers/servers-api';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -30,6 +33,7 @@ import {
   useConversations,
   useSendMessage,
 } from './assistant-api';
+import { linkifyServers } from './link-servers';
 import { ProposalCard } from './proposal-card';
 import { ReachabilityCard } from './reachability-card';
 
@@ -52,18 +56,18 @@ function AssistantDisabled() {
     <div className="grid min-h-[420px] place-items-center rounded-2xl border border-dashed border-border">
       <div className="flex max-w-[420px] flex-col items-center gap-3 text-center">
         <span className="grid size-12 place-items-center rounded-2xl bg-brand-soft text-brand">
-          <SparklesIcon className="size-6" aria-hidden="true" />
+          <JarvisIcon className="size-6" aria-hidden="true" />
         </span>
-        <h2 className="font-heading text-[17px] font-bold">AI-ассистент выключен</h2>
+        <h2 className="font-heading text-[17px] font-bold">Джарвис выключен</h2>
         <p className="text-[13px] text-text-2">
-          Добавьте ключ модели в Настройках, чтобы задавать вопросы о парке — ассистент видит метрики, Журнал
-          и базу знаний.
+          Добавьте ключ модели в Настройках, чтобы задавать вопросы о парке — Джарвис видит метрики, Журнал и
+          базу знаний.
         </p>
         <Link
           to="/settings/assistant"
           className="mt-1 inline-flex h-9 items-center gap-1.5 rounded-[10px] bg-cta px-4 text-[13px] font-semibold text-cta-foreground hover:bg-(--ns-cta-hover)"
         >
-          Настройки → Ассистент
+          Настройки → Джарвис
         </Link>
       </div>
     </div>
@@ -80,6 +84,12 @@ function AssistantChat() {
   });
   const conversations = useConversations();
   const history = useConversationHistory(conversationId);
+  const serversQuery = useServers();
+  const healthById = useMemo(() => {
+    const map: Record<string, ServerHealth> = {};
+    for (const srv of serversQuery.data?.items ?? []) map[srv.id] = serverHealth(srv);
+    return map;
+  }, [serversQuery.data]);
   const send = useSendMessage();
   const [input, setInput] = useState('');
   // Режим для НОВОГО чата. В существующей беседе режим закреплён и не меняется.
@@ -171,10 +181,10 @@ function AssistantChat() {
       {/* История бесед */}
       <aside className="hidden min-h-0 flex-col gap-3 rounded-2xl border border-border bg-surface p-3.5 lg:flex">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-[13px] font-bold">AI-ассистент</span>
+          <span className="truncate text-[13px] font-bold">Джарвис</span>
           <span className="inline-flex flex-none items-center gap-1.5 rounded-full bg-ok-soft px-2 py-0.5 text-[10px] font-semibold text-ok">
             <span className="size-1.5 rounded-full bg-ok" aria-hidden="true" />
-            доступ
+            Включён
           </span>
         </div>
         <button
@@ -226,23 +236,30 @@ function AssistantChat() {
           className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-5 sm:p-6"
         >
           {messages.length === 0 && !busy && !pendingUser && <EmptyChat />}
-          {messages.map((m) => (
-            <MessageRow key={m.id} message={m} />
-          ))}
-          {pendingUser && (
-            <MessageRow
-              message={{
-                id: 'pending-user',
-                role: 'user',
-                content: pendingUser,
-                citations: [],
-                proposals: [],
-                reachability: [],
-                createdAt: '',
-              }}
-            />
-          )}
-          {busy && <TypingRow />}
+          <ServerHealthContext.Provider value={healthById}>
+            {messages.map((m, i) => (
+              <MessageRow
+                key={m.id}
+                message={m}
+                grouped={m.role === 'assistant' && messages[i - 1]?.role === 'assistant'}
+                interim={m.role === 'assistant' && messages[i + 1]?.role === 'assistant'}
+              />
+            ))}
+            {pendingUser && (
+              <MessageRow
+                message={{
+                  id: 'pending-user',
+                  role: 'user',
+                  content: pendingUser,
+                  citations: [],
+                  proposals: [],
+                  reachability: [],
+                  createdAt: '',
+                }}
+              />
+            )}
+            {busy && <TypingRow />}
+          </ServerHealthContext.Provider>
         </div>
 
         {/* Композер: одно поле ввода; режим — тумблер (новый чат) или бейдж (беседа закреплена) */}
@@ -271,7 +288,7 @@ function AssistantChat() {
               onKeyDown={onKeyDown}
               disabled={busy}
               rows={1}
-              aria-label={mode === 'analysis' ? 'Текст для анализа' : 'Сообщение ассистенту'}
+              aria-label={mode === 'analysis' ? 'Текст для анализа' : 'Сообщение Джарвису'}
               placeholder={
                 mode === 'analysis'
                   ? 'Вставьте текст или скопированную страницу — соберу инструкцию…'
@@ -373,7 +390,7 @@ function ModeToggle({
 
 /** Бейдж режима в закреплённой беседе — сменить нельзя. */
 function ModeBadge({ mode }: { mode: AssistantMode }) {
-  const Icon = mode === 'analysis' ? WandSparklesIcon : SparklesIcon;
+  const Icon = mode === 'analysis' ? WandSparklesIcon : JarvisIcon;
   return (
     <span
       title="Режим беседы задан при её создании"
@@ -390,13 +407,13 @@ function EmptyChat() {
     <div className="grid flex-1 place-items-center text-center">
       <div className="flex flex-col items-center gap-2">
         <span className="grid size-11 place-items-center rounded-2xl bg-brand-soft text-brand">
-          <SparklesIcon className="size-5" aria-hidden="true" />
+          <JarvisIcon className="size-5" aria-hidden="true" />
         </span>
         <p className="text-[14px] font-semibold">
           Спросите об инцидентах, серверах или о том, как что-то починить
         </p>
         <p className="max-w-[380px] text-[12.5px] text-text-3">
-          Ассистент смотрит метрики, Журнал и базу знаний. Действия он только предлагает, запускаете их вы.
+          Джарвис смотрит метрики, Журнал и базу знаний. Действия он только предлагает, запускаете их вы.
         </p>
       </div>
     </div>
@@ -405,9 +422,9 @@ function EmptyChat() {
 
 function TypingRow() {
   return (
-    <div className="flex max-w-[84%] gap-2.5 animate-in fade-in-0 duration-200">
+    <div className="flex max-w-[84%] gap-3 animate-in fade-in-0 duration-200">
       <Avatar />
-      <div className="flex items-center gap-1 rounded-[14px] border border-border bg-surface-2 px-3.5 py-3">
+      <div className="flex items-center gap-1 py-3">
         {[0, 1, 2].map((i) => (
           <span
             key={i}
@@ -422,36 +439,50 @@ function TypingRow() {
 
 function Avatar() {
   return (
-    <span className="grid size-8 flex-none place-items-center rounded-[10px] bg-brand-soft text-brand">
-      <SparklesIcon className="size-4" aria-hidden="true" />
+    <span
+      data-testid="assistant-avatar"
+      className="grid size-8 flex-none place-items-center rounded-[10px] bg-brand-soft text-brand"
+    >
+      <JarvisIcon className="size-4" aria-hidden="true" />
     </span>
   );
 }
 
-function MessageRow({ message }: { message: AssistantMessage }) {
+function MessageRow({
+  message,
+  grouped = false,
+  interim = false,
+}: {
+  message: AssistantMessage;
+  /** Сообщение идёт следом за другим ответом Джарвиса: значка нет, вместо него пустое место. */
+  grouped?: boolean;
+  /** За ним идёт ещё ответ: это «сейчас посмотрю», приглушаем и не выделяем. */
+  interim?: boolean;
+}) {
+  const servers = useServers();
   if (message.role === 'user')
     return (
       <div className="flex max-w-[80%] flex-row-reverse gap-2.5 self-end animate-in fade-in-0 slide-in-from-bottom-1 duration-200">
-        <div className="rounded-[14px] bg-brand px-3.5 py-2.5 text-[13px] leading-relaxed text-(--ns-on-accent)">
+        <div className="rounded-[14px] border border-brand/30 bg-brand-soft px-3.5 py-2.5 text-[13px] leading-relaxed text-foreground">
           {message.content}
         </div>
       </div>
     );
 
   return (
-    <div className="flex max-w-[86%] gap-2.5 animate-in fade-in-0 slide-in-from-bottom-1 duration-200">
-      <Avatar />
-      <div className="min-w-0">
-        <div className="rounded-[14px] border border-border bg-surface-2 px-3.5 py-2.5">
-          <Markdown content={message.content} className="text-[13px]" />
-        </div>
-        {message.citations.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {message.citations.map((c) => (
-              <Citation key={`${c.type}:${c.id}`} citation={c} />
-            ))}
-          </div>
-        )}
+    <div
+      className={cn(
+        'flex max-w-[92%] gap-3 animate-in fade-in-0 slide-in-from-bottom-1 duration-200',
+        grouped && '-mt-2',
+      )}
+    >
+      {grouped ? <span className="size-8 flex-none" aria-hidden="true" /> : <Avatar />}
+      <div className={cn('min-w-0 flex-1', grouped && !interim && 'border-t border-border pt-2.5')}>
+        <Markdown
+          content={linkifyServers(message.content, servers.data?.items ?? [])}
+          className={cn('-my-1 text-[13.5px]', interim && '[&_p]:text-text-3')}
+        />
+        {message.citations.length > 0 && <Sources citations={message.citations} />}
         {message.reachability.map((r) => (
           <ReachabilityCard key={`${r.target.name}:${r.ports.map((p) => p.port).join(',')}`} result={r} />
         ))}
@@ -463,36 +494,68 @@ function MessageRow({ message }: { message: AssistantMessage }) {
   );
 }
 
-const CITE_META: Record<AssistantCitation['type'], { label: string; icon: typeof BookOpenIcon }> = {
-  kb: { label: 'база знаний', icon: BookOpenIcon },
-  incident: { label: 'инцидент', icon: AlertTriangleIcon },
-  audit: { label: 'журнал', icon: FileClockIcon },
-  server: { label: 'сервер', icon: ServerIcon },
-  metric: { label: 'метрика', icon: SparklesIcon },
+const CITE_META: Record<
+  AssistantCitation['type'],
+  { label: string; icon: ComponentType<SVGProps<SVGSVGElement>> }
+> = {
+  kb: { label: 'База знаний', icon: BookOpenIcon },
+  incident: { label: 'Инцидент', icon: AlertTriangleIcon },
+  audit: { label: 'Журнал', icon: FileClockIcon },
+  server: { label: 'Сервер', icon: ServerIcon },
+  metric: { label: 'Метрика', icon: JarvisIcon },
 };
 
-function Citation({ citation }: { citation: AssistantCitation }) {
+/** Одна строка «Основано на:» — на чём построен ответ; чипы тихие, чтобы не спорить с текстом. */
+function Sources({ citations }: { citations: AssistantCitation[] }) {
+  return (
+    <div data-testid="assistant-sources" className="mt-2.5 flex flex-wrap items-center gap-1.5">
+      <span className="text-[11.5px] font-medium text-text-3">Основано на:</span>
+      {citations.map((c) => (
+        <SourceChip key={`${c.type}:${c.id}`} citation={c} />
+      ))}
+    </div>
+  );
+}
+
+function SourceChip({ citation }: { citation: AssistantCitation }) {
   const meta = CITE_META[citation.type];
   const Icon = meta.icon;
-  const cls =
-    'inline-flex items-center gap-1.5 rounded-[8px] border border-border-2 bg-surface px-2.5 py-1 text-[11.5px] font-semibold text-brand transition-colors hover:border-brand';
+  const base =
+    'inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2.5 py-[3px] text-[11.5px] text-text-2';
+  const interactive = 'cursor-pointer transition-colors hover:border-border-2 hover:text-foreground';
   const inner = (
     <>
-      <Icon className="size-3.5" aria-hidden="true" />
+      <Icon className="size-3 flex-none text-text-3" aria-hidden="true" />
       <span className="max-w-[220px] truncate">{citation.label}</span>
     </>
   );
+  const title = `${meta.label}: ${citation.label}`;
   if (citation.type === 'kb')
     return (
-      <Link to="/knowledge" search={{ open: citation.id }} className={cls}>
+      <Link to="/knowledge" search={{ open: citation.id }} title={title} className={cn(base, interactive)}>
         {inner}
       </Link>
     );
   if (citation.type === 'incident')
     return (
-      <Link to="/incidents" className={cls}>
+      <Link to="/incidents" title={title} className={cn(base, interactive)}>
         {inner}
       </Link>
     );
-  return <span className={cn(cls, 'cursor-default hover:border-border-2')}>{inner}</span>;
+  if (citation.type === 'server')
+    return (
+      <button
+        type="button"
+        title={title}
+        onClick={() => openServer(citation.id)}
+        className={cn(base, interactive)}
+      >
+        {inner}
+      </button>
+    );
+  return (
+    <span title={title} className={base}>
+      {inner}
+    </span>
+  );
 }

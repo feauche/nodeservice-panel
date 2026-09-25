@@ -51,9 +51,9 @@ describe('маршруты настроек', () => {
   it('вкладка «Безопасность» показывает остаток кодов и способ входа текущей сессии', async () => {
     mockSecurity.recoveryLeft = 7;
     renderAt('/settings/security');
-    expect(await screen.findByText('включена')).toBeInTheDocument();
+    expect(await screen.findByText('Включена')).toBeInTheDocument();
     expect(await screen.findByText('7 из 10')).toBeInTheDocument();
-    expect(await screen.findByText(/пароль \+ код 2FA/)).toBeInTheDocument();
+    expect(await screen.findByText(/Пароль \+ код 2FA/)).toBeInTheDocument();
   });
 
   it('без сессии /settings уводит на /login', async () => {
@@ -65,10 +65,10 @@ describe('маршруты настроек', () => {
 
 describe('loginMethod', () => {
   it('переводит amr в подпись', () => {
-    expect(loginMethod(['pwd', 'totp'])).toBe('пароль + код 2FA');
-    expect(loginMethod(['pwd', 'recovery'])).toBe('пароль + код восстановления');
-    expect(loginMethod(['pwd', 'trusted'])).toBe('пароль · запомненное устройство');
-    expect(loginMethod(['pwd'])).toBe('пароль');
+    expect(loginMethod(['pwd', 'totp'])).toBe('Пароль + код 2FA');
+    expect(loginMethod(['pwd', 'recovery'])).toBe('Пароль + код восстановления');
+    expect(loginMethod(['pwd', 'trusted'])).toBe('Пароль · запомненное устройство');
+    expect(loginMethod(['pwd'])).toBe('Пароль');
     expect(loginMethod(undefined)).toBe('—');
   });
 });

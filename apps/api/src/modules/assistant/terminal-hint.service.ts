@@ -17,8 +17,8 @@ const HINT_TOOLS = [
 ];
 
 /**
- * Подсказки к терминалу (R4.6): администратор сам показывает ассистенту последние строки вывода.
- * Секреты и адреса маскируются до отправки, ассистент ничего не выполняет, команды из подсказки
+ * Подсказки к терминалу (R4.6): администратор сам показывает Джарвису последние строки вывода.
+ * Секреты и адреса маскируются до отправки, Джарвис ничего не выполняет, команды из подсказки
  * только вставляются в строку ввода у администратора.
  */
 @Injectable()
@@ -37,7 +37,11 @@ export class TerminalHintService {
     const cfg = await this.settings.config();
     if (!cfg)
       throw problem(HttpStatus.CONFLICT, {
-        detail: 'Ассистент выключен: задайте провайдера, ключ и модель в «Настройки → Ассистент».',
+        detail: 'Джарвис выключен: задайте провайдера, ключ и модель в «Настройки → Джарвис».',
+      });
+    if (!cfg.permissions.terminalHints)
+      throw problem(HttpStatus.CONFLICT, {
+        detail: 'Подсказки в терминале выключены: включите их в «Настройки → Джарвис → Разрешения».',
       });
     const server = (await this.servers.list()).find((s) => s.id === serverId);
     if (!server) throw problem(HttpStatus.NOT_FOUND, { detail: 'Сервер не найден.' });
@@ -58,7 +62,7 @@ export class TerminalHintService {
         ],
       },
     ];
-    const deps = this.deps.get();
+    const deps = this.deps.get(cfg.permissions);
     let result: Omit<TerminalHintResponse, 'masked'> | null = null;
     try {
       for (let round = 0; round < ROUNDS && !result; round += 1) {
@@ -107,11 +111,11 @@ export class TerminalHintService {
         detail: /Timeout|Abort/i.test(m)
           ? 'Провайдер не ответил за 60 секунд. Повторите.'
           : /ответил (401|403)/.test(m)
-            ? 'Провайдер отклонил ключ. Проверьте ключ в «Настройки → Ассистент».'
-            : 'Не удалось получить ответ ассистента. Повторите.',
+            ? 'Провайдер отклонил ключ. Проверьте ключ в «Настройки → Джарвис».'
+            : 'Не удалось получить ответ Джарвиса. Повторите.',
       });
     }
-    if (!result) throw problem(HttpStatus.BAD_GATEWAY, { detail: 'Ассистент не дал подсказки. Повторите.' });
+    if (!result) throw problem(HttpStatus.BAD_GATEWAY, { detail: 'Джарвис не дал подсказки. Повторите.' });
 
     await this.audit.record({
       action: 'server.terminal.hint',

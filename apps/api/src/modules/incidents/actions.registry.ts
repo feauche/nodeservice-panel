@@ -1,7 +1,7 @@
 import type { ActionKey, IncidentKind } from '@nodeservice/shared';
 
 /** Имя контейнера ноды в переменную $N (см. NODE_FIND в исполнителе). */
-const FIND_NODE =
+export const FIND_NODE =
   "N=$(docker ps -a --format '{{.Names}}|{{.Image}}' 2>/dev/null | awk -F'|' 'tolower($1) ~ /remna/ || tolower($2) ~ /remnawave\\/node/ {print $1; exit}')";
 
 /**

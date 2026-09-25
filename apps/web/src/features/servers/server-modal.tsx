@@ -171,7 +171,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
       : []),
     ['Ресурсы', resources || '—'],
     ['Аптайм', formatUptime(metrics?.uptimeSec)],
-    ['Проверка SSH', s.lastSshCheckAt ? formatAgo(s.lastSshCheckAt) : 'ещё не было'],
+    ['Проверка SSH', s.lastSshCheckAt ? formatAgo(s.lastSshCheckAt) : 'Ещё не было'],
     [
       'Агент',
       s.agentVersion
@@ -617,7 +617,7 @@ function ConnectionTab({ server }: { server: Server }) {
       <section className="rounded-2xl border border-border bg-surface-2/40 p-4">
         <div className="mb-3 flex items-baseline justify-between gap-3">
           <h3 className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">Общее</h3>
-          <span className="text-[12px] text-text-3">на связь не влияет</span>
+          <span className="text-[12px] text-text-3">На связь не влияет</span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field id="sm-name" label="Название" error={errors.name || undefined}>
@@ -647,7 +647,7 @@ function ConnectionTab({ server }: { server: Server }) {
       <section className="rounded-2xl border border-border bg-surface-2/40 p-4">
         <div className="mb-3 flex items-baseline justify-between gap-3">
           <h3 className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">Хостинг</h3>
-          <span className="text-[12px] text-text-3">справочник — в меню «Серверы»</span>
+          <span className="text-[12px] text-text-3">Справочник — в меню «Серверы»</span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field id="sm-provider" label="Провайдер" error={errors.providerId || undefined}>
@@ -712,10 +712,10 @@ function ConnectionTab({ server }: { server: Server }) {
           <h3 className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">Доступ по SSH</h3>
           <span className="text-[12px] text-text-3">
             {authTab !== 'keep'
-              ? 'новые доступы проверяются настоящим подключением, пароль не сохраняется'
+              ? 'Новые доступы проверяются настоящим подключением, пароль не сохраняется'
               : endpointChanged
-                ? 'смена адреса или пользователя сбросит отпечаток сервера'
-                : 'адрес, пользователь и способ входа'}
+                ? 'Смена адреса или пользователя сбросит отпечаток сервера'
+                : 'Адрес, пользователь и способ входа'}
           </span>
         </div>
         <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_110px_200px]">

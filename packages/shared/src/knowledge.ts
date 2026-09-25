@@ -11,7 +11,7 @@ export type KbSource = (typeof KB_SOURCES)[number];
 /** Откуда взята информация в статье — для бейджа источника в базе знаний. */
 export const KB_SOURCE_LABELS: Record<KbSource, string> = {
   self: 'Вручную',
-  ai: 'AI-ассистент',
+  ai: 'Джарвис',
   web: 'Веб',
   telegram: 'Telegram',
 };
@@ -22,6 +22,8 @@ export const kbDocSchema = z.object({
   content: z.string(),
   tags: z.array(z.string()),
   archived: z.boolean(),
+  /** Служебная закреплённая статья («Пояснения»): всегда сверху, не удаляется и не архивируется. */
+  pinned: z.boolean(),
   source: z.enum(KB_SOURCES),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),

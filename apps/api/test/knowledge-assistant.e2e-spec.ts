@@ -2,6 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import {
+  ASSISTANT_PERMISSION_KEYS,
   assistantChatResponseSchema,
   assistantStatusSchema,
   auditListResponseSchema,
@@ -254,7 +255,7 @@ describe('knowledge + assistant e2e', () => {
     await agent.delete(`/api/knowledge/${created.id}`).set(CSRF_HEADER, csrf).expect(204);
   });
 
-  it('ассистент выключен без ключа: статус false, чат — 409', async () => {
+  it('Джарвис выключен без ключа: статус false, чат — 409', async () => {
     const status = assistantStatusSchema.parse((await agent.get('/api/assistant/status').expect(200)).body);
     expect(status.enabled).toBe(false);
     await agent.post('/api/assistant/chat').set(CSRF_HEADER, csrf).send({ message: 'привет' }).expect(409);
@@ -393,8 +394,32 @@ describe('knowledge + assistant e2e', () => {
       .expect(200);
     const text = assistantChatResponseSchema.parse(res.body).message.content;
     expect(text).toContain('"totals"');
-    expect(text).toContain('"items"');
+    expect(text).toContain('"matched"');
     expect(text.match(/не найден/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('глоссарий «Пояснения» есть всегда: закреплён сверху, не удаляется, не архивируется и не переименовывается', async () => {
+    const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
+    const gloss = list.items.find((d) => d.title === 'Пояснения');
+    expect(gloss?.pinned).toBe(true);
+    // Закреплённая статья идёт первой, что бы ни менялось у остальных.
+    expect(list.items[0]?.id).toBe(gloss?.id);
+    const id = gloss?.id ?? '';
+    await agent.delete(`/api/knowledge/${id}`).set(CSRF_HEADER, csrf).expect(409);
+    await agent.put(`/api/knowledge/${id}`).set(CSRF_HEADER, csrf).send({ archived: true }).expect(409);
+    await agent.put(`/api/knowledge/${id}`).set(CSRF_HEADER, csrf).send({ title: 'Другое' }).expect(409);
+    // Содержимое править можно: администратор дописывает термины сам.
+    await agent
+      .put(`/api/knowledge/${id}`)
+      .set(CSRF_HEADER, csrf)
+      .send({
+        content: '# Пояснения\n\n| Термин | Простыми словами |\n| --- | --- |\n| VPN | Защищённый канал |\n',
+      })
+      .expect(200);
+    // Разрешения «глоссарий» больше нет в настройках Джарвиса.
+    const status = assistantStatusSchema.parse((await agent.get('/api/assistant/status').expect(200)).body);
+    expect(Object.keys(status.permissions).sort()).toEqual([...ASSISTANT_PERMISSION_KEYS].sort());
+    expect(status.permissions).not.toHaveProperty('glossary');
   });
 
   it('ревизия базы знаний: безопасно правит статьи, снимает версию, пишет отчёт', async () => {
@@ -431,7 +456,7 @@ describe('knowledge + assistant e2e', () => {
     await agent.delete(`/api/knowledge/${created.id}`).set(CSRF_HEADER, csrf).expect(204);
   });
 
-  it('ключ можно стереть — ассистент снова выключен', async () => {
+  it('ключ можно стереть — Джарвис снова выключен', async () => {
     const off = assistantStatusSchema.parse(
       (await agent.put('/api/settings/assistant').set(CSRF_HEADER, csrf).send({ clearKey: true }).expect(200))
         .body,

@@ -22,7 +22,7 @@ import { TerminalHintController } from './terminal-hint.controller.js';
 import { TerminalHintService } from './terminal-hint.service.js';
 import { ZvenoProvider } from './zveno.provider.js';
 
-/** Этап 9: AI-ассистент. Провайдер LLM за токеном — в тестах подменяется фейком. */
+/** Этап 9: Джарвис. Провайдер LLM за токеном — в тестах подменяется фейком. */
 @Module({
   imports: [
     ServersModule,

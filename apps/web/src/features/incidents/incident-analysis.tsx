@@ -16,10 +16,10 @@ import {
   Loader2Icon,
   RefreshCwIcon,
   SendIcon,
-  SparklesIcon,
 } from 'lucide-react';
 import { type FormEvent, type ReactNode, useState } from 'react';
 
+import { JarvisIcon } from '@/components/jarvis-icon';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAssistantStatus } from '@/features/assistant/assistant-api';
 import { ReachabilityCard } from '@/features/assistant/reachability-card';
@@ -57,7 +57,7 @@ function Head({ children }: { children?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 px-4 pt-3 text-[12px] text-text-3">
       <span className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-ai">
-        <SparklesIcon className="size-3.5" aria-hidden="true" />
+        <JarvisIcon className="size-3.5" aria-hidden="true" />
         Анализ
       </span>
       {children}
@@ -76,8 +76,8 @@ function Note({ children, tone }: { children: ReactNode; tone?: 'crit' }) {
 }
 
 /**
- * «Анализ» в деле инцидента: вывод ассистента сверху, шаг из цепочки правил, график и доказательства,
- * вопросы по делу. Ассистент только читает и предлагает; шаг запускает администратор кнопкой.
+ * «Анализ» в деле инцидента: вывод Джарвиса сверху, шаг из цепочки правил, график и доказательства,
+ * вопросы по делу. Джарвис только читает и предлагает; шаг запускает администратор кнопкой.
  */
 export function IncidentAnalysis({
   incident,
@@ -120,10 +120,22 @@ export function IncidentAnalysis({
       return (
         <Shell>
           <Head />
-          <Note>Чтобы разбирать инциденты, задайте провайдера, модель и ключ ассистента.</Note>
+          <Note>Чтобы разбирать инциденты, задайте провайдера, модель и ключ Джарвиса.</Note>
           <div className="px-4 pt-3 pb-4">
             <Link to="/settings/assistant" className={BTN}>
-              Открыть «Настройки → Ассистент»
+              Открыть «Настройки → Джарвис»
+            </Link>
+          </div>
+        </Shell>
+      );
+    if (!status.data.permissions.analysis)
+      return (
+        <Shell>
+          <Head />
+          <Note>Разбор по кнопке выключен в разрешениях Джарвиса.</Note>
+          <div className="px-4 pt-3 pb-4">
+            <Link to="/settings/assistant" className={BTN}>
+              Открыть «Настройки → Джарвис»
             </Link>
           </div>
         </Shell>
@@ -132,7 +144,7 @@ export function IncidentAnalysis({
       <Shell>
         <Head />
         <Note>
-          Ассистент посмотрит снимок сигналов, историю метрик и попытки починки, назовёт вероятную причину и
+          Джарвис посмотрит снимок сигналов, историю метрик и попытки починки, назовёт вероятную причину и
           предложит шаг.
         </Note>
         <div className="px-4 pt-3 pb-4">
@@ -192,7 +204,7 @@ export function IncidentAnalysis({
     return (
       <Shell>
         <Head />
-        <Note tone="crit">{a.error ?? 'Не удалось получить ответ ассистента.'}</Note>
+        <Note tone="crit">{a.error ?? 'Не удалось получить ответ Джарвиса.'}</Note>
         <div className="px-4 pt-3 pb-4">
           <button type="button" onClick={() => void launch()} disabled={start.isPending} className={BTN}>
             {start.isPending ? (
@@ -240,6 +252,9 @@ function DoneBlock({
   restarting: boolean;
 }) {
   const ask = useAskAnalysis();
+  const status = useAssistantStatus();
+  // Пока статус не пришёл, вопросы не прячем; выключенное разрешение убирает вопросы и повторный разбор.
+  const canAsk = status.data ? status.data.permissions.analysis : true;
   const [question, setQuestion] = useState('');
   const [pending, setPending] = useState<string | null>(null);
   // На телефоне доказательства свёрнуты: вывод и шаг с кнопкой должны помещаться на первый экран.
@@ -422,7 +437,7 @@ function DoneBlock({
         </div>
       )}
 
-      {a.thread.length === 0 && !pending && (
+      {canAsk && a.thread.length === 0 && !pending && (
         <div className="mx-4 mt-3 flex flex-wrap gap-1.5">
           {QUICK_QUESTIONS.map((q) => (
             <button
@@ -437,7 +452,12 @@ function DoneBlock({
         </div>
       )}
 
-      <form onSubmit={onSubmit} className="mx-4 mt-3 mb-3.5 flex gap-2">
+      {!canAsk && (
+        <p className="mx-4 mt-3 mb-3.5 text-[12.5px] text-text-3">
+          Вопросы по разбору выключены в разрешениях Джарвиса.
+        </p>
+      )}
+      <form onSubmit={onSubmit} hidden={!canAsk} className="mx-4 mt-3 mb-3.5 flex gap-2">
         <input
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
@@ -466,19 +486,21 @@ function DoneBlock({
           Разбор в {a.finishedAt ? hhmm(a.finishedAt) : '—'}
           {a.model ? ` · ${a.model}` : ''}
         </span>
-        <button
-          type="button"
-          onClick={onRestart}
-          disabled={restarting || pending !== null}
-          className={cn(BTN, 'ml-auto h-7 px-2.5 text-[12px]')}
-        >
-          {restarting ? (
-            <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />
-          ) : (
-            <RefreshCwIcon className="size-3.5" aria-hidden="true" />
-          )}
-          Разобрать заново
-        </button>
+        {canAsk && (
+          <button
+            type="button"
+            onClick={onRestart}
+            disabled={restarting || pending !== null}
+            className={cn(BTN, 'ml-auto h-7 px-2.5 text-[12px]')}
+          >
+            {restarting ? (
+              <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <RefreshCwIcon className="size-3.5" aria-hidden="true" />
+            )}
+            Разобрать заново
+          </button>
+        )}
       </div>
     </Shell>
   );

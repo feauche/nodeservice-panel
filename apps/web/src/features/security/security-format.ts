@@ -56,8 +56,8 @@ export function plural(n: number, forms: [string, string, string]): string {
 /** Как вошли в сессии — по amr. */
 export function loginMethod(amr: Me['amr'] | undefined): string {
   if (!amr) return '—';
-  if (amr.includes('recovery')) return 'пароль + код восстановления';
-  if (amr.includes('trusted')) return 'пароль · запомненное устройство';
-  if (amr.includes('totp')) return 'пароль + код 2FA';
-  return 'пароль';
+  if (amr.includes('recovery')) return 'Пароль + код восстановления';
+  if (amr.includes('trusted')) return 'Пароль · запомненное устройство';
+  if (amr.includes('totp')) return 'Пароль + код 2FA';
+  return 'Пароль';
 }

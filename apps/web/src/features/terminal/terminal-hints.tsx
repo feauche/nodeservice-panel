@@ -1,19 +1,20 @@
 import type { TerminalHintResponse } from '@nodeservice/shared';
 import { Link } from '@tanstack/react-router';
-import { Loader2Icon, LockIcon, SendIcon, SparklesIcon, XIcon } from 'lucide-react';
+import { Loader2Icon, LockIcon, SendIcon, XIcon } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 
+import { JarvisIcon } from '@/components/jarvis-icon';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAssistantStatus } from '@/features/assistant/assistant-api';
 import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useTerminalHint } from './terminal-api';
 
-/** Сколько последних строк терминала видит ассистент по кнопке. */
+/** Сколько последних строк терминала видит Джарвис по кнопке. */
 export const HINT_LINES = 60;
 
 /**
- * Подсказки к терминалу (C1): справа от экрана. Ассистент видит только то, что вы ему показали
+ * Подсказки к терминалу (C1): справа от экрана. Джарвис видит только то, что вы ему показали
  * кнопкой, объясняет вывод и предлагает команды. Команды только вставляются в строку ввода, без Enter.
  */
 export function TerminalHints({
@@ -55,15 +56,15 @@ export function TerminalHints({
     if (question.trim().length >= 2) void ask(question.trim());
   };
 
-  const enabled = Boolean(status.data?.enabled);
+  const enabled = Boolean(status.data?.enabled && status.data.permissions.terminalHints);
 
   return (
     <aside
-      aria-label="Подсказки ассистента"
+      aria-label="Подсказки Джарвиса"
       className={cn('flex min-h-0 flex-col gap-2.5 overflow-hidden bg-surface p-3 text-[13px]', className)}
     >
       <div className="flex items-center gap-2 font-semibold text-ai">
-        <SparklesIcon className="size-3.5" aria-hidden="true" />
+        <JarvisIcon className="size-3.5" aria-hidden="true" />
         Подсказки
         <span className="ml-auto rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-text-3">
           видит: последние {HINT_LINES} строк
@@ -84,12 +85,22 @@ export function TerminalHints({
           <Skeleton className="h-9 rounded-[10px]" />
         ) : !status.data?.enabled ? (
           <div className="flex flex-col items-start gap-2 text-[12.5px] leading-snug text-text-2">
-            <p className="m-0">Чтобы получать подсказки, задайте провайдера, модель и ключ ассистента.</p>
+            <p className="m-0">Чтобы получать подсказки, задайте провайдера, модель и ключ Джарвиса.</p>
             <Link
               to="/settings/assistant"
               className="inline-flex h-8 items-center rounded-[9px] border border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:text-foreground"
             >
-              Открыть «Настройки → Ассистент»
+              Открыть «Настройки → Джарвис»
+            </Link>
+          </div>
+        ) : !status.data.permissions.terminalHints ? (
+          <div className="flex flex-col items-start gap-2 text-[12.5px] leading-snug text-text-2">
+            <p className="m-0">Подсказки в терминале выключены в разрешениях Джарвиса.</p>
+            <Link
+              to="/settings/assistant"
+              className="inline-flex h-8 items-center rounded-[9px] border border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:text-foreground"
+            >
+              Открыть «Настройки → Джарвис»
             </Link>
           </div>
         ) : (

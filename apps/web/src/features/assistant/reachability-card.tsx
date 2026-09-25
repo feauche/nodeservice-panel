@@ -16,7 +16,7 @@ function Cell({ open, ms }: { open: boolean; ms: number | null }) {
   return (
     <span className={cn('inline-flex items-center gap-1.5 font-semibold', open ? 'text-ok' : 'text-crit')}>
       <span className="size-2 rounded-full bg-current" aria-hidden="true" />
-      {open ? `открыт${ms !== null ? ` · ${ms} мс` : ''}` : 'закрыт'}
+      {open ? `Открыт${ms !== null ? ` · ${ms} мс` : ''}` : 'Закрыт'}
     </span>
   );
 }
@@ -61,7 +61,7 @@ export function ReachabilityCard({ result }: { result: ReachabilityResult }) {
                   return (
                     <span key={p} className="inline-flex items-center gap-1.5">
                       <span className="text-text-3">{p}</span>
-                      {r ? <Cell open={r.open} ms={r.ms} /> : <span className="text-text-3">нет данных</span>}
+                      {r ? <Cell open={r.open} ms={r.ms} /> : <span className="text-text-3">Нет данных</span>}
                     </span>
                   );
                 })}
@@ -107,7 +107,7 @@ export function ReachabilityCard({ result }: { result: ReachabilityResult }) {
                         {r ? (
                           <Cell open={r.open} ms={r.ms} />
                         ) : (
-                          <span className="text-text-3">нет данных</span>
+                          <span className="text-text-3">Нет данных</span>
                         )}
                       </td>
                     );

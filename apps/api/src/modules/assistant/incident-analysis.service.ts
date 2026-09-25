@@ -1,6 +1,8 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
 import {
   ANALYSIS_THREAD_MAX,
+  AUTOFIX_GRACE_SECONDS,
   INCIDENT_CHART_METRIC,
   type Incident,
   type IncidentAnalysis,
@@ -10,7 +12,7 @@ import { problem } from '../../common/filters/problem-details.filter.js';
 import { AuditService } from '../audit/audit.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
 import { playbookForKind, renderPlaybook } from './assistant.playbooks.js';
-import { incidentCase, type ReadDeps, runReadTool } from './assistant.read-tools.js';
+import { incidentCase, type ReadDeps, runReadTool, toolsFor } from './assistant.read-tools.js';
 import { ReadDepsService } from './assistant-read-deps.service.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
 import {
@@ -21,6 +23,7 @@ import {
   chartName,
   dataBlock,
   parseSubmission,
+  pickAutoAnalysis,
   type Submission,
   stepLabel,
 } from './incident-analysis.logic.js';
@@ -45,15 +48,14 @@ function explain(err: unknown): string {
   if (err instanceof AnalysisError) return err.message;
   const m = err instanceof Error ? `${err.name} ${err.message}` : String(err);
   if (/Timeout|Abort/i.test(m)) return 'Провайдер не ответил за 60 секунд. Повторите разбор.';
-  if (/ответил (401|403)/.test(m))
-    return 'Провайдер отклонил ключ. Проверьте ключ в «Настройки → Ассистент».';
+  if (/ответил (401|403)/.test(m)) return 'Провайдер отклонил ключ. Проверьте ключ в «Настройки → Джарвис».';
   if (/ответил 429/.test(m)) return 'Провайдер ограничил число запросов. Повторите позже.';
-  return 'Не удалось получить ответ ассистента. Повторите разбор.';
+  return 'Не удалось получить ответ Джарвиса. Повторите разбор.';
 }
 
 /**
- * Разбор инцидента ассистентом (R4.2). Работает в фоне: вывод, доказательства и шаг пишутся прямо в
- * инцидент, ход работы виден по мере выполнения. Ассистент только читает; шаг из цепочки правил
+ * Разбор инцидента Джарвисом (R4.2). Работает в фоне: вывод, доказательства и шаг пишутся прямо в
+ * инцидент, ход работы виден по мере выполнения. Джарвис только читает; шаг из цепочки правил
  * запускает администратор.
  */
 @Injectable()
@@ -76,22 +78,70 @@ export class IncidentAnalysisService implements OnModuleInit {
     if (n > 0) this.log.warn(`Оборванных разборов после старта: ${n}`);
   }
 
-  private readDeps(): ReadDeps {
-    return this.readDepsService.get();
+  private readDeps(cfg: NonNullable<Awaited<ReturnType<AssistantSettingsStore['config']>>>): ReadDeps {
+    return this.readDepsService.get(cfg.permissions);
+  }
+
+  /** Когда запускали разборы сами: почасовой лимит считаем по этим меткам. */
+  private readonly autoStarts: number[] = [];
+
+  /** Раз в минуту: при включённом «Автоматическом разборе» берёт свежие открытые инциденты без разбора. */
+  @Interval(60_000)
+  async autoTick(): Promise<void> {
+    if (process.env.NODE_ENV === 'test') return;
+    try {
+      await this.autoRun();
+    } catch (err) {
+      this.log.warn(`Автоматический разбор не удался: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** Один проход автоматического разбора; вернёт id запущенных. Вынесено из таймера ради тестов. */
+  async autoRun(): Promise<string[]> {
+    const cfg = await this.settings.config();
+    if (!cfg?.permissions.analysis || !cfg.permissions.autoAnalysis) return [];
+    const nowMs = Date.now();
+    while (this.autoStarts.length > 0 && nowMs - (this.autoStarts[0] as number) > 3_600_000)
+      this.autoStarts.shift();
+    const { items } = await this.incidents.list('open');
+    const ids = pickAutoAnalysis(
+      items.filter((i) => !this.running.has(i.id)),
+      nowMs,
+      this.autoStarts.length,
+      AUTOFIX_GRACE_SECONDS * 1000,
+    );
+    const started: string[] = [];
+    for (const id of ids) {
+      try {
+        await this.start(id, 'auto');
+        this.autoStarts.push(Date.now());
+        started.push(id);
+      } catch (err) {
+        this.log.warn(
+          `Автоматический разбор ${id} не запущен: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return started;
   }
 
   private async config() {
     const cfg = await this.settings.config();
     if (!cfg)
       throw problem(HttpStatus.CONFLICT, {
-        detail: 'Ассистент выключен: задайте провайдера, ключ и модель в «Настройки → Ассистент».',
+        detail: 'Джарвис выключен: задайте провайдера, ключ и модель в «Настройки → Джарвис».',
       });
     return cfg;
   }
 
   /** Запустить разбор: возвращает инцидент со статусом «идёт», дальше работа идёт в фоне. */
-  async start(id: string): Promise<Incident> {
+  async start(id: string, by: 'manual' | 'auto' = 'manual'): Promise<Incident> {
     const cfg = await this.config();
+    if (!cfg.permissions.analysis)
+      throw problem(HttpStatus.CONFLICT, {
+        detail:
+          'Разбор инцидентов выключен: включите «Разбор по кнопке» в «Настройки → Джарвис → Разрешения».',
+      });
     const inc = await this.incidents.get(id);
     if (this.running.has(id)) throw problem(HttpStatus.CONFLICT, { detail: 'Разбор уже идёт.' });
     this.running.add(id);
@@ -115,7 +165,7 @@ export class IncidentAnalysisService implements OnModuleInit {
       await this.audit.record({
         action: 'incident.analysis.run',
         target: { type: 'incident', id, display: inc.title },
-        metadata: { kind: inc.kind, server: inc.serverName, model: cfg.model },
+        metadata: { kind: inc.kind, server: inc.serverName, model: cfg.model, by },
       });
       void this.execute(id, inc, cfg, base).finally(() => this.running.delete(id));
       return await this.incidents.get(id);
@@ -144,7 +194,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     };
     const deadline = Date.now() + TOTAL_MS;
     try {
-      const deps = this.readDeps();
+      const deps = this.readDeps(cfg);
       const book = playbookForKind(inc.kind);
       const playbook = book ? renderPlaybook(book) : null;
       let metricText: string | null = null;
@@ -172,7 +222,7 @@ export class IncidentAnalysisService implements OnModuleInit {
           model: cfg.model,
           system: analysisSystem(cfg.level, playbook),
           messages,
-          tools: ANALYSIS_TOOLS,
+          tools: toolsFor(ANALYSIS_TOOLS, cfg.permissions),
         });
         const uses = res.blocks.filter(
           (b): b is Extract<LlmBlock, { type: 'tool_use' }> => b.type === 'tool_use',
@@ -211,7 +261,7 @@ export class IncidentAnalysisService implements OnModuleInit {
         }
         messages.push({ role: 'user', content: results });
       }
-      if (!submission) throw new AnalysisError('Ассистент не сформулировал вывод. Повторите разбор.');
+      if (!submission) throw new AnalysisError('Джарвис не сформулировал вывод. Повторите разбор.');
       await save({
         ...cur,
         ...submission,
@@ -240,14 +290,19 @@ export class IncidentAnalysisService implements OnModuleInit {
   /** Уточняющий вопрос по готовому разбору; ответ и вопрос остаются в инциденте. */
   async ask(id: string, question: string): Promise<Incident> {
     const cfg = await this.config();
+    if (!cfg.permissions.analysis)
+      throw problem(HttpStatus.CONFLICT, {
+        detail:
+          'Разбор инцидентов выключен: включите «Разбор по кнопке» в «Настройки → Джарвис → Разрешения».',
+      });
     const inc = await this.incidents.get(id);
     const analysis = inc.analysis?.status === 'done' ? inc.analysis : null;
     if (!analysis) throw problem(HttpStatus.CONFLICT, { detail: 'Сначала запустите разбор инцидента.' });
     if (this.running.has(id))
-      throw problem(HttpStatus.CONFLICT, { detail: 'Ассистент ещё отвечает. Подождите.' });
+      throw problem(HttpStatus.CONFLICT, { detail: 'Джарвис ещё отвечает. Подождите.' });
     this.running.add(id);
     try {
-      const deps = this.readDeps();
+      const deps = this.readDeps(cfg);
       const past = analysis.thread;
       const messages: LlmMsg[] = [
         {
@@ -266,7 +321,7 @@ export class IncidentAnalysisService implements OnModuleInit {
           model: cfg.model,
           system: askSystem(cfg.level, analysis),
           messages,
-          tools: ASK_TOOLS,
+          tools: toolsFor(ASK_TOOLS, cfg.permissions),
         });
         const uses = res.blocks.filter(
           (b): b is Extract<LlmBlock, { type: 'tool_use' }> => b.type === 'tool_use',
@@ -292,7 +347,7 @@ export class IncidentAnalysisService implements OnModuleInit {
         }
         messages.push({ role: 'user', content: results });
       }
-      if (!answer) throw new AnalysisError('Ассистент не ответил. Повторите вопрос.');
+      if (!answer) throw new AnalysisError('Джарвис не ответил. Повторите вопрос.');
       const thread = [...past, { question, answer: answer.slice(0, ANSWER_MAX), at: now() }].slice(
         -ANALYSIS_THREAD_MAX,
       );

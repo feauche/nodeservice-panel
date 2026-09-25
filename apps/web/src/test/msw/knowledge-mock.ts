@@ -46,11 +46,24 @@ export function seedKnowledge(): void {
   mockKnowledge.items = [
     {
       id: uid(),
+      title: 'Пояснения',
+      content:
+        '# Пояснения\n\nКороткий словарь терминов и аббревиатур — что это простыми словами. Пополняется Джарвисом автоматически.\n\n| Термин | Простыми словами |\n| --- | --- |\n| conntrack | Таблица соединений в ядре |\n| SSH | Безопасный удалённый доступ к серверу |\n',
+      tags: ['глоссарий'],
+      archived: false,
+      pinned: true,
+      source: 'ai',
+      createdAt: iso(20),
+      updatedAt: iso(20),
+    },
+    {
+      id: uid(),
       title: 'Лимит conntrack',
       content:
-        '# Лимит conntrack\n\nЕсли таблица **conntrack** близка к пределу, подними лимит:\n\n```bash\nsysctl -w net.netfilter.nf_conntrack_max=1048576\n```\n\nПроверить текущее значение: `sysctl net.netfilter.nf_conntrack_count`.',
+        '# Лимит conntrack\n\nЕсли таблица **conntrack** близка к пределу, поднимите лимит:\n\n```bash\nsysctl -w net.netfilter.nf_conntrack_max=1048576\n```\n\nПроверить текущее значение: `sysctl net.netfilter.nf_conntrack_count`.',
       tags: ['conntrack', 'сеть'],
       archived: false,
+      pinned: false,
       source: 'web',
       createdAt: iso(9),
       updatedAt: iso(2),
@@ -62,6 +75,7 @@ export function seedKnowledge(): void {
         '# Перезапуск Xray\n\nПри падении процесса:\n\n1. `systemctl restart xray`\n2. Если нода в контейнере — `docker restart remnanode`\n3. Проверить логи: `journalctl -u xray -n 100`',
       tags: ['xray', 'runbook'],
       archived: false,
+      pinned: false,
       source: 'ai',
       createdAt: iso(14),
       updatedAt: iso(5),
@@ -70,9 +84,10 @@ export function seedKnowledge(): void {
       id: uid(),
       title: 'Очистка диска ноды',
       content:
-        '# Очистка диска\n\nКогда диск заполняется:\n\n- `journalctl --vacuum-size=200M`\n- `docker system prune -f`\n\nЛоги Xray обычно занимают больше всего.',
+        '# Очистка диска ноды\n\nКогда диск заполняется:\n\n- `journalctl --vacuum-size=200M`\n- `docker system prune -f`\n\nЛоги Xray обычно занимают больше всего.',
       tags: ['диск', 'обслуживание'],
       archived: false,
+      pinned: false,
       source: 'self',
       createdAt: iso(20),
       updatedAt: iso(11),
@@ -83,6 +98,7 @@ export function seedKnowledge(): void {
       content: '# Архив\n\nУстаревшая инструкция.',
       tags: ['архив'],
       archived: true,
+      pinned: false,
       source: 'telegram',
       createdAt: iso(60),
       updatedAt: iso(40),
@@ -140,7 +156,9 @@ export const knowledgeHandlers = [
     let items = mockKnowledge.items.filter((d) => d.archived === archived);
     if (q)
       items = items.filter((d) => d.title.toLowerCase().includes(q) || d.content.toLowerCase().includes(q));
-    items = [...items].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    items = [...items].sort(
+      (a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt),
+    );
     return HttpResponse.json({ items: items.map(toSummary) });
   }),
   http.post('/api/knowledge', async ({ request }) => {
@@ -157,6 +175,7 @@ export const knowledgeHandlers = [
       content: body.content ?? '',
       tags: body.tags ?? [],
       archived: false,
+      pinned: false,
       source: body.source ?? 'self',
       createdAt: now,
       updatedAt: now,
@@ -172,13 +191,17 @@ export const knowledgeHandlers = [
     const idx = mockKnowledge.items.findIndex((d) => d.id === params.id);
     if (idx < 0) return kbProblem(404, 'Статья не найдена.');
     const current = mockKnowledge.items[idx] as KbDoc;
-    snapshotVersion(current, 'edit');
     const patch = (await request.json()) as Partial<KbDoc>;
+    if (current.pinned && patch.archived === true)
+      return kbProblem(409, 'Служебную статью нельзя отправить в архив.');
+    snapshotVersion(current, 'edit');
     const next: KbDoc = { ...current, ...patch, updatedAt: new Date().toISOString() };
     mockKnowledge.items[idx] = next;
     return HttpResponse.json(next);
   }),
   http.delete('/api/knowledge/:id', ({ params }) => {
+    if (mockKnowledge.items.find((d) => d.id === params.id)?.pinned)
+      return kbProblem(409, 'Служебную статью нельзя удалить.');
     mockKnowledge.items = mockKnowledge.items.filter((d) => d.id !== params.id);
     delete mockKnowledge.versions[String(params.id)];
     return new HttpResponse(null, { status: 204 });

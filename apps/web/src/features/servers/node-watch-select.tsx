@@ -4,9 +4,9 @@ import { Pill } from '@/features/settings/settings-ui';
 import { cn } from '@/lib/utils';
 
 const SUB: Record<NodeWatch, string> = {
-  auto: 'судим, если контейнер найден',
-  on: 'нет контейнера — тоже инцидент',
-  off: 'сервер без ноды',
+  auto: 'Судим, если контейнер найден',
+  on: 'Нет контейнера — тоже инцидент',
+  off: 'Сервер без ноды',
 };
 
 const HINT: Record<NodeWatch, string> = {
@@ -17,12 +17,12 @@ const HINT: Record<NodeWatch, string> = {
 
 /** Пилюля «что зонд видел в последний раз» для шапки блока «Нода». */
 export function NodeStatePill({ server }: { server: Pick<Server, 'node' | 'nodeWatch'> }) {
-  if (server.nodeWatch === 'off') return <Pill tone="muted">слежение выключено</Pill>;
-  if (server.node === 'running') return <Pill tone="ok">контейнер работает</Pill>;
-  if (server.node === 'stopped') return <Pill tone="crit">контейнер остановлен</Pill>;
+  if (server.nodeWatch === 'off') return <Pill tone="muted">Слежение выключено</Pill>;
+  if (server.node === 'running') return <Pill tone="ok">Контейнер работает</Pill>;
+  if (server.node === 'stopped') return <Pill tone="crit">Контейнер остановлен</Pill>;
   if (server.node === 'none')
-    return <Pill tone={server.nodeWatch === 'on' ? 'crit' : 'muted'}>контейнер не найден</Pill>;
-  return <Pill tone="muted">ещё не проверяли</Pill>;
+    return <Pill tone={server.nodeWatch === 'on' ? 'crit' : 'muted'}>Контейнер не найден</Pill>;
+  return <Pill tone="muted">Ещё не проверяли</Pill>;
 }
 
 /**

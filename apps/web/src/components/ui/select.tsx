@@ -41,6 +41,8 @@ export function SelectContent({
   className,
   children,
   position = 'popper',
+  sideOffset = 6,
+  collisionPadding = 12,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
   return (
@@ -48,6 +50,9 @@ export function SelectContent({
       <SelectPrimitive.Content
         data-slot="select-content"
         position={position}
+        // Список не прилипает к полю: между ними зазор, у края экрана — отступ.
+        sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
         className={cn(
           'relative z-[110] max-h-[min(320px,var(--radix-select-content-available-height))] min-w-[8rem] overflow-hidden rounded-[10px] border border-border-2 bg-surface shadow-float',
           'data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',

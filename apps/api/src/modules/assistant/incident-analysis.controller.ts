@@ -17,7 +17,7 @@ export class IncidentAnalysisController {
   @Post(':id/analysis')
   @HttpCode(202)
   @ApiOperation({
-    summary: 'Разобрать инцидент ассистентом: работа идёт в фоне, ход виден в самом инциденте',
+    summary: 'Разобрать инцидент Джарвисом: работа идёт в фоне, ход виден в самом инциденте',
   })
   @ApiOkResponse({ type: AnalysisIncidentDto })
   start(@Param('id', ParseUUIDPipe) id: string): Promise<AnalysisIncidentDto> {

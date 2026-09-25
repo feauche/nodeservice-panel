@@ -7,11 +7,13 @@ import {
   buildReachCommand,
   dnsSummary,
   isProbeHost,
+  NODE_LOGS_COMMAND,
   normalizePorts,
   PROCESSES_COMMAND,
   parsePs,
   parseReach,
   pickProbes,
+  prepareNodeLogs,
   type ReachProbe,
   summarizeReach,
 } from './fleet-probe.logic.js';
@@ -122,5 +124,11 @@ export class FleetProbeService {
     const res = await this.run(serverId, PROCESSES_COMMAND);
     const parsed = parsePs(res.stdout);
     return { ...parsed, empty: parsed.cpu.length === 0 && parsed.mem.length === 0 };
+  }
+
+  /** Хвост журнала контейнера ноды с маскированием секретов и адресов. */
+  async nodeLogs(serverId: string) {
+    const res = await this.run(serverId, NODE_LOGS_COMMAND);
+    return prepareNodeLogs(res.stdout, res.code);
   }
 }

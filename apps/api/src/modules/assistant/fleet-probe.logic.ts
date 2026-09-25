@@ -1,6 +1,7 @@
 import type { Server } from '@nodeservice/shared';
 
-import { SH } from '../incidents/actions.registry.js';
+import { FIND_NODE, SH } from '../incidents/actions.registry.js';
+import { maskSecrets } from './terminal-hint.logic.js';
 
 /** Сколько независимых серверов задействуем и сколько портов проверяем за раз. */
 export const PROBE_MAX = 3;
@@ -188,4 +189,30 @@ export function parsePs(stdout: string): { cpu: ProcRow[]; mem: ProcRow[]; load:
     }
   }
   return out;
+}
+
+/** Сколько строк журнала контейнера ноды берём и сколько знаков отдаём модели. */
+export const NODE_LOGS_LINES = 80;
+export const NODE_LOGS_CHARS = 6000;
+
+/** Хвост журнала контейнера ноды: только чтение, `docker logs` ничего не меняет. */
+export const NODE_LOGS_COMMAND = SH(
+  `${FIND_NODE}; [ -n "$N" ] || { echo "контейнер ноды не найден"; exit 3; }; docker logs --tail ${NODE_LOGS_LINES} "$N" 2>&1`,
+);
+
+export interface NodeLogs {
+  found: boolean;
+  lines: number;
+  masked: number;
+  text: string;
+}
+
+/** Хвост логов до отправки модели: секреты, uuid, адреса и почта скрыты, длина ограничена с конца. */
+export function prepareNodeLogs(stdout: string, code: number): NodeLogs {
+  if (code === 3 || /контейнер ноды не найден/.test(stdout))
+    return { found: false, lines: 0, masked: 0, text: '' };
+  const raw = stdout.replace(/\r/g, '').trimEnd();
+  const tail = raw.length > NODE_LOGS_CHARS ? raw.slice(-NODE_LOGS_CHARS) : raw;
+  const { text, count } = maskSecrets(tail);
+  return { found: true, lines: text ? text.split('\n').length : 0, masked: count, text };
 }

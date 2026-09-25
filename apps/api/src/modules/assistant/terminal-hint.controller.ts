@@ -16,7 +16,7 @@ export class TerminalHintController {
 
   @Post(':id/terminal/hint')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Подсказка ассистента к выводу терминала: объяснение и команды для вставки' })
+  @ApiOperation({ summary: 'Подсказка Джарвиса к выводу терминала: объяснение и команды для вставки' })
   @ApiOkResponse({ type: TerminalHintResponseDto })
   hint(
     @Param('id', ParseUUIDPipe) id: string,

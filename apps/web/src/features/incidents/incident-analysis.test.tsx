@@ -31,10 +31,22 @@ describe('IncidentAnalysis', () => {
     mockAnalysis.stepMs = 20;
   });
 
-  it('ассистент не подключён — подсказка со ссылкой в настройки, кнопки разбора нет', async () => {
+  it('Джарвис не подключён — подсказка со ссылкой в настройки, кнопки разбора нет', async () => {
     open(cpuIncident().id);
-    expect(await screen.findByText(/задайте провайдера, модель и ключ ассистента/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Настройки → Ассистент/ })).toHaveAttribute(
+    expect(await screen.findByText(/задайте провайдера, модель и ключ Джарвиса/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Настройки → Джарвис/ })).toHaveAttribute(
+      'href',
+      '/settings/assistant',
+    );
+    expect(screen.queryByRole('button', { name: 'Разобрать инцидент' })).not.toBeInTheDocument();
+  });
+
+  it('разбор по кнопке выключен в разрешениях: пояснение со ссылкой, кнопки нет', async () => {
+    mockAssistant.enabled = true;
+    mockAssistant.permissions = { ...mockAssistant.permissions, analysis: false };
+    open(cpuIncident().id);
+    expect(await screen.findByText('Разбор по кнопке выключен в разрешениях Джарвиса.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Настройки → Джарвис/ })).toHaveAttribute(
       'href',
       '/settings/assistant',
     );
@@ -124,6 +136,35 @@ describe('IncidentAnalysis', () => {
     // без слияния предложение панели остаётся отдельным блоком
     expect(screen.getByTestId('proposal-block')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Разобрать заново' })).toBeInTheDocument();
+  });
+
+  it('готовый разбор при выключенном разрешении: вывод виден, вопросов и повторного разбора нет', async () => {
+    mockAssistant.enabled = true;
+    mockAssistant.permissions = { ...mockAssistant.permissions, analysis: false };
+    const inc = cpuIncident();
+    inc.analysis = {
+      status: 'done',
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      steps: [],
+      verdict: 'Процессор загружен без пауз.',
+      confidence: 'medium',
+      evidence: [],
+      unknown: null,
+      nextAction: null,
+      basedOn: { attempts: inc.attempts.length, resolved: false },
+      model: 'm',
+      error: null,
+      thread: [],
+    };
+    open(inc.id);
+    expect(await screen.findByText(/Процессор загружен без пауз/)).toBeInTheDocument();
+    await screen.findByText('Вопросы по разбору выключены в разрешениях Джарвиса.');
+    expect(screen.queryByRole('button', { name: 'Разобрать заново' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Как не допустить повтора?' })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('textbox', { hidden: true, name: 'Вопрос по этому инциденту' }),
+    ).not.toBeVisible();
   });
 
   it('график: у инцидента про диск виден порог, момент открытия и попытки', async () => {

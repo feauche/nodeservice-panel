@@ -45,7 +45,7 @@ export const incidentsKeys = {
   policy: ['incidents', 'policy'] as const,
 };
 
-/** Идёт ли по какому-то инциденту попытка или разбор ассистента — тогда данные перечитываются часто. */
+/** Идёт ли по какому-то инциденту попытка или разбор Джарвиса — тогда данные перечитываются часто. */
 export const hasRunningAttempt = (items: Incident[] | undefined): boolean =>
   Boolean(
     items?.some((i) => i.analysis?.status === 'running' || i.attempts.some((a) => a.status === 'running')),

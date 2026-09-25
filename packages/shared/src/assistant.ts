@@ -4,8 +4,8 @@ import { ACTION_LEVELS } from './incidents.js';
 import { reachabilityResultSchema } from './reachability.js';
 
 /**
- * AI-ассистент (этап 9): чат со знанием состояния парка и базы знаний.
- * Ассистент НИКОГДА не выполняет действия сам — только предлагает (proposal),
+ * Джарвис (этап 9): чат со знанием состояния парка и базы знаний.
+ * Джарвис НИКОГДА не выполняет действия сам — только предлагает (proposal),
  * а выполняет — администратор через тот же step-up/подтверждение, что и вручную.
  */
 
@@ -37,49 +37,185 @@ export function assistantMessageMax(mode: AssistantMode): number {
   return mode === 'analysis' ? ASSISTANT_ANALYSIS_MAX : ASSISTANT_MESSAGE_MAX;
 }
 
-/** Уровень пользователя — насколько подробно и какими терминами отвечать. */
+/**
+ * Подробность ответов Джарвиса. Ключи остались прежними (novice, intermediate, pro), поэтому старые
+ * настройки читаются; для человека это «Подробно», «Обычно» и «Кратко». Подробнее значит длиннее ответы
+ * и больше токенов у провайдера нейросети.
+ */
 export const ASSISTANT_LEVELS = ['novice', 'intermediate', 'pro'] as const;
 export type AssistantLevel = (typeof ASSISTANT_LEVELS)[number];
 export const ASSISTANT_LEVEL_LABELS: Record<AssistantLevel, string> = {
-  novice: 'Новичок',
-  intermediate: 'Средний',
-  pro: 'Профессионал',
+  pro: 'Кратко',
+  intermediate: 'Обычно',
+  novice: 'Подробно',
 };
 export const ASSISTANT_LEVEL_HINTS: Record<AssistantLevel, string> = {
-  novice: 'Максимально подробно и простыми словами, с расшифровкой терминов и аббревиатур.',
-  intermediate: 'Баланс: по делу, но поясняет неочевидные термины и шаги.',
-  pro: 'Кратко, терминами и аббревиатурами, без разжёвывания базового.',
+  novice:
+    'Подробно и простыми словами, с расшифровкой терминов и аббревиатур. Ответы длиннее, токенов уходит больше.',
+  intermediate: 'По делу, но с пояснением неочевидных терминов и шагов. Токенов уходит средне.',
+  pro: 'Коротко, терминами и аббревиатурами, без разжёвывания базового. Токенов уходит меньше.',
+};
+export const ASSISTANT_LEVEL_TOKENS: Record<AssistantLevel, string> = {
+  pro: 'Токенов: меньше',
+  intermediate: 'Токенов: средне',
+  novice: 'Токенов: больше',
 };
 export const ASSISTANT_LEVEL_DEFAULT: AssistantLevel = 'intermediate';
 
-/** Разрешения агента — что ему позволено делать в системе. Настройки он только читает. */
-export const ASSISTANT_PERMISSION_KEYS = ['kbWrite', 'glossary', 'kbReview'] as const;
+/** Разрешения Джарвиса: что ему можно в вашей системе. Настройки он только читает, действия только предлагает. */
+export const ASSISTANT_PERMISSION_KEYS = [
+  'kbWrite',
+  'kbReview',
+  'reach',
+  'processes',
+  'nodeLogs',
+  'terminalHints',
+  'analysis',
+  'autoAnalysis',
+  'proposals',
+] as const;
 export type AssistantPermission = (typeof ASSISTANT_PERMISSION_KEYS)[number];
 export const ASSISTANT_PERMISSION_LABELS: Record<AssistantPermission, string> = {
-  kbWrite: 'Создание и редактирование статей',
-  glossary: 'Автоглоссарий «Пояснения»',
-  kbReview: 'Еженедельная ревизия базы знаний',
+  kbWrite: 'Создание и правка статей',
+  kbReview: 'Еженедельная ревизия',
+  reach: 'Проверка доступности снаружи',
+  processes: 'Осмотр процессов',
+  nodeLogs: 'Логи ноды',
+  terminalHints: 'Подсказки в терминале',
+  analysis: 'Разбор по кнопке',
+  autoAnalysis: 'Автоматический разбор',
+  proposals: 'Карточки предложений',
 };
 export const ASSISTANT_PERMISSION_HINTS: Record<AssistantPermission, string> = {
-  kbWrite: 'Агент может сам создавать и править статьи в базе знаний (с меткой AI).',
-  glossary: 'Непонятные термины и аббревиатуры автоматически попадают в статью «Пояснения».',
-  kbReview: 'Раз в неделю агент наводит порядок в базе: чистит артефакты, дополняет, предлагает правки.',
+  kbWrite: 'Джарвис может сам писать статьи в базу знаний, с меткой «AI».',
+  kbReview: 'Раз в неделю наводит порядок: чистит артефакты, дополняет, предлагает правки.',
+  reach: 'С двух-трёх других серверов парка проверяет порт и DNS вашего сервера.',
+  processes: 'Имена и проценты CPU и памяти, без командных строк.',
+  nodeLogs:
+    'Последние строки журнала контейнера ноды. В логах бывают адреса пользователей: они маскируются, но остальной текст уходит провайдеру.',
+  terminalHints: 'Разбор вывода терминала, который вы сами показали кнопкой. Секреты маскируются.',
+  analysis: 'Кнопка «Разобрать инцидент» в деле инцидента.',
+  autoAnalysis:
+    'Сам разбирает предупреждения и критичные инциденты спустя минуту после открытия. Тратит токены, не больше пяти разборов в час.',
+  proposals: 'Предлагает шаг из цепочки инцидента карточкой. Запускаете шаг вы.',
 };
+
+/** Что делает возможность: метки риска рядом с переключателем. */
+export const ASSISTANT_RISKS = ['reads', 'writes', 'servers', 'provider', 'confirm'] as const;
+export type AssistantRisk = (typeof ASSISTANT_RISKS)[number];
+export const ASSISTANT_RISK_LABELS: Record<AssistantRisk, string> = {
+  reads: 'Читает',
+  writes: 'Пишет в базу знаний',
+  servers: 'Ходит на серверы',
+  provider: 'Данные уходят провайдеру',
+  confirm: 'Только с вашего подтверждения',
+};
+export const ASSISTANT_PERMISSION_RISKS: Record<AssistantPermission, AssistantRisk[]> = {
+  kbWrite: ['writes'],
+  kbReview: ['writes'],
+  reach: ['servers'],
+  processes: ['servers', 'provider'],
+  nodeLogs: ['servers', 'provider'],
+  terminalHints: ['provider'],
+  analysis: ['reads', 'provider'],
+  autoAnalysis: ['reads', 'provider'],
+  proposals: ['confirm'],
+};
+
+/** Группы разрешений для экрана настроек. */
+export const ASSISTANT_PERMISSION_GROUPS: ReadonlyArray<{
+  key: string;
+  title: string;
+  note?: string;
+  keys: readonly AssistantPermission[];
+}> = [
+  { key: 'kb', title: 'База знаний', keys: ['kbWrite', 'kbReview'] },
+  {
+    key: 'servers',
+    title: 'Серверы, только чтение',
+    note: 'по SSH от имени панели',
+    keys: ['reach', 'processes', 'nodeLogs', 'terminalHints'],
+  },
+  { key: 'incidents', title: 'Инциденты', keys: ['analysis', 'autoAnalysis', 'proposals'] },
+];
+
 export type AssistantPermissions = Record<AssistantPermission, boolean>;
 export const ASSISTANT_PERMISSIONS_DEFAULT: AssistantPermissions = {
   kbWrite: true,
-  glossary: true,
   kbReview: true,
+  reach: true,
+  processes: true,
+  nodeLogs: false,
+  terminalHints: true,
+  analysis: true,
+  autoAnalysis: false,
+  proposals: true,
 };
 
-const assistantPermissionsSchema = z.object({
-  kbWrite: z.boolean(),
-  glossary: z.boolean(),
-  kbReview: z.boolean(),
-});
+/** Пресеты одним нажатием: «Осторожный», «Обычный» и «Максимальный автоматизм». */
+export const ASSISTANT_PRESET_KEYS = ['careful', 'normal', 'max'] as const;
+export type AssistantPreset = (typeof ASSISTANT_PRESET_KEYS)[number];
+export const ASSISTANT_PRESETS: Record<
+  AssistantPreset,
+  { label: string; description: string; permissions: AssistantPermissions }
+> = {
+  careful: {
+    label: 'Осторожный',
+    description:
+      'Только чтение и подсказки. Статьи в базу знаний не пишет, на серверы сам не ходит, разбор только по кнопке.',
+    permissions: {
+      kbWrite: false,
+      kbReview: false,
+      reach: false,
+      processes: false,
+      nodeLogs: false,
+      terminalHints: true,
+      analysis: true,
+      autoAnalysis: false,
+      proposals: true,
+    },
+  },
+  normal: {
+    label: 'Обычный',
+    description: 'Чтение, статьи, проверки доступности и процессов, разбор по кнопке.',
+    permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT },
+  },
+  max: {
+    label: 'Максимальный автоматизм',
+    description:
+      'Всё из «Обычного» плюс автоматический разбор инцидентов и логи ноды. Изменения серверов по-прежнему только с вашего подтверждения.',
+    permissions: {
+      kbWrite: true,
+      kbReview: true,
+      reach: true,
+      processes: true,
+      nodeLogs: true,
+      terminalHints: true,
+      analysis: true,
+      autoAnalysis: true,
+      proposals: true,
+    },
+  },
+};
+
+/** Какой пресет совпадает с текущими разрешениями; null — настроено вручную. */
+export function matchAssistantPreset(p: AssistantPermissions): AssistantPreset | null {
+  return (
+    ASSISTANT_PRESET_KEYS.find((k) =>
+      ASSISTANT_PERMISSION_KEYS.every((perm) => ASSISTANT_PRESETS[k].permissions[perm] === p[perm]),
+    ) ?? null
+  );
+}
+
+const assistantPermissionsSchema = z.object(
+  Object.fromEntries(ASSISTANT_PERMISSION_KEYS.map((k) => [k, z.boolean()])) as Record<
+    AssistantPermission,
+    z.ZodBoolean
+  >,
+);
 
 export const assistantStatusSchema = z.object({
-  /** Ключ и модель заданы — ассистент работает. */
+  /** Ключ и модель заданы — Джарвис работает. */
   enabled: z.boolean(),
   provider: z.enum(ASSISTANT_PROVIDERS),
   /** Название модели вводит администратор (например «anthropic/claude-sonnet-4-5»). */
@@ -89,11 +225,11 @@ export const assistantStatusSchema = z.object({
 });
 export type AssistantStatus = z.infer<typeof assistantStatusSchema>;
 
-/** Настройки ассистента (Настройки → Ассистент): ключ приходит только на запись. */
+/** Настройки Джарвиса (Настройки → Джарвис): ключ приходит только на запись. */
 export const assistantSettingsUpdateSchema = z.object({
   provider: z.enum(ASSISTANT_PROVIDERS).optional(),
   apiKey: z.string().trim().min(8).max(400).optional(),
-  /** true — стереть ключ (выключить ассистента). */
+  /** true — стереть ключ (выключить Джарвиса). */
   clearKey: z.boolean().optional(),
   model: z.string().trim().max(ASSISTANT_MODEL_MAX).optional(),
   level: z.enum(ASSISTANT_LEVELS).optional(),
@@ -118,7 +254,7 @@ export const assistantProposalSchema = z.object({
   description: z.string(),
   /** Уровень действия из реестра. Старые предложения без него: интерфейс берёт уровень из реестра сам. */
   level: z.enum(ACTION_LEVELS).optional(),
-  /** Почему ассистент предлагает именно этот шаг (его слова, без последствий из реестра). */
+  /** Почему Джарвис предлагает именно этот шаг (его слова, без последствий из реестра). */
   reason: z.string().optional(),
 });
 export type AssistantProposal = z.infer<typeof assistantProposalSchema>;
@@ -159,7 +295,10 @@ export type AssistantChatRequest = z.infer<typeof assistantChatRequestSchema>;
 
 export const assistantChatResponseSchema = z.object({
   conversationId: z.uuid(),
+  /** Последнее сообщение хода (итог). */
   message: assistantMessageSchema,
+  /** Все сообщения хода по порядку: реплики по ходу работы и итог; их может быть несколько. */
+  messages: z.array(assistantMessageSchema).min(1),
 });
 export type AssistantChatResponse = z.infer<typeof assistantChatResponseSchema>;
 

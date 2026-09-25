@@ -13,7 +13,7 @@ import { useServers } from '@/features/servers/servers-api';
 import { useTerminalStore } from '@/features/terminal/terminal-store';
 import { toast } from '@/lib/notify';
 import { useNow } from '@/lib/use-now';
-import { cn } from '@/lib/utils';
+import { capFirst, cn } from '@/lib/utils';
 import { LevelChip } from './level-chip';
 
 const RESULT_DOT: Record<IncidentEvent['result'], string> = {
@@ -178,7 +178,7 @@ function AttemptRow({
           )}
         >
           {running && <Loader2Icon className="size-3 animate-spin" aria-hidden="true" />}
-          {pill.label}
+          {capFirst(pill.label)}
         </span>
         <span className="hidden w-[64px] text-right text-[12px] whitespace-nowrap text-text-3 tabular-nums sm:block">
           {attemptDuration(attempt, now)}

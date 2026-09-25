@@ -24,7 +24,7 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   {
     name: 'search_audit',
     description:
-      'Журнал событий панели (входы, изменения, инциденты, запросы к ассистенту). Для вопросов про период («за час», «за сутки», «сегодня») передай sinceMinutes (час = 60, сутки = 1440) — вернутся события за этот срок. query — необязательный полнотекстовый поиск. Без обоих — просто последние 15 событий. В ответе есть время каждого события.',
+      'Журнал событий панели (входы, изменения, инциденты, запросы к Джарвису). Для вопросов про период («за час», «за сутки», «сегодня») передай sinceMinutes (час = 60, сутки = 1440) — вернутся события за этот срок. query — необязательный полнотекстовый поиск. Без обоих — просто последние 15 событий. В ответе есть время каждого события.',
     input_schema: {
       type: 'object',
       properties: {
@@ -59,7 +59,7 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   {
     name: 'add_glossary_terms',
     description:
-      'Добавить термины и аббревиатуры в общий глоссарий «Пояснения» (таблица «термин → простое объяснение»). Вызывай ВСЕГДА, когда объясняешь пользователю непонятный термин/аббревиатуру — даже базовые (SSH, CPU, conntrack). Дубликаты инструмент отсекает сам. Требует разрешения glossary. Пояснения — короткие, простыми словами.',
+      'Добавить термины и аббревиатуры в общий глоссарий «Пояснения» (таблица «термин → простое объяснение»). Вызывай ВСЕГДА, когда объясняешь пользователю непонятный термин/аббревиатуру — даже базовые (SSH, CPU, conntrack). Дубликаты инструмент отсекает сам. Пояснения — короткие, простыми словами.',
     input_schema: {
       type: 'object',
       properties: {
@@ -97,14 +97,14 @@ export interface ToolDeps extends ReadDeps {
   autochecks: { get: () => Promise<unknown> };
   incidentSettings: { get: () => Promise<unknown> };
   /** Снимок настроек самого агента — уровень и разрешения (только чтение). */
-  assistant: { level: string; permissions: Record<string, boolean> };
+  assistant: { level: string };
   /** Создание статьи в БЗ (метка AI). Гейтится разрешением kbWrite в самом инструменте. */
   saveArticle: (a: {
     title: string;
     content: string;
     tags: string[];
   }) => Promise<{ id: string; title: string }>;
-  /** Пополнение глоссария «Пояснения». Гейтится разрешением glossary в самом инструменте. */
+  /** Пополнение глоссария «Пояснения». Работает всегда, отдельного разрешения нет. */
   addGlossary: (terms: Array<{ term: string; explain: string }>) => Promise<{ id: string; added: number }>;
 }
 
@@ -128,7 +128,11 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
   if (name === 'get_settings') {
     const [autochecks, incidents] = await Promise.all([deps.autochecks.get(), deps.incidentSettings.get()]);
     return {
-      content: JSON.stringify({ autochecks, incidents, assistant: deps.assistant }),
+      content: JSON.stringify({
+        autochecks,
+        incidents,
+        assistant: { level: deps.assistant.level, permissions: deps.permissions },
+      }),
       citations: [],
       proposals: [],
     };
@@ -173,11 +177,11 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
   }
 
   if (name === 'save_kb_article') {
-    if (!deps.assistant.permissions.kbWrite)
+    if (!deps.permissions.kbWrite)
       return {
         ...empty,
         content:
-          'Нет разрешения на создание статей (kbWrite отключён). Сообщи пользователю, что включается это в «Настройки → Ассистент → Разрешения», и предложи готовый текст статьи прямо в ответе.',
+          'Нет разрешения на создание статей (kbWrite отключён). Сообщи пользователю, что включается это в «Настройки → Джарвис → Разрешения», и предложи готовый текст статьи прямо в ответе.',
       };
     const title = String(arg.title ?? '').trim();
     if (!title) return { ...empty, content: 'Не задан заголовок статьи — сохранить не могу.' };
@@ -197,12 +201,6 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
   }
 
   if (name === 'add_glossary_terms') {
-    if (!deps.assistant.permissions.glossary)
-      return {
-        ...empty,
-        content:
-          'Нет разрешения на автоглоссарий (glossary отключён). Скажи пользователю, что включается это в «Настройки → Ассистент → Разрешения».',
-      };
     const rawTerms = Array.isArray(arg.terms) ? arg.terms : [];
     const terms = rawTerms
       .map((t) => {
@@ -221,6 +219,12 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
   }
 
   if (name === 'propose_action') {
+    if (!deps.permissions.proposals)
+      return {
+        ...empty,
+        content:
+          'Карточки предложений выключены в разрешениях (proposals). Карточки не будет: назовите шаг текстом и скажите, что включить карточки можно в «Настройки → Джарвис → Разрешения».',
+      };
     const preset = String(arg.preset ?? '');
     let inc: Incident;
     try {

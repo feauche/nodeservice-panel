@@ -99,7 +99,7 @@ export function SessionsCard() {
                 <span className="font-medium" title={s.userAgent}>
                   {shortUserAgent(s.userAgent)}
                 </span>
-                {s.current && <Pill tone="ok">текущая</Pill>}
+                {s.current && <Pill tone="ok">Текущая</Pill>}
               </div>
               <div className="mt-0.5 text-[11.5px] text-text-3">
                 <span className="font-mono">{s.ip || '—'}</span> · {loginMethod(s.amr)} · активность{' '}
@@ -192,7 +192,7 @@ export function DevicesCard() {
                 <span className="font-medium" title={d.userAgent}>
                   {shortUserAgent(d.userAgent)}
                 </span>
-                {d.current && <Pill tone="ok">это устройство</Pill>}
+                {d.current && <Pill tone="ok">Это устройство</Pill>}
               </div>
               <div className="mt-0.5 text-[11.5px] text-text-3">
                 <span className="font-mono">{d.ipPrefix || '—'}</span> · использовано{' '}

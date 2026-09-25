@@ -61,12 +61,17 @@ export class ZvenoProvider implements LlmProvider {
       },
       body: JSON.stringify({
         model: input.model,
-        max_tokens: 1024,
+        max_tokens: 4096,
         messages,
-        tools: input.tools.map((t) => ({
-          type: 'function',
-          function: { name: t.name, description: t.description, parameters: t.input_schema },
-        })),
+        // Пустой список инструментов провайдеры отвергают: без инструментов поле не отправляем.
+        ...(input.tools.length > 0
+          ? {
+              tools: input.tools.map((t) => ({
+                type: 'function',
+                function: { name: t.name, description: t.description, parameters: t.input_schema },
+              })),
+            }
+          : {}),
       }),
       signal: AbortSignal.timeout(60_000),
     });
@@ -90,6 +95,7 @@ export class ZvenoProvider implements LlmProvider {
       }
       blocks.push({ type: 'tool_use', id: call.id, name: call.function.name, input: parsed });
     }
-    return { stopReason: choice?.finish_reason === 'tool_calls' ? 'tool_use' : 'end', blocks };
+    // Есть вызовы — значит tool_use, каким бы ни был finish_reason: иначе вызов теряется, а модель «обещала».
+    return { stopReason: blocks.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end', blocks };
   }
 }

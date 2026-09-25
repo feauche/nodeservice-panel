@@ -6,6 +6,8 @@ import {
   auditActionLabel,
 } from '@nodeservice/shared';
 
+import { capFirst } from '@/lib/utils';
+
 const timeFmt = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const dayFmt = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit' });
 const fullFmt = new Intl.DateTimeFormat('ru-RU', {
@@ -111,13 +113,13 @@ export function metadataRows(
   return Object.entries(metadata).map(([key, raw]) => {
     let value = formatValue(raw);
     if (key === 'amr' && Array.isArray(raw))
-      value = raw.map((m) => AMR_LABELS[String(m)] ?? String(m)).join(' + ');
-    else if (key === 'reason' && typeof raw === 'string') value = REASON_LABELS[raw] ?? raw;
+      value = capFirst(raw.map((m) => AMR_LABELS[String(m)] ?? String(m)).join(' + '));
+    else if (key === 'reason' && typeof raw === 'string') value = capFirst(REASON_LABELS[raw] ?? raw);
     else if (key === 'mode' && typeof raw === 'string') value = MODE_LABELS[raw] ?? raw;
-    else if (key === 'stage' && raw === 'setup') value = 'первый запуск';
+    else if (key === 'stage' && raw === 'setup') value = 'Первый запуск';
     else if (key === 'error' && typeof raw === 'string') value = raw.split('/').pop() ?? raw;
     else if (key === 'env')
-      value = raw === 'production' ? 'прод' : raw === 'development' ? 'разработка' : value;
+      value = raw === 'production' ? 'Прод' : raw === 'development' ? 'Разработка' : value;
     return { key, label: KEY_LABELS[key] ?? key, value };
   });
 }

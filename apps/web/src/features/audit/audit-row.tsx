@@ -12,7 +12,7 @@ import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { toast } from '@/lib/notify';
 
-import { cn } from '@/lib/utils';
+import { capFirst, cn } from '@/lib/utils';
 import {
   buildAuditReport,
   formatDuration,
@@ -56,7 +56,7 @@ export function SourceBadge({ source }: { source: AuditEntry['source'] }) {
           : 'border-border bg-surface-2 text-text-2',
       )}
     >
-      {AUDIT_SOURCE_LABELS[source]}
+      {capFirst(AUDIT_SOURCE_LABELS[source])}
     </span>
   );
 }

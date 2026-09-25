@@ -146,7 +146,7 @@ describe('IncidentCasePage', () => {
     // правая колонка: сигналы
     expect(screen.getByText('Сигналы в момент сбоя')).toBeInTheDocument();
     expect(screen.getByText('Контейнер ноды')).toBeInTheDocument();
-    // блок «Анализ»: ассистент выключен — подсказка, куда идти
+    // блок «Анализ»: Джарвис выключен — подсказка, куда идти
     expect(await screen.findByText(/Чтобы разбирать инциденты, задайте провайдера/)).toBeInTheDocument();
     // подтверждение шага запускает попытку
     const user = userEvent.setup();
@@ -228,8 +228,8 @@ describe('AttemptsAccordion', () => {
     expect(buttons[1]).toHaveAttribute('aria-expanded', 'true');
     expect(buttons[2]).toHaveAttribute('aria-expanded', 'true');
     // итог виден и у свёрнутой строки
-    expect(buttons[0]).toHaveTextContent('не помогло');
-    expect(buttons[2]).toHaveTextContent('помогло');
+    expect(buttons[0]).toHaveTextContent('Не помогло');
+    expect(buttons[2]).toHaveTextContent('Помогло');
   });
 });
 

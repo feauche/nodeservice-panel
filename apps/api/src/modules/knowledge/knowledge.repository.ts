@@ -19,18 +19,18 @@ export class KnowledgeRepository {
         .select()
         .from(kbDocuments)
         .where(and(eq(kbDocuments.archived, archived), sql`search @@ websearch_to_tsquery('simple', ${q})`))
-        .orderBy(sql`ts_rank(search, websearch_to_tsquery('simple', ${q})) DESC`)
+        .orderBy(desc(kbDocuments.pinned), sql`ts_rank(search, websearch_to_tsquery('simple', ${q})) DESC`)
         .limit(50);
     }
     return this.db
       .select()
       .from(kbDocuments)
       .where(eq(kbDocuments.archived, archived))
-      .orderBy(desc(kbDocuments.updatedAt))
+      .orderBy(desc(kbDocuments.pinned), desc(kbDocuments.updatedAt))
       .limit(200);
   }
 
-  /** Топ-K статей для контекста ассистента (RAG-lite по FTS). */
+  /** Топ-K статей для контекста Джарвиса (RAG-lite по FTS). */
   async searchForContext(q: string, limit = 4): Promise<KbDocumentRow[]> {
     return this.db
       .select()

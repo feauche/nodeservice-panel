@@ -31,7 +31,7 @@ export function TotpCard() {
               : undefined
           }
         >
-          <Pill tone="ok">включена</Pill>
+          <Pill tone="ok">Включена</Pill>
         </SettingsRow>
         <SettingsRow
           label="Перевыпуск"

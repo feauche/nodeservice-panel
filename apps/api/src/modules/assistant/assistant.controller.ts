@@ -24,7 +24,7 @@ export class AssistantController {
   constructor(private readonly assistant: AssistantService) {}
 
   @Get('status')
-  @ApiOperation({ summary: 'Доступен ли ассистент (задан ли ключ) и модель' })
+  @ApiOperation({ summary: 'Доступен ли Джарвис (задан ли ключ) и модель' })
   @ApiOkResponse({ type: AssistantStatusDto })
   status(): Promise<AssistantStatusDto> {
     return this.assistant.status();
@@ -46,7 +46,7 @@ export class AssistantController {
 
   @Post('chat')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Отправить сообщение ассистенту (tool-use, предложения действий)' })
+  @ApiOperation({ summary: 'Отправить сообщение Джарвису (tool-use, предложения действий)' })
   @ApiOkResponse({ type: AssistantChatResponseDto })
   chat(@Body() body: AssistantChatRequestDto): Promise<AssistantChatResponseDto> {
     return this.assistant.chat(body.message, body.conversationId, body.mode);

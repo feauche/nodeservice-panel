@@ -232,6 +232,13 @@
       "when": 1789101300000,
       "tag": "0032_assistant_reachability",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1789101400000,
+      "tag": "0033_kb_pinned",
+      "breakpoints": true
     }
   ]
 }

@@ -18,7 +18,7 @@ const TABS = [
   { to: '/settings/security', label: 'Безопасность' },
   { to: '/settings/autochecks', label: 'Автопроверки' },
   { to: '/settings/incidents', label: 'Инциденты' },
-  { to: '/settings/assistant', label: 'Ассистент' },
+  { to: '/settings/assistant', label: 'Джарвис' },
 ] as const;
 
 /** Сервисные страницы вне панели — маленькими кнопками у заголовка, с подсказкой куда ведут. */

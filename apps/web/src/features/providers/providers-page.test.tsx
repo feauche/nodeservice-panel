@@ -49,11 +49,11 @@ describe('ProvidersPage', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Добавить провайдера' }));
     const dialog = await screen.findByRole('dialog', { name: 'Новый провайдер' });
-    expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('появится после ввода сайта');
+    expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('Появится после ввода сайта');
     await user.type(within(dialog).getByLabelText('Название'), 'Hetzner');
     await user.type(within(dialog).getByLabelText('Сайт'), 'hetzner.com');
     await waitFor(() =>
-      expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('нашли на сайте'),
+      expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('Нашли на сайте'),
     );
     // имя занято — ошибка у поля, диалог остаётся
     await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
@@ -63,7 +63,7 @@ describe('ProvidersPage', () => {
     await user.clear(within(dialog).getByLabelText('Сайт'));
     await user.type(within(dialog).getByLabelText('Сайт'), 'contabo.com');
     await waitFor(() =>
-      expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('на сайте иконки нет'),
+      expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('На сайте иконки нет'),
     );
     await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
@@ -119,7 +119,7 @@ describe('ProvidersPage', () => {
     await user.type(within(dialog).getByLabelText('Название'), '4VPS');
     await user.type(within(dialog).getByLabelText('Сайт'), '4vps.su');
     await waitFor(() =>
-      expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('на сайте иконки нет'),
+      expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('На сайте иконки нет'),
     );
     // поле ссылки скрыто из порядка табуляции, пока не раскрыто
     expect(within(dialog).getByLabelText('Ссылка на иконку')).toHaveAttribute('tabindex', '-1');
@@ -134,7 +134,7 @@ describe('ProvidersPage', () => {
     await user.clear(within(dialog).getByLabelText('Ссылка на иконку'));
     await user.type(within(dialog).getByLabelText('Ссылка на иконку'), '4vps.su/assets/img/favicon_news.svg');
     await waitFor(() =>
-      expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('по ссылке — нашли'),
+      expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent('По ссылке — нашли'),
     );
     await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
@@ -152,7 +152,7 @@ describe('ProvidersPage', () => {
     const link = within(edit).getByLabelText('Ссылка на иконку');
     expect(link).toHaveValue('https://4vps.su/assets/img/favicon_news.svg');
     expect(link).not.toHaveAttribute('tabindex', '-1');
-    expect(within(edit).getByTestId('provider-icon-state')).toHaveTextContent('по ручной ссылке');
+    expect(within(edit).getByTestId('provider-icon-state')).toHaveTextContent('По ручной ссылке');
     await user.clear(link);
     expect(within(edit).getByText('Пусто — панель найдёт иконку на сайте сама.')).toBeInTheDocument();
     await user.click(within(edit).getByRole('button', { name: 'Сохранить' }));
@@ -184,7 +184,7 @@ describe('ProvidersPage', () => {
     await user.type(within(dialog).getByLabelText('Сайт'), 'rawi.host');
     await waitFor(() =>
       expect(within(dialog).getByTestId('provider-icon-state')).toHaveTextContent(
-        'на сайте нет, нашли в кэше Google',
+        'На сайте нет, нашли в кэше Google',
       ),
     );
     await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
@@ -193,7 +193,7 @@ describe('ProvidersPage', () => {
     expect(await within(card).findByText(/Иконка из кэша Google/, {}, { timeout: 4000 })).toBeInTheDocument();
     await user.click(within(card).getByRole('button', { name: 'Изменить' }));
     const edit = await screen.findByRole('dialog', { name: 'Изменить провайдера' });
-    expect(within(edit).getByTestId('provider-icon-state')).toHaveTextContent('из кэша Google');
+    expect(within(edit).getByTestId('provider-icon-state')).toHaveTextContent('Из кэша Google');
     expect(within(edit).getByText(/взята из кэша Google/)).toBeInTheDocument();
   });
 

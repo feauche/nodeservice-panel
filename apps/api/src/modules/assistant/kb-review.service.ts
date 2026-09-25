@@ -74,7 +74,7 @@ export class KbReviewService {
   /** Пройтись по активным статьям и безопасно причесать их; вернуть сводку. */
   async runReview(): Promise<{ reviewed: number; changed: number; skipped: string | null }> {
     const cfg = await this.settings.config();
-    if (!cfg) return { reviewed: 0, changed: 0, skipped: 'ассистент выключен' };
+    if (!cfg) return { reviewed: 0, changed: 0, skipped: 'Джарвис выключен' };
     if (!cfg.permissions.kbReview) return { reviewed: 0, changed: 0, skipped: 'нет разрешения kbReview' };
 
     const docs = (await this.repo.list(undefined, false)).filter((d) => !SKIP_TITLES.has(d.title));

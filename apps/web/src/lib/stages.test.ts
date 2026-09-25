@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { HOME_SECTION, isSectionOpen, requireSectionOpen } from './stages';
 
 describe('stages · поэтапное открытие разделов', () => {
-  it('открыты Обзор, Серверы, Инциденты, Журнал, Ассистент, База знаний и настройки ассистента; остальное под замком', () => {
+  it('открыты Обзор, Серверы, Инциденты, Журнал, Джарвис, База знаний и настройки Джарвиса; остальное под замком', () => {
     expect(isSectionOpen(HOME_SECTION)).toBe(true);
     expect(isSectionOpen('/servers')).toBe(true);
     expect(isSectionOpen('/incidents')).toBe(true);

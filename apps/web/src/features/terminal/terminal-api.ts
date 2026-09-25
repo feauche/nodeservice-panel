@@ -65,7 +65,7 @@ export function useTerminalSession(serverId: string, id: string | null) {
   });
 }
 
-/** Подсказка ассистента к выводу терминала: текст маскируется на сервере, ничего не выполняется. */
+/** Подсказка Джарвиса к выводу терминала: текст маскируется на сервере, ничего не выполняется. */
 export function useTerminalHint(serverId: string) {
   return useMutation({
     mutationFn: ({ text, question }: { text: string; question?: string }): Promise<TerminalHintResponse> =>

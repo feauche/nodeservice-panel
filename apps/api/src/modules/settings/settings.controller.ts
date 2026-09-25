@@ -94,7 +94,7 @@ export class SettingsController {
   }
 
   @Get('assistant')
-  @ApiOperation({ summary: 'Статус AI-ассистента (задан ли ключ, модель)' })
+  @ApiOperation({ summary: 'Статус Джарвиса (задан ли ключ, модель)' })
   @ApiOkResponse({ type: AssistantStatusDto })
   getAssistant(): Promise<AssistantStatusDto> {
     return this.settings.getAssistant();
@@ -102,7 +102,7 @@ export class SettingsController {
 
   @Put('assistant')
   @Audit('settings.assistant.updated', {
-    target: { type: 'settings', id: 'assistant', display: 'AI-ассистент' },
+    target: { type: 'settings', id: 'assistant', display: 'Джарвис' },
   })
   @ApiOperation({ summary: 'Задать/убрать ключ модели и выбрать модель' })
   @ApiOkResponse({ type: AssistantStatusDto })

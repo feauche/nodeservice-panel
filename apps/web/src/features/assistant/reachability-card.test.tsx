@@ -12,8 +12,8 @@ describe('ReachabilityCard (B1)', () => {
     expect(within(card).getByText(/с 3 независимых серверов парка/)).toBeInTheDocument();
     for (const name of ['nl-ams-02', 'fi-hel-01', 'pl-waw-03'])
       expect(within(within(card).getByRole('table')).getByRole('rowheader', { name })).toBeInTheDocument();
-    expect(within(within(card).getByRole('table')).getAllByText('открыт · 12 мс')).toHaveLength(3);
-    expect(within(within(card).getByRole('table')).getAllByText('закрыт')).toHaveLength(3);
+    expect(within(within(card).getByRole('table')).getAllByText('Открыт · 12 мс')).toHaveLength(3);
+    expect(within(within(card).getByRole('table')).getAllByText('Закрыт')).toHaveLength(3);
     expect(within(card).getByText('22: открыт со всех')).toBeInTheDocument();
     expect(within(card).getByText('443: закрыт со всех')).toBeInTheDocument();
     expect(within(card).getByText(/а не из сети пользователей/)).toBeInTheDocument();

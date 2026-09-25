@@ -51,7 +51,7 @@ export function LockPage() {
         <div className="min-w-0">
           <h2 className="mb-[5px] text-xl">Экран заблокирован</h2>
           <div className="truncate text-[13px] text-text-2">
-            {me?.login ?? 'администратор'} · сессия сохранена
+            {me?.login ?? 'Администратор'} · Сессия сохранена
           </div>
         </div>
       </div>

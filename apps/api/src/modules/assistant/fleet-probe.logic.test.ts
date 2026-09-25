@@ -5,11 +5,14 @@ import {
   buildReachCommand,
   dnsSummary,
   isProbeHost,
+  NODE_LOGS_CHARS,
+  NODE_LOGS_COMMAND,
   normalizePorts,
   PROCESSES_COMMAND,
   parsePs,
   parseReach,
   pickProbes,
+  prepareNodeLogs,
   summarizeReach,
 } from './fleet-probe.logic.js';
 
@@ -173,5 +176,32 @@ describe('осмотр процессов', () => {
   });
   it('мусор даёт пустой результат', () => {
     expect(parsePs('ошибка')).toEqual({ cpu: [], mem: [], load: null });
+  });
+});
+
+describe('логи ноды', () => {
+  it('команда только читает: docker logs с ограничением, без записи и удаления', () => {
+    expect(NODE_LOGS_COMMAND).toContain('docker logs --tail');
+    expect(NODE_LOGS_COMMAND).not.toMatch(/\brm\b|>\s*\/(?!dev\/null)|restart|stop|kill/);
+  });
+  it('секреты, uuid и публичные адреса скрываются до отправки модели', () => {
+    const r = prepareNodeLogs(
+      'user 0192c000-0000-4000-8000-00000000000a from 203.0.113.77 token=abcdef123456\nok',
+      0,
+    );
+    expect(r.found).toBe(true);
+    expect(r.text).not.toContain('203.0.113.77');
+    expect(r.text).not.toContain('abcdef123456');
+    expect(r.text).not.toContain('0192c000');
+    expect(r.masked).toBeGreaterThanOrEqual(3);
+    expect(r.text).toContain('ok');
+  });
+  it('длинный журнал обрезается с начала: последние строки важнее', () => {
+    const r = prepareNodeLogs(`${'старая строка\n'.repeat(2000)}последняя`, 0);
+    expect(r.text.length).toBeLessThanOrEqual(NODE_LOGS_CHARS);
+    expect(r.text.endsWith('последняя')).toBe(true);
+  });
+  it('нет контейнера ноды — found=false, а не пустой успех', () => {
+    expect(prepareNodeLogs('контейнер ноды не найден\n', 3)).toMatchObject({ found: false, lines: 0 });
   });
 });

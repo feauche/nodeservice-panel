@@ -11,6 +11,8 @@ export const kbDocuments = pgTable(
     content: text('content').notNull().default(''),
     tags: jsonb('tags').$type<string[]>().notNull().default([]),
     archived: boolean('archived').notNull().default(false),
+    /** Закреплена сверху и защищена от удаления (миграция 0033): глоссарий «Пояснения». */
+    pinned: boolean('pinned').notNull().default(false),
     source: text('source').$type<KbSource>().notNull().default('self'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

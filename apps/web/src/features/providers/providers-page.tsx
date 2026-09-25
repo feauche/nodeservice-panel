@@ -190,7 +190,7 @@ export function ProvidersPage() {
                     <span className="block truncate text-[13.5px] font-semibold">{p.name}</span>
                     <span className="block truncate text-[11.5px] text-text-3">
                       {p.serversCount === 0
-                        ? 'серверов нет'
+                        ? 'Серверов нет'
                         : `${p.serversCount} ${plural(p.serversCount, 'сервер', 'сервера', 'серверов')}`}
                     </span>
                   </span>

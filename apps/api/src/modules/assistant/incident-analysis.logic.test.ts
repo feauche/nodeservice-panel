@@ -6,6 +6,7 @@ import {
   ASK_TOOLS,
   analysisSystem,
   parseSubmission,
+  pickAutoAnalysis,
   stepLabel,
 } from './incident-analysis.logic.js';
 
@@ -64,6 +65,7 @@ describe('инструменты и промпты разбора', () => {
         'get_metrics_history',
         'get_playbook',
         'get_server_detail',
+        'inspect_node_logs',
         'inspect_processes',
         'list_incidents',
         'submit_analysis',
@@ -100,5 +102,35 @@ describe('isAnalysisStale', () => {
   it('идущий и оборванный разбор не «устаревают»', () => {
     expect(isAnalysisStale(a({ status: 'running' }), { attempts: 5, resolved: true })).toBe(false);
     expect(isAnalysisStale(a({ status: 'failed' }), { attempts: 5, resolved: true })).toBe(false);
+  });
+});
+
+describe('pickAutoAnalysis', () => {
+  const NOW = Date.parse('2026-09-26T12:00:00.000Z');
+  const inc = (id: string, agoMin: number, over: Record<string, unknown> = {}) => ({
+    id,
+    status: 'open' as const,
+    severity: 'crit' as const,
+    openedAt: new Date(NOW - agoMin * 60_000).toISOString(),
+    analysis: null,
+    ...over,
+  });
+  it('ждёт паузу автопочинки: свежий инцидент моложе минуты не берётся', () => {
+    expect(pickAutoAnalysis([inc('a', 0.5), inc('b', 2)], NOW, 0, 60_000)).toEqual(['b']);
+  });
+  it('пропускает закрытые, уже разобранные и слишком старые', () => {
+    const items = [
+      inc('closed', 5, { status: 'resolved' }),
+      inc('done', 5, { analysis: { status: 'done' } }),
+      inc('old', 7 * 60),
+      inc('ok', 5),
+    ];
+    expect(pickAutoAnalysis(items as never, NOW, 0, 60_000)).toEqual(['ok']);
+  });
+  it('не больше пяти в час с учётом уже запущенных; сначала самые давние', () => {
+    const items = Array.from({ length: 8 }, (_, i) => inc(`i${i}`, 10 + i));
+    expect(pickAutoAnalysis(items, NOW, 0, 60_000)).toEqual(['i7', 'i6', 'i5', 'i4', 'i3']);
+    expect(pickAutoAnalysis(items, NOW, 3, 60_000)).toEqual(['i7', 'i6']);
+    expect(pickAutoAnalysis(items, NOW, 5, 60_000)).toEqual([]);
   });
 });

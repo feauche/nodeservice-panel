@@ -25,15 +25,28 @@ function open(read: () => string = () => OUT) {
 describe('TerminalHints (C1)', () => {
   beforeEach(() => resetMockState({ authenticated: true }));
 
-  it('ассистент не подключён: подсказка со ссылкой в настройки, кнопки объяснения нет', async () => {
+  it('Джарвис не подключён: подсказка со ссылкой в настройки, кнопки объяснения нет', async () => {
     mockAssistant.enabled = false;
     open();
-    expect(await screen.findByText(/задайте провайдера, модель и ключ ассистента/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Настройки → Ассистент/ })).toHaveAttribute(
+    expect(await screen.findByText(/задайте провайдера, модель и ключ Джарвиса/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Настройки → Джарвис/ })).toHaveAttribute(
       'href',
       '/settings/assistant',
     );
     expect(screen.queryByRole('button', { name: /Объяснить/ })).not.toBeInTheDocument();
+  });
+
+  it('подсказки выключены в разрешениях: пояснение со ссылкой, кнопки и поля вопроса нет', async () => {
+    mockAssistant.enabled = true;
+    mockAssistant.permissions = { ...mockAssistant.permissions, terminalHints: false };
+    open();
+    expect(await screen.findByText(/выключены в разрешениях Джарвиса/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Настройки → Джарвис/ })).toHaveAttribute(
+      'href',
+      '/settings/assistant',
+    );
+    expect(screen.queryByRole('button', { name: /Объяснить/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
   it('«Объяснить»: вывод, команды с пометкой риска; «Вставить» отдаёт команду без Enter', async () => {

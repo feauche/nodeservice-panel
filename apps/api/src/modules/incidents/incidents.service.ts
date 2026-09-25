@@ -109,7 +109,7 @@ export class IncidentsService {
     };
   }
 
-  /** Записать разбор ассистента; false — инцидента уже нет (удалили во время разбора). */
+  /** Записать разбор Джарвиса; false — инцидента уже нет (удалили во время разбора). */
   async saveAnalysis(id: string, analysis: IncidentAnalysis): Promise<boolean> {
     return (await this.repo.update(id, { analysis })) !== undefined;
   }

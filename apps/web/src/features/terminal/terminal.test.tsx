@@ -115,26 +115,26 @@ describe('TerminalHost / TerminalWindow', () => {
     expect(ws.sent.some((m) => m.includes('\\n') || m.includes('\\r'))).toBe(false);
   });
 
-  it('подсказки ассистента: кнопка в шапке неактивна до подключения, панель открывается и закрывается', async () => {
-    // Ассистент включён: без него панель рисует ссылку в настройки, а хост в этом тесте без роутера.
+  it('подсказки Джарвиса: кнопка в шапке неактивна до подключения, панель открывается и закрывается', async () => {
+    // Джарвис включён: без него панель рисует ссылку в настройки, а хост в этом тесте без роутера.
     mockAssistant.enabled = true;
     preflightOk();
     renderHost();
     act(() => useTerminalStore.getState().open(TARGET));
     await screen.findByRole('dialog', { name: 'Терминал de-fra-01' });
-    const toggle = screen.getByRole('button', { name: 'Подсказки ассистента' });
+    const toggle = screen.getByRole('button', { name: 'Подсказки Джарвиса' });
     expect(toggle).toBeDisabled();
     await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
     act(() => (MockWebSocket.instances[0] as MockWebSocket).emit({ t: 'y' }));
     await waitFor(() => expect(toggle).toBeEnabled());
     const user = userEvent.setup();
-    expect(screen.queryByRole('complementary', { name: 'Подсказки ассистента' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('complementary', { name: 'Подсказки Джарвиса' })).not.toBeInTheDocument();
     await user.click(toggle);
-    expect(await screen.findByRole('complementary', { name: 'Подсказки ассистента' })).toBeInTheDocument();
+    expect(await screen.findByRole('complementary', { name: 'Подсказки Джарвиса' })).toBeInTheDocument();
     expect(toggle).toHaveAttribute('aria-pressed', 'true');
     await user.click(screen.getByRole('button', { name: 'Скрыть подсказки' }));
     await waitFor(() =>
-      expect(screen.queryByRole('complementary', { name: 'Подсказки ассистента' })).not.toBeInTheDocument(),
+      expect(screen.queryByRole('complementary', { name: 'Подсказки Джарвиса' })).not.toBeInTheDocument(),
     );
   });
 

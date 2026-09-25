@@ -22,7 +22,7 @@ export const autochecksHandlers = [
           type: 'about:blank',
           title: 'Данные не прошли проверку',
           status: 400,
-          detail: 'Проверь поля',
+          detail: 'Проверьте поля',
           errors: parsed.error.issues.map((i) => ({ path: String(i.path[0]), message: i.message })),
         },
         { status: 400 },

@@ -1,6 +1,6 @@
 {
   "name": "@nodeservice/shared",
-  "version": "0.14.0",
+  "version": "0.16.0",
   "private": true,
   "description": "Общие контракты: zod-схемы API, enum-ы аудита, протокол панель↔агент",
   "type": "module",

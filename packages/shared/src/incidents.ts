@@ -316,7 +316,7 @@ export const incidentSnapshotSchema = z.object({
 });
 export type IncidentSnapshot = z.infer<typeof incidentSnapshotSchema>;
 
-/* ---------- разбор ассистентом (R4.2) ---------- */
+/* ---------- разбор Джарвисом (R4.2) ---------- */
 
 export const ANALYSIS_STATUSES = ['running', 'done', 'failed'] as const;
 export type AnalysisStatus = (typeof ANALYSIS_STATUSES)[number];
@@ -356,7 +356,7 @@ export const incidentAnalysisSchema = z.object({
   status: z.enum(ANALYSIS_STATUSES),
   startedAt: z.iso.datetime(),
   finishedAt: z.iso.datetime().nullable(),
-  /** Что ассистент делает или сделал («Смотрю историю диска»): идёт разбор — видно ход работы. */
+  /** Что Джарвис делает или сделал («Смотрю историю диска»): идёт разбор — видно ход работы. */
   steps: z.array(z.string()),
   verdict: z.string().nullable(),
   confidence: z.enum(ANALYSIS_CONFIDENCE).nullable(),
@@ -370,7 +370,7 @@ export const incidentAnalysisSchema = z.object({
   model: z.string().nullable(),
   error: z.string().nullable(),
   thread: z.array(z.object({ question: z.string(), answer: z.string(), at: z.iso.datetime() })),
-  /** Проверка доступности снаружи, если ассистент её делал (у старых разборов поля нет). */
+  /** Проверка доступности снаружи, если Джарвис её делал (у старых разборов поля нет). */
   reachability: reachabilityResultSchema.nullable().optional(),
 });
 export type IncidentAnalysis = z.infer<typeof incidentAnalysisSchema>;
@@ -416,7 +416,7 @@ export const incidentSchema = z.object({
   proposal: incidentProposalSchema.nullable(),
   /** Что видел агент в момент открытия — для правой колонки кейса и будущего анализа ИИ. */
   snapshot: incidentSnapshotSchema.nullable(),
-  /** Разбор ассистентом: вывод, доказательства, шаг, вопросы; null — ещё не разбирали. */
+  /** Разбор Джарвисом: вывод, доказательства, шаг, вопросы; null — ещё не разбирали. */
   analysis: incidentAnalysisSchema.nullable(),
 });
 export type Incident = z.infer<typeof incidentSchema>;

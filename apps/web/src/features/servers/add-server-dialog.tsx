@@ -55,7 +55,7 @@ function factsLine(t: TestConnectionResponse): string {
       t.facts.memoryMb ? `${Math.round(t.facts.memoryMb / 1024)} ГБ RAM` : null,
     ]
       .filter(Boolean)
-      .join(' · ') || 'сведений нет'
+      .join(' · ') || 'Сведений нет'
   );
 }
 

@@ -3,10 +3,10 @@ import '@xterm/xterm/css/xterm.css';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
-import { BookmarkIcon, MaximizeIcon, MinusIcon, SettingsIcon, SparklesIcon, XIcon } from 'lucide-react';
+import { BookmarkIcon, MaximizeIcon, MinusIcon, SettingsIcon, XIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Rnd } from 'react-rnd';
-
+import { JarvisIcon } from '@/components/jarvis-icon';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -287,8 +287,8 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
           <div className="flex flex-none gap-[3px]">
             <button
               type="button"
-              title="Подсказки ассистента"
-              aria-label="Подсказки ассистента"
+              title="Подсказки Джарвиса"
+              aria-label="Подсказки Джарвиса"
               aria-pressed={hintsOpen}
               disabled={!connected}
               onClick={toggleHints}
@@ -297,7 +297,7 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
                 hintsOpen && 'bg-surface-3 text-ai',
               )}
             >
-              <SparklesIcon className="size-3.5" aria-hidden="true" />
+              <JarvisIcon className="size-3.5" aria-hidden="true" />
             </button>
             <DropdownMenu>
               <DropdownMenuTrigger

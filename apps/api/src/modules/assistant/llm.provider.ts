@@ -40,13 +40,17 @@ export class AnthropicProvider implements LlmProvider {
     const client = new Anthropic({ apiKey: input.apiKey });
     const res = await client.messages.create({
       model: input.model,
-      max_tokens: 1024,
+      max_tokens: 4096,
       system: input.system,
-      tools: input.tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.input_schema as Anthropic.Tool.InputSchema,
-      })),
+      ...(input.tools.length > 0
+        ? {
+            tools: input.tools.map((t) => ({
+              name: t.name,
+              description: t.description,
+              input_schema: t.input_schema as Anthropic.Tool.InputSchema,
+            })),
+          }
+        : {}),
       messages: input.messages as Anthropic.MessageParam[],
     });
     const blocks: LlmBlock[] = res.content.map((b) => {

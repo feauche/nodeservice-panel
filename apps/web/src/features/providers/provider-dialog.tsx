@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Field } from '@/features/auth/components/field';
 import { apiErrorMessage, isApiError } from '@/lib/api';
 import { toast } from '@/lib/notify';
-import { cn } from '@/lib/utils';
+import { capFirst, cn } from '@/lib/utils';
 import { ProviderIcon } from './provider-icon';
 import { providersApi, useCreateProvider, useUpdateProvider } from './providers-api';
 
@@ -285,7 +285,7 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
                 <div className="font-medium">Иконка</div>
                 <div className={cn('flex items-center gap-1.5 text-text-3', previewing && 'text-text-2')}>
                   {previewing && <Loader2Icon className="size-3 animate-spin" aria-hidden="true" />}
-                  <span data-testid="provider-icon-state">{iconState}</span>
+                  <span data-testid="provider-icon-state">{capFirst(iconState)}</span>
                 </div>
                 {preview && !preview.icon && preview.reason && !previewing && (
                   <div

@@ -1,8 +1,10 @@
 import hljs from 'highlight.js/lib/common';
 import dockerfile from 'highlight.js/lib/languages/dockerfile';
 import nginx from 'highlight.js/lib/languages/nginx';
-import { Fragment, type ReactNode } from 'react';
+import { createContext, Fragment, type ReactNode, useContext } from 'react';
 
+import { HEALTH_COLORS, HEALTH_LABELS, type ServerHealth } from '@/features/servers/server-health';
+import { openServer } from '@/features/servers/server-modal-store';
 import { cn } from '@/lib/utils';
 
 /** Ячейки строки markdown-таблицы: делим по «|», отбрасываем крайние пустые от обрамляющих труб. */
@@ -94,10 +96,36 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
   );
 }
 
+/** Состояние серверов по id: у ссылки на сервер в тексте появляется цветная точка. Без провайдера точки нет. */
+export const ServerHealthContext = createContext<Record<string, ServerHealth>>({});
+
+function ServerLink({ id, children }: { id: string; children: ReactNode }) {
+  const health = useContext(ServerHealthContext)[id];
+  return (
+    <button
+      type="button"
+      title={health ? HEALTH_LABELS[health] : undefined}
+      onClick={() => openServer(id)}
+      className="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-semibold text-brand underline decoration-dotted decoration-1 underline-offset-[3px] hover:decoration-solid focus-visible:decoration-solid"
+    >
+      {health && (
+        <span
+          aria-hidden="true"
+          data-health={health}
+          className="mr-1.5 inline-block size-[7px] rounded-full align-middle"
+          style={{ background: HEALTH_COLORS[health] }}
+        />
+      )}
+      {children}
+    </button>
+  );
+}
+
 /** Инлайн: **жирный**, `код`, [текст](url). Безопасно — без dangerouslySetInnerHTML. */
 function renderInline(text: string, keyBase: string): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const re = /\*\*(.+?)\*\*|`([^`]+?)`|\[([^\]]+?)\]\((https?:\/\/[^)\s]+)\)/g;
+  const re =
+    /\*\*(.+?)\*\*|`([^`]+?)`|\[([^\]]+?)\]\((https?:\/\/[^)\s]+|server:[0-9a-fA-F-]{36})\)|(?<![*\w])\*([^*\n]+?)\*(?!\*)|(?<!\w)_([^_\n]+?)_(?!\w)/g;
   let last = 0;
   let m: RegExpExecArray | null = re.exec(text);
   let i = 0;
@@ -106,7 +134,7 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
     if (m[1] !== undefined) {
       nodes.push(
         <strong key={`${keyBase}-b${i}`} className="font-semibold text-foreground">
-          {m[1]}
+          {renderInline(m[1], `${keyBase}-b${i}`)}
         </strong>,
       );
     } else if (m[2] !== undefined) {
@@ -117,6 +145,20 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
         >
           {m[2]}
         </code>,
+      );
+    } else if (m[5] !== undefined || m[6] !== undefined) {
+      nodes.push(
+        <em key={`${keyBase}-i${i}`} className="text-foreground italic">
+          {renderInline((m[5] ?? m[6]) as string, `${keyBase}-i${i}`)}
+        </em>,
+      );
+    } else if (m[3] !== undefined && m[4]?.startsWith('server:')) {
+      // Имя сервера: карточка открывается поверх текущей страницы, без перехода.
+      const serverId = m[4].slice('server:'.length);
+      nodes.push(
+        <ServerLink key={`${keyBase}-s${i}`} id={serverId}>
+          {m[3]}
+        </ServerLink>,
       );
     } else if (m[3] !== undefined && m[4] !== undefined) {
       nodes.push(
@@ -186,7 +228,7 @@ export function tocFromMarkdown(content: string): TocItem[] {
       continue;
     }
     if (inCode) continue;
-    const h = /^(#{1,3})\s+(.*)$/.exec(line);
+    const h = /^(#{1,4})\s+(.*)$/.exec(line);
     if (!h) continue;
     const text = stripMd(h[2] ?? '');
     if (!text) continue;
@@ -283,8 +325,33 @@ export function Markdown({
       continue;
     }
 
+    // Горизонтальная линия
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) {
+      blocks.push(<hr key={key++} className="my-4 border-0 border-t border-border" />);
+      i += 1;
+      continue;
+    }
+
+    // Цитата: подряд идущие строки с «>»
+    if (/^\s*>/.test(line)) {
+      const quote: string[] = [];
+      while (i < lines.length && /^\s*>/.test(lines[i] ?? '')) {
+        quote.push((lines[i] ?? '').replace(/^\s*>\s?/, ''));
+        i += 1;
+      }
+      blocks.push(
+        <blockquote
+          key={key++}
+          className="my-3 rounded-r-[8px] border-l-[3px] border-brand bg-brand-soft px-3.5 py-2 text-foreground"
+        >
+          {renderInline(quote.join(' '), `q${key}`)}
+        </blockquote>,
+      );
+      continue;
+    }
+
     // Заголовки
-    const h = /^(#{1,3})\s+(.*)$/.exec(line);
+    const h = /^(#{1,4})\s+(.*)$/.exec(line);
     if (h) {
       const level = h[1]?.length ?? 1;
       const text = h[2] ?? '';
@@ -293,7 +360,9 @@ export function Markdown({
           ? 'mt-4 mb-2 font-heading text-[19px] font-bold first:mt-0'
           : level === 2
             ? 'mt-4 mb-1.5 text-[16px] font-semibold first:mt-0'
-            : 'mt-3 mb-1 text-[14px] font-semibold first:mt-0';
+            : level === 3
+              ? 'mt-3 mb-1 text-[14px] font-semibold first:mt-0'
+              : 'mt-3 mb-1 text-[13px] font-semibold text-text-2 first:mt-0';
       const headingId = headingIds ? pushUnique(slugify(text), seenHeadings) : undefined;
       blocks.push(
         <div key={key++} id={headingId} className={cn(cls, headingIds && 'scroll-mt-4')}>
@@ -338,9 +407,14 @@ export function Markdown({
     while (
       i < lines.length &&
       (lines[i] ?? '').trim() !== '' &&
-      !/^(#{1,3})\s|^\s*([-*]|\d+\.)\s/.test(lines[i] ?? '') &&
+      !/^(#{1,4})\s|^\s*([-*]|\d+\.)\s|^\s*>|^\s*(-{3,}|\*{3,})\s*$/.test(lines[i] ?? '') &&
       !(lines[i] ?? '').trimStart().startsWith('```')
     ) {
+      para.push(lines[i] ?? '');
+      i += 1;
+    }
+    // Страховка от зацикливания: строка, которую не взял ни один блок, идёт абзацем и всегда съедается.
+    if (para.length === 0) {
       para.push(lines[i] ?? '');
       i += 1;
     }

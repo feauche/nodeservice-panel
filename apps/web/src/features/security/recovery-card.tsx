@@ -168,7 +168,7 @@ function RecoveryCodesDialog({
               // biome-ignore lint/suspicious/noArrayIndexKey: порядок выпуска стабилен
               <li key={i} className={c.usedAt ? 'text-text-3' : undefined}>
                 {c.code === null ? (
-                  <span className="text-text-3">недоступен</span>
+                  <span className="text-text-3">Недоступен</span>
                 ) : c.usedAt ? (
                   <s title={`Использован ${formatDate(c.usedAt)}`}>{c.code}</s>
                 ) : (

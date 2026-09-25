@@ -22,6 +22,7 @@ import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { FleetProbeService } from '../src/modules/assistant/fleet-probe.service.js';
+import { IncidentAnalysisService } from '../src/modules/assistant/incident-analysis.service.js';
 import {
   LLM_PROVIDER,
   type LlmProvider,
@@ -404,7 +405,7 @@ describe('проверка доступности, процессы и пред�
     expect(JSON.stringify(audit.body)).not.toContain('nf_conntrack: table full');
   });
 
-  it('подсказка: пустой вывод, чужой сервер, лишний размер и выключенный ассистент', async () => {
+  it('подсказка: пустой вывод, чужой сервер, лишний размер и выключенный Джарвис', async () => {
     const hint = (id: string, body: object) =>
       agent.post(`/api/servers/${id}/terminal/hint`).set(CSRF_HEADER, csrf).send(body);
     await hint(target().id, { text: '   \n  ' }).expect(400);
@@ -417,5 +418,106 @@ describe('проверка доступности, процессы и пред�
       .set(CSRF_HEADER, csrf)
       .send({ apiKey: 'sk-test-0123456789', model: 'anthropic/claude-sonnet-4-5' })
       .expect(200);
+  });
+
+  describe('разрешения Джарвиса', () => {
+    const setPerms = (permissions: Record<string, boolean>) =>
+      agent.put('/api/settings/assistant').set(CSRF_HEADER, csrf).send({ permissions }).expect(200);
+    const openIncident = async (ageMs: number) => {
+      const db = app.get<Db>(DB);
+      await db.execute(sql`delete from incidents`);
+      const row = await app.get(IncidentsRepository).open({
+        serverId: target().id,
+        serverName: target().name,
+        kind: 'ssh_down',
+        severity: 'crit',
+        title: 'SSH недоступен',
+        detail: 'Сервер не отвечает.',
+        timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+      });
+      const id = row?.id ?? '';
+      await db.execute(
+        sql`update incidents set opened_at = now() - (${ageMs} * interval '1 millisecond') where id = ${id}`,
+      );
+      return id;
+    };
+    const waitDone = async (id: string) => {
+      for (let i = 0; i < 100; i += 1) {
+        const inc = incidentSchema.parse((await agent.get(`/api/incidents/${id}`).expect(200)).body);
+        if (inc.analysis && inc.analysis.status !== 'running') return inc;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      throw new Error('разбор не завершился');
+    };
+
+    it('без «Проверки доступности снаружи» чат не ходит на серверы и говорит об этом', async () => {
+      await setPerms({ reach: false });
+      ssh.execLog.length = 0;
+      const res = assistantChatResponseSchema.parse(
+        (
+          await agent
+            .post('/api/assistant/chat')
+            .set(CSRF_HEADER, csrf)
+            .send({ message: 'ДОСТУПНОСТЬ цели?' })
+            .expect(200)
+        ).body,
+      );
+      expect(res.message.reachability).toHaveLength(0);
+      expect(ssh.execLog.filter((c) => c.includes('ns-reach'))).toHaveLength(0);
+      await setPerms({ reach: true });
+    });
+
+    it('без «Разбора по кнопке» запуск и вопрос по разбору отклоняются с понятным текстом', async () => {
+      const id = await openIncident(5 * 60_000);
+      await setPerms({ analysis: false });
+      const run = await agent.post(`/api/incidents/${id}/analysis`).set(CSRF_HEADER, csrf).expect(409);
+      expect(JSON.stringify(run.body)).toContain('Разбор по кнопке');
+      await agent
+        .post(`/api/incidents/${id}/analysis/ask`)
+        .set(CSRF_HEADER, csrf)
+        .send({ question: 'Почему?' })
+        .expect(409);
+      await setPerms({ analysis: true });
+    });
+
+    it('автоматический разбор: выключен по умолчанию, включённый берёт только инцидент старше паузы, один раз', async () => {
+      const analysis = app.get(IncidentAnalysisService);
+      const id = await openIncident(5 * 60_000);
+      expect(await analysis.autoRun()).toEqual([]);
+      await setPerms({ autoAnalysis: true });
+      const fresh = await openIncident(10_000);
+      expect(await analysis.autoRun()).toEqual([]);
+      expect(fresh).not.toBe('');
+      const old = await openIncident(5 * 60_000);
+      expect(await analysis.autoRun()).toEqual([old]);
+      const done = await waitDone(old);
+      expect(done.analysis?.status).toBe('done');
+      expect(await analysis.autoRun()).toEqual([]);
+      expect(id).not.toBe('');
+      const audit = await agent.get('/api/audit?category=server').expect(200);
+      expect(JSON.stringify(audit.body)).toContain('incident.analysis.run');
+      await setPerms({ autoAnalysis: false });
+    });
+
+    it('без «Разбора по кнопке» автоматический разбор тоже не идёт', async () => {
+      const analysis = app.get(IncidentAnalysisService);
+      await setPerms({ autoAnalysis: true, analysis: false });
+      await openIncident(5 * 60_000);
+      expect(await analysis.autoRun()).toEqual([]);
+      await setPerms({ autoAnalysis: false, analysis: true });
+    });
+
+    it('без «Подсказок в терминале» подсказка отклоняется, а данные модели не уходят', async () => {
+      const before = fake.hintInputs.length;
+      await setPerms({ terminalHints: false });
+      const res = await agent
+        .post(`/api/servers/${target().id}/terminal/hint`)
+        .set(CSRF_HEADER, csrf)
+        .send({ text: 'ss -s' })
+        .expect(409);
+      expect(JSON.stringify(res.body)).toContain('Подсказки в терминале выключены');
+      expect(fake.hintInputs).toHaveLength(before);
+      await setPerms({ terminalHints: true });
+    });
   });
 });

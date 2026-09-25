@@ -86,7 +86,7 @@ class FakeLlm implements LlmProvider {
   }
 }
 
-describe('разбор инцидента ассистентом e2e', () => {
+describe('разбор инцидента Джарвисом e2e', () => {
   let app: INestApplication;
   let agent: InstanceType<typeof TestAgent>;
   let csrf: string;
@@ -175,10 +175,10 @@ describe('разбор инцидента ассистентом e2e', () => {
     await ssh.stop();
   });
 
-  it('без настроенного ассистента — 409 с понятным текстом, разбор не создаётся', async () => {
+  it('без настроенного Джарвиса — 409 с понятным текстом, разбор не создаётся', async () => {
     const id = await openIncident();
     const res = await run(id).expect(409);
-    expect(JSON.stringify(res.body)).toContain('Настройки → Ассистент');
+    expect(JSON.stringify(res.body)).toContain('Настройки → Джарвис');
     expect((await get(id)).analysis).toBeNull();
     await agent
       .put('/api/settings/assistant')

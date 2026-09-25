@@ -13,7 +13,7 @@ import { LevelChip } from '@/features/incidents/level-chip';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
-import { cn } from '@/lib/utils';
+import { capFirst, cn } from '@/lib/utils';
 
 const STEP_LABEL: Record<IncidentAttempt['steps'][number]['key'], string> = {
   precheck: 'Проверка',
@@ -62,7 +62,7 @@ function AttemptSteps({ attempt }: { attempt: IncidentAttempt }) {
             {STEP_LABEL[s.key]}
           </b>
           <span className="line-clamp-2 text-[11.5px] leading-snug text-text-3">
-            {s.note ?? (s.status === 'pending' ? 'ждёт очереди' : s.status === 'running' ? 'идёт…' : '—')}
+            {s.note ?? (s.status === 'pending' ? 'Ждёт очереди' : s.status === 'running' ? 'Идёт…' : '—')}
           </span>
         </li>
       ))}
@@ -76,7 +76,7 @@ function statePill(attempt: IncidentAttempt | undefined, level: string, blocked:
     if (attempt.status === 'helped' || attempt.status === 'done')
       return <Pill tone="ok">{attempt.status === 'done' ? 'Выполнено' : 'Помогло'}</Pill>;
     if (attempt.status === 'not_helped') return <Pill tone="warn">Не помогло</Pill>;
-    return <Pill tone="crit">{ATTEMPT_STATUS_LABELS[attempt.status]}</Pill>;
+    return <Pill tone="crit">{capFirst(ATTEMPT_STATUS_LABELS[attempt.status])}</Pill>;
   }
   if (blocked) return <Pill tone="muted">Недоступно</Pill>;
   return level === 'T2' ? (
@@ -87,7 +87,7 @@ function statePill(attempt: IncidentAttempt | undefined, level: string, blocked:
 }
 
 /**
- * Предложение ассистента в переписке (A3): уровень, причина, что будет и что проверится; по кнопке
+ * Предложение Джарвиса в переписке (A3): уровень, причина, что будет и что проверится; по кнопке
  * шаг запускает администратор, а ход выполнения показывается здесь же, в карточке. Название и
  * последствия берутся из реестра, поэтому карточка не может пообещать не то, что будет сделано.
  */

@@ -27,6 +27,7 @@ import { ProvidersService } from '../providers/providers.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import { AutochecksStore } from '../settings/autochecks.store.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
+import { toolsFor } from './assistant.read-tools.js';
 import { AssistantRepository } from './assistant.repository.js';
 import { ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
@@ -34,12 +35,21 @@ import { FleetProbeService } from './fleet-probe.service.js';
 import { LLM_PROVIDER, type LlmBlock, type LlmMsg, type LlmProvider } from './llm.provider.js';
 
 const MAX_TOOL_ROUNDS = 8;
+/** Сколько раз за ход можно «подтолкнуть» модель, если она ответила пустотой или пообещала вызов без вызова. */
+const MAX_NUDGES = 2;
+const PROMISE_RE =
+  /(?:сейчас|сразу|теперь|далее|щас|давайте)\s+(?:вызову|вызываю|проверю|посмотрю|запрошу|получу|запущу|выясню|уточню)|(?:вызову|вызываю)\s+(?:инструмент|функцию)|нужно\s+(?:было\s+)?вызвать/i;
+const NUDGE_PROMISE =
+  'Вы написали, что вызовете инструмент, но не вызвали. Вызовите нужный инструмент прямо сейчас, а затем дайте ответ по его результату.';
+const NUDGE_EMPTY = 'Ответ пустой. Вызовите нужный инструмент или ответьте текстом по уже имеющимся данным.';
+const NUDGE_FINAL =
+  'Дайте итоговый ответ администратору по уже полученным данным. Инструменты больше недоступны, ничего не обещайте вызвать.';
 
-const SYSTEM = `Ты — встроенный помощник панели NodeService: самохостируемой панели управления парком VPN/прокси-серверов (единственный администратор). Ты глубоко знаешь, как устроена сама панель, и знаешь её реальные данные через инструменты.
+const SYSTEM = `Ты — Джарвис, встроенный помощник панели NodeService: самохостируемой панели управления парком VPN/прокси-серверов (единственный администратор). Ты глубоко знаешь, как устроена сама панель, и знаешь её реальные данные через инструменты.
 
 ПРАВИЛА:
 - Отвечай кратко и по делу, на русском, обращайся на «вы».
-- Для реальных данных ВСЕГДА зови инструменты, все они только читают: get_fleet_status (весь парк), get_server_detail (один сервер, id или имя), get_metrics_history (история метрики: пик, тренд), list_incidents и get_incident (инциденты и дело целиком), get_maintenance (обновления, перезагрузка, диск), check_reachability (доступность адреса снаружи с 2–3 независимых серверов парка), inspect_processes (тяжёлые процессы), get_playbook (порядок диагностики), get_settings, search_audit, search_kb. Не выдумывай метрики, адреса, теги, события.
+- Для реальных данных ВСЕГДА зови инструменты, все они только читают: get_fleet_status (весь парк), get_server_detail (один сервер, id или имя), get_metrics_history (история метрики: пик, тренд), list_incidents и get_incident (инциденты и дело целиком), get_maintenance (обновления, перезагрузка, диск), {{SERVER_TOOLS}}get_playbook (порядок диагностики), get_settings, search_audit, search_kb. Не выдумывай метрики, адреса, теги, события.
 - Разбор сбоя: сначала get_playbook по теме (нода недоступна, диск, нагрузка, conntrack, ТСПУ, блокировка домена), затем get_incident и проверки из плейбука. Ответ делай так: что видно из данных, вероятная причина (помечай как предположение, если данных мало), что уже пробовали, что предлагаешь дальше. Если данных для вывода нет — так и скажи, не додумывай. Плейбук называет, чего панель не видит (логи ноды, страну IP, ретрансмиты): говори об этом прямо.
 - Проверка доступности идёт с серверов парка, а не из сети пользователей: не делай выводов о блокировке у пользователей только по ней.
 - Если инструмент вернул «недоступно» или «данных нет» — скажи об этом прямо и не подставляй свои числа.
@@ -54,9 +64,9 @@ const SYSTEM = `Ты — встроенный помощник панели Node
 - «Инциденты» (/incidents) — реестр по дням: строка = инцидент с одной фразой о том, что происходит или чем кончилось. Фильтр Все/Открытые/Решённые, сортировка по времени закрытия. Клик открывает дело инцидента (/incidents/<id>): шапка, хронология, попытки починки (раскрываются, внутри шаги «пред-проверка → действие → пост-проверка» и вывод), блок предложения следующего шага, кнопка «Открыть сервер», «Закрыть вручную», удаление. «Автопочинка» (/incidents/autofix) — режим на каждый вид инцидента: «Само», «Спросить» (по умолчанию), «Наблюдать»; общий выключатель и пауза. Инцидент открывается сразу, а автоматическое исправление ждёт около минуты — вдруг поднимется само.
 - Уровни действий: T0 «Наблюдение» (только смотрим), T1 «Безопасное авто», T2 «С подтверждением», T3 «Только вручную» (команда для терминала). Ты ничего не запускаешь сам: только предлагаешь, а администратор подтверждает. Действие T3 предлагай лишь как команду для ручного запуска.
 - Настройка «Нода» у сервера: «Определять автоматически», «Есть, следить», «Нет, не следить». Остановленная нода — инцидент только там, где за ней следим.
-- «Настройки» (/settings) — вкладки: «Внешний вид» (логотип, имя бренда), «Безопасность» (смена пароля, 2FA и коды восстановления, таймаут сессии по бездействию, автоблокировка экрана, «всегда спрашивать код 2FA», активные сессии и устройства), «Автопроверки» (тумблеры и интервалы: серверы без агента, серверы с агентом, «агент не в сети», метрики агента), «Инциденты» (пороги CPU/памяти/диска, «время реакции», автопочинка, кулдаун), «Ассистент» (провайдер zveno.ai, название модели, ключ).
+- «Настройки» (/settings) — вкладки: «Внешний вид» (логотип, имя бренда), «Безопасность» (смена пароля, 2FA и коды восстановления, таймаут сессии по бездействию, автоблокировка экрана, «всегда спрашивать код 2FA», активные сессии и устройства), «Автопроверки» (тумблеры и интервалы: серверы без агента, серверы с агентом, «агент не в сети», метрики агента), «Инциденты» (пороги CPU/памяти/диска, «время реакции», автопочинка, кулдаун), «Джарвис» (провайдер zveno.ai, название модели, ключ).
 - «Журнал» (/audit) — все события панели, фильтры (категория/результат/период/поиск), экспорт CSV/JSON, кнопка «Скопировать» отчёт по записи.
-- «Ассистент» (/assistant) — это ты. «База знаний» (/knowledge) — markdown-статьи (runbooks) с поиском и редактором.
+- «Джарвис» (/assistant) — это ты. «База знаний» (/knowledge) — markdown-статьи (runbooks) с поиском и редактором.
 - Вход/безопасность: 6 часов жизни сессии, блокировка экрана по бездействию (разблокировка паролем), step-up (подтверждение паролем) на чувствительные действия.
 
 Пиши пути через интерфейс человеку понятно: «Серверы → карточка → ⋮ → Установить агента → Установить по SSH».`;
@@ -64,7 +74,12 @@ const SYSTEM = `Ты — встроенный помощник панели Node
 const ANSWER_STYLE = `ОФОРМЛЕНИЕ ОТВЕТОВ:
 - Пиши в Markdown: заголовки, **жирный**, списки, блоки кода с языком (\`\`\`bash, \`\`\`json), таблицы — где это делает ответ понятнее и красивее.
 - На вопрос «как что-то сделать» давай ПОДРОБНУЮ пошаговую инструкцию (нумерованный список): что именно нажать, а где полезно — как это работает и зачем. Не отвечай сухим «Настройки → Безопасность» без деталей.
-- Ссылайся на статьи базы знаний по теме: используй search_kb и упоминай найденную статью (она станет цитатой под ответом).`;
+- Ссылайся на статьи базы знаний по теме: используй search_kb и упоминай найденную статью (она станет цитатой под ответом).
+- Перечисления (серверы, инциденты, шаги) оформляй маркированным списком, каждая позиция с новой строки, а не одной строкой через тире.
+- Названия серверов пиши ровно так, как они названы в парке: панель сама делает их ссылками на карточку сервера.
+- Никогда не обещай вызвать инструмент, не вызвав его: если нужны данные, вызывай инструмент сразу, в этом же ходе. Не пиши «сейчас проверю» без вызова.
+- Сообщений в ответе может быть несколько, но только если ситуация действительно требует: например вывод, затем инструкция, затем команды. Разделяй их отдельной строкой «===». Короткий ответ — одно сообщение, без дробления.
+- Вложения под ответом (цитаты) появляются сами по твоим вызовам инструментов. Не вызывай инструменты ради вложений и не ссылайся на них в тексте.`;
 
 const KB_RULES = `БАЗА ЗНАНИЙ И ГЛОССАРИЙ:
 - ПЕРЕД созданием статьи обязательно сделай search_kb. Если такая статья уже есть — не создавай дубликат: дополни существующую или просто сошлись на неё.
@@ -93,11 +108,16 @@ function buildSystem(level: AssistantLevel, permissions: AssistantPermissions, m
   const perms = ASSISTANT_PERMISSION_KEYS.map(
     (k) => `${ASSISTANT_PERMISSION_LABELS[k]} — ${permissions[k] ? 'разрешено' : 'запрещено'}`,
   ).join('; ');
+  const serverTools = [
+    permissions.reach && 'check_reachability (доступность адреса снаружи с 2–3 независимых серверов парка)',
+    permissions.processes && 'inspect_processes (тяжёлые процессы)',
+    permissions.nodeLogs && 'inspect_node_logs (последние строки журнала ноды, секреты скрыты)',
+  ].filter(Boolean);
   const modeBlock = mode === 'analysis' ? `\n\n${ANALYSIS_TASK}` : '';
   const now = new Date().toISOString();
   return `ТЕКУЩЕЕ ВРЕМЯ СЕРВЕРА (UTC): ${now}. Отвечая про периоды («за час», «за сутки», «сегодня»), опирайся на него и зови search_audit с sinceMinutes (час = 60).
 
-${SYSTEM}
+${SYSTEM.replace('{{SERVER_TOOLS}}', serverTools.length > 0 ? `${serverTools.join(', ')}, ` : '')}
 
 ${ANSWER_STYLE}
 
@@ -105,10 +125,10 @@ ${KB_RULES}
 
 ${levelRule(level)}
 
-РАЗРЕШЕНИЯ (сейчас): ${perms}. Свои разрешения смотри через get_settings. Настройки ты только читаешь — менять их не можешь. Если просят действие, на которое нет разрешения, честно скажи об этом и подскажи, что включается это в «Настройки → Ассистент → Разрешения».${modeBlock}`;
+РАЗРЕШЕНИЯ (сейчас): ${perms}. Свои разрешения смотри через get_settings. Настройки ты только читаешь — менять их не можешь. Если просят действие, на которое нет разрешения, честно скажи об этом и подскажи, что включается это в «Настройки → Джарвис → Разрешения».${modeBlock}`;
 }
 
-/** AI-ассистент: цикл tool-use, предложения действий (human-in-the-loop), беседы в БД. */
+/** Джарвис: цикл tool-use, предложения действий (human-in-the-loop), беседы в БД. */
 @Injectable()
 export class AssistantService {
   private readonly log = new Logger(AssistantService.name);
@@ -172,7 +192,7 @@ export class AssistantService {
     const cfg = await this.settings.config();
     if (!cfg)
       throw problem(HttpStatus.CONFLICT, {
-        detail: 'AI-ассистент выключен: задай провайдера, ключ и модель в Настройки → Ассистент.',
+        detail: 'Джарвис выключен: задай провайдера, ключ и модель в Настройки → Джарвис.',
       });
     const { apiKey, model, level, permissions } = cfg;
 
@@ -205,7 +225,8 @@ export class AssistantService {
       audit: this.auditRepo,
       autochecks: this.autochecks,
       incidentSettings: this.incidentSettings,
-      assistant: { level, permissions },
+      assistant: { level },
+      permissions,
       saveArticle: async (a) => {
         const doc = await this.knowledge.create(
           { title: a.title, content: a.content, tags: a.tags, source: 'ai' },
@@ -218,20 +239,36 @@ export class AssistantService {
     const citations: AssistantCitation[] = [];
     const proposals: AssistantProposal[] = [];
     const reachability: ReachabilityResult[] = [];
+    /** Реплики по ходу работы («Смотрю данные…»): каждая идёт отдельным сообщением. */
+    const interim: string[] = [];
     let answer = '';
     let toolCalls = 0;
+    let nudges = 0;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-      const res = await this.llm.run({ apiKey, model, system, messages, tools: ASSISTANT_TOOLS });
-      answer = res.blocks
-        .filter((b): b is Extract<LlmBlock, { type: 'text' }> => b.type === 'text')
-        .map((b) => b.text)
-        .join('\n')
-        .trim();
+      const res = await this.llm.run({
+        apiKey,
+        model,
+        system,
+        messages,
+        tools: toolsFor(ASSISTANT_TOOLS, permissions),
+      });
+      const text = textOf(res.blocks);
       const uses = res.blocks.filter(
         (b): b is Extract<LlmBlock, { type: 'tool_use' }> => b.type === 'tool_use',
       );
-      if (res.stopReason !== 'tool_use' || uses.length === 0) break;
+      if (uses.length === 0) {
+        // Пустой ответ или обещание вызвать инструмент без вызова: один-два толчка вместо «Не удалось сформировать ответ».
+        if (nudges < MAX_NUDGES && round < MAX_TOOL_ROUNDS - 1 && (!text || PROMISE_RE.test(text))) {
+          nudges += 1;
+          if (text) messages.push({ role: 'assistant', content: res.blocks });
+          appendUserText(messages, text ? NUDGE_PROMISE : NUDGE_EMPTY);
+          continue;
+        }
+        answer = text;
+        break;
+      }
+      if (text && interim.at(-1) !== text) interim.push(text);
 
       messages.push({ role: 'assistant', content: res.blocks });
       const results: LlmBlock[] = [];
@@ -265,30 +302,66 @@ export class AssistantService {
       messages.push({ role: 'user', content: results });
     }
 
-    const finalAnswer = answer || 'Не удалось сформировать ответ.';
-    const saved = await this.repo.addMessage({
-      conversationId: conv.id,
-      role: 'assistant',
-      content: finalAnswer,
-      citations: dedupe(citations),
-      proposals,
-      reachability,
-    });
+    if (!answer) {
+      // Раунды кончились на вызовах инструментов или ответа так и нет: просим итог по собранному, без инструментов.
+      appendUserText(messages, NUDGE_FINAL);
+      const res = await this.llm.run({ apiKey, model, system, messages, tools: [] });
+      answer = textOf(res.blocks);
+    }
+
+    const finalText = answer || 'Не удалось получить ответ. Повторите вопрос.';
+    // Ответ можно разбить на несколько сообщений строкой «===»: вывод, затем инструкция, затем команды.
+    const parts = finalText
+      .split(/\n[ \t]*={3,}[ \t]*\n/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const texts = [...interim, ...(parts.length > 0 ? parts : [finalText])];
+    const saved: AssistantMessageRow[] = [];
+    for (const [i, content] of texts.entries()) {
+      const last = i === texts.length - 1;
+      saved.push(
+        await this.repo.addMessage({
+          conversationId: conv.id,
+          role: 'assistant',
+          content,
+          // Вложения относятся к итогу, а не к промежуточным репликам.
+          citations: last ? dedupe(citations) : [],
+          proposals: last ? proposals : [],
+          reachability: last ? reachability : [],
+        }),
+      );
+    }
     await this.audit.record({
       action: 'assistant.chat',
       target: { type: 'assistant', id: conv.id, display: conv.title },
       // Вопрос и превью ответа — прямо в записи Журнала, чтобы её было видно без открытия беседы.
       metadata: {
         question: previewText(message),
-        answer: previewText(finalAnswer),
+        answer: previewText(finalText),
         model,
         mode: effectiveMode,
         toolCalls,
+        messages: texts.length,
         proposals: proposals.length,
       },
     });
-    return { conversationId: conv.id, message: this.toMessage(saved) };
+    const out = saved.map((r) => this.toMessage(r));
+    return { conversationId: conv.id, message: out[out.length - 1] as AssistantMessage, messages: out };
   }
+}
+
+const textOf = (blocks: LlmBlock[]): string =>
+  blocks
+    .filter((b): b is Extract<LlmBlock, { type: 'text' }> => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+    .trim();
+
+/** Реплика пользователя в конец: к уже стоящей подряд реплике пользователя дописывается блоком, иначе новой. */
+function appendUserText(messages: LlmMsg[], text: string): void {
+  const last = messages.at(-1);
+  if (last?.role === 'user') last.content.push({ type: 'text', text });
+  else messages.push({ role: 'user', content: [{ type: 'text', text }] });
 }
 
 /** Однострочное превью для Журнала: схлопываем пробелы и обрезаем длинный текст. */

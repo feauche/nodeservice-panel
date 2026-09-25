@@ -14,21 +14,21 @@ describe('SecurityPage', () => {
 
   it('показывает сводку: 2FA включена, коды, сессии с «текущая», запомненные устройства', async () => {
     renderPage(SecurityPage, '/settings/security', ['/lock']);
-    expect(await screen.findByText('включена')).toBeInTheDocument();
+    expect(await screen.findByText('Включена')).toBeInTheDocument();
     expect(await screen.findByText('8 из 10')).toBeInTheDocument();
     const sessions = await screen.findByRole('list', { name: 'Активные сессии' });
     await waitFor(() => expect(within(sessions).getAllByRole('listitem')).toHaveLength(2));
-    expect(within(sessions).getByText('текущая')).toBeInTheDocument();
+    expect(within(sessions).getByText('Текущая')).toBeInTheDocument();
     expect(within(sessions).getByText('198.51.100.20')).toBeInTheDocument();
     const devices = await screen.findByRole('list', { name: 'Запомненные устройства' });
-    expect(within(devices).getByText('это устройство')).toBeInTheDocument();
+    expect(within(devices).getByText('Это устройство')).toBeInTheDocument();
     expect(screen.getByText(/Последняя смена — 1 августа 2026/)).toBeInTheDocument();
   });
 
   it('смена пароля: неверный текущий — ошибка у поля; верный — сессии завершены', async () => {
     renderPage(SecurityPage, '/settings/security');
     const user = userEvent.setup();
-    await screen.findByText('включена');
+    await screen.findByText('Включена');
     await user.type(screen.getByLabelText('Текущий пароль'), 'wrong password 123');
     await user.type(screen.getByLabelText('Новый пароль'), 'a brand new passphrase');
     await user.click(screen.getByRole('button', { name: 'Сменить пароль' }));
@@ -45,7 +45,7 @@ describe('SecurityPage', () => {
   it('пароль из утечек — сообщение у поля нового пароля', async () => {
     renderPage(SecurityPage, '/settings/security');
     const user = userEvent.setup();
-    await screen.findByText('включена');
+    await screen.findByText('Включена');
     await user.type(screen.getByLabelText('Текущий пароль'), MOCK.password);
     await user.type(screen.getByLabelText('Новый пароль'), MOCK_SECURITY.pwnedPassword);
     await user.click(screen.getByRole('button', { name: 'Сменить пароль' }));

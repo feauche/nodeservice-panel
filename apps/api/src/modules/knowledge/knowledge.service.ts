@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import type {
   AuditSource,
   KbDoc,
@@ -16,11 +16,37 @@ import { KnowledgeRepository } from './knowledge.repository.js';
 
 /** База знаний: CRUD markdown-статей с полнотекстовым поиском. */
 @Injectable()
-export class KnowledgeService {
+export class KnowledgeService implements OnModuleInit {
+  private readonly log = new Logger(KnowledgeService.name);
+
   constructor(
     private readonly repo: KnowledgeRepository,
     private readonly audit: AuditService,
   ) {}
+
+  /** Глоссарий «Пояснения» есть всегда и закреплён: Джарвис читает его и пополняет. */
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.ensureGlossary();
+    } catch (err) {
+      this.log.warn(`Не удалось подготовить глоссарий: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  async ensureGlossary(): Promise<KbDocumentRow> {
+    const existing = await this.repo.findByTitle(GLOSSARY_TITLE);
+    if (existing) {
+      if (existing.pinned && !existing.archived) return existing;
+      return (await this.repo.update(existing.id, { pinned: true, archived: false })) ?? existing;
+    }
+    return this.repo.insert({
+      title: GLOSSARY_TITLE,
+      content: renderGlossary([]),
+      tags: ['глоссарий'],
+      source: 'ai',
+      pinned: true,
+    });
+  }
 
   private toDoc(row: KbDocumentRow): KbDoc {
     return {
@@ -29,6 +55,7 @@ export class KnowledgeService {
       content: row.content,
       tags: row.tags ?? [],
       archived: row.archived,
+      pinned: row.pinned,
       source: row.source,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
@@ -45,6 +72,7 @@ export class KnowledgeService {
       title: row.title,
       tags: row.tags ?? [],
       archived: row.archived,
+      pinned: row.pinned,
       source: row.source,
       excerpt: text.slice(0, 160),
       createdAt: row.createdAt.toISOString(),
@@ -94,6 +122,12 @@ export class KnowledgeService {
   async update(id: string, patch: KbDocUpdate, opts?: { reason?: string }): Promise<KbDoc> {
     const before = await this.repo.findById(id);
     if (!before) throw problem(HttpStatus.NOT_FOUND, { detail: 'Статья не найдена.' });
+    if (before.pinned && patch.archived === true)
+      throw problem(HttpStatus.CONFLICT, { detail: 'Служебную статью нельзя отправить в архив.' });
+    if (before.pinned && patch.title !== undefined && patch.title !== before.title)
+      throw problem(HttpStatus.CONFLICT, {
+        detail: 'Название служебной статьи менять нельзя: по нему её находит Джарвис.',
+      });
     // Перед изменением сохраняем предыдущее состояние в историю версий.
     await this.snapshot(before, opts?.reason ?? 'edit');
     const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
@@ -145,16 +179,15 @@ export class KnowledgeService {
         });
       return { id: row?.id ?? existing.id, added };
     }
-    const doc = await this.create(
-      { title: GLOSSARY_TITLE, content, tags: ['глоссарий'], source: 'ai' },
-      opts,
-    );
+    const doc = await this.ensureGlossary();
+    await this.repo.update(doc.id, { content });
     return { id: doc.id, added };
   }
 
   async remove(id: string): Promise<void> {
     const row = await this.repo.findById(id);
     if (!row) throw problem(HttpStatus.NOT_FOUND, { detail: 'Статья не найдена.' });
+    if (row.pinned) throw problem(HttpStatus.CONFLICT, { detail: 'Служебную статью нельзя удалить.' });
     await this.repo.delete(id);
     await this.audit.record({
       action: 'kb.deleted',
@@ -202,7 +235,7 @@ export class KnowledgeService {
 const GLOSSARY_TITLE = 'Пояснения';
 const GLOSSARY_HEADER = `# Пояснения
 
-Короткий словарь терминов и аббревиатур — что это простыми словами. Пополняется ассистентом автоматически.
+Короткий словарь терминов и аббревиатур — что это простыми словами. Пополняется Джарвисом автоматически.
 
 | Термин | Простыми словами |
 | --- | --- |`;

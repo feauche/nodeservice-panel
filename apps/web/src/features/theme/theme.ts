@@ -3,9 +3,9 @@
  * Хранится в localStorage, применяется атрибутом data-ns-theme на <html>.
  */
 export const THEMES = [
-  { key: 'dark', name: 'Графит', description: 'тёмная с синим уклоном — по умолчанию' },
-  { key: 'light', name: 'Светлая', description: 'для дневного света' },
-  { key: 'black', name: 'Чёрная', description: 'чистый чёрный, для OLED' },
+  { key: 'dark', name: 'Графит', description: 'Тёмная с синим уклоном — по умолчанию' },
+  { key: 'light', name: 'Светлая', description: 'Для дневного света' },
+  { key: 'black', name: 'Чёрная', description: 'Чистый чёрный, для OLED' },
 ] as const;
 
 export type ThemeKey = (typeof THEMES)[number]['key'];

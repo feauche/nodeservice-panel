@@ -11,13 +11,12 @@ import {
   SearchIcon,
   ServerIcon,
   SettingsIcon,
-  SparklesIcon,
   XIcon,
 } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
-
 import { BrandLogo, BrandName } from '@/components/brand-logo';
+import { JarvisIcon } from '@/components/jarvis-icon';
 import { ThemeMenu } from '@/components/theme-menu';
 import {
   DropdownMenu,
@@ -66,9 +65,9 @@ const SERVERS_GROUP = {
     { to: '/servers/providers', label: 'Провайдеры' },
   ],
 } as const;
-/** Раздел «Автоматизация» — AI-ассистент и база знаний. */
+/** Раздел «Автоматизация» — Джарвис и база знаний. */
 const NAV_AUTOMATION = [
-  { to: '/assistant', label: 'Ассистент', icon: SparklesIcon },
+  { to: '/assistant', label: 'Джарвис', icon: JarvisIcon },
   { to: '/knowledge', label: 'База знаний', icon: BookOpenIcon },
 ] as const;
 /** Версия панели из сборки; в тестах и dev без define — «dev». */
@@ -507,7 +506,7 @@ function MobileNav({ openIncidents }: { openIncidents: number | undefined }) {
 
 /* ---------- каркас ---------- */
 interface AppShellProps {
-  /** Заголовок раздела; если не задан — шапка не рисуется (напр. чат ассистента на весь экран). */
+  /** Заголовок раздела; если не задан — шапка не рисуется (напр. чат Джарвиса на весь экран). */
   title?: string;
   subtitle?: string;
   /** Маленькие сервисные кнопки справа от заголовка (например, ссылки на документацию API). */

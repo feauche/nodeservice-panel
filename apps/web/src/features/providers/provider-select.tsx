@@ -1,19 +1,15 @@
 import type { Provider } from '@nodeservice/shared';
 import { PlusIcon } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { cn } from '@/lib/utils';
+import { Combobox } from '@/components/ui/combobox';
 import { ProviderDialog } from './provider-dialog';
 import { ProviderIcon } from './provider-icon';
 import { useProviders } from './providers-api';
 
-const NONE = '__none__';
-const ADD = '__add__';
-
 /**
- * Выбор провайдера с иконками. Последний пункт «Добавить провайдера…» открывает форму, и
- * созданный провайдер сразу становится выбранным — из окна сервера выходить не нужно.
+ * Выбор провайдера с иконками и поиском (когда провайдеров много). Внизу всегда виден пункт
+ * «Добавить провайдера…»: форма открывается поверх, созданный провайдер сразу становится выбранным.
  */
 export function ProviderSelect({
   id,
@@ -34,54 +30,42 @@ export function ProviderSelect({
   const [justAdded, setJustAdded] = useState<Provider | null>(null);
   const loaded = providers.data?.items ?? [];
   const items = justAdded && !loaded.some((p) => p.id === justAdded.id) ? [...loaded, justAdded] : loaded;
+  const options = useMemo(
+    () =>
+      items.map((p) => ({
+        value: p.id,
+        label: p.name,
+        keywords: p.siteHost,
+        node: (
+          <span className="flex min-w-0 items-center gap-2">
+            <ProviderIcon provider={p} size="sm" />
+            <span className="truncate">{p.name}</span>
+            <span className="truncate text-[11.5px] text-text-3">{p.siteHost}</span>
+          </span>
+        ),
+      })),
+    [items],
+  );
   return (
     <>
-      <Select
-        value={value ?? NONE}
-        disabled={disabled}
-        onValueChange={(v) => {
-          if (v === ADD) {
-            setAdding(true);
-            return;
-          }
-          // Radix присылает '' сразу после выбора значения, для которого скрытый <option> ещё не
-          // зарегистрирован (только что созданный провайдер) — это не выбор пользователя.
-          if (v === '') return;
-          onChange(v === NONE ? null : v);
+      <Combobox
+        id={id}
+        ariaLabel="Провайдер"
+        value={value}
+        onChange={onChange}
+        options={options}
+        placeholder={<span className="text-text-3">Без провайдера</span>}
+        emptyLabel="Без провайдера"
+        searchPlaceholder="Найти провайдера…"
+        searchFrom={8}
+        action={{
+          label: 'Добавить провайдера…',
+          icon: <PlusIcon className="size-3.5" aria-hidden="true" />,
+          onSelect: () => setAdding(true),
         }}
-      >
-        <SelectTrigger
-          id={id}
-          aria-label="Провайдер"
-          className={cn(
-            'h-10 rounded-[10px] [&>span]:flex [&>span]:min-w-0 [&>span]:items-center',
-            className,
-          )}
-        >
-          {/* Radix копирует в триггер содержимое выбранного пункта — иконка и имя приходят оттуда */}
-          <SelectValue placeholder={<span className="text-text-3">Без провайдера</span>} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={NONE}>
-            <span className="text-text-3">Без провайдера</span>
-          </SelectItem>
-          {items.map((p) => (
-            <SelectItem key={p.id} value={p.id}>
-              <span className="flex items-center gap-2">
-                <ProviderIcon provider={p} size="sm" />
-                {p.name}
-                <span className="text-[11.5px] text-text-3">{p.siteHost}</span>
-              </span>
-            </SelectItem>
-          ))}
-          <SelectItem value={ADD} className="border-t border-border text-brand data-highlighted:text-brand">
-            <span className="flex items-center gap-2">
-              <PlusIcon className="size-4" aria-hidden="true" />
-              Добавить провайдера…
-            </span>
-          </SelectItem>
-        </SelectContent>
-      </Select>
+        disabled={disabled}
+        className={className}
+      />
       <ProviderDialog
         open={adding}
         onOpenChange={setAdding}

@@ -45,7 +45,7 @@ describe('OverviewPage (по демо)', () => {
     expect(await screen.findByText('Серверов в норме')).toBeInTheDocument();
     expect(screen.getByText('Средний CPU')).toBeInTheDocument();
     expect(screen.getByText('Трафик сейчас')).toBeInTheDocument();
-    expect(screen.getByText(/приём · отдача/)).toBeInTheDocument();
+    expect(screen.getByText(/Приём · отдача/)).toBeInTheDocument();
     expect(screen.getByText('Соединений сейчас')).toBeInTheDocument();
     expect((await screen.findAllByTestId('sparkline')).length).toBeGreaterThanOrEqual(3);
     expect(await screen.findByTestId('areaspark')).toBeInTheDocument();
@@ -72,7 +72,7 @@ describe('OverviewPage (по демо)', () => {
     const panel = (await screen.findByText('Требует внимания')).closest('section') as HTMLElement;
     expect(within(panel).getByText('nl-ams-02')).toBeInTheDocument();
     expect(within(panel).getByText('SSH недоступен')).toBeInTheDocument();
-    expect(within(panel).getByText('офлайн')).toBeInTheDocument();
+    expect(within(panel).getByText('Офлайн')).toBeInTheDocument();
   });
 
   it('последние события Журнала с ссылкой', async () => {
@@ -102,7 +102,7 @@ describe('OverviewPage (по демо)', () => {
     const panel = (await screen.findByText('Требует внимания')).closest('section') as HTMLElement;
     expect(within(panel).getByText('nl-ams-02')).toBeInTheDocument();
     expect(within(panel).getByText('Агент не установлен')).toBeInTheDocument();
-    expect(within(panel).getByText('внимание')).toBeInTheDocument();
+    expect(within(panel).getByText('Внимание')).toBeInTheDocument();
   });
 
   it('форматтеры трафика', () => {

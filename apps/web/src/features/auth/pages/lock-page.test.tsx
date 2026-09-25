@@ -18,7 +18,7 @@ describe('LockPage', () => {
 
   it('показывает логин и фокусирует пароль', async () => {
     renderPage(LockPage, '/lock', ['/', '/login']);
-    expect(await screen.findByText(/admin · сессия сохранена/)).toBeInTheDocument();
+    expect(await screen.findByText(/admin · Сессия сохранена/)).toBeInTheDocument();
     expect(screen.getByLabelText('Пароль')).toHaveFocus();
   });
 

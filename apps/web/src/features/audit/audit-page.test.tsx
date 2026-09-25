@@ -44,8 +44,8 @@ describe('AuditPage', () => {
     const list = rows();
     expect(list).toHaveLength(25);
     expect(list[0]).toHaveAttribute('data-seq', '57');
-    expect(within(list[0] as HTMLElement).getByText('вручную')).toBeInTheDocument();
-    expect(screen.getAllByText('авто').length).toBeGreaterThan(0);
+    expect(within(list[0] as HTMLElement).getByText('Вручную')).toBeInTheDocument();
+    expect(screen.getAllByText('Авто').length).toBeGreaterThan(0);
     expect(screen.getByText('1–25 из 57')).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Страницы журнала' })).toBeInTheDocument();
   });
@@ -114,7 +114,7 @@ describe('AuditPage', () => {
     await user.click(rows()[0] as HTMLElement);
     const login = await screen.findByTestId('audit-details');
     expect(within(login).getByText('Способ входа')).toBeInTheDocument();
-    expect(within(login).getByText('пароль + код 2FA')).toBeInTheDocument();
+    expect(within(login).getByText('Пароль + код 2FA')).toBeInTheDocument();
   });
 
   it('пустой журнал — понятное сообщение; экспорт ведёт на /api/audit/export с фильтрами', async () => {

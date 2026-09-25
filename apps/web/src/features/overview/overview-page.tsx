@@ -259,7 +259,7 @@ export function OverviewPage() {
       name: j.server.name,
       reason: j.reason,
       tone: j.health as 'warn' | 'crit',
-      pill: j.health === 'crit' ? 'офлайн' : 'внимание',
+      pill: j.health === 'crit' ? 'Офлайн' : 'Внимание',
       serverId: j.server.id as string | null,
       link: null as LinkProps | null,
     }));
@@ -277,7 +277,7 @@ export function OverviewPage() {
       name: inc.serverName,
       reason: `${INCIDENT_KIND_META[inc.kind].label}${inc.proposal ? ' · ждёт подтверждения' : ''}`,
       tone: (inc.severity === 'crit' ? 'crit' : 'warn') as 'warn' | 'crit',
-      pill: 'инцидент',
+      pill: 'Инцидент',
       serverId: null as string | null,
       link: { to: '/incidents/$id', params: { id: inc.id } } as LinkProps | null,
     }));
@@ -342,7 +342,7 @@ export function OverviewPage() {
           caps="Серверов в норме"
           value={`${okCount}`}
           unit={`/ ${items.length}`}
-          status={offlineCount > 0 ? 'есть офлайн' : 'стабильно'}
+          status={offlineCount > 0 ? 'Есть офлайн' : 'Стабильно'}
           tone={offlineCount > 0 ? 'crit' : 'ok'}
           spark={fleet?.cpuAvgSpark ?? []}
         />
@@ -350,7 +350,7 @@ export function OverviewPage() {
           caps="Средний CPU"
           value={cpuAvg === null ? '—' : formatPct(cpuAvg)}
           unit={cpuAvg === null ? undefined : '%'}
-          status={cpuAvg === null ? 'ждёт агента' : cpuAvg > 85 ? 'высокая нагрузка' : 'в норме'}
+          status={cpuAvg === null ? 'Ждёт агента' : cpuAvg > 85 ? 'Высокая нагрузка' : 'В норме'}
           tone={cpuAvg === null ? 'muted' : cpuAvg > 85 ? 'warn' : 'ok'}
           spark={fleet?.cpuAvgSpark ?? []}
         />
@@ -358,7 +358,7 @@ export function OverviewPage() {
           caps="Трафик сейчас"
           value={trafficNow === null ? '—' : `↓ ${rx.value} · ↑ ${tx.value}`}
           unit={trafficNow === null ? undefined : rx.unit === tx.unit ? rx.unit : `${rx.unit} / ${tx.unit}`}
-          status={trafficNow === null ? 'ждёт агента' : 'приём · отдача'}
+          status={trafficNow === null ? 'Ждёт агента' : 'Приём · отдача'}
           tone={trafficNow === null ? 'muted' : 'ok'}
           spark={fleet?.trafficRxSpark ?? []}
         />
@@ -366,7 +366,7 @@ export function OverviewPage() {
           caps="Соединений сейчас"
           value={conntrackNow === null ? '—' : Math.round(conntrackNow).toLocaleString('ru-RU')}
           unit={conntrackNow === null ? undefined : 'conntrack'}
-          status={conntrackNow === null ? 'ждёт агента' : 'весь парк'}
+          status={conntrackNow === null ? 'Ждёт агента' : 'Весь парк'}
           tone={conntrackNow === null ? 'muted' : 'ok'}
           spark={fleet?.conntrackSpark ?? []}
         />

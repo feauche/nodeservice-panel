@@ -1,17 +1,19 @@
-import type {
-  AssistantConversation,
-  AssistantLevel,
-  AssistantMessage,
-  AssistantMode,
-  AssistantPermissions,
-  AssistantProvider,
-  KbDoc,
+import {
+  ASSISTANT_PERMISSIONS_DEFAULT,
+  type AssistantConversation,
+  type AssistantLevel,
+  type AssistantMessage,
+  type AssistantMode,
+  type AssistantPermissions,
+  type AssistantProvider,
+  type KbDoc,
 } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
 
 import { mockIncidents } from './incidents-mock';
 import { mockKnowledge } from './knowledge-mock';
 import { sampleReach } from './reach-sample';
+import { mockServers } from './servers-mock';
 
 interface AssistantMock {
   enabled: boolean;
@@ -27,7 +29,7 @@ export const mockAssistant: AssistantMock = {
   provider: 'zveno',
   model: 'anthropic/claude-sonnet-4-5',
   level: 'intermediate',
-  permissions: { kbWrite: true, glossary: true, kbReview: true },
+  permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT },
   conversations: [],
   messages: {},
 };
@@ -46,7 +48,7 @@ export function seedAssistant(): void {
   mockAssistant.enabled = false;
   mockAssistant.model = 'claude-sonnet-4-5';
   mockAssistant.level = 'intermediate';
-  mockAssistant.permissions = { kbWrite: true, glossary: true, kbReview: true };
+  mockAssistant.permissions = { ...ASSISTANT_PERMISSIONS_DEFAULT };
   mockAssistant.conversations = [];
   mockAssistant.messages = {};
 }
@@ -58,7 +60,7 @@ function aProblem(status: number, detail: string) {
   );
 }
 
-/** Демо-ответ ассистента: цитаты (база знаний + инцидент) и предложение автопочинки. */
+/** Демо-ответ Джарвиса: цитаты (база знаний + инцидент) и предложение автопочинки. */
 function buildReply(text = ''): AssistantMessage {
   if (/доступ|снаружи/i.test(text))
     return {
@@ -99,6 +101,33 @@ function buildReply(text = ''): AssistantMessage {
   };
 }
 
+/** Ответ в двух сообщениях: «сейчас посмотрю» и итог с именами серверов и одной ссылкой-источником. */
+function buildFleetReplies(): AssistantMessage[] {
+  const now = new Date().toISOString();
+  const fra = mockServers.items.find((x) => x.name === 'de-fra-01');
+  return [
+    {
+      id: uid(),
+      role: 'assistant',
+      content: 'Смотрю историю инцидентов за всё время.',
+      citations: [],
+      proposals: [],
+      reachability: [],
+      createdAt: now,
+    },
+    {
+      id: uid(),
+      role: 'assistant',
+      content:
+        '**Инциденты по серверам за всё время:**\n\n- de-fra-01 — 4 инцидента, все закрыты\n- nl-ams-02 — 2 инцидента, все закрыты\n\nБольше всего сбоев на первом.',
+      citations: fra ? [{ type: 'server', id: fra.id, label: fra.name }] : [],
+      proposals: [],
+      reachability: [],
+      createdAt: now,
+    },
+  ];
+}
+
 /** Режим «Анализ»: если разрешено — создаём статью в БЗ и ссылаемся на неё; иначе — про разрешение. */
 function buildAnalysisReply(): AssistantMessage {
   const now = new Date().toISOString();
@@ -107,7 +136,7 @@ function buildAnalysisReply(): AssistantMessage {
       id: uid(),
       role: 'assistant',
       content:
-        'Разбор готов, но создание статей выключено — включи «Настройки → Ассистент → Разрешения». Пока держи черновик в ответе.',
+        'Разбор готов, но создание статей выключено — включите «Настройки → Джарвис → Разрешения». Пока черновик статьи ниже, в ответе.',
       citations: [],
       proposals: [],
       reachability: [],
@@ -121,6 +150,7 @@ function buildAnalysisReply(): AssistantMessage {
       '# Настройка Xray Reality\n\n## Что это\n\nReality — маскировка VLESS под настоящий TLS-сайт.\n\n## Шаги\n\n1. Установи Xray: `bash <(curl -fsSL install)`\n2. Сгенерируй ключи: `xray x25519`\n3. Пропиши `dest` и `serverNames` в конфиг.\n\n```json\n{ "flow": "xtls-rprx-vision" }\n```',
     tags: ['xray', 'reality', 'инструкция'],
     archived: false,
+    pinned: false,
     source: 'ai',
     createdAt: now,
     updatedAt: now,
@@ -140,10 +170,7 @@ function buildAnalysisReply(): AssistantMessage {
 export const assistantHandlers = [
   http.post('/api/servers/:id/terminal/hint', async ({ request }) => {
     if (!mockAssistant.enabled)
-      return aProblem(
-        409,
-        'Ассистент выключен: задайте провайдера, ключ и модель в «Настройки → Ассистент».',
-      );
+      return aProblem(409, 'Джарвис выключен: задайте провайдера, ключ и модель в «Настройки → Джарвис».');
     const body = (await request.json().catch(() => ({}))) as { text?: string; question?: string };
     const text = (body.text ?? '').trim();
     if (!text) return aProblem(400, 'В терминале пока нет вывода: подсказывать нечего.');
@@ -222,7 +249,7 @@ export const assistantHandlers = [
     HttpResponse.json({ items: mockAssistant.messages[String(params.id)] ?? [] }),
   ),
   http.post('/api/assistant/chat', async ({ request }) => {
-    if (!mockAssistant.enabled) return aProblem(409, 'AI-ассистент выключен: не задан ключ модели.');
+    if (!mockAssistant.enabled) return aProblem(409, 'Джарвис выключен: не задан ключ модели.');
     const body = (await request.json()) as {
       message: string;
       conversationId?: string;
@@ -252,8 +279,14 @@ export const assistantHandlers = [
       reachability: [],
       createdAt: new Date().toISOString(),
     };
-    const reply = effMode === 'analysis' ? buildAnalysisReply() : buildReply(body.message);
-    mockAssistant.messages[convId] = [...(mockAssistant.messages[convId] ?? []), userMsg, reply];
-    return HttpResponse.json({ conversationId: convId, message: reply });
+    const replies =
+      effMode === 'analysis'
+        ? [buildAnalysisReply()]
+        : /по каким серверам/i.test(body.message)
+          ? buildFleetReplies()
+          : [buildReply(body.message)];
+    const reply = replies[replies.length - 1] as AssistantMessage;
+    mockAssistant.messages[convId] = [...(mockAssistant.messages[convId] ?? []), userMsg, ...replies];
+    return HttpResponse.json({ conversationId: convId, message: reply, messages: replies });
   }),
 ];
