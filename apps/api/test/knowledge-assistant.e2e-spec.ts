@@ -64,6 +64,30 @@ class FakeLlm implements LlmProvider {
       }
       return { stopReason: 'end', blocks: [{ type: 'text', text: 'Добавил в глоссарий.' }] };
     }
+    // Инструменты чтения: зовём все новые, а в ответ отдаём начала их результатов — проверить проводку модуля.
+    if (userText.includes('ИНСТРУМЕНТЫ')) {
+      if (!done)
+        return {
+          stopReason: 'tool_use',
+          blocks: [
+            { type: 'tool_use', id: 'r1', name: 'get_fleet_status', input: {} },
+            { type: 'tool_use', id: 'r2', name: 'list_incidents', input: { status: 'open' } },
+            { type: 'tool_use', id: 'r3', name: 'get_incident', input: { incidentId: FAKE_INCIDENT } },
+            {
+              type: 'tool_use',
+              id: 'r4',
+              name: 'get_metrics_history',
+              input: { serverId: 'нет-такого', metric: 'cpuPct' },
+            },
+            { type: 'tool_use', id: 'r5', name: 'get_maintenance', input: { serverId: 'нет-такого' } },
+          ],
+        };
+      const echoes = input.messages
+        .flatMap((m) => m.content)
+        .map((b) => (b.type === 'tool_result' ? String(b.content).slice(0, 80) : ''))
+        .filter(Boolean);
+      return { stopReason: 'end', blocks: [{ type: 'text', text: `ЭХО ${echoes.join(' | ')}` }] };
+    }
     // Ревизия базы знаний: возвращаем причёсанный вариант (длиннее оригинала → пройдёт предохранитель).
     if (input.system.includes('редактор базы знаний')) {
       return { stopReason: 'end', blocks: [{ type: 'text', text: `${userText}\n\nПроверено ревизией.` }] };
@@ -359,6 +383,18 @@ describe('knowledge + assistant e2e', () => {
       .expect(200);
     list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
     expect(list.items.filter((d) => d.title === 'Пояснения')).toHaveLength(1);
+  });
+
+  it('инструменты чтения подключены: парк, инциденты, история, обслуживание', async () => {
+    const res = await agent
+      .post('/api/assistant/chat')
+      .set(CSRF_HEADER, csrf)
+      .send({ message: 'Что в парке? ИНСТРУМЕНТЫ' })
+      .expect(200);
+    const text = assistantChatResponseSchema.parse(res.body).message.content;
+    expect(text).toContain('"totals"');
+    expect(text).toContain('"items"');
+    expect(text.match(/не найден/g)?.length).toBeGreaterThanOrEqual(3);
   });
 
   it('ревизия базы знаний: безопасно правит статьи, снимает версию, пишет отчёт', async () => {

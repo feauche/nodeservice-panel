@@ -1,46 +1,18 @@
-import {
-  type AssistantCitation,
-  type AssistantProposal,
-  INCIDENT_ACTIONS,
-  VM_METRIC_NAMES,
-} from '@nodeservice/shared';
+import { type AssistantCitation, type AssistantProposal, INCIDENT_ACTIONS } from '@nodeservice/shared';
 
 import type { AuditRepository } from '../audit/audit.repository.js';
-import type { IncidentsService } from '../incidents/incidents.service.js';
 import type { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
-import type { VmReaderService } from '../metrics/vm-reader.service.js';
-import type { ServersService } from '../servers/servers.service.js';
+import { READ_TOOL_DEFS, type ReadDeps, runReadTool } from './assistant.read-tools.js';
 import type { LlmToolDef } from './llm.provider.js';
 
 /** Определения инструментов для модели (read-only + propose_action). */
 export const ASSISTANT_TOOLS: LlmToolDef[] = [
-  {
-    name: 'get_fleet_status',
-    description:
-      'Полный список серверов парка: имя, id, адрес (ip/домен:порт), пользователь SSH, теги, статус агента и его версия, состояние SSH, ОС/архитектура, ядра, память, когда последний раз проверяли. И число открытых инцидентов.',
-    input_schema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'get_server_detail',
-    description:
-      'Детали одного сервера по id: все поля + последние метрики (CPU %, память, диск, сеть, conntrack, аптайм).',
-    input_schema: { type: 'object', properties: { serverId: { type: 'string' } }, required: ['serverId'] },
-  },
+  ...READ_TOOL_DEFS,
   {
     name: 'get_settings',
     description:
       'Текущие настройки панели: автопроверки (интервалы/тумблеры), инциденты (пороги CPU/памяти/диска, время реакции, автопочинка) и твои собственные настройки (assistant.level — уровень пользователя, assistant.permissions — что тебе разрешено). Без секретов. Загляни сюда, если просят действие и надо проверить разрешение.',
     input_schema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'query_metrics',
-    description:
-      'Последнее значение метрики сервера. metric: cpuPct|memUsedMb|diskUsedMb|netRxBps|conntrackCount.',
-    input_schema: {
-      type: 'object',
-      properties: { serverId: { type: 'string' }, metric: { type: 'string' } },
-      required: ['serverId', 'metric'],
-    },
   },
   {
     name: 'search_audit',
@@ -113,10 +85,7 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   },
 ];
 
-export interface ToolDeps {
-  servers: ServersService;
-  incidents: IncidentsService;
-  metrics: VmReaderService;
+export interface ToolDeps extends ReadDeps {
   kb: KnowledgeRepository;
   audit: AuditRepository;
   autochecks: { get: () => Promise<unknown> };
@@ -140,104 +109,19 @@ export interface ToolOutcome {
   proposals: AssistantProposal[];
 }
 
-const METRIC_ALLOW = new Set(Object.keys(VM_METRIC_NAMES));
-
 /** Выполнить инструмент из аллоулиста. Неизвестный инструмент — явная ошибка (не молчим). */
 export async function runTool(name: string, input: unknown, deps: ToolDeps): Promise<ToolOutcome> {
   const arg = (input ?? {}) as Record<string, unknown>;
   const empty: ToolOutcome = { content: '', citations: [], proposals: [] };
 
-  if (name === 'get_fleet_status') {
-    const servers = await deps.servers.list();
-    const incidents = await deps.incidents.list('open');
-    const summary = servers.map((s) => ({
-      id: s.id,
-      name: s.name,
-      address: `${s.sshUser}@${s.host}:${s.port}`,
-      tags: s.tags,
-      agent: s.agentStatus,
-      agentVersion: s.agentVersion,
-      ssh: s.sshOk,
-      os: [s.facts.os, s.facts.osVersion].filter(Boolean).join(' ') || null,
-      arch: s.facts.arch,
-      cpuCores: s.facts.cpuCores,
-      memoryMb: s.facts.memoryMb,
-      lastCheck: s.lastSshCheckAt,
-    }));
-    return {
-      content: JSON.stringify({ servers: summary, openIncidents: incidents.items.length }),
-      citations: incidents.items.slice(0, 3).map((i) => ({ type: 'incident', id: i.id, label: i.title })),
-      proposals: [],
-    };
-  }
-
-  if (name === 'get_server_detail') {
-    const id = String(arg.serverId ?? '');
-    const server = (await deps.servers.list()).find((s) => s.id === id);
-    if (!server) return { ...empty, content: 'Сервер с таким id не найден.' };
-    const metric = async (key: keyof typeof VM_METRIC_NAMES) => {
-      const res = await deps.metrics.query(`${VM_METRIC_NAMES[key]}{server_id="${id}"}`);
-      const v = res?.[0]?.points.at(-1)?.[1];
-      return v !== undefined && Number.isFinite(v) ? v : null;
-    };
-    const [cpu, memUsed, memTotal, diskUsed, diskTotal, rx, tx, conntrack, uptime] = await Promise.all([
-      metric('cpuPct'),
-      metric('memUsedMb'),
-      metric('memTotalMb'),
-      metric('diskUsedMb'),
-      metric('diskTotalMb'),
-      metric('netRxBps'),
-      metric('netTxBps'),
-      metric('conntrackCount'),
-      metric('cpuPct'),
-    ]);
-    return {
-      content: JSON.stringify({
-        id: server.id,
-        name: server.name,
-        address: `${server.sshUser}@${server.host}:${server.port}`,
-        tags: server.tags,
-        notes: server.notes,
-        agent: server.agentStatus,
-        agentVersion: server.agentVersion,
-        ssh: server.sshOk,
-        facts: server.facts,
-        metrics: {
-          cpuPct: cpu,
-          memUsedMb: memUsed,
-          memTotalMb: memTotal,
-          diskUsedMb: diskUsed,
-          diskTotalMb: diskTotal,
-          netRxBps: rx,
-          netTxBps: tx,
-          conntrack,
-          uptimeSec: uptime,
-        },
-      }),
-      citations: [{ type: 'server', id: server.id, label: server.name }],
-      proposals: [],
-    };
-  }
+  const read = await runReadTool(name, arg, deps);
+  if (read) return read;
 
   if (name === 'get_settings') {
     const [autochecks, incidents] = await Promise.all([deps.autochecks.get(), deps.incidentSettings.get()]);
     return {
       content: JSON.stringify({ autochecks, incidents, assistant: deps.assistant }),
       citations: [],
-      proposals: [],
-    };
-  }
-
-  if (name === 'query_metrics') {
-    const serverId = String(arg.serverId ?? '');
-    const metric = String(arg.metric ?? '');
-    if (!METRIC_ALLOW.has(metric)) return { ...empty, content: 'Неизвестная метрика.' };
-    const vm = VM_METRIC_NAMES[metric as keyof typeof VM_METRIC_NAMES];
-    const res = await deps.metrics.query(`${vm}{server_id="${serverId}"}`);
-    const v = res?.[0]?.points.at(-1)?.[1];
-    return {
-      content: JSON.stringify({ metric, serverId, value: v ?? null }),
-      citations: v !== undefined ? [{ type: 'metric', id: `${serverId}:${metric}`, label: metric }] : [],
       proposals: [],
     };
   }

@@ -3,7 +3,9 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module.js';
 import { IncidentsModule } from '../incidents/incidents.module.js';
 import { KnowledgeModule } from '../knowledge/knowledge.module.js';
+import { MaintenanceModule } from '../maintenance/maintenance.module.js';
 import { MetricsModule } from '../metrics/metrics.module.js';
+import { ProvidersModule } from '../providers/providers.module.js';
 import { ServersModule } from '../servers/servers.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { AssistantController } from './assistant.controller.js';
@@ -21,6 +23,8 @@ import { ZvenoProvider } from './zveno.provider.js';
     IncidentsModule,
     KnowledgeModule,
     MetricsModule,
+    MaintenanceModule,
+    ProvidersModule,
     AuditModule,
     AssistantSettingsModule,
     SettingsModule,
