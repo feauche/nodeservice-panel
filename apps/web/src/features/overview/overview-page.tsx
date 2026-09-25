@@ -28,6 +28,7 @@ import {
   type ServerHealth,
   serverHealth,
 } from '@/features/servers/server-health';
+import { openServer } from '@/features/servers/server-modal-store';
 import { useServers } from '@/features/servers/servers-api';
 import { apiErrorMessage } from '@/lib/api';
 import { isSectionOpen } from '@/lib/stages';
@@ -139,6 +140,57 @@ function Panel({
   );
 }
 
+/**
+ * Строка «Требует внимания». Инцидент ведёт на свою страницу; сервер открывается карточкой поверх
+ * обзора, без перехода в раздел «Серверы».
+ */
+function AttentionRow({
+  row,
+}: {
+  row: {
+    name: string;
+    reason: string;
+    tone: 'warn' | 'crit';
+    pill: string;
+    serverId: string | null;
+    link: LinkProps | null;
+  };
+}) {
+  const cls =
+    'flex w-full items-center gap-3 rounded-[10px] px-1.5 py-2.5 text-left transition-colors hover:bg-surface-2';
+  const body = (
+    <>
+      <span className={cn('size-2 flex-none rounded-full', HEALTH_DOT[row.tone])} aria-hidden="true" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13.5px] font-semibold">{row.name}</span>
+        <span className="block truncate text-[12px] text-text-3">{row.reason}</span>
+      </span>
+      <span
+        className={cn(
+          'rounded-full px-2 py-0.5 text-[11.5px] font-semibold whitespace-nowrap',
+          row.tone === 'crit' ? 'bg-crit-soft text-crit' : 'bg-warn-soft text-warn',
+        )}
+      >
+        {row.pill}
+      </span>
+      <ChevronRightIcon className="size-4 flex-none text-text-3" aria-hidden="true" />
+    </>
+  );
+  if (row.serverId) {
+    const id = row.serverId;
+    return (
+      <button type="button" onClick={() => openServer(id)} className={cn(cls, 'cursor-pointer')}>
+        {body}
+      </button>
+    );
+  }
+  return row.link ? (
+    <Link {...row.link} className={cls}>
+      {body}
+    </Link>
+  ) : null;
+}
+
 /** Баннер инцидентов: ссылка в раздел, пока он закрыт — просто заметная строка без ссылки. */
 function IncidentsBanner({ open, crit }: { open: number; crit: number }) {
   const cls =
@@ -208,7 +260,8 @@ export function OverviewPage() {
       reason: j.reason,
       tone: j.health as 'warn' | 'crit',
       pill: j.health === 'crit' ? 'офлайн' : 'внимание',
-      link: { to: '/servers', search: { open: j.server.id } } as LinkProps,
+      serverId: j.server.id as string | null,
+      link: null as LinkProps | null,
     }));
   const incidentRows = (openIncidents.data?.items ?? [])
     // Связь (агент/SSH) уже отражена строкой здоровья — не дублируем.
@@ -225,7 +278,8 @@ export function OverviewPage() {
       reason: `${INCIDENT_KIND_META[inc.kind].label}${inc.proposal ? ' · ждёт подтверждения' : ''}`,
       tone: (inc.severity === 'crit' ? 'crit' : 'warn') as 'warn' | 'crit',
       pill: 'инцидент',
-      link: { to: '/incidents/$id', params: { id: inc.id } } as LinkProps,
+      serverId: null as string | null,
+      link: { to: '/incidents/$id', params: { id: inc.id } } as LinkProps | null,
     }));
   const attention = [...incidentRows, ...healthRows];
 
@@ -347,28 +401,7 @@ export function OverviewPage() {
             <ul className="flex flex-col">
               {attention.slice(0, 5).map((row) => (
                 <li key={row.key} className="border-t border-border first:border-t-0">
-                  <Link
-                    {...row.link}
-                    className="flex items-center gap-3 rounded-[10px] px-1.5 py-2.5 transition-colors hover:bg-surface-2"
-                  >
-                    <span
-                      className={cn('size-2 flex-none rounded-full', HEALTH_DOT[row.tone])}
-                      aria-hidden="true"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13.5px] font-semibold">{row.name}</span>
-                      <span className="block truncate text-[12px] text-text-3">{row.reason}</span>
-                    </span>
-                    <span
-                      className={cn(
-                        'rounded-full px-2 py-0.5 text-[11.5px] font-semibold whitespace-nowrap',
-                        row.tone === 'crit' ? 'bg-crit-soft text-crit' : 'bg-warn-soft text-warn',
-                      )}
-                    >
-                      {row.pill}
-                    </span>
-                    <ChevronRightIcon className="size-4 flex-none text-text-3" aria-hidden="true" />
-                  </Link>
+                  <AttentionRow row={row} />
                 </li>
               ))}
             </ul>

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { formatWhen } from '@/features/audit/audit-format';
+import { openServer, serverIdFromLink } from '@/features/servers/server-modal-store';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -175,6 +176,7 @@ function NotificationRow({
   onNavigate: () => void;
 }) {
   const { cls, Icon } = ICON[n.severity];
+  const serverId = n.link ? serverIdFromLink(n.link.to) : null;
   const unread = !n.readAt;
   return (
     <div
@@ -196,11 +198,24 @@ function NotificationRow({
         {n.body && <div className="mt-0.5 text-[12px] leading-normal text-text-2">{n.body}</div>}
         <div className="mt-1 flex flex-wrap items-center gap-x-2.5 text-[11.5px] text-text-3">
           <time dateTime={n.createdAt}>{formatWhen(n.createdAt)}</time>
-          {n.link && (
-            <Link to={n.link.to} onClick={onNavigate} className="font-semibold text-brand hover:underline">
-              {n.link.label} →
-            </Link>
-          )}
+          {n.link &&
+            (serverId ? (
+              // Ссылка на сервер: карточка открывается поверх текущей страницы, без перехода
+              <button
+                type="button"
+                onClick={() => {
+                  openServer(serverId);
+                  onNavigate();
+                }}
+                className="cursor-pointer font-semibold text-brand hover:underline"
+              >
+                {n.link.label} →
+              </button>
+            ) : (
+              <Link to={n.link.to} onClick={onNavigate} className="font-semibold text-brand hover:underline">
+                {n.link.label} →
+              </Link>
+            ))}
         </div>
       </div>
       <button

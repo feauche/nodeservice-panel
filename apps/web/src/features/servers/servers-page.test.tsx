@@ -9,12 +9,19 @@ import { mockProviders } from '@/test/msw/providers-mock';
 import { MOCK_SECURITY, mockSecurity } from '@/test/msw/security-mock';
 import { MOCK_SSH, mockServers, seedServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
+import { ServerModalHost } from './server-modal-host';
+import { useServerModalStore } from './server-modal-store';
 import { ServersPage } from './servers-page';
 
+/** Как в приложении: карточку сервера показывает хозяин из AppShell, а не сама страница. */
 function Harness() {
   const [tag, setTag] = useState<string | undefined>(undefined);
-  const [open, setOpen] = useState<string | undefined>(undefined);
-  return <ServersPage tag={tag} onTag={setTag} openId={open} onOpen={setOpen} />;
+  return (
+    <>
+      <ServersPage tag={tag} onTag={setTag} />
+      <ServerModalHost />
+    </>
+  );
 }
 
 const cards = () => screen.getAllByRole('article');
@@ -23,6 +30,7 @@ describe('ServersPage', () => {
   beforeEach(() => {
     resetMockState({ authenticated: true });
     seedServers();
+    useServerModalStore.getState().close();
   });
 
   it('список: имя, адрес, ОС и архитектура, теги, статусы SSH и агента', async () => {

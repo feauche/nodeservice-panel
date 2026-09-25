@@ -27,10 +27,8 @@ describe('ProvidersPage', () => {
     const card = screen.getByTestId('provider-card');
     expect(within(card).getByRole('heading', { name: 'Aéza' })).toBeInTheDocument();
     expect(within(card).getByRole('link', { name: /aeza\.net/ })).toHaveAttribute('href', 'https://aeza.net');
-    expect(await within(card).findByRole('link', { name: /de-fra-01/ })).toHaveAttribute(
-      'href',
-      expect.stringContaining('/servers?open='),
-    );
+    // сервер провайдера — кнопка: карточка открывается поверх страницы, без перехода в «Серверы»
+    expect(await within(card).findByRole('button', { name: /de-fra-01/ })).toBeInTheDocument();
     expect(within(card).getByLabelText('Заметка')).toHaveValue('аккаунт lumax@…, оплата до 5 октября');
 
     const user = userEvent.setup();

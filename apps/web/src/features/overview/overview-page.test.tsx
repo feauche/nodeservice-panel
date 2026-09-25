@@ -1,6 +1,8 @@
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
-
+import { ServerModalHost } from '@/features/servers/server-modal-host';
+import { useServerModalStore } from '@/features/servers/server-modal-store';
 import { resetMockState } from '@/test/msw/handlers';
 import { mockIncidents } from '@/test/msw/incidents-mock';
 import { mockMetrics } from '@/test/msw/metrics-mock';
@@ -20,6 +22,22 @@ describe('OverviewPage (по демо)', () => {
     expect(await screen.findByText('1 в норме')).toBeInTheDocument();
     expect(screen.getByText('1 офлайн')).toBeInTheDocument();
     expect(screen.getByText('50%')).toBeInTheDocument();
+  });
+
+  it('«Требует внимания»: сервер открывается карточкой поверх обзора, без перехода в «Серверы»', async () => {
+    useServerModalStore.getState().close();
+    const Page = () => (
+      <>
+        <OverviewPage />
+        <ServerModalHost />
+      </>
+    );
+    const { router } = renderPage(Page, '/', ['/servers']);
+    const user = userEvent.setup();
+    // nl-ams-02 в моках недоступен по SSH — строка в «Требует внимания»
+    await user.click(await screen.findByRole('button', { name: /nl-ams-02/ }));
+    expect(await screen.findByRole('dialog', { name: 'nl-ams-02' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/');
   });
 
   it('KPI-плитки: серверы, CPU, трафик, соединения — со спарклайнами', async () => {

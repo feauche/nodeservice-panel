@@ -40,16 +40,13 @@ import { cn } from '@/lib/utils';
 import { AddServerDialog } from './add-server-dialog';
 import { ServerCard, ServerCardGhost } from './server-card';
 import { HEALTH_LABELS, type ServerHealth, serverHealth } from './server-health';
-import { ServerModal, type ServerModalTab } from './server-modal';
+import { openServer } from './server-modal-store';
 import { serversKeys, useCheckAllServers, useReorderServers, useServers } from './servers-api';
 
 export interface ServersPageProps {
   /** Фильтр по тегу из URL (?tag=prod) — ссылку можно переслать. */
   tag?: string | undefined;
   onTag: (tag: string | undefined) => void;
-  /** Модалка сервера из URL (?open=<id>). */
-  openId?: string | undefined;
-  onOpen: (id: string | undefined) => void;
 }
 
 type HealthFilter = 'all' | ServerHealth;
@@ -60,14 +57,13 @@ const HEALTH_FILTERS: Array<{ key: HealthFilter; label: string }> = [
   { key: 'crit', label: HEALTH_LABELS.crit },
 ];
 
-export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
+export function ServersPage({ tag, onTag }: ServersPageProps) {
   const servers = useServers();
   const overview = useOverviewMetrics();
   const [q, setQ] = useState('');
   const [health, setHealth] = useState<HealthFilter>('all');
   const [addOpen, setAddOpen] = useState(false);
   const [checkAllOpen, setCheckAllOpen] = useState(false);
-  const [modalTab, setModalTab] = useState<ServerModalTab>('metrics');
   const checkAll = useCheckAllServers();
   const reorder = useReorderServers();
   const qc = useQueryClient();
@@ -165,13 +161,11 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
   /** Клик, которым закончилось перетаскивание, не должен открывать модалку сервера. */
   const openDetail = (server: Server) => {
     if (dragging.current) return;
-    setModalTab('metrics');
-    onOpen(server.id);
+    openServer(server.id, 'metrics');
   };
   const openEdit = (server: Server) => {
     if (dragging.current) return;
-    setModalTab('connection');
-    onOpen(server.id);
+    openServer(server.id, 'connection');
   };
 
   return (
@@ -370,14 +364,6 @@ export function ServersPage({ tag, onTag, openId, onOpen }: ServersPageProps) {
       </DndContext>
 
       <AddServerDialog open={addOpen} onOpenChange={setAddOpen} />
-      <ServerModal
-        server={items.find((sv) => sv.id === openId) ?? null}
-        initialTab={modalTab}
-        onClose={() => {
-          onOpen(undefined);
-          setModalTab('metrics');
-        }}
-      />
     </div>
   );
 }

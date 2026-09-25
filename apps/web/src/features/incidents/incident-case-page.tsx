@@ -14,6 +14,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatWhen } from '@/features/audit/audit-format';
+import { openServer } from '@/features/servers/server-modal-store';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -149,10 +150,10 @@ export function IncidentCasePage({ id }: { id: string }) {
           </div>
           <div className="flex flex-none flex-wrap items-center gap-2">
             {inc.serverId && (
-              <Link to="/servers" search={{ open: inc.serverId }} className={BTN}>
+              <button type="button" onClick={() => openServer(inc.serverId ?? '')} className={BTN}>
                 <ServerIcon className="size-3.5" aria-hidden="true" />
                 Сервер
-              </Link>
+              </button>
             )}
             {inc.status === 'open' && (
               <button

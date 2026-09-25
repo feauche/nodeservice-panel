@@ -33,6 +33,7 @@ import { NotificationBell } from '@/features/notifications/notification-bell';
 import { useSecurityOverview } from '@/features/security/security-api';
 import { StepUpHost } from '@/features/security/step-up-host';
 import { useIdleLock } from '@/features/security/use-idle-lock';
+import { ServerModalHost } from '@/features/servers/server-modal-host';
 import { TerminalHost } from '@/features/terminal/terminal-host';
 import { isSectionOpen, LOCKED_HINT } from '@/lib/stages';
 import { cn } from '@/lib/utils';
@@ -627,6 +628,7 @@ export function AppShell({ title, subtitle, actions, children }: AppShellProps) 
         <StepUpHost />
         {/* веб-терминал — одно плавающее окно на всё приложение */}
         <TerminalHost />
+        <ServerModalHost />
       </div>
     </div>
   );

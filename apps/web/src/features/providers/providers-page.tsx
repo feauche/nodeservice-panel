@@ -1,5 +1,4 @@
 import { isProviderIconServiceUrl, PROVIDER_NOTE_MAX, type Provider } from '@nodeservice/shared';
-import { Link } from '@tanstack/react-router';
 import {
   ArrowDownAZIcon,
   ArrowDownWideNarrowIcon,
@@ -16,6 +15,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { openServer } from '@/features/servers/server-modal-store';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { plural } from '@/lib/plural';
@@ -342,14 +342,14 @@ function ProviderCard({
             <ul className="mt-2 overflow-hidden rounded-[10px] border border-border">
               {servers.data?.map((s) => (
                 <li key={s.id} className="border-t border-border first:border-t-0">
-                  <Link
-                    to="/servers"
-                    search={{ open: s.id }}
-                    className="flex items-center gap-3 px-4 py-2.5 text-[13px] transition-colors hover:bg-surface-2"
+                  <button
+                    type="button"
+                    onClick={() => openServer(s.id)}
+                    className="flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left text-[13px] transition-colors hover:bg-surface-2"
                   >
                     <span className="min-w-0 flex-1 truncate font-medium">{s.name}</span>
                     <span className="text-[12px] text-text-3">открыть →</span>
-                  </Link>
+                  </button>
                 </li>
               ))}
             </ul>

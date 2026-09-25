@@ -1,10 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
-
+import { ServerModalHost } from '@/features/servers/server-modal-host';
+import { useServerModalStore } from '@/features/servers/server-modal-store';
 import { toast } from '@/lib/notify';
 import { resetMockState } from '@/test/msw/handlers';
 import { mockNotifications } from '@/test/msw/notifications-mock';
+import { mockServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
 import { NotificationBell } from './notification-bell';
 
@@ -65,5 +67,34 @@ describe('NotificationBell', () => {
     toast.success('Провайдер «Contabo» добавлен', { description: 'иконку подтянем в фоне' });
     await new Promise((r) => setTimeout(r, 50));
     expect(mockNotifications.items).toHaveLength(before);
+  });
+
+  it('ссылка на сервер в уведомлении открывает карточку поверх страницы, без перехода', async () => {
+    useServerModalStore.getState().close();
+    const target = mockServers.items[0];
+    if (!target) throw new Error('нет мок-сервера');
+    mockNotifications.items = [
+      {
+        id: '0192e000-0000-7000-8000-00000000f001',
+        severity: 'warn',
+        title: `Обслуживание: ${target.name}`,
+        body: 'обновлений безопасности: 5',
+        link: { to: `/servers?open=${target.id}`, label: 'Открыть сервер' },
+        createdAt: new Date().toISOString(),
+        readAt: null,
+      },
+    ];
+    const HostPage = () => (
+      <>
+        <NotificationBell />
+        <ServerModalHost />
+      </>
+    );
+    const { router } = renderPage(HostPage, '/', ['/servers']);
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId('notification-bell'));
+    await user.click(await screen.findByRole('button', { name: /Открыть сервер/ }));
+    expect(await screen.findByRole('dialog', { name: target.name })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/');
   });
 });

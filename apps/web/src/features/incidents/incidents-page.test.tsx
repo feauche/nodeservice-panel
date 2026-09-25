@@ -119,12 +119,30 @@ describe('IncidentCasePage', () => {
   it('кейс: хронология, сигналы в момент сбоя, правило и подтверждение шага', async () => {
     const { IncidentCasePage } = await import('./incident-case-page');
     const id = openId();
-    const Page = () => <IncidentCasePage id={id} />;
-    renderPage(Page, '/incidents/$id', ['/incidents', '/incidents/autofix', '/servers'], `/incidents/${id}`);
+    const { ServerModalHost } = await import('@/features/servers/server-modal-host');
+    const { useServerModalStore } = await import('@/features/servers/server-modal-store');
+    useServerModalStore.getState().close();
+    // Как в приложении: карточку сервера показывает хозяин из AppShell
+    const Page = () => (
+      <>
+        <IncidentCasePage id={id} />
+        <ServerModalHost />
+      </>
+    );
+    const { router } = renderPage(
+      Page,
+      '/incidents/$id',
+      ['/incidents', '/incidents/autofix', '/servers'],
+      `/incidents/${id}`,
+    );
     expect(await screen.findByText('Высокая нагрузка на CPU · de-fra-01')).toBeInTheDocument();
-    // B2: кнопка «Сервер» ведёт на карточку сервера этого инцидента
-    const serverLink = screen.getByRole('link', { name: 'Сервер' });
-    expect(serverLink.getAttribute('href')).toMatch(/^\/servers\?open=/);
+    // B2: кнопка «Сервер» открывает карточку сервера этого инцидента поверх страницы, без перехода
+    const user0 = userEvent.setup();
+    await user0.click(screen.getByRole('button', { name: 'Сервер' }));
+    const serverDialog = await screen.findByRole('dialog', { name: 'de-fra-01' });
+    expect(router.state.location.pathname).toBe(`/incidents/${id}`);
+    await user0.click(within(serverDialog).getByRole('button', { name: 'Закрыть' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'de-fra-01' })).not.toBeInTheDocument());
     // правая колонка: сигналы
     expect(screen.getByText('Сигналы в момент сбоя')).toBeInTheDocument();
     expect(screen.getByText('Контейнер ноды')).toBeInTheDocument();
