@@ -58,10 +58,13 @@ describe('инструменты и промпты разбора', () => {
     const names = ANALYSIS_TOOLS.map((t) => t.name).sort();
     expect(names).toEqual(
       [
+        'check_reachability',
         'get_incident',
         'get_maintenance',
         'get_metrics_history',
+        'get_playbook',
         'get_server_detail',
+        'inspect_processes',
         'list_incidents',
         'submit_analysis',
       ].sort(),

@@ -1,4 +1,11 @@
-import { type AssistantCitation, type AssistantProposal, INCIDENT_ACTIONS } from '@nodeservice/shared';
+import {
+  type AssistantCitation,
+  type AssistantProposal,
+  actionMeta,
+  INCIDENT_CHAINS,
+  type Incident,
+  type ReachabilityResult,
+} from '@nodeservice/shared';
 
 import type { AuditRepository } from '../audit/audit.repository.js';
 import type { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
@@ -71,16 +78,15 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   {
     name: 'propose_action',
     description:
-      'Предложить администратору безопасное действие для инцидента. НЕ выполняет — только предлагает. preset: node_up|restart_node|free_disk|apt_clean|agent_reinstall.',
+      'Предложить администратору шаг для инцидента: появится карточка с кнопкой, нажимает её администратор, вы ничего не запускаете. preset — ключ шага из цепочки правил ЭТОГО инцидента (поле chain в get_incident). T0 и T1 безопасны; T2 меняет состояние сервера, в reason объясните почему именно он; T3 (перезагрузка и подобное) карточкой не предлагается: напишите команду и последствия текстом. Название и последствия карточка берёт из реестра сама.',
     input_schema: {
       type: 'object',
       properties: {
         incidentId: { type: 'string' },
-        preset: { type: 'string' },
-        title: { type: 'string' },
-        description: { type: 'string' },
+        preset: { type: 'string', description: 'ключ шага из chain инцидента' },
+        reason: { type: 'string', description: 'Коротко, почему именно этот шаг (до 300 знаков)' },
       },
-      required: ['incidentId', 'preset', 'title', 'description'],
+      required: ['incidentId', 'preset', 'reason'],
     },
   },
 ];
@@ -107,6 +113,8 @@ export interface ToolOutcome {
   content: string;
   citations: AssistantCitation[];
   proposals: AssistantProposal[];
+  /** Проверки доступности, которые нужно показать матрицей под ответом. */
+  reachability?: ReachabilityResult[];
 }
 
 /** Выполнить инструмент из аллоулиста. Неизвестный инструмент — явная ошибка (не молчим). */
@@ -214,17 +222,55 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
 
   if (name === 'propose_action') {
     const preset = String(arg.preset ?? '');
-    if (!INCIDENT_ACTIONS.some((a) => a.key === preset && !a.terminal))
-      return { ...empty, content: 'Неизвестный пресет — предложение отклонено.' };
+    let inc: Incident;
+    try {
+      inc = await deps.incidents.get(String(arg.incidentId ?? ''));
+    } catch {
+      return {
+        ...empty,
+        content: 'Инцидент с таким id не найден. Возьмите id из list_incidents. Карточка не создана.',
+      };
+    }
+    if (inc.status === 'resolved')
+      return { ...empty, content: 'Инцидент уже закрыт: предлагать нечего. Карточка не создана.' };
+    if (!inc.serverId)
+      return {
+        ...empty,
+        content: 'Сервера этого инцидента больше нет: действие выполнять не на чем. Карточка не создана.',
+      };
+    const chain = INCIDENT_CHAINS[inc.kind] as readonly string[];
+    if (!chain.includes(preset))
+      return {
+        ...empty,
+        content: `Шага «${preset}» нет в цепочке правил этого инцидента. Доступные: ${chain.join(', ') || 'нет'}. Карточка не создана.`,
+      };
+    if (inc.attempts.some((a) => a.status === 'running'))
+      return {
+        ...empty,
+        content: 'Сейчас уже идёт попытка починки: дождитесь результата. Карточка не создана.',
+      };
+    const meta = actionMeta(preset);
+    if (meta.level === 'T3' || meta.terminal)
+      return {
+        ...empty,
+        content: `«${meta.title}» (T3) выполняется только вручную, карточки не будет. Напишите администратору команду текстом и последствия. Команда: ${meta.summary}.${meta.consequence ? ` Последствия: ${meta.consequence}.` : ''}`,
+      };
+    const reason = String(arg.reason ?? '')
+      .trim()
+      .slice(0, 300);
     const proposal: AssistantProposal = {
       kind: 'autofix',
-      incidentId: String(arg.incidentId ?? ''),
+      incidentId: inc.id,
       preset,
-      title: String(arg.title ?? ''),
-      description: String(arg.description ?? ''),
+      level: meta.level,
+      reason: reason || undefined,
+      title: meta.title,
+      description:
+        [reason, meta.consequence ? `Последствия: ${meta.consequence}.` : null].filter(Boolean).join(' ') ||
+        meta.summary,
     };
     return {
-      content: 'Предложение показано администратору для подтверждения.',
+      content: `Карточка «${meta.title}» (${meta.level}) показана администратору. Запустит её он сам.`,
       citations: [],
       proposals: [proposal],
     };

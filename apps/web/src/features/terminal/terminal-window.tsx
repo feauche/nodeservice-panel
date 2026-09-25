@@ -3,7 +3,7 @@ import '@xterm/xterm/css/xterm.css';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
-import { BookmarkIcon, MaximizeIcon, MinusIcon, SettingsIcon, XIcon } from 'lucide-react';
+import { BookmarkIcon, MaximizeIcon, MinusIcon, SettingsIcon, SparklesIcon, XIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Rnd } from 'react-rnd';
 
@@ -18,11 +18,16 @@ import {
 import { useSnippets } from '@/features/settings/settings-api';
 import { cn } from '@/lib/utils';
 import { SnippetsDialog } from './snippets-dialog';
+import { HINT_LINES, TerminalHints } from './terminal-hints';
 import type { TerminalTarget } from './terminal-store';
 import { useTerminalSocket } from './use-terminal-socket';
 
 const DEFAULT_W = 520;
 const DEFAULT_H = 330;
+const HINTS_W = 320;
+const MIN_W = 420;
+const HINTS_H = 460;
+const HINTS_H_COMPACT = 520;
 
 interface Geom {
   x: number;
@@ -34,10 +39,12 @@ interface Geom {
 function defaultGeom(): Geom {
   const w = typeof window !== 'undefined' ? window.innerWidth : 1280;
   const h = typeof window !== 'undefined' ? window.innerHeight : 800;
+  // На телефоне окно не шире экрана: раньше оно вылезало за правый край.
+  const width = Math.min(DEFAULT_W, w - 24);
   return {
-    width: DEFAULT_W,
+    width,
     height: DEFAULT_H,
-    x: Math.max(12, w - DEFAULT_W - 28),
+    x: Math.max(12, w - width - 28),
     y: Math.max(12, h - DEFAULT_H - 26),
   };
 }
@@ -76,6 +83,9 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
   const [fullscreen, setFullscreen] = useState(false);
   const prevGeom = useRef<Geom | null>(null);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
+  const [hintsOpen, setHintsOpen] = useState(false);
+  /** На сколько окно расширили под панель подсказок, чтобы при закрытии вернуть прежнюю ширину. */
+  const hintsGrow = useRef({ w: 0, h: 0 });
   const snippets = useSnippets();
 
   /** Вставить команду в строку ввода (без Enter) и вернуть фокус в терминал. */
@@ -86,6 +96,54 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
     },
     [sendInput],
   );
+
+  /** Последние строки экрана терминала для подсказки (то, что видит администратор). */
+  const readRecent = useCallback((): string => {
+    const term = termRef.current;
+    if (!term) return '';
+    const buf = term.buffer.active;
+    const lines: string[] = [];
+    for (let i = Math.max(0, buf.length - HINT_LINES); i < buf.length; i += 1)
+      lines.push(buf.getLine(i)?.translateToString(true) ?? '');
+    return lines.join('\n').trimEnd();
+  }, []);
+
+  /**
+   * Панель подсказок расширяет окно вправо, а не отнимает ширину у терминала; на узком экране она
+   * ложится поверх низа окна, и окно только вытягивается вверх, чтобы хватило места.
+   */
+  const toggleHints = useCallback(() => {
+    setHintsOpen((open) => {
+      const next = !open;
+      if (!fullscreen)
+        setGeom((g) => {
+          const compact = window.innerWidth < 768;
+          if (next) {
+            const width = compact ? g.width : Math.min(window.innerWidth - 24, g.width + HINTS_W);
+            const height = Math.min(
+              window.innerHeight - 24,
+              Math.max(g.height, compact ? HINTS_H_COMPACT : HINTS_H),
+            );
+            hintsGrow.current = { w: width - g.width, h: height - g.height };
+            return {
+              ...g,
+              width,
+              height,
+              x: Math.max(12, Math.min(g.x, window.innerWidth - 12 - width)),
+              y: Math.max(12, Math.min(g.y, window.innerHeight - 12 - height)),
+            };
+          }
+          const grow = hintsGrow.current;
+          hintsGrow.current = { w: 0, h: 0 };
+          return {
+            ...g,
+            width: Math.max(Math.min(MIN_W, window.innerWidth - 24), g.width - grow.w),
+            height: Math.max(260, g.height - grow.h),
+          };
+        });
+      return next;
+    });
+  }, [fullscreen]);
 
   const connected = status === 'connected';
 
@@ -193,7 +251,7 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
     <Rnd
       size={{ width: geom.width, height: geom.height }}
       position={{ x: geom.x, y: geom.y }}
-      minWidth={420}
+      minWidth={Math.min(MIN_W, typeof window !== 'undefined' ? window.innerWidth - 24 : MIN_W)}
       minHeight={260}
       bounds="window"
       dragHandleClassName="ns-term-drag"
@@ -227,6 +285,20 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
             </b>
           </span>
           <div className="flex flex-none gap-[3px]">
+            <button
+              type="button"
+              title="Подсказки ассистента"
+              aria-label="Подсказки ассистента"
+              aria-pressed={hintsOpen}
+              disabled={!connected}
+              onClick={toggleHints}
+              className={cn(
+                'grid size-[26px] cursor-pointer place-items-center rounded-[6px] text-text-3 transition-colors hover:bg-surface-3 hover:text-ai disabled:cursor-default disabled:opacity-40',
+                hintsOpen && 'bg-surface-3 text-ai',
+              )}
+            >
+              <SparklesIcon className="size-3.5" aria-hidden="true" />
+            </button>
             <DropdownMenu>
               <DropdownMenuTrigger
                 title="Сниппеты"
@@ -302,11 +374,25 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
           </div>
         </div>
 
-        {/* Тело: xterm + оверлеи состояний */}
-        <div className="relative min-h-0 flex-1 bg-surface">
-          <div ref={bodyRef} className="absolute inset-0 overflow-hidden px-[15px] py-[13px]" />
-          {(status === 'auth' || status === 'connecting') && <ConnectingOverlay server={server} />}
-          {(status === 'closed' || status === 'error') && <EndedOverlay error={error} onReopen={reopen} />}
+        {/* Тело: xterm + оверлеи состояний; справа, если открыта, панель подсказок */}
+        <div className="relative flex min-h-0 flex-1 bg-surface">
+          <div className="relative min-w-0 flex-1">
+            <div ref={bodyRef} className="absolute inset-0 overflow-hidden px-[15px] py-[13px]" />
+            {(status === 'auth' || status === 'connecting') && <ConnectingOverlay server={server} />}
+            {(status === 'closed' || status === 'error') && <EndedOverlay error={error} onReopen={reopen} />}
+          </div>
+          {hintsOpen && (
+            <TerminalHints
+              serverId={server.id}
+              readRecent={readRecent}
+              onInsert={insertSnippet}
+              onClose={toggleHints}
+              className={cn(
+                'w-[320px] flex-none border-l border-border',
+                'max-md:absolute max-md:inset-x-0 max-md:bottom-0 max-md:h-[62%] max-md:w-auto max-md:border-t max-md:border-l-0',
+              )}
+            />
+          )}
         </div>
       </div>
       <SnippetsDialog open={snippetsOpen} onOpenChange={setSnippetsOpen} />

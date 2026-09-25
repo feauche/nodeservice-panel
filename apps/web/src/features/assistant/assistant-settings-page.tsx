@@ -95,7 +95,7 @@ export function AssistantSettingsPage() {
             {/* Слева — подключение к провайдеру */}
             <SettingsCard
               title="Подключение"
-              hint="Ключ модели хранится в панели зашифрованным. Ассистент видит метрики, Журнал и базу знаний, но действия только предлагает — запускаешь ты."
+              hint="Ключ модели хранится в панели зашифрованным. Ассистент видит метрики, Журнал и базу знаний, но действия только предлагает, запускаете их вы."
             >
               <div className="mt-1 flex flex-col gap-4">
                 <div className="flex items-center justify-between gap-3 border-t border-border py-3.5 first:border-t-0">
@@ -134,7 +134,7 @@ export function AssistantSettingsPage() {
                     Модель
                   </label>
                   <span className="text-[12px] text-text-3">
-                    Впиши название модели у провайдера, например{' '}
+                    Укажите название модели у провайдера, например{' '}
                     <code className="rounded bg-surface-2 px-1 font-mono text-[11.5px]">
                       anthropic/claude-sonnet-4-5
                     </code>{' '}

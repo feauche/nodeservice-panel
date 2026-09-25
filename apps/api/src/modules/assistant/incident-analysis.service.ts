@@ -8,13 +8,10 @@ import {
 
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { AuditService } from '../audit/audit.service.js';
-import { IncidentMetricsService } from '../incidents/incident-metrics.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
-import { MaintenanceService } from '../maintenance/maintenance.service.js';
-import { VmReaderService } from '../metrics/vm-reader.service.js';
-import { ProvidersService } from '../providers/providers.service.js';
-import { ServersService } from '../servers/servers.service.js';
+import { playbookForKind, renderPlaybook } from './assistant.playbooks.js';
 import { incidentCase, type ReadDeps, runReadTool } from './assistant.read-tools.js';
+import { ReadDepsService } from './assistant-read-deps.service.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
 import {
   ANALYSIS_TOOLS,
@@ -67,11 +64,7 @@ export class IncidentAnalysisService implements OnModuleInit {
   constructor(
     private readonly settings: AssistantSettingsStore,
     private readonly incidents: IncidentsService,
-    private readonly servers: ServersService,
-    private readonly metrics: VmReaderService,
-    private readonly incidentMetrics: IncidentMetricsService,
-    private readonly providers: ProvidersService,
-    private readonly maintenance: MaintenanceService,
+    private readonly readDepsService: ReadDepsService,
     private readonly audit: AuditService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
   ) {}
@@ -84,14 +77,7 @@ export class IncidentAnalysisService implements OnModuleInit {
   }
 
   private readDeps(): ReadDeps {
-    return {
-      servers: this.servers,
-      incidents: this.incidents,
-      metrics: this.metrics,
-      incidentMetrics: this.incidentMetrics,
-      providers: this.providers,
-      maintenance: this.maintenance,
-    };
+    return this.readDepsService.get();
   }
 
   private async config() {
@@ -159,6 +145,8 @@ export class IncidentAnalysisService implements OnModuleInit {
     const deadline = Date.now() + TOTAL_MS;
     try {
       const deps = this.readDeps();
+      const book = playbookForKind(inc.kind);
+      const playbook = book ? renderPlaybook(book) : null;
       let metricText: string | null = null;
       const metric = INCIDENT_CHART_METRIC[inc.kind];
       if (metric && inc.serverId) {
@@ -175,13 +163,14 @@ export class IncidentAnalysisService implements OnModuleInit {
         { role: 'user', content: text(`${dataBlock(incidentCase(inc), metricText)}\n\nСделайте разбор.`) },
       ];
       let submission: Submission | null = null;
+      let reach: IncidentAnalysis['reachability'] = null;
       let nudged = false;
       for (let round = 0; round < MAX_ROUNDS && !submission; round += 1) {
         if (Date.now() > deadline) throw new AnalysisError('Разбор занял слишком много времени. Повторите.');
         const res = await this.llm.run({
           apiKey: cfg.apiKey,
           model: cfg.model,
-          system: analysisSystem(cfg.level),
+          system: analysisSystem(cfg.level, playbook),
           messages,
           tools: ANALYSIS_TOOLS,
         });
@@ -208,9 +197,9 @@ export class IncidentAnalysisService implements OnModuleInit {
             content = parsed.ok ? 'Разбор принят.' : parsed.error;
           } else if (ANALYSIS_TOOLS.some((t) => t.name === use.name)) {
             try {
-              content =
-                (await runReadTool(use.name, (use.input ?? {}) as Record<string, unknown>, deps))?.content ??
-                'Нет данных.';
+              const out = await runReadTool(use.name, (use.input ?? {}) as Record<string, unknown>, deps);
+              content = out?.content ?? 'Нет данных.';
+              if (out?.reachability?.[0]) reach = out.reachability[0];
             } catch (err) {
               this.log.warn(
                 `Инструмент «${use.name}» в разборе: ${err instanceof Error ? err.message : err}`,
@@ -226,6 +215,7 @@ export class IncidentAnalysisService implements OnModuleInit {
       await save({
         ...cur,
         ...submission,
+        reachability: reach,
         status: 'done',
         finishedAt: now(),
         error: null,

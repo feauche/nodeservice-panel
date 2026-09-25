@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { reachabilityResultSchema } from './reachability.js';
+
 import { nodeStateSchema } from './servers.js';
 
 /**
@@ -368,6 +370,8 @@ export const incidentAnalysisSchema = z.object({
   model: z.string().nullable(),
   error: z.string().nullable(),
   thread: z.array(z.object({ question: z.string(), answer: z.string(), at: z.iso.datetime() })),
+  /** Проверка доступности снаружи, если ассистент её делал (у старых разборов поля нет). */
+  reachability: reachabilityResultSchema.nullable().optional(),
 });
 export type IncidentAnalysis = z.infer<typeof incidentAnalysisSchema>;
 

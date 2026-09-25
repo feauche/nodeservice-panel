@@ -9,6 +9,7 @@ import { HttpResponse, http } from 'msw';
 
 import { mockAssistant } from './assistant-mock';
 import { mockIncidents } from './incidents-mock';
+import { sampleReach } from './reach-sample';
 
 /** Управление моком разбора: в тестах шаги быстрые, в браузере (см. mocks/browser.ts) — медленнее. */
 export const mockAnalysis = { stepMs: 30, fail: false };
@@ -135,7 +136,16 @@ export const analysisHandlers = [
             finishedAt: iso(),
             error: 'Провайдер не ответил за 60 секунд. Повторите разбор.',
           }
-        : { ...inc.analysis, ...BODIES[inc.kind], status: 'done', finishedAt: iso(), steps: list };
+        : {
+            ...inc.analysis,
+            ...BODIES[inc.kind],
+            ...(inc.kind === 'node_down' || inc.kind === 'ssh_down'
+              ? { reachability: sampleReach(inc.serverName, 'partial') }
+              : {}),
+            status: 'done',
+            finishedAt: iso(),
+            steps: list,
+          };
     }, mockAnalysis.stepMs * list.length);
     return HttpResponse.json(inc, { status: 202 });
   }),

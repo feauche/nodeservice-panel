@@ -47,7 +47,7 @@ export function UserMenu() {
   const security = useSecurityOverview();
   const sessions = useSessions();
   const current = sessions.data?.items.find((s) => s.current);
-  const settingsOpen = isSectionOpen('/settings');
+  const settingsOpen = isSectionOpen('/settings/security');
 
   const lockScreen = useLockScreen();
   const doLock = () => {

@@ -1,12 +1,10 @@
 import {
-  type ActionKey,
   ASSISTANT_MODE_LABELS,
   ASSISTANT_MODES,
   ASSISTANT_SUGGESTIONS,
   type AssistantCitation,
   type AssistantMessage,
   type AssistantMode,
-  type AssistantProposal,
   assistantMessageMax,
 } from '@nodeservice/shared';
 import { Link } from '@tanstack/react-router';
@@ -22,9 +20,7 @@ import {
   WandSparklesIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { useRunAction } from '@/features/incidents/incidents-api';
 import { Markdown } from '@/features/knowledge/markdown';
-import { StepUpCancelledError } from '@/features/security/step-up';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -34,6 +30,8 @@ import {
   useConversations,
   useSendMessage,
 } from './assistant-api';
+import { ProposalCard } from './proposal-card';
+import { ReachabilityCard } from './reachability-card';
 
 // Помним последнюю открытую беседу, чтобы вернуться и продолжить после ухода со страницы.
 const LAST_CONV_KEY = 'ns.assistant.conversation';
@@ -239,6 +237,7 @@ function AssistantChat() {
                 content: pendingUser,
                 citations: [],
                 proposals: [],
+                reachability: [],
                 createdAt: '',
               }}
             />
@@ -275,8 +274,8 @@ function AssistantChat() {
               aria-label={mode === 'analysis' ? 'Текст для анализа' : 'Сообщение ассистенту'}
               placeholder={
                 mode === 'analysis'
-                  ? 'Вставь текст или скопированную страницу — соберу инструкцию…'
-                  : 'Спроси о парке, метриках или как что-то починить…'
+                  ? 'Вставьте текст или скопированную страницу — соберу инструкцию…'
+                  : 'Спросите о парке, метриках или о том, как что-то починить…'
               }
               className="max-h-[200px] w-full resize-none bg-transparent px-2 py-1 text-[13.5px] leading-relaxed outline-none placeholder:text-text-3"
             />
@@ -393,9 +392,11 @@ function EmptyChat() {
         <span className="grid size-11 place-items-center rounded-2xl bg-brand-soft text-brand">
           <SparklesIcon className="size-5" aria-hidden="true" />
         </span>
-        <p className="text-[14px] font-semibold">Спроси об инцидентах, серверах или как что-то починить</p>
+        <p className="text-[14px] font-semibold">
+          Спросите об инцидентах, серверах или о том, как что-то починить
+        </p>
         <p className="max-w-[380px] text-[12.5px] text-text-3">
-          Ассистент смотрит метрики, Журнал и базу знаний. Действия он только предлагает — запускаешь ты.
+          Ассистент смотрит метрики, Журнал и базу знаний. Действия он только предлагает, запускаете их вы.
         </p>
       </div>
     </div>
@@ -451,8 +452,11 @@ function MessageRow({ message }: { message: AssistantMessage }) {
             ))}
           </div>
         )}
+        {message.reachability.map((r) => (
+          <ReachabilityCard key={`${r.target.name}:${r.ports.map((p) => p.port).join(',')}`} result={r} />
+        ))}
         {message.proposals.map((p) => (
-          <ProposalCard key={`${p.incidentId}:${p.preset}`} proposal={p} />
+          <ProposalCard key={`${p.incidentId}:${p.preset}`} proposal={p} createdAt={message.createdAt} />
         ))}
       </div>
     </div>
@@ -491,36 +495,4 @@ function Citation({ citation }: { citation: AssistantCitation }) {
       </Link>
     );
   return <span className={cn(cls, 'cursor-default hover:border-border-2')}>{inner}</span>;
-}
-
-function ProposalCard({ proposal }: { proposal: AssistantProposal }) {
-  const autofix = useRunAction();
-  const apply = async () => {
-    try {
-      await autofix.mutateAsync({ id: proposal.incidentId, action: proposal.preset as ActionKey });
-      toast.success('Запущено: ход выполнения — в разделе «Инциденты».');
-    } catch (err) {
-      if (!(err instanceof StepUpCancelledError)) toast.error(apiErrorMessage(err));
-    }
-  };
-  return (
-    <div className="mt-2.5 flex items-start gap-3 rounded-[12px] border border-border-2 bg-[linear-gradient(180deg,var(--ns-brand-soft),transparent)] p-3.5">
-      <span className="grid size-9 flex-none place-items-center rounded-[10px] bg-brand-soft text-brand">
-        <WandSparklesIcon className="size-4.5" aria-hidden="true" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="font-heading text-[13.5px] font-semibold">{proposal.title}</div>
-        <div className="mt-0.5 text-[12px] leading-normal text-text-2">{proposal.description}</div>
-        <button
-          type="button"
-          disabled={autofix.isPending}
-          onClick={() => void apply()}
-          className="mt-2.5 inline-flex h-8 items-center gap-1.5 rounded-[9px] bg-cta px-3.5 text-[12.5px] font-semibold text-cta-foreground hover:bg-(--ns-cta-hover) disabled:opacity-50"
-        >
-          <WandSparklesIcon className="size-3.5" aria-hidden="true" />
-          Применить
-        </button>
-      </div>
-    </div>
-  );
 }

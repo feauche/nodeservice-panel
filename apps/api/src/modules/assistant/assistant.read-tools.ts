@@ -18,7 +18,9 @@ import type { MaintenanceService } from '../maintenance/maintenance.service.js';
 import type { VmReaderService } from '../metrics/vm-reader.service.js';
 import type { ProvidersService } from '../providers/providers.service.js';
 import type { ServersService } from '../servers/servers.service.js';
+import { PLAYBOOKS, playbookById, renderPlaybook } from './assistant.playbooks.js';
 import type { ToolOutcome } from './assistant.tools.js';
+import type { FleetProbeService } from './fleet-probe.service.js';
 import type { LlmToolDef } from './llm.provider.js';
 
 /** Инструменты только для чтения (уровень T0): ассистент видит парк, но ничего не меняет. */
@@ -77,6 +79,35 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
     },
   },
   {
+    name: 'check_reachability',
+    description:
+      'Проверка доступности адреса сервера снаружи: с 2–3 независимых серверов парка (разные хостеры и подсети) по SSH проверяется TCP-порт и то, во что резолвится имя. Только чтение. Возвращает по каждому порту вывод (открыт со всех / закрыт со всех / частично), ответы DNS и ограничения проверки. ports — до трёх портов (по умолчанию порт SSH сервера); порт ноды панель не знает, уточните у администратора или проверьте 443. serverId — id или имя.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        serverId: { type: 'string', description: 'id или имя проверяемого сервера' },
+        ports: { type: 'array', items: { type: 'number' }, description: 'до трёх TCP-портов' },
+      },
+      required: ['serverId'],
+    },
+  },
+  {
+    name: 'inspect_processes',
+    description:
+      'Самые тяжёлые процессы сервера по CPU и памяти и средняя нагрузка (load): только имена, пользователи и проценты, без командных строк. Только чтение по SSH. Зови при высокой нагрузке или памяти, чтобы понять, создаёт ли её нода или что-то другое. serverId — id или имя.',
+    input_schema: {
+      type: 'object',
+      properties: { serverId: { type: 'string', description: 'id или имя сервера' } },
+      required: ['serverId'],
+    },
+  },
+  {
+    name: 'get_playbook',
+    description:
+      'Плейбук диагностики: порядок проверок, как читать результат, что можно предлагать и чего панель не видит. Без id возвращает список плейбуков. id: node_offline | server_unreachable | disk_full | high_load | conntrack_full | tspu_degradation | domain_blocked | gemini_ru. Сверяйся с плейбуком перед разбором сбоя.',
+    input_schema: { type: 'object', properties: { id: { type: 'string' } } },
+  },
+  {
     name: 'get_maintenance',
     description:
       'Обслуживание сервера: сколько обновлений (из них безопасности), нужна ли перезагрузка, ядро, автообновления, версия агента (установлена и последняя), свободное место, предупреждения последней проверки, идёт ли сейчас запуск и чем кончился прошлый. serverId — id или имя.',
@@ -95,6 +126,7 @@ export interface ReadDeps {
   incidentMetrics: Pick<IncidentMetricsService, 'latest'>;
   providers: Pick<ProvidersService, 'list'>;
   maintenance: Pick<MaintenanceService, 'state'>;
+  probe: Pick<FleetProbeService, 'reachability' | 'processes'>;
 }
 
 const HISTORY_METRICS = new Set<string>([...SERVER_METRIC_KEYS, 'memPct', 'diskPct']);
@@ -459,6 +491,45 @@ export async function runReadTool(
       citations: [{ type: 'incident', id: inc.id, label: inc.title }],
       proposals: [],
     };
+  }
+
+  if (name === 'check_reachability') {
+    const servers = await deps.servers.list();
+    const s = findServer(servers, String(arg.serverId ?? ''));
+    if (!s) return notFound(servers);
+    const result = await deps.probe.reachability(s, servers, arg.ports);
+    return {
+      content: JSON.stringify(result),
+      citations: [{ type: 'server', id: s.id, label: s.name }],
+      proposals: [],
+      reachability: result.probes.length > 0 ? [result] : [],
+    };
+  }
+
+  if (name === 'inspect_processes') {
+    const servers = await deps.servers.list();
+    const s = findServer(servers, String(arg.serverId ?? ''));
+    if (!s) return notFound(servers);
+    try {
+      const r = await deps.probe.processes(s.id);
+      if (r.empty) return none('Список процессов получить не удалось: сервер вернул пустой ответ.');
+      return {
+        content: JSON.stringify({ server: s.name, ...r }),
+        citations: [{ type: 'server', id: s.id, label: s.name }],
+        proposals: [],
+      };
+    } catch {
+      return none('Сервер не ответил по SSH: процессы посмотреть не удалось. Скажите об этом прямо.');
+    }
+  }
+
+  if (name === 'get_playbook') {
+    const id = String(arg.id ?? '').trim();
+    if (!id) return none(JSON.stringify(PLAYBOOKS.map((p) => ({ id: p.id, title: p.title, when: p.when }))));
+    const p = playbookById(id);
+    return none(
+      p ? renderPlaybook(p) : `Плейбука «${id}» нет. Доступные: ${PLAYBOOKS.map((x) => x.id).join(', ')}.`,
+    );
   }
 
   if (name === 'get_maintenance') {

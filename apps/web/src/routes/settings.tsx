@@ -3,7 +3,7 @@ import { BookOpenTextIcon, BracesIcon } from 'lucide-react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { requireAuth } from '@/features/auth/guards';
-import { requireSectionOpen } from '@/lib/stages';
+import { isSectionOpen, requireSectionOpen } from '@/lib/stages';
 
 export const Route = createFileRoute('/settings')({
   beforeLoad: async ({ context }) => {
@@ -63,7 +63,7 @@ function SettingsLayout() {
         aria-label="Разделы настроек"
         className="mb-5 inline-flex max-w-full gap-0.5 overflow-x-auto rounded-[11px] border border-border bg-surface p-[3px]"
       >
-        {TABS.map((t) => (
+        {TABS.filter((t) => isSectionOpen(t.to)).map((t) => (
           <Link
             key={t.to}
             to={t.to}

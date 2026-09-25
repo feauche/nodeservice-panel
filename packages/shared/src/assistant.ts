@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+import { ACTION_LEVELS } from './incidents.js';
+import { reachabilityResultSchema } from './reachability.js';
+
 /**
  * AI-ассистент (этап 9): чат со знанием состояния парка и базы знаний.
  * Ассистент НИКОГДА не выполняет действия сам — только предлагает (proposal),
@@ -113,6 +116,10 @@ export const assistantProposalSchema = z.object({
   preset: z.string(),
   title: z.string(),
   description: z.string(),
+  /** Уровень действия из реестра. Старые предложения без него: интерфейс берёт уровень из реестра сам. */
+  level: z.enum(ACTION_LEVELS).optional(),
+  /** Почему ассистент предлагает именно этот шаг (его слова, без последствий из реестра). */
+  reason: z.string().optional(),
 });
 export type AssistantProposal = z.infer<typeof assistantProposalSchema>;
 
@@ -122,6 +129,8 @@ export const assistantMessageSchema = z.object({
   content: z.string(),
   citations: z.array(assistantCitationSchema).default([]),
   proposals: z.array(assistantProposalSchema).default([]),
+  /** Проверки доступности, сделанные при ответе (показываются матрицей под ответом). */
+  reachability: z.array(reachabilityResultSchema).default([]),
   createdAt: z.iso.datetime(),
 });
 export type AssistantMessage = z.infer<typeof assistantMessageSchema>;
@@ -176,3 +185,29 @@ export const ASSISTANT_SUGGESTIONS = [
   'Как установить агента на сервер?',
   'Что было в Журнале за час?',
 ] as const;
+
+/** Подсказка к терминалу (R4.6): вывод терминала → объяснение и команды, которые можно вставить. */
+export const TERMINAL_HINT_TEXT_MAX = 12_000;
+export const terminalHintRequestSchema = z.object({
+  /** Последние строки терминала; секреты маскируются на сервере до отправки модели. */
+  text: z.string().max(TERMINAL_HINT_TEXT_MAX),
+  question: z.string().trim().max(500).optional(),
+});
+export type TerminalHintRequest = z.infer<typeof terminalHintRequestSchema>;
+
+export const TERMINAL_COMMAND_RISKS = ['read', 'change'] as const;
+export const terminalHintResponseSchema = z.object({
+  title: z.string(),
+  explanation: z.string(),
+  commands: z.array(
+    z.object({
+      command: z.string(),
+      note: z.string(),
+      /** read — только читает; change — меняет систему, вставить можно, но осторожно. */
+      risk: z.enum(TERMINAL_COMMAND_RISKS),
+    }),
+  ),
+  /** Сколько фрагментов замаскировано перед отправкой: ключи, пароли, токены, адреса. */
+  masked: z.number().int().min(0),
+});
+export type TerminalHintResponse = z.infer<typeof terminalHintResponseSchema>;

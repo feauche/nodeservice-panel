@@ -18,6 +18,9 @@ export class FakeSsh {
   /** Сколько «временных файлов старше часа» осмотр диска находит на тестовом сервере. */
   inspectTmpGb = 3.5;
   /** Обслуживание: сколько обновлений «видит» apt и падает ли шаг с этим маркером. */
+  /** Проверка доступности: ответы проверяющих по очереди (open | closed), пустая очередь — open. */
+  reachQueue: Array<'open' | 'closed'> = [];
+  reachDns = '203.0.113.7';
   maintenance = { updates: 3, security: 1, reboot: false, failStep: '' as string };
 
   async start(port = 0): Promise<void> {
@@ -93,6 +96,18 @@ export class FakeSsh {
                   }
                   stream.exit(0);
                 }
+              } else if (info.command.includes('ns-reach')) {
+                const state = this.reachQueue.shift() ?? 'open';
+                const ports = (info.command.match(/for p in ([0-9 ]+);/)?.[1] ?? '').trim().split(/\s+/);
+                for (const p of ports)
+                  stream.write(state === 'open' ? `tcp ${p} open 12\n` : `tcp ${p} closed\n`);
+                stream.write(`dns ${this.reachDns}\n`);
+                stream.exit(0);
+              } else if (info.command.includes('== cpu')) {
+                stream.write(
+                  '== cpu\n 812 root xray 87.5 3.1\n 1 root systemd 0.1 0.2\n== mem\n 812 root xray 87.5 3.1\n 990 root dockerd 0.4 2.0\n== load\n4.20 3.90 2.10 2/321 9999\n',
+                );
+                stream.exit(0);
               } else if (info.command.includes('du -xh')) {
                 // Осмотр диска: много коротких кусков вывода подряд — так и проявляется гонка записи лога и шагов.
                 for (let i = 0; i < 160; i++) stream.write(`${i}.0G\t/var/lib/каталог-${i}\n`);

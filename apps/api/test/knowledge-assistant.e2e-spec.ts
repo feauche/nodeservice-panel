@@ -291,8 +291,8 @@ describe('knowledge + assistant e2e', () => {
     expect(res.message.role).toBe('assistant');
     expect(res.message.content).toContain('conntrack');
     // предложение действия — human-in-the-loop
-    expect(res.message.proposals).toHaveLength(1);
-    expect(res.message.proposals[0]?.preset).toBe('restart_node');
+    // Предложение по несуществующему инциденту отклоняется, карточки нет (положительный путь: fleet-probe.e2e-spec)
+    expect(res.message.proposals).toHaveLength(0);
     // цитата на базу знаний
     expect(res.message.citations.some((c) => c.type === 'kb')).toBe(true);
 

@@ -1,9 +1,11 @@
 import {
+  type TerminalHintResponse,
   type TerminalSessionDetail,
+  terminalHintResponseSchema,
   terminalSessionDetailSchema,
   terminalSessionsResponseSchema,
 } from '@nodeservice/shared';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from '@/lib/api';
 
@@ -60,5 +62,17 @@ export function useTerminalSession(serverId: string, id: string | null) {
     staleTime: 10_000,
     // Открытая сессия дописывается — обновляем, пока не завершена.
     refetchInterval: (q) => (q.state.data && q.state.data.endedAt === null ? 3_000 : false),
+  });
+}
+
+/** Подсказка ассистента к выводу терминала: текст маскируется на сервере, ничего не выполняется. */
+export function useTerminalHint(serverId: string) {
+  return useMutation({
+    mutationFn: ({ text, question }: { text: string; question?: string }): Promise<TerminalHintResponse> =>
+      api.post(
+        `/servers/${serverId}/terminal/hint`,
+        { text, ...(question ? { question } : {}) },
+        terminalHintResponseSchema,
+      ),
   });
 }

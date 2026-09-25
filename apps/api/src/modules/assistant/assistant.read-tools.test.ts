@@ -273,6 +273,79 @@ describe('get_maintenance', () => {
   });
 });
 
+describe('check_reachability, inspect_processes, get_playbook', () => {
+  it('доступность: сервер ищется по имени, результат отдаётся как есть, проверка получает список серверов парка', async () => {
+    const seen: unknown[] = [];
+    const d = deps({
+      probe: {
+        reachability: async (t: unknown, all: unknown, ports: unknown) => {
+          seen.push(t, all, ports);
+          return {
+            target: { name: 'de-1', address: '10.0.0.1' },
+            probes: [],
+            ports: [],
+            dns: { answers: [], consistent: true },
+            notes: [],
+          };
+        },
+        processes: async () => ({ cpu: [], mem: [], load: null, empty: true }),
+      },
+    });
+    const { out, json } = await call('check_reachability', { serverId: 'de-1', ports: [443] }, d);
+    expect(json().target.name).toBe('de-1');
+    expect((seen[0] as { id: string }).id).toBe(ID_A);
+    expect((seen[1] as unknown[]).length).toBe(2);
+    expect(seen[2]).toEqual([443]);
+    expect(out.citations[0]).toMatchObject({ type: 'server', label: 'de-1' });
+    expect((await call('check_reachability', { serverId: 'нет' }, d)).out.content).toContain(
+      'Доступные серверы',
+    );
+  });
+  it('процессы: пустой ответ и ошибка SSH — честные сообщения, а не падение', async () => {
+    const mk = (fn: () => Promise<unknown>) =>
+      deps({ probe: { reachability: async () => ({}), processes: fn } });
+    expect(
+      (
+        await call(
+          'inspect_processes',
+          { serverId: 'de-1' },
+          mk(async () => ({ cpu: [], mem: [], load: null, empty: true })),
+        )
+      ).out.content,
+    ).toContain('пустой ответ');
+    expect(
+      (
+        await call(
+          'inspect_processes',
+          { serverId: 'de-1' },
+          mk(async () => {
+            throw new Error('ssh');
+          }),
+        )
+      ).out.content,
+    ).toContain('не ответил по SSH');
+    const ok = await call(
+      'inspect_processes',
+      { serverId: 'de-1' },
+      mk(async () => ({
+        cpu: [{ pid: 1, user: 'root', name: 'xray', cpu: 90, mem: 3 }],
+        mem: [],
+        load: '1 1 1',
+        empty: false,
+      })),
+    );
+    expect(ok.json().cpu[0].name).toBe('xray');
+  });
+  it('плейбук: список без id, текст по id, подсказка по неверному id', async () => {
+    const list = await call('get_playbook', {});
+    expect(JSON.parse(list.out.content).map((p: { id: string }) => p.id)).toContain('node_offline');
+    expect((await call('get_playbook', { id: 'disk_full' })).out.content).toContain(
+      'ПЛЕЙБУК «Диск заполнен»',
+    );
+    expect((await call('get_playbook', { id: 'нет' })).out.content).toContain('Доступные:');
+  });
+});
+
 it('чужое имя инструмента — null, чтобы отработал основной исполнитель', async () => {
   expect(await runReadTool('search_kb', {}, deps())).toBeNull();
 });

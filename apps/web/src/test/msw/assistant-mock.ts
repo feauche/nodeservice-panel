@@ -11,6 +11,7 @@ import { HttpResponse, http } from 'msw';
 
 import { mockIncidents } from './incidents-mock';
 import { mockKnowledge } from './knowledge-mock';
+import { sampleReach } from './reach-sample';
 
 interface AssistantMock {
   enabled: boolean;
@@ -58,7 +59,18 @@ function aProblem(status: number, detail: string) {
 }
 
 /** Демо-ответ ассистента: цитаты (база знаний + инцидент) и предложение автопочинки. */
-function buildReply(): AssistantMessage {
+function buildReply(text = ''): AssistantMessage {
+  if (/доступ|снаружи/i.test(text))
+    return {
+      id: uid(),
+      role: 'assistant',
+      content:
+        'Порт SSH открыт со всех проверяющих, а порт 443 закрыт. Похоже, сервис не слушает 443 или его закрывает фильтр.',
+      citations: [],
+      proposals: [],
+      reachability: [sampleReach('de-fra-01', 'closed443')],
+      createdAt: new Date().toISOString(),
+    };
   const cpu = mockIncidents.items.find((i) => i.kind === 'cpu_high' && i.status !== 'resolved');
   const kb = { type: 'kb' as const, id: '0192e000-0000-7000-8000-000000000001', label: 'Лимит conntrack' };
   const citations: AssistantMessage['citations'] = [kb];
@@ -71,15 +83,18 @@ function buildReply(): AssistantMessage {
       preset: 'restart_node',
       title: 'Перезапустить контейнер ноды',
       description: 'Снимет пиковую нагрузку на CPU на de-fra-01.',
+      level: 'T2',
+      reason: 'CPU держится выше порога, а по базе знаний помогает перезапуск.',
     });
   }
   return {
     id: uid(),
     role: 'assistant',
     content:
-      'Сейчас на **de-fra-01** высокая нагрузка на CPU. По базе знаний помогает `перезапуск Xray`. Могу предложить безопасное действие — подтвердишь, и я запущу.',
+      'Сейчас на **de-fra-01** высокая нагрузка на CPU. По базе знаний помогает `перезапуск Xray`. Могу предложить безопасное действие: вы подтвердите, и оно запустится.',
     citations,
     proposals,
+    reachability: [],
     createdAt: new Date().toISOString(),
   };
 }
@@ -95,6 +110,7 @@ function buildAnalysisReply(): AssistantMessage {
         'Разбор готов, но создание статей выключено — включи «Настройки → Ассистент → Разрешения». Пока держи черновик в ответе.',
       citations: [],
       proposals: [],
+      reachability: [],
       createdAt: now,
     };
   }
@@ -116,11 +132,50 @@ function buildAnalysisReply(): AssistantMessage {
     content: `Собрал статью **«${article.title}»** и сохранил в базу знаний (метка AI).`,
     citations: [{ type: 'kb', id: article.id, label: article.title }],
     proposals: [],
+    reachability: [],
     createdAt: now,
   };
 }
 
 export const assistantHandlers = [
+  http.post('/api/servers/:id/terminal/hint', async ({ request }) => {
+    if (!mockAssistant.enabled)
+      return aProblem(
+        409,
+        'Ассистент выключен: задайте провайдера, ключ и модель в «Настройки → Ассистент».',
+      );
+    const body = (await request.json().catch(() => ({}))) as { text?: string; question?: string };
+    const text = (body.text ?? '').trim();
+    if (!text) return aProblem(400, 'В терминале пока нет вывода: подсказывать нечего.');
+    const masked = (text.match(/password|token|secret|\b\d{1,3}(?:\.\d{1,3}){3}\b/gi) ?? []).length;
+    const conntrack = /conntrack/i.test(text);
+    return HttpResponse.json({
+      title: conntrack ? 'Упёрся conntrack' : 'Вывод выглядит обычно',
+      explanation: conntrack
+        ? 'В ядре переполнена таблица соединений, поэтому новые соединения отбрасываются. Сервис жив, но часть пользователей не подключается.'
+        : `Ничего тревожного в последних строках не видно.${body.question ? ` Вы спросили: «${body.question}».` : ''}`,
+      commands: conntrack
+        ? [
+            {
+              command: 'cat /proc/sys/net/netfilter/nf_conntrack_max',
+              note: 'Какой сейчас предел',
+              risk: 'read',
+            },
+            {
+              command: 'sysctl net.netfilter.nf_conntrack_count',
+              note: 'Сколько записей занято',
+              risk: 'read',
+            },
+            {
+              command: 'sysctl -w net.netfilter.nf_conntrack_max=1048576',
+              note: 'Поднять предел, учтите объём памяти',
+              risk: 'change',
+            },
+          ]
+        : [{ command: 'uptime', note: 'Посмотреть нагрузку', risk: 'read' }],
+      masked,
+    });
+  }),
   http.get('/api/assistant/status', () =>
     HttpResponse.json({
       enabled: mockAssistant.enabled,
@@ -194,9 +249,10 @@ export const assistantHandlers = [
       content: body.message,
       citations: [],
       proposals: [],
+      reachability: [],
       createdAt: new Date().toISOString(),
     };
-    const reply = effMode === 'analysis' ? buildAnalysisReply() : buildReply();
+    const reply = effMode === 'analysis' ? buildAnalysisReply() : buildReply(body.message);
     mockAssistant.messages[convId] = [...(mockAssistant.messages[convId] ?? []), userMsg, reply];
     return HttpResponse.json({ conversationId: convId, message: reply });
   }),

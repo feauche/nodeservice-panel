@@ -11,11 +11,15 @@ import { SettingsModule } from '../settings/settings.module.js';
 import { AssistantController } from './assistant.controller.js';
 import { AssistantRepository } from './assistant.repository.js';
 import { AssistantService } from './assistant.service.js';
+import { ReadDepsService } from './assistant-read-deps.service.js';
 import { AssistantSettingsModule } from './assistant-settings.module.js';
+import { FleetProbeService } from './fleet-probe.service.js';
 import { IncidentAnalysisController } from './incident-analysis.controller.js';
 import { IncidentAnalysisService } from './incident-analysis.service.js';
 import { KbReviewService } from './kb-review.service.js';
 import { LLM_PROVIDER } from './llm.provider.js';
+import { TerminalHintController } from './terminal-hint.controller.js';
+import { TerminalHintService } from './terminal-hint.service.js';
 import { ZvenoProvider } from './zveno.provider.js';
 
 /** Этап 9: AI-ассистент. Провайдер LLM за токеном — в тестах подменяется фейком. */
@@ -31,10 +35,13 @@ import { ZvenoProvider } from './zveno.provider.js';
     AssistantSettingsModule,
     SettingsModule,
   ],
-  controllers: [AssistantController, IncidentAnalysisController],
+  controllers: [AssistantController, IncidentAnalysisController, TerminalHintController],
   providers: [
     AssistantService,
     IncidentAnalysisService,
+    FleetProbeService,
+    ReadDepsService,
+    TerminalHintService,
     AssistantRepository,
     KbReviewService,
     { provide: LLM_PROVIDER, useClass: ZvenoProvider },

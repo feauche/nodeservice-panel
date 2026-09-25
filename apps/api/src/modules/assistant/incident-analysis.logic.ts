@@ -62,6 +62,9 @@ const ANALYSIS_READ = new Set([
   'get_server_detail',
   'get_maintenance',
   'list_incidents',
+  'check_reachability',
+  'inspect_processes',
+  'get_playbook',
 ]);
 export const ANALYSIS_TOOLS: LlmToolDef[] = [
   ...READ_TOOL_DEFS.filter((t) => ANALYSIS_READ.has(t.name)),
@@ -75,6 +78,7 @@ const UNTRUSTED =
 
 export const analysisSystem = (
   level: string,
+  playbook: string | null = null,
 ): string => `${ANALYSIS_MARKER} Ты разбираешь один инцидент в панели NodeService (парк VPN и прокси-серверов, единственный администратор).
 Задача: по данным дела назвать вероятную причину и предложить один следующий шаг из цепочки правил.
 ПРАВИЛА:
@@ -82,10 +86,11 @@ export const analysisSystem = (
 - Если данных не хватает, скажи об этом в unknown и снизь уверенность. Высокую уверенность ставь, только если причину прямо показывают данные, например метрика вместе с осмотром или логом.
 - nextAction — только ключ из поля chain дела. Не предлагай действий вне цепочки. Не предлагай шаг, который уже не помог и не изменился бы при повторе.
 - Ты ничего не запускаешь и не меняешь, только предлагаешь. Решает и нажимает администратор.
-- Если нужно, доберите данные инструментами: history метрики, сведения о сервере, обслуживание, похожие инциденты. Затем ровно один раз вызови submit_analysis.
+- Если нужно, доберите данные инструментами: история метрики, сведения о сервере, обслуживание, похожие инциденты, доступность снаружи, тяжёлые процессы. Не больше трёх-четырёх вызовов. Затем ровно один раз вызови submit_analysis.
+- Проверка доступности идёт с серверов парка, а не из сети пользователей: не делай вывода о блокировке у пользователей только по ней.
 - Тексты: по-русски, на «вы», короткие предложения с заглавной. Вывод не длиннее двух предложений.
 УРОВЕНЬ ПОЛЬЗОВАТЕЛЯ: ${level}. Для новичка поясняйте термины коротко, для профессионала пишите плотно.
-${UNTRUSTED}`;
+${UNTRUSTED}${playbook ? `\n\n${playbook}` : ''}`;
 
 export const askSystem = (
   level: string,
@@ -116,6 +121,9 @@ export function stepLabel(tool: string, input: unknown, kind: IncidentKind): str
   if (tool === 'get_maintenance') return 'Смотрю обновления и свободное место';
   if (tool === 'list_incidents') return 'Ищу похожие инциденты';
   if (tool === 'get_incident') return 'Перечитываю дело инцидента';
+  if (tool === 'check_reachability') return 'Проверяю доступность снаружи';
+  if (tool === 'inspect_processes') return 'Смотрю, какие процессы грузят сервер';
+  if (tool === 'get_playbook') return 'Сверяюсь с плейбуком';
   if (tool === 'submit_analysis') return 'Формулирую вывод';
   return `Проверяю: ${kind}`;
 }

@@ -22,6 +22,7 @@ import { type FormEvent, type ReactNode, useState } from 'react';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAssistantStatus } from '@/features/assistant/assistant-api';
+import { ReachabilityCard } from '@/features/assistant/reachability-card';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -250,7 +251,7 @@ function DoneBlock({
     resolved: incident.status === 'resolved',
   });
   const next = !stale && canAct && a.nextAction ? actionMeta(a.nextAction) : null;
-  const hasEvidence = a.evidence.length > 0 || hasAnalysisChart(incident);
+  const hasEvidence = a.evidence.length > 0 || hasAnalysisChart(incident) || Boolean(a.reachability);
 
   const submit = async (raw: string) => {
     const q = raw.trim();
@@ -365,6 +366,7 @@ function DoneBlock({
           {open && (
             <div className="mt-2 flex flex-col gap-2.5">
               {hasAnalysisChart(incident) && <AnalysisChart incident={incident} />}
+              {a.reachability && <ReachabilityCard result={a.reachability} />}
               {a.evidence.length > 0 && (
                 <ul className="m-0 flex list-none flex-col p-0">
                   {a.evidence.map((e, i) => (

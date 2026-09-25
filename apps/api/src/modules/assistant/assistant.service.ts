@@ -10,6 +10,7 @@ import {
   type AssistantPermissions,
   type AssistantProposal,
   type AssistantStatus,
+  type ReachabilityResult,
 } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
@@ -29,6 +30,7 @@ import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js'
 import { AssistantRepository } from './assistant.repository.js';
 import { ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
+import { FleetProbeService } from './fleet-probe.service.js';
 import { LLM_PROVIDER, type LlmBlock, type LlmMsg, type LlmProvider } from './llm.provider.js';
 
 const MAX_TOOL_ROUNDS = 8;
@@ -36,12 +38,12 @@ const MAX_TOOL_ROUNDS = 8;
 const SYSTEM = `Ты — встроенный помощник панели NodeService: самохостируемой панели управления парком VPN/прокси-серверов (единственный администратор). Ты глубоко знаешь, как устроена сама панель, и знаешь её реальные данные через инструменты.
 
 ПРАВИЛА:
-- Отвечай кратко и по делу, на русском, обращайся на «ты».
-- Для реальных данных ВСЕГДА зови инструменты, все они только читают: get_fleet_status (весь парк), get_server_detail (один сервер, id или имя), get_metrics_history (история метрики: пик, тренд), list_incidents и get_incident (инциденты и дело целиком), get_maintenance (обновления, перезагрузка, диск), get_settings, search_audit, search_kb. Не выдумывай метрики, адреса, теги, события.
-- Разбор сбоя: сначала get_incident, затем при необходимости get_metrics_history и get_server_detail. Ответ делай так: что видно из данных, вероятная причина (помечай как предположение, если данных мало), что уже пробовали, что предлагаешь дальше. Если данных для вывода нет — так и скажи, не додумывай.
+- Отвечай кратко и по делу, на русском, обращайся на «вы».
+- Для реальных данных ВСЕГДА зови инструменты, все они только читают: get_fleet_status (весь парк), get_server_detail (один сервер, id или имя), get_metrics_history (история метрики: пик, тренд), list_incidents и get_incident (инциденты и дело целиком), get_maintenance (обновления, перезагрузка, диск), check_reachability (доступность адреса снаружи с 2–3 независимых серверов парка), inspect_processes (тяжёлые процессы), get_playbook (порядок диагностики), get_settings, search_audit, search_kb. Не выдумывай метрики, адреса, теги, события.
+- Разбор сбоя: сначала get_playbook по теме (нода недоступна, диск, нагрузка, conntrack, ТСПУ, блокировка домена), затем get_incident и проверки из плейбука. Ответ делай так: что видно из данных, вероятная причина (помечай как предположение, если данных мало), что уже пробовали, что предлагаешь дальше. Если данных для вывода нет — так и скажи, не додумывай. Плейбук называет, чего панель не видит (логи ноды, страну IP, ретрансмиты): говори об этом прямо.
+- Проверка доступности идёт с серверов парка, а не из сети пользователей: не делай выводов о блокировке у пользователей только по ней.
 - Если инструмент вернул «недоступно» или «данных нет» — скажи об этом прямо и не подставляй свои числа.
-- Если спрашивают «как что-то сделать в панели» — объясни точный путь по интерфейсу (см. карту ниже). Это встроенное знание, инструкции в базе знаний для этого не нужны.
-- Действия ты не выполняешь сам — если нужно, зови propose_action, администратор подтвердит.
+- Действий ты не выполняешь никогда. Шаг предлагай через propose_action, только из цепочки правил инцидента (поле chain в get_incident): появится карточка, нажимает её администратор. Уровни: T0 и T1 безопасны; T2 меняет состояние сервера, объясни последствия и почему именно он; T3 (перезагрузка и подобное) карточкой не предлагай: напиши команду и последствия текстом.
 
 КАРТА ПАНЕЛИ (навигация слева):
 - «Обзор» (/) — здоровье парка, KPI (средний CPU, память, трафик, соединения), «Требует внимания», «Трафик парка», последние события, баннер активных инцидентов.
@@ -120,6 +122,7 @@ export class AssistantService {
     private readonly incidentMetrics: IncidentMetricsService,
     private readonly providers: ProvidersService,
     private readonly maintenance: MaintenanceService,
+    private readonly probe: FleetProbeService,
     private readonly kb: KnowledgeRepository,
     private readonly knowledge: KnowledgeService,
     private readonly auditRepo: AuditRepository,
@@ -140,6 +143,7 @@ export class AssistantService {
       content: row.content,
       citations: (row.citations as AssistantCitation[]) ?? [],
       proposals: (row.proposals as AssistantProposal[]) ?? [],
+      reachability: (row.reachability as ReachabilityResult[]) ?? [],
       createdAt: row.createdAt.toISOString(),
     };
   }
@@ -196,6 +200,7 @@ export class AssistantService {
       incidentMetrics: this.incidentMetrics,
       providers: this.providers,
       maintenance: this.maintenance,
+      probe: this.probe,
       kb: this.kb,
       audit: this.auditRepo,
       autochecks: this.autochecks,
@@ -212,6 +217,7 @@ export class AssistantService {
     };
     const citations: AssistantCitation[] = [];
     const proposals: AssistantProposal[] = [];
+    const reachability: ReachabilityResult[] = [];
     let answer = '';
     let toolCalls = 0;
 
@@ -234,7 +240,14 @@ export class AssistantService {
         try {
           const outcome = await runTool(use.name, use.input, deps);
           citations.push(...outcome.citations);
-          proposals.push(...outcome.proposals);
+          for (const r of outcome.reachability ?? []) {
+            const at = reachability.findIndex((x) => x.target.name === r.target.name);
+            if (at >= 0) reachability.splice(at, 1);
+            reachability.push(r);
+          }
+          for (const p of outcome.proposals)
+            if (!proposals.some((x) => x.incidentId === p.incidentId && x.preset === p.preset))
+              proposals.push(p);
           results.push({ type: 'tool_result', tool_use_id: use.id, content: outcome.content });
         } catch (err) {
           // Падение одного инструмента не должно ронять весь чат: логируем и даём модели
@@ -259,6 +272,7 @@ export class AssistantService {
       content: finalAnswer,
       citations: dedupe(citations),
       proposals,
+      reachability,
     });
     await this.audit.record({
       action: 'assistant.chat',

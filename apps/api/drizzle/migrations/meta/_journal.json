@@ -225,6 +225,13 @@
       "when": 1789101200000,
       "tag": "0031_incident_analysis",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1789101300000,
+      "tag": "0032_assistant_reachability",
+      "breakpoints": true
     }
   ]
 }

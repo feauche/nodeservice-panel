@@ -130,6 +130,7 @@ export const AUDIT_ACTIONS = {
   'server.autocheck.ssh': { category: 'server', label: 'Автопроверка SSH изменила статус' },
   'server.terminal.open': { category: 'server', label: 'Открыт веб-терминал' },
   'server.terminal.close': { category: 'server', label: 'Веб-терминал закрыт' },
+  'server.terminal.hint': { category: 'server', label: 'Терминал: подсказка ассистента' },
   'server.terminal.denied': { category: 'server', label: 'Веб-терминал отклонён: нет входа' },
   'provider.created': { category: 'server', label: 'Провайдер добавлен' },
   'provider.updated': { category: 'server', label: 'Провайдер изменён' },

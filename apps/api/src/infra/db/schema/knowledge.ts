@@ -58,6 +58,8 @@ export const assistantMessages = pgTable(
     content: text('content').notNull(),
     citations: jsonb('citations').$type<unknown[]>().notNull().default([]),
     proposals: jsonb('proposals').$type<unknown[]>().notNull().default([]),
+    /** Проверки доступности снаружи (миграция 0032). */
+    reachability: jsonb('reachability').$type<unknown[]>().notNull().default([]),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('assistant_msg_conv_idx').on(t.conversationId, t.createdAt)],

@@ -28,10 +28,25 @@ describe('AssistantPage', () => {
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
     // ответ ассистента с предложением автопочинки
     expect(await screen.findByText('Перезапустить контейнер ноды')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Применить' })).toBeInTheDocument();
+    const card = screen.getByTestId('proposal-card');
+    expect(within(card).getByText('T2')).toBeInTheDocument();
+    expect(within(card).getByText(/Почему:/)).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Выполнить' })).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: 'Открыть инцидент' })).toBeInTheDocument();
     // цитата на базу знаний ведёт на конкретную статью (?open=<id>), а не просто в раздел
     const kbLink = screen.getByRole('link', { name: /Лимит conntrack/ });
     expect(kbLink.getAttribute('href')).toContain('open=');
+  });
+
+  it('вопрос про доступность: под ответом матрица проверки снаружи', async () => {
+    mockAssistant.enabled = true;
+    renderPage(AssistantPage, '/assistant');
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText('Сообщение ассистенту'), 'Сервер доступен снаружи?');
+    await user.click(screen.getByRole('button', { name: 'Отправить' }));
+    const card = await screen.findByTestId('reachability-card');
+    expect(within(card).getByText(/Доступность de-fra-01 снаружи/)).toBeInTheDocument();
+    expect(within(card).getByText('443: закрыт со всех')).toBeInTheDocument();
   });
 
   it('чип-подсказка отправляет вопрос', async () => {
@@ -72,6 +87,7 @@ describe('AssistantPage', () => {
           content: question,
           citations: [],
           proposals: [],
+          reachability: [],
           createdAt: iso,
         },
         {
@@ -80,6 +96,7 @@ describe('AssistantPage', () => {
           content: 'Первый ответ.',
           citations: [],
           proposals: [],
+          reachability: [],
           createdAt: iso,
         },
       ],
@@ -99,6 +116,7 @@ describe('AssistantPage', () => {
           content: 'Второй ответ.',
           citations: [],
           proposals: [],
+          reachability: [],
           createdAt: iso,
         };
         mockAssistant.messages[convId] = [
@@ -109,6 +127,7 @@ describe('AssistantPage', () => {
             content: question,
             citations: [],
             proposals: [],
+            reachability: [],
             createdAt: iso,
           },
           reply,
