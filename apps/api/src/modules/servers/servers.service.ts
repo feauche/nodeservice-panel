@@ -372,6 +372,7 @@ export class ServersService {
         ...(patch.auth ? { authChanged: true, authMethod: patch.auth.method } : {}),
       },
     });
+    if (updated.name !== row.name) await this.repo.propagateRename(id, row.name, updated.name);
     return this.toDto(updated);
   }
 

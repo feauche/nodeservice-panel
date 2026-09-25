@@ -388,7 +388,8 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
     const server = await this.serversRepo.findById(serverId);
     await this.notifications.push({
       severity: check.rebootRequired || (check.updates?.security ?? 0) > 0 ? 'warn' : 'info',
-      title: `Обслуживание: ${server?.name ?? 'сервер'}`,
+      title: server ? 'Обслуживание: {server}' : 'Обслуживание: сервер',
+      ...(server ? { server: { id: server.id, name: server.name } } : {}),
       body: found.join(' · '),
       link: { to: `/servers?open=${serverId}`, label: 'Открыть сервер' },
     });

@@ -70,6 +70,7 @@ bash "$APP_DIR/infra/scripts/backup.sh"
 
 echo -e "${C}==> Сборка образа api ($after)${N}"
 sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$after/" "$ENV_FILE"
+export APP_COMMIT="$after" APP_BUILT_AT="$(date -u +%Y-%m-%d)"
 if ! "${COMPOSE[@]}" build api; then
     sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$before/" "$ENV_FILE"
     git checkout --quiet --detach "$before"

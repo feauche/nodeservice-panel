@@ -89,6 +89,24 @@ export class ServersRepository {
     return row;
   }
 
+  /**
+   * Сервер переименован: инциденты хранят имя строкой (в списке и в заголовке «Вид · имя») — обновляем.
+   * Уведомления имени не хранят, а подставляют актуальное при показе (миграция 0030).
+   */
+  async propagateRename(id: string, oldName: string, newName: string): Promise<void> {
+    await this.db.execute(sql`
+      update incidents
+      set server_name = ${newName},
+          title = case
+            when right(title, length(${oldName}) + 3) = ' · ' || ${oldName}
+              then left(title, length(title) - length(${oldName})) || ${newName}
+            else title
+          end
+      where server_id = ${id}
+    `);
+    this.events.emit({ type: 'rename', data: { id } });
+  }
+
   async delete(id: string): Promise<boolean> {
     const rows = await this.db.delete(servers).where(eq(servers.id, id)).returning({ id: servers.id });
     if (rows.length > 0) this.events.emit({ type: 'server', data: { id } });

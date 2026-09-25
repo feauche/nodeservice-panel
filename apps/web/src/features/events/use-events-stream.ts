@@ -39,6 +39,15 @@ export function useEventsStream(enabled = true): void {
         void qc.invalidateQueries({ queryKey: ['metrics', 'overview'] });
       }),
     );
+    // Переименовали сервер: новое имя нужно и в списках инцидентов, и в уведомлениях.
+    es.addEventListener('rename', () =>
+      later('rename', () => {
+        void qc.invalidateQueries({ queryKey: ['servers'] });
+        void qc.invalidateQueries({ queryKey: incidentsKeys.all });
+        void qc.invalidateQueries({ queryKey: notificationsKeys.list });
+        void qc.invalidateQueries({ queryKey: ['metrics', 'overview'] });
+      }),
+    );
     es.addEventListener('incident', () =>
       later('incident', () => void qc.invalidateQueries({ queryKey: incidentsKeys.all })),
     );

@@ -18,7 +18,12 @@ export interface PushInput {
   title: string;
   body?: string | null;
   link?: NotificationLink | null;
+  /** Про какой сервер: в title/body пишем токен `{server}`, имя подставится при показе (переименование видно сразу). */
+  server?: { id: string; name: string } | null;
 }
+
+/** Токен имени сервера в тексте уведомления. */
+export const SERVER_TOKEN = '{server}';
 
 /**
  * Центр уведомлений. `push()` вызывают сервисы панели (инциденты, обслуживание, фоновые задачи),
@@ -37,12 +42,15 @@ export class NotificationsService {
     private readonly events: EventsService,
   ) {}
 
-  toDto(row: NotificationRow): Notification {
+  toDto(row: NotificationRow & { serverNameNow?: string | null }): Notification {
+    // Имя сервера — актуальное из справочника; удалён — то, что было при создании.
+    const name = row.serverNameNow ?? row.serverName ?? 'сервер';
+    const fill = (t: string | null): string | null => (t === null ? null : t.replaceAll(SERVER_TOKEN, name));
     return {
       id: row.id,
       severity: row.severity as NotificationSeverity,
-      title: row.title,
-      body: row.body,
+      title: fill(row.title) ?? row.title,
+      body: fill(row.body),
       link: row.linkTo && row.linkLabel ? { to: row.linkTo, label: row.linkLabel } : null,
       createdAt: row.createdAt.toISOString(),
       readAt: row.readAt?.toISOString() ?? null,
@@ -65,6 +73,8 @@ export class NotificationsService {
         body: input.body ? input.body.slice(0, 1000) : null,
         linkTo: input.link?.to ?? null,
         linkLabel: input.link?.label ?? null,
+        serverId: input.server?.id ?? null,
+        serverName: input.server?.name ?? null,
       });
       this.events.emit({ type: 'notification', data: this.toDto(row) });
     } catch (err) {

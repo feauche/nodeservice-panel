@@ -13,6 +13,7 @@ import {
   type IncidentPolicyResponse,
   type IncidentPolicyUpdate,
   type IncidentsListResponse,
+  incidentTitleToken,
   type NodeState,
   type ResolveIncidentRequest,
 } from '@nodeservice/shared';
@@ -422,7 +423,8 @@ export class IncidentsService {
     if (decision === 'waiting' || decision === 'none')
       await this.notifications.push({
         severity: meta.severity === 'crit' ? 'crit' : 'warn',
-        title: row.title,
+        title: incidentTitleToken(meta.label),
+        server: { id: server.id, name: server.name },
         body:
           decision === 'waiting'
             ? `${detail} Ждём ${AUTOFIX_GRACE_SECONDS} с — возможно, поднимется само, иначе починим автоматически.`
@@ -454,7 +456,10 @@ export class IncidentsService {
   private async autoResolve(row: IncidentRow, reason?: string): Promise<void> {
     await this.notifications.push({
       severity: 'ok',
-      title: reason ? `${row.title} — закрыт` : `${row.title} — проблема исчезла`,
+      title: reason
+        ? `${incidentTitleToken(INCIDENT_KIND_META[row.kind as IncidentKind].label)} — закрыт`
+        : `${incidentTitleToken(INCIDENT_KIND_META[row.kind as IncidentKind].label)} — проблема исчезла`,
+      ...(row.serverId ? { server: { id: row.serverId, name: row.serverName } } : {}),
       body: reason ?? 'Инцидент закрыт автоматически.',
       link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
     });

@@ -15,6 +15,8 @@ export class FakeSsh {
   /** Строки, «дописанные» в authorized_keys. */
   installedKeys: string[] = [];
   execLog: string[] = [];
+  /** Сколько «временных файлов старше часа» осмотр диска находит на тестовом сервере. */
+  inspectTmpGb = 3.5;
   /** Обслуживание: сколько обновлений «видит» apt и падает ли шаг с этим маркером. */
   maintenance = { updates: 3, security: 1, reboot: false, failStep: '' as string };
 
@@ -91,6 +93,11 @@ export class FakeSsh {
                   }
                   stream.exit(0);
                 }
+              } else if (info.command.includes('du -xh')) {
+                // Осмотр диска: много коротких кусков вывода подряд — так и проявляется гонка записи лога и шагов.
+                for (let i = 0; i < 160; i++) stream.write(`${i}.0G\t/var/lib/каталог-${i}\n`);
+                stream.write(`Временных файлов старше часа: ${this.inspectTmpGb.toFixed(1)} ГБ\n`);
+                stream.exit(0);
               } else if (info.command.includes('authorized_keys')) {
                 const m = info.command.match(/echo '([^']+)'/);
                 if (m?.[1] && !this.installedKeys.includes(m[1])) this.installedKeys.push(m[1]);

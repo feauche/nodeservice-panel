@@ -30,6 +30,9 @@ export function outcomeSentence(inc: Incident, now: number): string {
         last.by === 'auto' ? 'автоматически' : 'по вашей команде'
       }`;
     if (inc.resolvedBy === 'manual') return 'Закрыт администратором';
+    // Не «прошло само, починка не потребовалась», если панель пыталась: проблема ушла, но не от её шагов.
+    if (fixes.length > 0) return 'Проблема ушла сама, шаги починки не помогли';
+    if (inc.attempts.length > 0) return 'Проблема ушла сама после осмотра';
     return 'Прошло само, починка не потребовалась';
   }
   const failed =
@@ -93,12 +96,26 @@ export const hhmm = (iso: string): string =>
 
 export interface WeekStats {
   total: number;
+  /** Починила панель сама: помог автоматический шаг. */
   auto: number;
+  /** Помог шаг, который вы подтвердили. */
   waited: number;
+  /** Ушло без помощи: шаги не помогли или не понадобились. */
+  self: number;
+  /** Закрыто вручную. */
   manual: number;
   open: number;
-  avgFixS: number | null;
+  /** Медианное время от сбоя до починки шагом панели, секунды. */
+  medianFixS: number | null;
 }
+
+/** Медиана, а не среднее: один инцидент на сутки не должен превращать «время починки» в часы. */
+const median = (xs: number[]): number | null => {
+  if (xs.length === 0) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? (s[mid] as number) : Math.round(((s[mid - 1] as number) + (s[mid] as number)) / 2);
+};
 
 /** Итог за 7 дней для полосы над реестром. */
 export function weekStats(items: Incident[], now: number): WeekStats {
@@ -106,23 +123,33 @@ export function weekStats(items: Incident[], now: number): WeekStats {
   const week = items.filter((i) => new Date(i.openedAt).getTime() >= since);
   let auto = 0;
   let waited = 0;
+  let self = 0;
   let manual = 0;
   let open = 0;
-  const durations: number[] = [];
+  const fixDurations: number[] = [];
   for (const i of week) {
     if (i.status !== 'resolved') {
       open += 1;
       continue;
     }
     const helped = [...i.attempts].reverse().find((a) => a.status === 'helped');
-    if (helped?.by === 'manual') waited += 1;
-    else if (helped || i.resolvedBy === 'auto') auto += 1;
-    else manual += 1;
-    if (i.resolvedAt)
-      durations.push((new Date(i.resolvedAt).getTime() - new Date(i.openedAt).getTime()) / 1000);
+    if (helped) {
+      if (helped.by === 'manual') waited += 1;
+      else auto += 1;
+      if (i.resolvedAt)
+        fixDurations.push((new Date(i.resolvedAt).getTime() - new Date(i.openedAt).getTime()) / 1000);
+    } else if (i.resolvedBy === 'manual') manual += 1;
+    else self += 1;
   }
-  const avgFixS = durations.length
-    ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
-    : null;
-  return { total: week.length, auto, waited, manual, open, avgFixS };
+  return { total: week.length, auto, waited, self, manual, open, medianFixS: median(fixDurations) };
+}
+
+/** Время закрытия для сортировки реестра; у открытого — момент открытия. */
+export const closedAtMs = (inc: Incident): number => new Date(inc.resolvedAt ?? inc.openedAt).getTime();
+
+/** «40 с», «6 мин», «9 ч 12 мин». */
+export function humanSeconds(s: number): string {
+  if (s < 60) return `${s} с`;
+  if (s < 3600) return `${Math.round(s / 60)} мин`;
+  return `${Math.floor(s / 3600)} ч ${Math.round((s % 3600) / 60)} мин`;
 }

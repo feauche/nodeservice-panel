@@ -32,29 +32,30 @@ const STEP_ICON: Record<IncidentAttempt['steps'][number]['status'], { cls: strin
   skipped: { cls: 'bg-surface-3 text-text-3', mark: '–' },
 };
 
-/** Хронология инцидента: точка по итогу события, уровень действия, кто. */
+/** Хронология инцидента: время, точка по итогу события с линией, текст, уровень и кто. */
 export function Timeline({ events }: { events: IncidentEvent[] }) {
   return (
-    <ol className="flex flex-col gap-0" aria-label="Хронология">
+    <ol className="flex flex-col" aria-label="Хронология">
       {events.map((e, i) => (
-        <li key={`${e.at}-${e.result}-${e.action}`} className="relative flex items-start gap-3 py-1.5">
-          {i < events.length - 1 && (
-            <span
-              aria-hidden="true"
-              className="absolute top-[18px] left-[75px] h-[calc(100%-6px)] border-l border-border"
-            />
-          )}
-          <span className="w-[64px] flex-none pt-0.5 text-[11.5px] text-text-3 tabular-nums">
+        <li
+          key={`${e.at}-${e.result}-${e.action}`}
+          className="grid grid-cols-[104px_16px_minmax(0,1fr)_auto] items-start gap-x-2.5 py-1.5 max-sm:grid-cols-[16px_minmax(0,1fr)]"
+        >
+          <span className="pt-0.5 text-[11.5px] whitespace-nowrap text-text-3 tabular-nums max-sm:hidden">
             {formatWhen(e.at)}
           </span>
-          <span className="mt-1.5 flex-none">
+          {/* Точка и линия к следующему событию: линия рисуется в ячейке точки, поэтому не «плывёт» */}
+          <span className="relative flex justify-center pt-[7px]" aria-hidden="true">
+            {i < events.length - 1 && <span className="absolute top-[15px] -bottom-[13px] w-px bg-border" />}
             <span
-              className={cn('block size-2 rounded-full ring-4 ring-surface', RESULT_DOT[e.result])}
-              aria-hidden="true"
+              className={cn('relative block size-2 rounded-full ring-4 ring-surface', RESULT_DOT[e.result])}
             />
           </span>
-          <span className="min-w-0 flex-1 text-[12.5px]">{e.action}</span>
-          <span className="flex flex-none items-center gap-1.5 text-[11.5px] text-text-3">
+          <span className="min-w-0 text-[12.5px]">
+            <span className="hidden text-text-3 max-sm:block">{formatWhen(e.at)}</span>
+            {e.action}
+          </span>
+          <span className="flex flex-none items-center gap-1.5 text-[11.5px] text-text-3 max-sm:col-start-2">
             {e.level && <LevelChip level={e.level} />}
             {e.by === 'auto' ? 'Авто' : 'Вручную'}
           </span>
@@ -73,9 +74,16 @@ export function AttemptBlock({ attempt, index }: { attempt: IncidentAttempt; ind
   const secs = (s: IncidentAttempt['steps'][number]) =>
     s.startedAt && s.finishedAt
       ? `${((new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime()) / 1000).toFixed(1)} с`
-      : s.status === 'running' && s.startedAt
+      : running && s.status === 'running' && s.startedAt
         ? `${Math.max(0, Math.round((now - new Date(s.startedAt).getTime()) / 1000))} с`
         : '';
+  // Старые записи, где шаг остался «выполняется» после конца попытки, показываем по итогу попытки.
+  const stepStatus = (st: IncidentAttempt['steps'][number]['status']) =>
+    !running && st === 'running'
+      ? attempt.status === 'helped' || attempt.status === 'done'
+        ? 'ok'
+        : 'failed'
+      : st;
   return (
     <div
       data-testid="attempt-block"
@@ -103,13 +111,14 @@ export function AttemptBlock({ attempt, index }: { attempt: IncidentAttempt; ind
       </div>
       <ol className="mt-2.5 flex flex-col gap-1.5">
         {attempt.steps.map((s) => {
-          const ic = STEP_ICON[s.status];
+          const status = stepStatus(s.status);
+          const ic = STEP_ICON[status];
           return (
             <li
               key={s.key}
               className={cn(
                 'grid grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-[9px] border border-border bg-surface px-2.5 py-1.5 text-[12.5px]',
-                s.status === 'pending' && 'opacity-55',
+                status === 'pending' && 'opacity-55',
               )}
             >
               <span
@@ -118,7 +127,7 @@ export function AttemptBlock({ attempt, index }: { attempt: IncidentAttempt; ind
               >
                 {ic.mark}
               </span>
-              <span className={cn('min-w-0', s.status === 'failed' && 'text-crit')}>
+              <span className={cn('min-w-0', status === 'failed' && 'text-crit')}>
                 {s.label}
                 {s.note && <span className="text-text-3">: {s.note}</span>}
               </span>

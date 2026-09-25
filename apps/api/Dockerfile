@@ -16,6 +16,10 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 FROM deps AS build
 COPY . .
+# Хэш коммита и дата сборки попадают в подсказку у версии панели (в контексте сборки нет .git).
+ARG APP_COMMIT=dev
+ARG APP_BUILT_AT=
+ENV APP_COMMIT=$APP_COMMIT APP_BUILT_AT=$APP_BUILT_AT
 # Сначала общий пакет: web и api импортируют его из dist (в git и в контекст сборки dist не попадает).
 RUN pnpm --filter @nodeservice/shared build && pnpm --filter web build && pnpm --filter api build \
  && pnpm --filter api deploy --legacy --prod /out/api \

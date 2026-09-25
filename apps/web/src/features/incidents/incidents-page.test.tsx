@@ -19,13 +19,40 @@ describe('IncidentsPage', () => {
     // итог за 7 дней
     const stats = screen.getByTestId('incidents-stats');
     expect(stats).toHaveTextContent('сбоев за 7 дней');
-    expect(stats).toHaveTextContent('починились сами');
+    expect(stats).toHaveTextContent('починила панель');
+    expect(stats).toHaveTextContent('прошли сами');
     // группа «Сейчас» для открытых
     expect(screen.getByRole('region', { name: 'Сейчас' })).toBeInTheDocument();
     // предложение читается предложением с заглавной
     expect(screen.getByText(/Ждёт подтверждения: перезапустить контейнер ноды/)).toBeInTheDocument();
     // решённый: «Помогло с первой попытки»
     expect(screen.getByText(/Помогло с первой попытки: освободить диск, автоматически/)).toBeInTheDocument();
+  });
+
+  it('решённые: недавно закрытый сверху, а не недавно открытый', async () => {
+    const [base] = mockIncidents.items;
+    if (!base) throw new Error('нет мок-инцидента');
+    const mk = (id: string, kind: 'cpu_high' | 'mem_high', openedMinAgo: number, closedMinAgo: number) => ({
+      ...base,
+      id,
+      kind,
+      title: kind === 'cpu_high' ? 'Высокая нагрузка на CPU · de-fra-01' : 'Память на пределе · de-fra-01',
+      status: 'resolved' as const,
+      openedAt: new Date(Date.now() - openedMinAgo * 60_000).toISOString(),
+      resolvedAt: new Date(Date.now() - closedMinAgo * 60_000).toISOString(),
+      resolvedBy: 'auto' as const,
+      attempts: [],
+      proposal: null,
+    });
+    // «Давно открытый, но закрыт только что» должен быть выше «открыт позже, закрыт раньше».
+    mockIncidents.items = [
+      mk('7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3c01', 'mem_high', 60, 50),
+      mk('7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3c02', 'cpu_high', 300, 2),
+    ];
+    renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
+    const rows = await screen.findAllByTestId('incident-row');
+    expect(rows[0]).toHaveTextContent('Высокая нагрузка на CPU');
+    expect(rows[1]).toHaveTextContent('Память на пределе');
   });
 
   it('фильтры «Открытые» и «Решённые»', async () => {

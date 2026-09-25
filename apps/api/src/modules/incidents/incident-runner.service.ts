@@ -13,10 +13,12 @@ import {
   actionMeta,
   DEFAULT_AUTOFIX_POLICY,
   INCIDENT_CHAINS,
+  INCIDENT_KIND_META,
   type IncidentAttempt,
   type IncidentEvent,
   type IncidentKind,
   type IncidentProposal,
+  incidentTitleToken,
 } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
@@ -134,6 +136,8 @@ export class IncidentRunnerService implements OnModuleInit {
   /** Куски вывода пишутся в БД строго по очереди — иначе параллельные read-modify-write затирают друг друга. */
   private readonly logChains = new Map<string, Promise<void>>();
   private readonly inflight = new Set<Promise<void>>();
+  /** Очередь записей по инциденту: чтение → правка → запись попытки идут строго по одной. */
+  private readonly locks = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly repo: IncidentsRepository,
@@ -178,21 +182,51 @@ export class IncidentRunnerService implements OnModuleInit {
 
   /** Инцидент закрывают руками, пока действие идёт — попытку обрываем, чтобы не висела «выполняется». */
   async cancelRunning(incidentId: string, note: string): Promise<void> {
-    const row = await this.repo.findById(incidentId);
-    if (!row) return;
-    const running = row.attempts.filter((a) => a.status === 'running');
-    if (running.length === 0) return;
-    for (const a of running) this.active.delete(a.id);
-    await this.repo.update(incidentId, {
-      attempts: row.attempts.map((a) => (a.status === 'running' ? abortAttempt(a, note) : a)),
-      timeline: [
-        ...row.timeline,
-        ...running.map((a) =>
-          ev(a.by, `${actionMeta(a.action).title}: ${note.toLowerCase()}`, 'failed', a.level),
-        ),
-      ],
+    let serverId: string | null = null;
+    await this.locked(incidentId, async () => {
+      const row = await this.repo.findById(incidentId);
+      if (!row) return;
+      const running = row.attempts.filter((a) => a.status === 'running');
+      if (running.length === 0) return;
+      serverId = row.serverId;
+      for (const a of running) this.active.delete(a.id);
+      await this.repo.update(incidentId, {
+        attempts: row.attempts.map((a) => (a.status === 'running' ? abortAttempt(a, note) : a)),
+        timeline: [
+          ...row.timeline,
+          ...running.map((a) =>
+            ev(a.by, `${actionMeta(a.action).title}: ${note.toLowerCase()}`, 'failed', a.level),
+          ),
+        ],
+      });
     });
-    if (row.serverId && this.busy.get(row.serverId) === incidentId) this.busy.delete(row.serverId);
+    if (serverId && this.busy.get(serverId) === incidentId) this.busy.delete(serverId);
+  }
+
+  /**
+   * Все правки попыток одного инцидента — через эту очередь. Без неё строка вывода команды и смена
+   * статуса шага читают одну и ту же версию, а пишут по очереди: побеждает последний, и «шаг завершён»
+   * затирается старым «выполняется» (так шаг «Найти, что занимает диск» висел 27857 секунд).
+   */
+  private locked<T>(incidentId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.locks.get(incidentId) ?? Promise.resolve();
+    const next = prev.catch(() => undefined).then(fn);
+    const tail = next.catch(() => undefined);
+    this.locks.set(incidentId, tail);
+    void tail.then(() => {
+      if (this.locks.get(incidentId) === tail) this.locks.delete(incidentId);
+    });
+    return next;
+  }
+
+  /** Заголовок инцидента для уведомления: вид + токен имени сервера (переименование видно сразу). */
+  private titleTok(row: IncidentRow): string {
+    const meta = INCIDENT_KIND_META[row.kind as IncidentKind];
+    return meta ? incidentTitleToken(meta.label) : row.title;
+  }
+
+  private serverOf(row: IncidentRow): { server?: { id: string; name: string } } {
+    return row.serverId ? { server: { id: row.serverId, name: row.serverName } } : {};
   }
 
   /** Взять фоновую задачу под присмотр: `settle()` дождётся и её. */
@@ -248,11 +282,14 @@ export class IncidentRunnerService implements OnModuleInit {
       })),
       log: '',
     };
-    const updated = await this.repo.update(incidentId, {
-      attempts: [...row.attempts, attempt],
-      proposal: null,
-      lastAutofixAt: new Date(),
-      ...(row.status === 'open' && by === 'manual' ? { status: 'acknowledged' } : {}),
+    const updated = await this.locked(incidentId, async () => {
+      const fresh = (await this.repo.findById(incidentId)) ?? row;
+      return this.repo.update(incidentId, {
+        attempts: [...fresh.attempts, attempt],
+        proposal: null,
+        lastAutofixAt: new Date(),
+        ...(fresh.status === 'open' && by === 'manual' ? { status: 'acknowledged' } : {}),
+      });
     });
     this.busy.set(row.serverId, incidentId);
     this.active.add(attempt.id);
@@ -317,7 +354,8 @@ export class IncidentRunnerService implements OnModuleInit {
       return 'waiting';
     await this.notifications.push({
       severity: 'info',
-      title: `${row.title}: чиню автоматически`,
+      title: `${this.titleTok(row)}: чиню автоматически`,
+      ...this.serverOf(row),
       body: `${row.detail} Запускаю «${action.title}» (T1).`,
       link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
     });
@@ -387,7 +425,21 @@ export class IncidentRunnerService implements OnModuleInit {
       await this.finish(incidentId, attemptId, 'done', ['postcheck', 'rollback']);
       await this.repo.appendEvent(incidentId, ev(by, `${action.title}: список получен`, 'notify', 'T0'));
       await this.auditAttempt(row0, key, by, 'done', act.note);
-      await this.escalate(incidentId, key, by, `${action.title}: список получен`);
+      // Осмотр диска сам считает, сколько во временных каталогах файлов старше часа: если пусто,
+      // предлагать чистку незачем, а если есть — говорим сколько, чтобы подтверждение было осознанным.
+      const tmpGb = key === 'disk_inspect' ? await this.readTmpGb(incidentId, attemptId) : null;
+      const noTmp = tmpGb !== null && tmpGb < 0.05;
+      await this.escalate(
+        incidentId,
+        key,
+        by,
+        tmpGb === null
+          ? `${action.title}: список получен`
+          : noTmp
+            ? 'осмотр не нашёл во временных каталогах файлов старше часа'
+            : `осмотр нашёл ${tmpGb.toFixed(1)} ГБ временных файлов старше часа`,
+        noTmp ? new Set<ActionKey>(['tmp_clean']) : undefined,
+      );
       return;
     }
     await this.repo.appendEvent(incidentId, ev(by, `Выполнено: ${action.title}`, 'applied', action.level));
@@ -628,16 +680,26 @@ export class IncidentRunnerService implements OnModuleInit {
   }
 
   /** Следующий шаг цепочки: T1 при включённом авто — сразу, иначе предложение (T2/T3 или подтверждение T1). */
+  /** Из вывода осмотра: «Временных файлов старше часа: 3.5 ГБ». Нет строки — null. */
+  private async readTmpGb(incidentId: string, attemptId: string): Promise<number | null> {
+    const row = await this.repo.findById(incidentId);
+    const log = row?.attempts.find((a) => a.id === attemptId)?.log ?? '';
+    const m = log.match(/Временных файлов старше часа:\s*([0-9]+(?:[.,][0-9]+)?)\s*ГБ/);
+    return m?.[1] ? Number(m[1].replace(',', '.')) : null;
+  }
+
   private async escalate(
     incidentId: string,
     current: ActionKey,
     by: 'auto' | 'manual',
     reason: string,
+    /** Шаги цепочки, которые сейчас бессмысленны (например, чистить нечего) — пропускаем. */
+    skip: ReadonlySet<ActionKey> = new Set<ActionKey>(),
   ): Promise<void> {
     const row = await this.repo.findById(incidentId);
     if (!row || row.status === 'resolved' || !row.serverId) return;
     const chain = INCIDENT_CHAINS[row.kind as IncidentKind];
-    const next = chain[chain.indexOf(current) + 1];
+    const next = chain.slice(chain.indexOf(current) + 1).find((k) => !skip.has(k));
     if (!next) {
       await this.repo.appendEvent(
         incidentId,
@@ -707,7 +769,11 @@ export class IncidentRunnerService implements OnModuleInit {
     const first = fresh.attempts.length === 0;
     await this.notifications.push({
       severity: level === 'T3' || row.severity === 'crit' ? 'crit' : 'warn',
-      title: level === 'T3' ? `${row.title}: нужно вмешательство` : `${row.title}: ждёт подтверждения`,
+      title:
+        level === 'T3'
+          ? `${this.titleTok(row)}: нужно вмешательство`
+          : `${this.titleTok(row)}: ждёт подтверждения`,
+      ...this.serverOf(row),
       body:
         level === 'T3'
           ? `${action.title} — только вручную. ${reason}.`
@@ -757,13 +823,18 @@ export class IncidentRunnerService implements OnModuleInit {
   ): Promise<void> {
     await this.logChains.get(attemptId);
     this.logChains.delete(attemptId);
+    const okEnd = status === 'helped' || status === 'done';
     await this.patchAttempt(incidentId, attemptId, (a) => ({
       ...a,
       status,
       finishedAt: iso(),
-      steps: a.steps.map((s) =>
-        skip.includes(s.key) && s.status === 'pending' ? { ...s, status: 'skipped' } : s,
-      ),
+      steps: a.steps.map((s) => {
+        if (skip.includes(s.key) && s.status === 'pending') return { ...s, status: 'skipped' };
+        // Попытка закончилась, а шаг всё ещё «выполняется» — так не бывает: закрываем по итогу попытки.
+        if (s.status === 'running')
+          return { ...s, status: okEnd ? 'ok' : 'failed', finishedAt: s.finishedAt ?? iso() };
+        return s;
+      }),
     }));
   }
 
@@ -795,12 +866,14 @@ export class IncidentRunnerService implements OnModuleInit {
     attemptId: string,
     fn: (a: IncidentAttempt) => IncidentAttempt,
   ): Promise<void> {
-    const row = await this.repo.findById(incidentId);
-    if (!row) return;
-    // Попытку уже оборвали (закрыли инцидент, сторож) — ход в памяти останавливается, ничего не пишет.
-    if (!row.attempts.some((a) => a.id === attemptId && a.status === 'running')) throw new AttemptAborted();
-    await this.repo.update(incidentId, {
-      attempts: row.attempts.map((a) => (a.id === attemptId ? fn(a) : a)),
+    await this.locked(incidentId, async () => {
+      const row = await this.repo.findById(incidentId);
+      if (!row) return;
+      // Попытку уже оборвали (закрыли инцидент, сторож) — ход в памяти останавливается, ничего не пишет.
+      if (!row.attempts.some((a) => a.id === attemptId && a.status === 'running')) throw new AttemptAborted();
+      await this.repo.update(incidentId, {
+        attempts: row.attempts.map((a) => (a.id === attemptId ? fn(a) : a)),
+      });
     });
   }
 
@@ -817,8 +890,9 @@ export class IncidentRunnerService implements OnModuleInit {
         severity: result === 'helped' ? 'ok' : 'warn',
         title:
           result === 'helped'
-            ? `${row.title}: «${action.title}» помогло`
-            : `${row.title}: «${action.title}» — ${ATTEMPT_STATUS_LABELS[result]}`,
+            ? `${this.titleTok(row)}: «${action.title}» помогло`
+            : `${this.titleTok(row)}: «${action.title}» — ${ATTEMPT_STATUS_LABELS[result]}`,
+        ...this.serverOf(row),
         body: `${by === 'auto' ? 'Автоматически' : 'По вашей команде'} · ${note}`,
         link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
       });

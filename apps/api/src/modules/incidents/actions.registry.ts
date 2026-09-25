@@ -68,6 +68,10 @@ export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
       'echo "== Самые тяжёлые каталоги =="; du -xh / --max-depth=2 2>/dev/null | sort -h | tail -20; ' +
         'echo; echo "== Файлы больше 200 МБ =="; ' +
         'timeout -k 5 60 find / -xdev -type f -size +200M -exec du -h {} + 2>/dev/null | sort -h | tail -20; ' +
+        'echo; echo "== Что удалит очистка временных файлов (старше часа) =="; ' +
+        'timeout -k 5 30 find /tmp /var/tmp -xdev -type f -mmin +60 -size +5M -exec du -h {} + 2>/dev/null | sort -h | tail -15; ' +
+        "find /tmp /var/tmp -xdev -type f -mmin +60 -printf '%s\\n' 2>/dev/null | " +
+        'awk \'{s+=$1} END {printf "Временных файлов старше часа: %.1f ГБ\\n", s/1073741824}\'; ' +
         'true',
     ),
     precheck: ['ssh_ok'],

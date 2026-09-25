@@ -7,6 +7,7 @@ import {
   incidentPolicyResponseSchema,
   incidentSchema,
   incidentsListResponseSchema,
+  notificationsResponseSchema,
   serverSchema,
 } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
@@ -26,6 +27,7 @@ import { IncidentMetricsService } from '../src/modules/incidents/incident-metric
 import { IncidentRunnerService } from '../src/modules/incidents/incident-runner.service.js';
 import { IncidentsRepository } from '../src/modules/incidents/incidents.repository.js';
 import { IncidentsService } from '../src/modules/incidents/incidents.service.js';
+import { NotificationsService } from '../src/modules/notifications/notifications.service.js';
 import { FakeSsh, SSH_PASSWORD, SSH_USER } from './fake-ssh.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -184,6 +186,43 @@ describe('incidents e2e', () => {
     expect(audit.items.some((e) => e.action === 'incident.opened')).toBe(true);
   });
 
+  it('осмотр диска: поток вывода не затирает статус шагов; чистить нечего — чистка не предлагается', async () => {
+    const db = app.get<Db>(DB);
+    await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
+    const repo = app.get(IncidentsRepository);
+    ssh.inspectTmpGb = 0;
+    // Несколько инцидентов подряд: гонка проявляется не всегда, серия её ловит
+    for (let n = 0; n < 4; n++) {
+      const opened = await repo.open({
+        serverId,
+        serverName: 'inc-host',
+        kind: 'disk_high',
+        severity: 'warn',
+        title: 'Диск заполняется · inc-host',
+        detail: 'Диск держится выше порога.',
+        timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+      });
+      const id = opened?.id ?? '';
+      app.get(IncidentMetricsService).setForTest(serverId, { disk: 94 });
+      await agent.post(`/api/incidents/${id}/actions/apt_clean/run`).set(CSRF_HEADER, csrf).expect(202);
+      const done = await settled(id);
+      const inspect = done.attempts.find((a) => a.action === 'disk_inspect');
+      expect(inspect?.status, `серия ${n}`).toBe('done');
+      // ни один шаг не остался «выполняется»
+      expect(
+        inspect?.steps.map((st) => st.status),
+        `серия ${n}`,
+      ).toEqual(['ok', 'ok', 'skipped', 'skipped']);
+      expect(inspect?.log).toContain('Временных файлов старше часа: 0.0 ГБ');
+      expect(inspect?.log).toContain('159.0G');
+      // чистить нечего — предложения нет, цепочка честно кончилась
+      expect(done.proposal).toBeNull();
+      expect(done.timeline.some((e) => e.action.includes('исчерпаны'))).toBe(true);
+      await agent.post(`/api/incidents/${id}/resolve`).set(CSRF_HEADER, csrf).expect(200);
+    }
+    ssh.inspectTmpGb = 3.5;
+  });
+
   it('осмотр T0 «Найти, что занимает диск» выполняется сам, когда чистка не помогла', async () => {
     const db = app.get<Db>(DB);
     await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
@@ -210,6 +249,7 @@ describe('incidents e2e', () => {
     expect(done.timeline.some((e) => e.action.includes('список получен'))).toBe(true);
     // после осмотра — предложение убрать временные файлы, но только с подтверждением
     expect(done.proposal).toMatchObject({ action: 'tmp_clean', level: 'T2' });
+    expect(done.proposal?.reason).toContain('3.5 ГБ временных файлов старше часа');
 
     // подтверждаем: /tmp чистится, диск всё ещё занят → цепочка кончилась
     await agent.post(`/api/incidents/${id}/actions/tmp_clean/run`).set(CSRF_HEADER, csrf).expect(202);
@@ -483,6 +523,41 @@ describe('incidents e2e', () => {
       .send({ nodeWatch: 'auto' })
       .expect(200);
     await svc.probeNodeState(serverId, 'running');
+  });
+
+  it('переименование сервера: новое имя в инциденте и в уже созданных уведомлениях', async () => {
+    const repo = app.get(IncidentsRepository);
+    const opened = await repo.open({
+      serverId,
+      serverName: 'inc-host',
+      kind: 'disk_high',
+      severity: 'warn',
+      title: 'Диск заполняется · inc-host',
+      detail: 'Диск держится выше порога.',
+      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+    });
+    await app.get(NotificationsService).push({
+      severity: 'warn',
+      title: 'Диск заполняется · {server}: ждёт подтверждения',
+      server: { id: serverId, name: 'inc-host' },
+    });
+    await agent
+      .patch(`/api/servers/${serverId}`)
+      .set(CSRF_HEADER, csrf)
+      .send({ name: 'renamed-host' })
+      .expect(200);
+    const inc = incidentSchema.parse((await agent.get(`/api/incidents/${opened?.id}`).expect(200)).body);
+    expect(inc.serverName).toBe('renamed-host');
+    expect(inc.title).toBe('Диск заполняется · renamed-host');
+    const notes = notificationsResponseSchema.parse((await agent.get('/api/notifications').expect(200)).body);
+    expect(notes.items[0]?.title).toBe('Диск заполняется · renamed-host: ждёт подтверждения');
+    // обратно, чтобы остальные тесты видели прежнее имя
+    await agent
+      .patch(`/api/servers/${serverId}`)
+      .set(CSRF_HEADER, csrf)
+      .send({ name: 'inc-host' })
+      .expect(200);
+    await agent.post(`/api/incidents/${opened?.id}/resolve`).set(CSRF_HEADER, csrf).expect(200);
   });
 
   it('ручное закрытие инцидента', async () => {

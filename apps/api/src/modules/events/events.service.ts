@@ -9,7 +9,9 @@ import type { Notification } from '@nodeservice/shared';
 export type PanelEvent =
   | { type: 'notification'; data: Notification }
   | { type: 'server'; data: { id: string } }
-  | { type: 'incident'; data: { id: string } };
+  | { type: 'incident'; data: { id: string } }
+  /** Сервер переименован: имена в инцидентах и уведомлениях изменились — браузеру перечитать всё. */
+  | { type: 'rename'; data: { id: string } };
 
 @Injectable()
 export class EventsService {

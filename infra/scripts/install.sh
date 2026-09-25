@@ -207,6 +207,7 @@ fi
 
 # --- 5. Сборка и запуск ---------------------------------------------------------------------
 step "Сборка образа api (первый раз 3–8 минут)"
+export APP_COMMIT="$(git -C "$APP_DIR" rev-parse --short HEAD)" APP_BUILT_AT="$(date -u +%Y-%m-%d)"
 "${COMPOSE[@]}" build api || die "Сборка образа не удалась — лог выше."
 step "Запуск стека"
 # caddy ждёт healthy у api через depends_on; при провале `up -d` сам вернёт ошибку без логов,

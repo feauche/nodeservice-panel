@@ -10,7 +10,15 @@ import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
-import { dayLabel, durationText, hhmm, outcomeSentence, weekStats } from './incident-format';
+import {
+  closedAtMs,
+  dayLabel,
+  durationText,
+  hhmm,
+  humanSeconds,
+  outcomeSentence,
+  weekStats,
+} from './incident-format';
 import { type IncidentsFilter, useDeleteResolvedIncidents, useIncidents } from './incidents-api';
 import { LevelChip } from './level-chip';
 
@@ -63,9 +71,13 @@ export function IncidentsPage() {
     const out: Array<{ key: string; label: string; note?: string; items: Incident[] }> = [];
     const open = items.filter((i) => i.status !== 'resolved');
     if (open.length > 0) out.push({ key: 'now', label: 'Сейчас', items: open });
+    // Решённые: недавно закрытый — сверху; день группы — день закрытия, а не открытия.
+    const resolved = items
+      .filter((i) => i.status === 'resolved')
+      .sort((a, b) => closedAtMs(b) - closedAtMs(a));
     const byDay = new Map<string, Incident[]>();
-    for (const inc of items.filter((i) => i.status === 'resolved')) {
-      const label = dayLabel(inc.openedAt, now);
+    for (const inc of resolved) {
+      const label = dayLabel(inc.resolvedAt ?? inc.openedAt, now);
       byDay.set(label, [...(byDay.get(label) ?? []), inc]);
     }
     for (const [label, list] of byDay) {
@@ -77,7 +89,7 @@ export function IncidentsPage() {
       out.push({
         key: label,
         label,
-        note: auto === n ? `${n} ${word} · все починились сами` : `${n} ${word}`,
+        note: auto === n ? `${n} ${word} · все починила панель` : `${n} ${word}`,
         items: list,
       });
     }
@@ -199,14 +211,8 @@ export function IncidentsPage() {
 
 /** Полоса итога за 7 дней: числа словами, без KPI-плиток. */
 function StatsStrip({ stats }: { stats: ReturnType<typeof weekStats> }) {
-  const resolved = stats.auto + stats.waited + stats.manual;
+  const resolved = stats.auto + stats.waited + stats.self + stats.manual;
   const pct = (n: number) => (resolved > 0 ? `${(n / resolved) * 100}%` : '0%');
-  const avg =
-    stats.avgFixS === null
-      ? null
-      : stats.avgFixS < 60
-        ? `${stats.avgFixS} с`
-        : `${Math.round(stats.avgFixS / 60)} мин`;
   return (
     <div
       data-testid="incidents-stats"
@@ -214,18 +220,22 @@ function StatsStrip({ stats }: { stats: ReturnType<typeof weekStats> }) {
     >
       <Stat n={stats.total} label="сбоев за 7 дней" />
       <span className="hidden h-7 w-px bg-border sm:block" aria-hidden="true" />
-      <Stat n={stats.auto} label="починились сами" cls="text-ok" />
-      <Stat n={stats.waited} label="ждали подтверждения" cls="text-warn" />
+      <Stat n={stats.auto} label="починила панель" cls="text-ok" />
+      <Stat n={stats.waited} label="по вашей команде" cls="text-warn" />
+      <Stat n={stats.self} label="прошли сами" cls="text-brand" />
       <Stat n={stats.manual} label="закрыты вручную" />
       {stats.open > 0 && <Stat n={stats.open} label="открыто сейчас" cls="text-crit" />}
       <div className="flex min-w-[120px] flex-1 items-center gap-3">
         <div className="flex h-2 flex-1 overflow-hidden rounded-full bg-surface-3" aria-hidden="true">
           <span className="h-full bg-ok" style={{ width: pct(stats.auto) }} />
           <span className="h-full bg-warn" style={{ width: pct(stats.waited) }} />
+          <span className="h-full bg-brand" style={{ width: pct(stats.self) }} />
           <span className="h-full bg-border-2" style={{ width: pct(stats.manual) }} />
         </div>
-        {avg && (
-          <span className="text-[12px] whitespace-nowrap text-text-3">Среднее время починки {avg}</span>
+        {stats.medianFixS !== null && (
+          <span className="text-[12px] whitespace-nowrap text-text-3">
+            Типичное время починки {humanSeconds(stats.medianFixS)}
+          </span>
         )}
       </div>
     </div>
@@ -255,7 +265,12 @@ function IncidentRow({ inc, now }: { inc: Incident; now: number }) {
       className="grid grid-cols-[3px_52px_minmax(0,1fr)_auto] items-center gap-x-3 border-t border-border py-2.5 pr-3 transition-colors hover:bg-surface-2 md:grid-cols-[3px_56px_170px_minmax(0,1fr)_auto_84px] md:gap-x-4"
     >
       <span className={cn('h-full min-h-9 w-[3px] rounded-r-[2px]', barTone(inc))} aria-hidden="true" />
-      <span className="text-[12.5px] text-text-3 tabular-nums">{hhmm(inc.openedAt)}</span>
+      <span
+        className="text-[12.5px] text-text-3 tabular-nums"
+        title={`Открыт ${hhmm(inc.openedAt)}${inc.resolvedAt ? ` · закрыт ${hhmm(inc.resolvedAt)}` : ''}`}
+      >
+        {hhmm(inc.resolvedAt ?? inc.openedAt)}
+      </span>
       <span className="hidden truncate text-[13px] font-semibold md:block">{inc.serverName}</span>
       <span className="min-w-0">
         <span className="block text-[13px] font-semibold max-md:line-clamp-2 md:truncate">

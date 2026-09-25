@@ -37,6 +37,9 @@ services:
     build:
       context: ..
       dockerfile: apps/api/Dockerfile
+      args:
+        APP_COMMIT: ${APP_COMMIT:-dev}
+        APP_BUILT_AT: ${APP_BUILT_AT:-}
     restart: unless-stopped
     env_file: .env
     environment:

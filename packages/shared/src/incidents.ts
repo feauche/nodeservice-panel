@@ -27,6 +27,9 @@ export const INCIDENT_KINDS = [
 ] as const;
 export type IncidentKind = (typeof INCIDENT_KINDS)[number];
 
+/** Заголовок инцидента с токеном имени сервера — для уведомлений: имя подставится при показе. */
+export const incidentTitleToken = (label: string): string => `${label} · {server}`;
+
 export const INCIDENT_KIND_META: Record<
   IncidentKind,
   { label: string; component: string; severity: IncidentSeverity }
