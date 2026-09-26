@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { changeOperationSchema } from './assistant-changes.js';
 import { ACTION_LEVELS } from './incidents.js';
 import { reachabilityResultSchema } from './reachability.js';
 
@@ -63,6 +64,7 @@ export const ASSISTANT_PERMISSION_KEYS = [
   'analysis',
   'autoAnalysis',
   'proposals',
+  'changes',
 ] as const;
 export type AssistantPermission = (typeof ASSISTANT_PERMISSION_KEYS)[number];
 export const ASSISTANT_PERMISSION_LABELS: Record<AssistantPermission, string> = {
@@ -77,6 +79,7 @@ export const ASSISTANT_PERMISSION_LABELS: Record<AssistantPermission, string> = 
   analysis: 'Разбор по кнопке',
   autoAnalysis: 'Автоматический разбор',
   proposals: 'Карточки предложений',
+  changes: 'Изменения по подтверждению',
 };
 export const ASSISTANT_PERMISSION_HINTS: Record<AssistantPermission, string> = {
   kbWrite: 'Джарвис может сам писать статьи в базу знаний, с меткой «AI».',
@@ -94,6 +97,8 @@ export const ASSISTANT_PERMISSION_HINTS: Record<AssistantPermission, string> = {
   autoAnalysis:
     'Сам разбирает предупреждения и критичные инциденты спустя минуту после открытия. Тратит токены, не больше пяти разборов в час.',
   proposals: 'Предлагает шаг из цепочки инцидента карточкой. Запускаете шаг вы.',
+  changes:
+    'Предлагает изменить сервер (провайдер, теги, заметку, название, слежение за нодой, профиль), закрыть инцидент или поставить автопочинку на паузу: карточкой с «было → станет». Применяете вы; применённое записывается в Журнал и по возможности отменяется кнопкой.',
 };
 
 /** Что делает возможность: метки риска рядом с переключателем. */
@@ -118,6 +123,7 @@ export const ASSISTANT_PERMISSION_RISKS: Record<AssistantPermission, AssistantRi
   analysis: ['reads', 'provider'],
   autoAnalysis: ['reads', 'provider'],
   proposals: ['confirm'],
+  changes: ['confirm'],
 };
 
 /** Группы разрешений для экрана настроек. */
@@ -135,6 +141,7 @@ export const ASSISTANT_PERMISSION_GROUPS: ReadonlyArray<{
     keys: ['reach', 'processes', 'inspect', 'nodeLogs', 'serviceLogs', 'terminalHints'],
   },
   { key: 'incidents', title: 'Инциденты', keys: ['analysis', 'autoAnalysis', 'proposals'] },
+  { key: 'changes', title: 'Изменения', note: 'только с вашего подтверждения', keys: ['changes'] },
 ];
 
 export type AssistantPermissions = Record<AssistantPermission, boolean>;
@@ -150,6 +157,7 @@ export const ASSISTANT_PERMISSIONS_DEFAULT: AssistantPermissions = {
   analysis: true,
   autoAnalysis: false,
   proposals: true,
+  changes: true,
 };
 
 /** Пресеты одним нажатием: «Осторожный», «Обычный» и «Максимальный автоматизм». */
@@ -175,6 +183,7 @@ export const ASSISTANT_PRESETS: Record<
       analysis: true,
       autoAnalysis: false,
       proposals: true,
+      changes: false,
     },
   },
   normal: {
@@ -199,6 +208,7 @@ export const ASSISTANT_PRESETS: Record<
       analysis: true,
       autoAnalysis: true,
       proposals: true,
+      changes: true,
     },
   },
 };
@@ -250,8 +260,8 @@ export const assistantCitationSchema = z.object({
 });
 export type AssistantCitation = z.infer<typeof assistantCitationSchema>;
 
-/** Предложение действия — выполняется только после подтверждения администратором. */
-export const assistantProposalSchema = z.object({
+/** Предложение шага автопочинки для инцидента — выполняется только после подтверждения администратором. */
+export const assistantAutofixProposalSchema = z.object({
   kind: z.literal('autofix'),
   incidentId: z.uuid(),
   preset: z.string(),
@@ -262,6 +272,22 @@ export const assistantProposalSchema = z.object({
   /** Почему Джарвис предлагает именно этот шаг (его слова, без последствий из реестра). */
   reason: z.string().optional(),
 });
+export type AssistantAutofixProposal = z.infer<typeof assistantAutofixProposalSchema>;
+
+/** Предложение изменения (J5): карточка берёт подробности и состояние по `changeId`. */
+export const assistantChangeProposalSchema = z.object({
+  kind: z.literal('change'),
+  changeId: z.uuid(),
+  operation: changeOperationSchema,
+  title: z.string(),
+  level: z.enum(ACTION_LEVELS),
+});
+export type AssistantChangeProposal = z.infer<typeof assistantChangeProposalSchema>;
+
+export const assistantProposalSchema = z.discriminatedUnion('kind', [
+  assistantAutofixProposalSchema,
+  assistantChangeProposalSchema,
+]);
 export type AssistantProposal = z.infer<typeof assistantProposalSchema>;
 
 export const assistantMessageSchema = z.object({

@@ -39,6 +39,7 @@ import {
   usePendingChats,
   useSendMessage,
 } from './assistant-api';
+import { ChangeCard } from './change-card';
 import { linkifyServers } from './link-servers';
 import { ProposalCard } from './proposal-card';
 import { ReachabilityCard } from './reachability-card';
@@ -454,9 +455,13 @@ function MessageRow({
         {message.reachability.map((r) => (
           <ReachabilityCard key={`${r.target.name}:${r.ports.map((p) => p.port).join(',')}`} result={r} />
         ))}
-        {message.proposals.map((p) => (
-          <ProposalCard key={`${p.incidentId}:${p.preset}`} proposal={p} createdAt={message.createdAt} />
-        ))}
+        {message.proposals.map((p) =>
+          p.kind === 'change' ? (
+            <ChangeCard key={p.changeId} proposal={p} />
+          ) : (
+            <ProposalCard key={`${p.incidentId}:${p.preset}`} proposal={p} createdAt={message.createdAt} />
+          ),
+        )}
       </div>
     </div>
   );

@@ -10,11 +10,14 @@ import {
 import { CheckIcon, ChevronDownIcon, CopyIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
+import { JarvisIcon } from '@/components/jarvis-icon';
 import { toast } from '@/lib/notify';
 
 import { capFirst, cn } from '@/lib/utils';
 import {
   buildAuditReport,
+  changeHeadline,
+  changeRows,
   formatDuration,
   formatFull,
   formatValue,
@@ -71,7 +74,8 @@ interface RowProps {
 }
 
 export function AuditRow({ entry, expanded, fresh, colSpan = 6, onToggle }: RowProps) {
-  const label = auditActionLabel(entry.action);
+  const headline = changeHeadline(entry);
+  const label = headline ?? auditActionLabel(entry.action);
   return (
     <>
       <tr
@@ -91,12 +95,21 @@ export function AuditRow({ entry, expanded, fresh, colSpan = 6, onToggle }: RowP
         </td>
         <td className="min-w-0 px-3">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="hidden flex-none rounded-[5px] bg-surface-3 px-1.5 py-[1px] text-[10.5px] font-semibold tracking-[0.04em] text-text-3 uppercase xl:inline">
-              {AUDIT_CATEGORY_LABELS[entry.category]}
+            {!headline && (
+              <span className="hidden flex-none rounded-[5px] bg-surface-3 px-1.5 py-[1px] text-[10.5px] font-semibold tracking-[0.04em] text-text-3 uppercase xl:inline">
+                {AUDIT_CATEGORY_LABELS[entry.category]}
+              </span>
+            )}
+            {headline && <JarvisIcon className="size-3.5 flex-none text-ai" />}
+            <span className={cn('truncate', headline ? 'font-semibold' : 'font-medium')} title={label}>
+              {label}
             </span>
-            <span className="truncate font-medium">{label}</span>
             {entry.targetDisplay && (
-              <span className="hidden truncate text-text-3 xl:inline">· {entry.targetDisplay}</span>
+              <span
+                className={cn('hidden truncate text-text-3 xl:inline', headline && 'max-w-[30%] flex-none')}
+              >
+                · {entry.targetDisplay}
+              </span>
             )}
           </div>
           {/* На планшете и телефоне колонки «Кто» нет — актор второй строкой под событием. */}
@@ -162,6 +175,7 @@ function Field({ label, children, mono }: { label: string; children: ReactNode; 
 
 export function AuditDetails({ entry }: { entry: AuditEntry }) {
   const changes = entry.changes ? Object.entries(entry.changes) : [];
+  const rows = changeRows(entry);
   const metadata = metadataRows(entry.metadata);
   const [copied, setCopied] = useState(false);
   const copyReport = async () => {
@@ -215,6 +229,29 @@ export function AuditDetails({ entry }: { entry: AuditEntry }) {
           )}
         </dl>
         <div className="flex flex-col gap-4">
+          {rows.length > 0 && (
+            <section>
+              <h3 className="mb-1.5 text-[11px] font-semibold tracking-[0.1em] text-text-3 uppercase">
+                Изменения
+              </h3>
+              <div className="overflow-x-auto rounded-[8px] border border-border">
+                <table className="w-full text-[12px]">
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.label} className="border-t border-border first:border-t-0">
+                        <td className="w-[120px] px-2.5 py-1.5 text-text-2">{r.label}</td>
+                        <td className="px-2.5 py-1.5">
+                          <span className="text-text-3 line-through decoration-text-3/60">{r.before}</span>
+                          <span className="mx-1.5 text-text-3">→</span>
+                          <span className="font-medium">{r.after}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
           {changes.length > 0 && (
             <section>
               <h3 className="mb-1.5 text-[11px] font-semibold tracking-[0.1em] text-text-3 uppercase">
@@ -254,7 +291,7 @@ export function AuditDetails({ entry }: { entry: AuditEntry }) {
               </dl>
             </section>
           )}
-          {changes.length === 0 && metadata.length === 0 && (
+          {changes.length === 0 && rows.length === 0 && metadata.length === 0 && (
             <p className="text-[12.5px] text-text-3">Дополнительных данных нет.</p>
           )}
         </div>

@@ -13,6 +13,9 @@ import { AssistantRepository } from './assistant.repository.js';
 import { AssistantService } from './assistant.service.js';
 import { ReadDepsService } from './assistant-read-deps.service.js';
 import { AssistantSettingsModule } from './assistant-settings.module.js';
+import { ChangesController } from './changes/changes.controller.js';
+import { ChangesRepository } from './changes/changes.repository.js';
+import { ChangesService } from './changes/changes.service.js';
 import { FleetInventoryController } from './fleet-inventory.controller.js';
 import { FleetInventoryService } from './fleet-inventory.service.js';
 import { FleetProbeService } from './fleet-probe.service.js';
@@ -42,6 +45,7 @@ import { ZvenoProvider } from './zveno.provider.js';
     IncidentAnalysisController,
     TerminalHintController,
     FleetInventoryController,
+    ChangesController,
   ],
   providers: [
     AssistantService,
@@ -52,6 +56,8 @@ import { ZvenoProvider } from './zveno.provider.js';
     TerminalHintService,
     AssistantRepository,
     KbReviewService,
+    ChangesRepository,
+    ChangesService,
     { provide: LLM_PROVIDER, useClass: ZvenoProvider },
   ],
 })

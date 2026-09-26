@@ -83,7 +83,7 @@ export const servers = pgTable('servers', {
   lastSshCheckAt: timestamp('last_ssh_check_at', { withTimezone: true }),
   lastSshOkAt: timestamp('last_ssh_ok_at', { withTimezone: true }),
   /* профиль в парке (миграция 0034): знание владельца и снимок фактического состояния */
-  role: text('role'),
+  roles: jsonb('roles').$type<string[]>().notNull().default([]),
   importance: text('importance').notNull().default('normal'),
   maintenanceWindow: text('maintenance_window'),
   expectedContainers: jsonb('expected_containers').$type<string[]>().notNull().default([]),

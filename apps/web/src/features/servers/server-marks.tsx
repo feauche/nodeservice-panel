@@ -1,12 +1,13 @@
 import {
   SERVER_IMPORTANCE_LABELS,
-  SERVER_ROLE_LABELS,
+  SERVER_ROLE_SHORT,
   type Server,
   type ServerRole,
 } from '@nodeservice/shared';
 import {
   ArrowRightLeftIcon,
   GlobeIcon,
+  LayersIcon,
   LayoutDashboardIcon,
   LogInIcon,
   type LucideIcon,
@@ -18,23 +19,28 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 const ROLE_ICONS: Record<ServerRole, LucideIcon> = {
   entry: LogInIcon,
   exit: GlobeIcon,
-  relay: ArrowRightLeftIcon,
+  bridge: ArrowRightLeftIcon,
   panel: LayoutDashboardIcon,
   other: ServerIcon,
 };
 
-/** Подпись значка роли: «Входной. Критичный»; без роли — «Важность: Критичный». */
+/** Подпись значка функций: «Вход, Выход. Критичный»; без функций — «Важность: Критичный». */
 export function roleMarkLabel(profile: Server['profile']): string | null {
   const importance = SERVER_IMPORTANCE_LABELS[profile.importance];
-  if (profile.role) return `${SERVER_ROLE_LABELS[profile.role]}. ${importance}`;
+  if (profile.roles.length > 0)
+    return `${profile.roles.map((r) => SERVER_ROLE_SHORT[r]).join(', ')}. ${importance}`;
   return profile.importance === 'critical' ? `Важность: ${importance}` : null;
 }
 
-/** Значок роли рядом с названием сервера: маленькая плитка с подсказкой. Нет роли и нет критичности — ничего. */
+/**
+ * Значок функций рядом с названием сервера: маленькая плитка с подсказкой. Одна функция — её значок, несколько —
+ * общий; нет функций и нет критичности — ничего.
+ */
 export function RoleMark({ server }: { server: Server }) {
   const label = roleMarkLabel(server.profile);
   if (!label) return null;
-  const Icon = server.profile.role ? ROLE_ICONS[server.profile.role] : ShieldAlertIcon;
+  const [only, ...more] = server.profile.roles;
+  const Icon = only ? (more.length === 0 ? ROLE_ICONS[only] : LayersIcon) : ShieldAlertIcon;
   return (
     <Tooltip>
       <TooltipTrigger asChild>

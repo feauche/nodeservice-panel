@@ -68,3 +68,29 @@ export const assistantMessages = pgTable(
   (t) => [index('assistant_msg_conv_idx').on(t.conversationId, t.createdAt)],
 );
 export type AssistantMessageRow = typeof assistantMessages.$inferSelect;
+
+/** Изменение по предложению Джарвиса (миграция 0035): args и plan хранятся, чтобы применить и откатить ровно то, что показали. */
+export const assistantChanges = pgTable(
+  'assistant_changes',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    conversationId: uuid('conversation_id').references(() => assistantConversations.id, {
+      onDelete: 'set null',
+    }),
+    operation: text('operation').notNull(),
+    args: jsonb('args').$type<Record<string, unknown>>().notNull(),
+    reason: text('reason'),
+    plan: jsonb('plan').$type<Record<string, unknown>>().notNull(),
+    status: text('status').notNull().default('proposed'),
+    note: text('note'),
+    decidedBy: text('decided_by'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('assistant_changes_created_idx').on(t.createdAt),
+    index('assistant_changes_conv_idx').on(t.conversationId),
+  ],
+);
+export type AssistantChangeRow = typeof assistantChanges.$inferSelect;

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { mockAudit, seedAudit } from '@/test/msw/audit-mock';
+import { mockAudit, pushAuditEntry, seedAudit } from '@/test/msw/audit-mock';
 import { resetMockState } from '@/test/msw/handlers';
 import { mockServers, seedServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
@@ -115,6 +115,88 @@ describe('AuditPage', () => {
     const login = await screen.findByTestId('audit-details');
     expect(within(login).getByText('Способ входа')).toBeInTheDocument();
     expect(within(login).getByText('Пароль + код 2FA')).toBeInTheDocument();
+  });
+
+  describe('изменения по предложению Джарвиса (J5, C1)', () => {
+    const change = (kind: 'applied' | 'reverted' | 'rejected' | 'failed', over = {}) =>
+      pushAuditEntry({
+        action: `assistant.change.${kind}`,
+        category: 'assistant',
+        result: kind === 'failed' ? 'failed' : 'ok',
+        targetType: 'server',
+        targetId: null,
+        targetDisplay: 'de-fra-01',
+        metadata: {
+          changeId: '0192f100-0000-7000-8000-000000000001',
+          operation: 'server.provider',
+          title: 'Сменить провайдера',
+          reason: 'В панели указан Hetzner, а вы сказали, что сервер у Aéza.',
+          rows: [{ label: 'Провайдер', before: 'Hetzner', after: 'Aéza' }],
+          note: 'Проверено: Провайдер: Aéza.',
+        },
+        ...over,
+      });
+
+    it('строка с заголовком «Джарвис предложил, вы применили: …», значком Джарвиса и целью', async () => {
+      change('applied');
+      renderPage(Harness, '/audit');
+      const headline = await screen.findByText('Джарвис предложил, вы применили: Сменить провайдера');
+      const row = headline.closest('tr') as HTMLElement;
+      expect(row.querySelector('svg.text-ai')).not.toBeNull();
+      expect(within(row).getByText('· de-fra-01')).toBeInTheDocument();
+    });
+
+    it('разные решения — разные заголовки', async () => {
+      change('failed');
+      change('rejected');
+      change('reverted');
+      renderPage(Harness, '/audit');
+      expect(
+        await screen.findByText('Вы отменили изменение Джарвиса: Сменить провайдера'),
+      ).toBeInTheDocument();
+      expect(screen.getByText('Вы отклонили предложение Джарвиса: Сменить провайдера')).toBeInTheDocument();
+      expect(
+        screen.getByText('Изменение по предложению Джарвиса не применено: Сменить провайдера'),
+      ).toBeInTheDocument();
+    });
+
+    it('детали: «Было → Станет», причина и итог проверки; сырых ключей и кнопки отмены нет', async () => {
+      change('applied');
+      renderPage(Harness, '/audit');
+      const user = userEvent.setup();
+      const headline = await screen.findByText('Джарвис предложил, вы применили: Сменить провайдера');
+      await user.click(headline.closest('tr') as HTMLElement);
+      const details = await screen.findByTestId('audit-details');
+      expect(within(details).getByText('Изменения')).toBeInTheDocument();
+      const diff = within(details).getByText('Провайдер').closest('tr') as HTMLElement;
+      expect(within(diff).getByText('Hetzner')).toBeInTheDocument();
+      expect(within(diff).getByText('Aéza')).toBeInTheDocument();
+      expect(within(details).getByText('Причина')).toBeInTheDocument();
+      expect(within(details).getByText(/В панели указан Hetzner/)).toBeInTheDocument();
+      expect(within(details).getByText('Итог')).toBeInTheDocument();
+      expect(within(details).getByText('Проверено: Провайдер: Aéza.')).toBeInTheDocument();
+      expect(within(details).getByText('assistant.change.applied')).toBeInTheDocument();
+      expect(within(details).queryByText('rows')).not.toBeInTheDocument();
+      expect(within(details).queryByText('title')).not.toBeInTheDocument();
+      expect(within(details).queryByText('operation')).not.toBeInTheDocument();
+      expect(within(details).queryByRole('button', { name: /Отменить/ })).not.toBeInTheDocument();
+    });
+
+    it('фильтр по разделу «Джарвис» оставляет такие записи', async () => {
+      change('applied');
+      renderPage(() => <Harness initial={{ category: ['assistant'] }} />, '/audit');
+      await screen.findByText('Джарвис предложил, вы применили: Сменить провайдера');
+      expect(rows()).toHaveLength(1);
+    });
+
+    it('отчёт по записи включает строки «было → станет»', async () => {
+      change('applied');
+      const { buildAuditReport } = await import('./audit-format');
+      const report = buildAuditReport(mockAudit.entries[0] as never);
+      expect(report).toContain('Провайдер: Hetzner → Aéza');
+      expect(report).toContain('Итог: Проверено: Провайдер: Aéza.');
+      expect(report).not.toContain('rows');
+    });
   });
 
   it('пустой журнал — понятное сообщение; экспорт ведёт на /api/audit/export с фильтрами', async () => {

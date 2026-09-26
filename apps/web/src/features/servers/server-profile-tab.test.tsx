@@ -22,7 +22,7 @@ async function openProfile() {
 
 const server = () => mockServers.items[0] as (typeof mockServers.items)[number];
 
-describe('вкладка «Профиль» (J3, A5 + C3)', () => {
+describe('вкладка «Профиль» (J3, A5 + R2 + C3)', () => {
   beforeEach(() => {
     resetMockState({ authenticated: true });
     seedServers();
@@ -33,23 +33,100 @@ describe('вкладка «Профиль» (J3, A5 + C3)', () => {
     const { dialog } = await openProfile();
     expect(within(dialog).getByTestId('profile-summary')).toHaveTextContent('Ожидаемое не задано');
     expect(within(dialog).getByText('Снимка ещё нет')).toBeInTheDocument();
-    expect(within(dialog).getByText(/Ожидаемое не задано\. Добавьте контейнеры и порты/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/Пока ничего не добавлено\. Добавьте контейнеры и порты/),
+    ).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeDisabled();
     expect(within(dialog).queryByRole('button', { name: 'Отменить' })).toBeNull();
     expect(within(dialog).queryByRole('button', { name: 'Взять из текущего состояния' })).toBeNull();
   });
 
-  it('роль и важность: выбор, повторный клик по роли сбрасывает, сохранение уходит в PATCH', async () => {
+  it('пояснения: зачем профиль, «Необязательно» у четырёх блоков, подсказки к функциям и важности', async () => {
+    const { dialog } = await openProfile();
+    expect(
+      within(dialog).getByText(/Джарвис по этим данным понимает, что сломается при сбое/),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/Заполнять необязательно: без профиля он работает как раньше/),
+    ).toBeInTheDocument();
+    expect(within(dialog).getAllByText('Необязательно')).toHaveLength(4);
+    // Мост назван мостом и объяснён
+    expect(
+      within(dialog).getByRole('checkbox', { name: 'Мост: передаёт трафик на другой сервер' }),
+    ).toHaveAccessibleDescription(/Переходник между вашими серверами/);
+    expect(within(dialog).getByText(/Приложения клиентов подключаются к этому серверу/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Например: remnanode, порт 443/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Когда можно обновлять и перезагружать сервер/)).toBeInTheDocument();
+  });
+
+  it('функции сервера: отмечать можно несколько, повторное нажатие снимает отметку', async () => {
     const { dialog } = await openProfile();
     const user = userEvent.setup();
-    const role = within(dialog).getByRole('radiogroup', { name: 'Роль сервера в парке' });
-    await user.click(within(role).getByRole('radio', { name: 'Входной' }));
-    expect(within(role).getByRole('radio', { name: 'Входной' })).toHaveAttribute('aria-checked', 'true');
-    await user.click(within(role).getByRole('radio', { name: 'Входной' }));
-    expect(within(role).getByRole('radio', { name: 'Входной' })).toHaveAttribute('aria-checked', 'false');
+    const entry = within(dialog).getByRole('checkbox', { name: 'Принимает подключения клиентов' });
+    const exit = within(dialog).getByRole('checkbox', { name: 'Выпускает трафик в интернет' });
+    expect(within(dialog).getAllByRole('checkbox')).toHaveLength(5);
+    await user.click(entry);
+    await user.click(exit);
+    expect(entry).toHaveAttribute('aria-checked', 'true');
+    expect(exit).toHaveAttribute('aria-checked', 'true');
+    expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeEnabled();
+    await user.click(entry);
+    expect(entry).toHaveAttribute('aria-checked', 'false');
+    expect(exit).toHaveAttribute('aria-checked', 'true');
+    await user.click(exit);
     expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeDisabled();
+  });
 
-    await user.click(within(role).getByRole('radio', { name: 'Выходной' }));
+  it('важность: подсказки ко всем трём значениям видны сразу, выбранное подсвечено', async () => {
+    const { dialog } = await openProfile();
+    const user = userEvent.setup();
+    const hints = within(dialog).getByRole('list', { name: 'Что значит каждая важность' });
+    const items = within(hints).getAllByRole('listitem');
+    expect(items).toHaveLength(3);
+    expect(items[0]).toHaveTextContent(/Критичный\. Без него клиенты теряют доступ/);
+    expect(items[1]).toHaveTextContent(/Обычный\. Один из нескольких равноценных серверов/);
+    expect(items[2]).toHaveTextContent(/Второстепенный\. Запасной или тестовый сервер/);
+    expect(items.map((i) => i.dataset.selected)).toEqual(['false', 'true', 'false']);
+    const importance = within(dialog).getByRole('radiogroup', { name: 'Важность сервера' });
+    await user.click(within(importance).getByRole('radio', { name: 'Критичный' }));
+    expect(items.map((i) => i.dataset.selected)).toEqual(['true', 'false', 'false']);
+    expect(within(dialog).getByText('Сейчас важность влияет только на советы Джарвиса.')).toBeInTheDocument();
+  });
+
+  it('нода Remnawave стоит первым блоком: режимы, состояние, отмена возвращает сохранённое', async () => {
+    const { dialog } = await openProfile();
+    const user = userEvent.setup();
+    const headings = within(dialog)
+      .getAllByRole('heading', { level: 3 })
+      .map((h) => h.textContent);
+    expect(headings.slice(0, 2)).toEqual(['Нода Remnawave на сервере', 'Что делает сервер']);
+    expect(within(dialog).getByText('Ещё не проверяли')).toBeInTheDocument();
+    const auto = within(dialog).getByRole('button', { name: /Определять автоматически/ });
+    expect(auto).toHaveAttribute('aria-pressed', 'true');
+    expect(
+      within(dialog).getByText(/Панель следит за нодой, только если найдёт её контейнер/),
+    ).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: /Нет, не следить/ }));
+    expect(within(dialog).getByText('Слежение выключено')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/инцидент об остановленной ноде заводиться не будет/),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeEnabled();
+    await user.click(within(dialog).getByRole('button', { name: 'Отменить' }));
+    expect(within(dialog).getByRole('button', { name: /Определять автоматически/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeDisabled();
+  });
+
+  it('слежение за нодой сохраняется вместе с профилем одним запросом', async () => {
+    const { dialog } = await openProfile();
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole('button', { name: /Есть, следить/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Выпускает трафик в интернет' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Принимает подключения клиентов' }));
     const importance = within(dialog).getByRole('radiogroup', { name: 'Важность сервера' });
     await user.click(within(importance).getByRole('radio', { name: 'Критичный' }));
     await user.type(within(dialog).getByLabelText('Окно обслуживания'), 'ночью 03:00–05:00');
@@ -57,12 +134,27 @@ describe('вкладка «Профиль» (J3, A5 + C3)', () => {
 
     await waitFor(() =>
       expect(server().profile).toMatchObject({
-        role: 'exit',
+        roles: ['entry', 'exit'],
         importance: 'critical',
         maintenanceWindow: 'ночью 03:00–05:00',
       }),
     );
+    expect(server().nodeWatch).toBe('on');
     await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeDisabled());
+    expect(within(dialog).getByRole('button', { name: /Есть, следить/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('на вкладке «Подключение» блока про ноду больше нет', async () => {
+    const { dialog } = await openProfile();
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole('button', { name: 'Подключение' }));
+    expect(await within(dialog).findByLabelText('Название')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: /Нет, не следить/ })).toBeNull();
+    expect(within(dialog).queryByText(/Нода Remnawave на сервере/)).toBeNull();
+    expect(within(dialog).queryByRole('heading', { name: 'Нода' })).toBeNull();
   });
 
   it('добавление контейнера и порта: проверка имени, дубликатов и диапазона', async () => {

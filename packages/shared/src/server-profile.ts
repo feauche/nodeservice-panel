@@ -6,14 +6,32 @@ import { z } from 'zod';
  * сутки и сравнивает с ожидаемым: расхождение показывается предупреждением и доступно Джарвису.
  */
 
-export const SERVER_ROLES = ['entry', 'exit', 'relay', 'panel', 'other'] as const;
+export const SERVER_ROLES = ['entry', 'exit', 'bridge', 'panel', 'other'] as const;
 export type ServerRole = (typeof SERVER_ROLES)[number];
+/** Функции сервера в схеме VPN. Их может быть несколько: в простой схеме один сервер и вход, и выход. */
 export const SERVER_ROLE_LABELS: Record<ServerRole, string> = {
-  entry: 'Входной',
-  exit: 'Выходной',
-  relay: 'Реле',
+  entry: 'Принимает подключения клиентов',
+  exit: 'Выпускает трафик в интернет',
+  bridge: 'Мост: передаёт трафик на другой сервер',
+  panel: 'Панель Remnawave',
+  other: 'Другое',
+};
+/** Короткие названия для значков и подсказок. */
+export const SERVER_ROLE_SHORT: Record<ServerRole, string> = {
+  entry: 'Вход',
+  exit: 'Выход',
+  bridge: 'Мост',
   panel: 'Панель',
   other: 'Другое',
+};
+export const SERVER_ROLE_HINTS: Record<ServerRole, string> = {
+  entry:
+    'Приложения клиентов подключаются к этому серверу. Обычно это сервер в России или с хорошей связью для клиентов.',
+  exit: 'Отсюда трафик выходит в интернет к сайтам. Обычно сервер за границей.',
+  bridge:
+    'Переходник между вашими серверами: принимает трафик от одного и отправляет на другой (цепочка «вход, мост, выход»). Клиенты к нему напрямую не подключаются.',
+  panel: 'Здесь стоит панель Remnawave (пользователи, ноды, подписки), а не нода.',
+  other: 'Всё остальное: сайт, бот, мониторинг.',
 };
 
 export const SERVER_IMPORTANCE = ['critical', 'normal', 'low'] as const;
@@ -22,6 +40,13 @@ export const SERVER_IMPORTANCE_LABELS: Record<ServerImportance, string> = {
   critical: 'Критичный',
   normal: 'Обычный',
   low: 'Второстепенный',
+};
+/** Что реально меняется в поведении Джарвиса при каждом значении (сейчас важность влияет только на его советы). */
+export const SERVER_IMPORTANCE_HINTS: Record<ServerImportance, string> = {
+  critical:
+    'Без него клиенты теряют доступ, например единственный вход. Джарвис перед перезапуском, обновлением или перезагрузкой называет последствия и окно обслуживания и не предлагает рискованное без причины.',
+  normal: 'Один из нескольких равноценных серверов. Джарвис советует как обычно.',
+  low: 'Запасной или тестовый сервер. Джарвис не считает его сбой срочным, разбирает после остальных и без лишних оговорок предлагает перезапуск и обновление.',
 };
 
 export const EXPECTED_CONTAINERS_MAX = 20;
@@ -35,8 +60,8 @@ export const containerNameSchema = z
 export const portNumberSchema = z.coerce.number().int().min(1).max(65_535);
 
 export const serverProfileSchema = z.object({
-  /** Роль в схеме парка; null — не указана. */
-  role: z.enum(SERVER_ROLES).nullable(),
+  /** Функции сервера в схеме (вход, выход, мост, панель); пусто — не указаны. */
+  roles: z.array(z.enum(SERVER_ROLES)),
   /** Насколько важен сервер: критичному Джарвис ничего рискованного не предлагает без предупреждения. */
   importance: z.enum(SERVER_IMPORTANCE),
   /** Когда можно ставить обновления и перезагружать, свободным текстом; null — не указано. */
@@ -49,7 +74,7 @@ export const serverProfileSchema = z.object({
 export type ServerProfile = z.infer<typeof serverProfileSchema>;
 
 export const DEFAULT_SERVER_PROFILE: ServerProfile = {
-  role: null,
+  roles: [],
   importance: 'normal',
   maintenanceWindow: null,
   expectedContainers: [],
@@ -58,7 +83,7 @@ export const DEFAULT_SERVER_PROFILE: ServerProfile = {
 
 /** Что можно менять в профиле: каждое поле отдельно; списки заменяются целиком. */
 export const serverProfilePatchSchema = z.object({
-  role: z.enum(SERVER_ROLES).nullable().optional(),
+  roles: z.array(z.enum(SERVER_ROLES)).max(SERVER_ROLES.length).optional(),
   importance: z.enum(SERVER_IMPORTANCE).optional(),
   maintenanceWindow: z.string().trim().max(MAINTENANCE_WINDOW_MAX).nullable().optional(),
   expectedContainers: z
@@ -139,6 +164,7 @@ export function computeDrift(
 export function normalizeProfilePatch(patch: ServerProfilePatch): ServerProfilePatch {
   return {
     ...patch,
+    ...(patch.roles ? { roles: SERVER_ROLES.filter((r) => patch.roles?.includes(r)) } : {}),
     ...(patch.expectedContainers
       ? { expectedContainers: [...new Set(patch.expectedContainers.map((c) => c.trim()))].sort() }
       : {}),

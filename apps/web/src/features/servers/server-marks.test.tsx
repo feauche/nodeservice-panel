@@ -14,7 +14,7 @@ const base = (over: Partial<Server> = {}): Server =>
     id: '11111111-1111-4111-8111-111111111111',
     name: 'ru-entry-1',
     profile: {
-      role: null,
+      roles: [],
       importance: 'normal',
       maintenanceWindow: null,
       expectedContainers: [],
@@ -29,23 +29,23 @@ const withProfile = (p: Partial<Server['profile']>, drift: Server['drift'] = [])
 
 const wrap = (ui: React.ReactNode) => render(<TooltipProvider delayDuration={0}>{ui}</TooltipProvider>);
 
-describe('значок роли (B3)', () => {
-  it('роль и критичность: значок с подписью «Входной. Критичный»', () => {
-    wrap(<RoleMark server={withProfile({ role: 'entry', importance: 'critical' })} />);
-    expect(screen.getByRole('img', { name: 'Входной. Критичный' })).toBeInTheDocument();
+describe('значок функций (B3)', () => {
+  it('одна функция и критичность: значок с подписью «Вход. Критичный»', () => {
+    wrap(<RoleMark server={withProfile({ roles: ['entry'], importance: 'critical' })} />);
+    expect(screen.getByRole('img', { name: 'Вход. Критичный' })).toBeInTheDocument();
   });
 
-  it('у каждой роли свой значок и своя подпись', () => {
-    const labels: Array<[Server['profile']['role'], string]> = [
-      ['entry', 'Входной. Обычный'],
-      ['exit', 'Выходной. Обычный'],
-      ['relay', 'Реле. Обычный'],
+  it('у каждой функции свой значок и своя подпись', () => {
+    const labels: Array<[Server['profile']['roles'][number], string]> = [
+      ['entry', 'Вход. Обычный'],
+      ['exit', 'Выход. Обычный'],
+      ['bridge', 'Мост. Обычный'],
       ['panel', 'Панель. Обычный'],
       ['other', 'Другое. Обычный'],
     ];
     const seen = new Set<string>();
     for (const [role, label] of labels) {
-      const { container, unmount } = wrap(<RoleMark server={withProfile({ role })} />);
+      const { container, unmount } = wrap(<RoleMark server={withProfile({ roles: [role] })} />);
       expect(screen.getByRole('img', { name: label })).toBeInTheDocument();
       seen.add(container.querySelector('svg')?.innerHTML ?? '');
       unmount();
@@ -53,12 +53,26 @@ describe('значок роли (B3)', () => {
     expect(seen.size).toBe(5);
   });
 
-  it('без роли: значок только у критичного, с подписью «Важность: Критичный»', () => {
-    wrap(<RoleMark server={withProfile({ role: null, importance: 'critical' })} />);
+  it('несколько функций: общий значок и перечисление в подписи', () => {
+    const { container, unmount } = wrap(
+      <RoleMark server={withProfile({ roles: ['entry', 'exit'], importance: 'critical' })} />,
+    );
+    expect(screen.getByRole('img', { name: 'Вход, Выход. Критичный' })).toBeInTheDocument();
+    const multi = container.querySelector('svg')?.innerHTML ?? '';
+    unmount();
+    for (const role of ['entry', 'exit', 'bridge', 'panel', 'other'] as const) {
+      const one = wrap(<RoleMark server={withProfile({ roles: [role] })} />);
+      expect(one.container.querySelector('svg')?.innerHTML).not.toBe(multi);
+      one.unmount();
+    }
+  });
+
+  it('без функций: значок только у критичного, с подписью «Важность: Критичный»', () => {
+    wrap(<RoleMark server={withProfile({ roles: [], importance: 'critical' })} />);
     expect(screen.getByRole('img', { name: 'Важность: Критичный' })).toBeInTheDocument();
   });
 
-  it('без роли и без критичности значка нет', () => {
+  it('без функций и без критичности значка нет', () => {
     for (const importance of ['normal', 'low'] as const) {
       const { container, unmount } = wrap(<RoleMark server={withProfile({ importance })} />);
       expect(container).toBeEmptyDOMElement();
@@ -93,14 +107,14 @@ describe('карточки в сетке', () => {
     const first = mockServers.items[0] as Server;
     mockServers.items[0] = {
       ...first,
-      profile: { ...first.profile, role: 'entry', importance: 'critical' },
+      profile: { ...first.profile, roles: ['entry'], importance: 'critical' },
       drift: [{ kind: 'port_not_listening', subject: '8443', detail: 'Порт 8443 никто не слушает.' }],
     };
     renderPage(() => <ServersPage tag={undefined} onTag={() => {}} />, '/servers');
     await screen.findByText(first.name);
     const cards = screen.getAllByRole('article');
     const mine = cards.find((c) => within(c).queryByText(first.name)) as HTMLElement;
-    expect(within(mine).getByRole('img', { name: 'Входной. Критичный' })).toBeInTheDocument();
+    expect(within(mine).getByRole('img', { name: 'Вход. Критичный' })).toBeInTheDocument();
     expect(within(mine).getByRole('img', { name: 'Не совпадает с ожидаемым: 1' })).toBeInTheDocument();
     for (const other of cards.filter((c) => c !== mine)) {
       expect(within(other).queryByTestId('role-mark')).toBeNull();

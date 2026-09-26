@@ -47,7 +47,7 @@ export class ServersService {
 
   toDto(row: ServerRow): Server {
     const profile: ServerProfile = {
-      role: (row.role as ServerProfile['role']) ?? null,
+      roles: (row.roles as ServerProfile['roles']) ?? [],
       importance: (row.importance as ServerProfile['importance']) ?? 'normal',
       maintenanceWindow: row.maintenanceWindow,
       expectedContainers: row.expectedContainers ?? [],
@@ -269,7 +269,7 @@ export class ServersService {
       memoryMb: row.memoryMb,
       hostKeyFp: row.hostKeyFp,
       nodeWatch: row.nodeWatch,
-      role: row.role,
+      roles: row.roles ?? [],
       importance: row.importance,
       maintenanceWindow: row.maintenanceWindow,
       expectedContainers: row.expectedContainers ?? [],
@@ -370,7 +370,7 @@ export class ServersService {
       notes: r.notes,
       providerId: r.providerId,
       nodeWatch: r.nodeWatch,
-      role: r.role,
+      roles: r.roles,
       importance: r.importance,
       maintenanceWindow: r.maintenanceWindow,
       expectedContainers: r.expectedContainers,
@@ -386,7 +386,7 @@ export class ServersService {
       ...(patch.notes !== undefined ? { notes: patch.notes?.trim() ? patch.notes.trim() : null } : {}),
       ...(patch.providerId !== undefined ? { providerId: await this.resolveProvider(patch.providerId) } : {}),
       ...(patch.nodeWatch !== undefined ? { nodeWatch: patch.nodeWatch } : {}),
-      ...(profilePatch?.role !== undefined ? { role: profilePatch.role } : {}),
+      ...(profilePatch?.roles !== undefined ? { roles: profilePatch.roles } : {}),
       ...(profilePatch?.importance !== undefined ? { importance: profilePatch.importance } : {}),
       ...(profilePatch?.maintenanceWindow !== undefined
         ? { maintenanceWindow: profilePatch.maintenanceWindow }

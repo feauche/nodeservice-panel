@@ -40,6 +40,40 @@ describe('AssistantPage', () => {
     expect(kbLink.getAttribute('href')).toContain('open=');
   });
 
+  it('изменения по подтверждению: Джарвис присылает карточки, применение делается кнопкой в самой карточке', async () => {
+    mockAssistant.enabled = true;
+    renderPage(AssistantPage, '/assistant');
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText('Сообщение Джарвису'), 'предложи изменения');
+    await user.click(screen.getByRole('button', { name: 'Отправить' }));
+    const cards = await screen.findAllByTestId('change-card');
+    expect(cards).toHaveLength(3);
+    for (const c of cards) await within(c).findByRole('button', { name: 'Применить' });
+    expect(
+      cards.map(
+        (c) =>
+          within(c).getByText(/^(Сменить провайдера|Изменить теги|Изменить профиль сервера)$/).textContent,
+      ),
+    ).toEqual(['Сменить провайдера', 'Изменить теги', 'Изменить профиль сервера']);
+    expect(screen.queryByTestId('proposal-card')).not.toBeInTheDocument();
+    await user.click(within(cards[0] as HTMLElement).getByRole('button', { name: 'Применить' }));
+    await within(cards[0] as HTMLElement).findByText('Применено');
+    // остальные ждут своего решения: «Применить всё» нет
+    expect(within(cards[1] as HTMLElement).getByRole('button', { name: 'Применить' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /Применить всё/ })).not.toBeInTheDocument();
+  });
+
+  it('без разрешения на изменения Джарвис карточек изменений не присылает', async () => {
+    mockAssistant.enabled = true;
+    mockAssistant.permissions = { ...mockAssistant.permissions, changes: false };
+    renderPage(AssistantPage, '/assistant');
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText('Сообщение Джарвису'), 'предложи изменения');
+    await user.click(screen.getByRole('button', { name: 'Отправить' }));
+    await screen.findByTestId('proposal-card');
+    expect(screen.queryByTestId('change-card')).not.toBeInTheDocument();
+  });
+
   it('имя сервера в ответе — ссылка: клик открывает карточку сервера', async () => {
     mockAssistant.enabled = true;
     useServerModalStore.getState().close();

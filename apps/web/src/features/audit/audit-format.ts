@@ -102,26 +102,63 @@ const KEY_LABELS: Record<string, string> = {
   mode: 'Режим',
   toolCalls: 'Инструментов',
   proposals: 'Предложений',
+  changeId: 'ID изменения',
+  note: 'Итог',
 };
 
+/** Записи о решениях по изменениям, которые предложил Джарвис (J5): показываются своей строкой. */
+const CHANGE_LEAD: Record<string, string> = {
+  'assistant.change.applied': 'Джарвис предложил, вы применили',
+  'assistant.change.reverted': 'Вы отменили изменение Джарвиса',
+  'assistant.change.rejected': 'Вы отклонили предложение Джарвиса',
+  'assistant.change.failed': 'Изменение по предложению Джарвиса не применено',
+};
+
+export const isChangeEntry = (entry: Pick<AuditEntry, 'action'>): boolean => entry.action in CHANGE_LEAD;
+
+/** «Джарвис предложил, вы применили: Сменить провайдера»; для остальных записей null. */
+export function changeHeadline(entry: AuditEntry): string | null {
+  const lead = CHANGE_LEAD[entry.action];
+  if (!lead) return null;
+  const title = entry.metadata.title;
+  return typeof title === 'string' && title ? `${lead}: ${title}` : lead;
+}
+
+/** Строки «было → станет» из метаданных изменения; пусто у остальных записей и при повреждённых данных. */
+export function changeRows(entry: AuditEntry): Array<{ label: string; before: string; after: string }> {
+  const rows = entry.metadata.rows;
+  if (!isChangeEntry(entry) || !Array.isArray(rows)) return [];
+  return rows.flatMap((r) => {
+    const row = r as Record<string, unknown> | null;
+    return row && typeof row.label === 'string'
+      ? [{ label: row.label, before: formatValue(row.before), after: formatValue(row.after) }]
+      : [];
+  });
+}
+
 const MODE_LABELS: Record<string, string> = { agent: 'Агент', analysis: 'Анализ' };
+
+/** Эти ключи показываются отдельным блоком «Изменения» (строки «было → станет») или уже есть в заголовке. */
+const HIDDEN_KEYS = new Set(['rows', 'title', 'operation']);
 
 /** Метаданные записи → понятные подписи и значения; неизвестные ключи показываются как есть. */
 export function metadataRows(
   metadata: Record<string, unknown>,
 ): Array<{ key: string; label: string; value: string }> {
-  return Object.entries(metadata).map(([key, raw]) => {
-    let value = formatValue(raw);
-    if (key === 'amr' && Array.isArray(raw))
-      value = capFirst(raw.map((m) => AMR_LABELS[String(m)] ?? String(m)).join(' + '));
-    else if (key === 'reason' && typeof raw === 'string') value = capFirst(REASON_LABELS[raw] ?? raw);
-    else if (key === 'mode' && typeof raw === 'string') value = MODE_LABELS[raw] ?? raw;
-    else if (key === 'stage' && raw === 'setup') value = 'Первый запуск';
-    else if (key === 'error' && typeof raw === 'string') value = raw.split('/').pop() ?? raw;
-    else if (key === 'env')
-      value = raw === 'production' ? 'Прод' : raw === 'development' ? 'Разработка' : value;
-    return { key, label: KEY_LABELS[key] ?? key, value };
-  });
+  return Object.entries(metadata)
+    .filter(([key]) => !HIDDEN_KEYS.has(key))
+    .map(([key, raw]) => {
+      let value = formatValue(raw);
+      if (key === 'amr' && Array.isArray(raw))
+        value = capFirst(raw.map((m) => AMR_LABELS[String(m)] ?? String(m)).join(' + '));
+      else if (key === 'reason' && typeof raw === 'string') value = capFirst(REASON_LABELS[raw] ?? raw);
+      else if (key === 'mode' && typeof raw === 'string') value = MODE_LABELS[raw] ?? raw;
+      else if (key === 'stage' && raw === 'setup') value = 'Первый запуск';
+      else if (key === 'error' && typeof raw === 'string') value = raw.split('/').pop() ?? raw;
+      else if (key === 'env')
+        value = raw === 'production' ? 'Прод' : raw === 'development' ? 'Разработка' : value;
+      return { key, label: KEY_LABELS[key] ?? key, value };
+    });
 }
 
 /** Текстовый отчёт по одной записи — для кнопки «Скопировать» в раскрытых деталях. */
@@ -140,10 +177,12 @@ export function buildAuditReport(entry: AuditEntry): string {
       : []),
   ];
   const changes = entry.changes ? Object.entries(entry.changes) : [];
-  if (changes.length > 0) {
+  const rows = changeRows(entry);
+  if (changes.length > 0 || rows.length > 0) {
     lines.push('Изменения:');
     for (const [field, diff] of changes)
       lines.push(`  ${field}: ${formatValue(diff.before)} → ${formatValue(diff.after)}`);
+    for (const r of rows) lines.push(`  ${r.label}: ${r.before} → ${r.after}`);
   }
   const metadata = metadataRows(entry.metadata);
   if (metadata.length > 0) {

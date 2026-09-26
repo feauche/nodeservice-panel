@@ -94,7 +94,40 @@ describe('AssistantSettingsPage', () => {
     expect(screen.getByText('Серверы, только чтение')).toBeInTheDocument();
     expect(screen.getAllByText('Ходит на серверы').length).toBeGreaterThanOrEqual(3);
     expect(screen.getAllByText('Данные уходят провайдеру').length).toBeGreaterThanOrEqual(3);
-    expect(screen.getByText('Только с вашего подтверждения')).toBeInTheDocument();
+    expect(screen.getAllByText('Только с вашего подтверждения')).toHaveLength(2);
+  });
+
+  it('«Изменения по подтверждению»: отдельная группа «Изменения» под «Инциденты», подсказка, метка риска, наборы и сохранение', async () => {
+    mockAssistant.enabled = true;
+    mockAssistant.permissions = { ...ASSISTANT_PERMISSIONS_DEFAULT };
+    renderPage(AssistantSettingsPage, '/settings/assistant');
+    const user = userEvent.setup();
+    await screen.findByText('Включён');
+    await user.click(screen.getByRole('button', { name: 'Разрешения' }));
+
+    const groups = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
+    expect(groups.indexOf('Инциденты')).toBeGreaterThanOrEqual(0);
+    expect(groups.findIndex((t) => t?.startsWith('Изменения'))).toBe(groups.indexOf('Инциденты') + 1);
+    expect(screen.getByText('только с вашего подтверждения')).toBeInTheDocument();
+    expect(screen.getByText(/карточкой с «было → станет»\. Применяете вы;/)).toBeInTheDocument();
+    expect(screen.getByText(/записывается в Журнал/)).toBeInTheDocument();
+
+    const sw = screen.getByRole('switch', { name: 'Изменения по подтверждению' });
+    expect(sw).toBeChecked();
+    // Наборы: «Осторожный» выключает, «Обычный» и «Максимальный автоматизм» включают
+    await user.click(screen.getByRole('radio', { name: /Осторожный/ }));
+    expect(sw).not.toBeChecked();
+    await user.click(screen.getByRole('radio', { name: /Обычный/ }));
+    expect(sw).toBeChecked();
+    await user.click(screen.getByRole('radio', { name: /Максимальный автоматизм/ }));
+    expect(sw).toBeChecked();
+
+    await user.click(sw);
+    expect(sw).not.toBeChecked();
+    expect(screen.getByText('Сейчас настроено вручную.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(mockAssistant.permissions.changes).toBe(false));
+    expect(mockAssistant.permissions.proposals).toBe(true);
   });
 
   it('раздел «Данные для провайдера» показывает только то, что разрешено', async () => {

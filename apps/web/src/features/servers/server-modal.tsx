@@ -41,7 +41,6 @@ import { ProviderSelect } from '@/features/providers/provider-select';
 import { useProviders } from '@/features/providers/providers-api';
 import { formatAgo } from '@/features/security/security-format';
 import { StepUpCancelledError } from '@/features/security/step-up';
-import { NodeStatePill, NodeWatchSegments } from '@/features/servers/node-watch-select';
 import { useTerminalStore } from '@/features/terminal/terminal-store';
 import { apiErrorMessage, isApiError } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -547,7 +546,6 @@ function ConnectionTab({ server }: { server: Server }) {
   const providers = useProviders();
   const [form, setForm] = useState({ name: '', host: '', port: '22', sshUser: '', tags: '', notes: '' });
   const [providerId, setProviderId] = useState<string | null>(null);
-  const [nodeWatch, setNodeWatch] = useState<Server['nodeWatch']>('auto');
   const [authTab, setAuthTab] = useState<(typeof AUTH_TABS)[number]['key']>('keep');
   const [password, setPassword] = useState('');
   const [privateKey, setPrivateKey] = useState('');
@@ -565,7 +563,6 @@ function ConnectionTab({ server }: { server: Server }) {
       notes: server.notes ?? '',
     });
     setProviderId(server.providerId);
-    setNodeWatch(server.nodeWatch);
     setAuthTab('keep');
     setPassword('');
     setPrivateKey('');
@@ -597,7 +594,6 @@ function ConnectionTab({ server }: { server: Server }) {
         .filter(Boolean),
       notes: form.notes.trim() ? form.notes.trim() : null,
       providerId,
-      nodeWatch,
       ...(auth ? { auth } : {}),
     });
     if (!parsed.success) {
@@ -715,15 +711,6 @@ function ConnectionTab({ server }: { server: Server }) {
             />
           </Field>
         </div>
-      </section>
-
-      {/* Нода: заводить ли инциденты по контейнеру ноды на этом сервере (витрина «Нода», вариант 2) */}
-      <section className="rounded-2xl border border-border bg-surface-2/40 p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">Нода</h3>
-          <NodeStatePill server={{ node: server.node, nodeWatch }} />
-        </div>
-        <NodeWatchSegments value={nodeWatch} disabled={busy} onChange={setNodeWatch} />
       </section>
 
       {/* Доступ по SSH */}

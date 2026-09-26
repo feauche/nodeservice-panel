@@ -1,5 +1,5 @@
 import {
-  type AssistantProposal,
+  type AssistantAutofixProposal,
   ATTEMPT_STATUS_LABELS,
   actionKeySchema,
   actionMeta,
@@ -91,7 +91,13 @@ function statePill(attempt: IncidentAttempt | undefined, level: string, blocked:
  * шаг запускает администратор, а ход выполнения показывается здесь же, в карточке. Название и
  * последствия берутся из реестра, поэтому карточка не может пообещать не то, что будет сделано.
  */
-export function ProposalCard({ proposal, createdAt }: { proposal: AssistantProposal; createdAt: string }) {
+export function ProposalCard({
+  proposal,
+  createdAt,
+}: {
+  proposal: AssistantAutofixProposal;
+  createdAt: string;
+}) {
   const meta = actionMeta(proposal.preset);
   const level = proposal.level ?? meta.level;
   const incident = useIncident(proposal.incidentId);

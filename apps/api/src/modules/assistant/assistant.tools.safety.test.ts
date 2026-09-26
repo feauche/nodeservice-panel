@@ -68,6 +68,7 @@ describe('набор инструментов Джарвиса', () => {
         'inspect_processes',
         'list_incidents',
         'propose_action',
+        'propose_change',
         'save_kb_article',
         'search_audit',
         'search_conversations',
@@ -163,6 +164,83 @@ describe('propose_action', () => {
       deps(),
     );
     expect(r.proposals[0]?.incidentId).toBe(INC_ID);
+  });
+});
+
+describe('propose_change', () => {
+  const change = {
+    id: '0192c000-0000-7000-8000-0000000000d1',
+    operation: 'server.provider',
+    title: 'Сменить провайдера',
+    level: 'T1',
+    target: { type: 'server', id: 's1', label: 'ru-entry-1' },
+    rows: [{ label: 'Провайдер', before: 'Hetzner', after: 'Aéza' }],
+  };
+  const withChanges = (
+    out: unknown,
+    perms: Partial<AssistantPermissions> = {},
+    seen: { args?: unknown[] } = {},
+  ) =>
+    ({
+      ...deps(incident(), perms),
+      changes: {
+        propose: async (...args: unknown[]) => {
+          seen.args = args;
+          return out;
+        },
+      },
+    }) as unknown as ToolDeps;
+  const call = (d: ToolDeps, input: Record<string, unknown> = {}) =>
+    runTool(
+      'propose_change',
+      {
+        operation: 'server.provider',
+        args: { server: 'ru-entry-1', provider: 'Aéza' },
+        reason: 'Так надо.',
+        ...input,
+      },
+      d,
+    );
+
+  it('без разрешения «Изменения по подтверждению» карточки нет, а сам инструмент модели не показывается', async () => {
+    const r = await call(withChanges({ change, reused: false }, { changes: false }));
+    expect(r.proposals).toEqual([]);
+    expect(r.content).toContain('выключены в разрешениях');
+    const names = toolsFor(ASSISTANT_TOOLS, { ...ASSISTANT_PERMISSIONS_DEFAULT, changes: false }).map(
+      (t) => t.name,
+    );
+    expect(names).not.toContain('propose_change');
+    expect(names).toContain('propose_action');
+  });
+  it('карточка: id изменения в предложении, модели сказано, что ничего не применено', async () => {
+    const seen: { args?: unknown[] } = {};
+    const r = await call(withChanges({ change, reused: false }, {}, seen));
+    expect(r.proposals).toEqual([
+      {
+        kind: 'change',
+        changeId: change.id,
+        operation: 'server.provider',
+        title: 'Сменить провайдера',
+        level: 'T1',
+      },
+    ]);
+    expect(r.content).toContain('Провайдер: Hetzner → Aéza');
+    expect(r.content).toContain('До нажатия «Применить» ничего не изменено');
+    expect(seen.args).toEqual(['server.provider', { server: 'ru-entry-1', provider: 'Aéza' }, 'Так надо.']);
+  });
+  it('отказ панели передаётся модели текстом, карточки нет; повтор карточку не дублирует', async () => {
+    const no = await call(withChanges({ problem: 'Сервер «х» не найден. Карточка не создана.' }));
+    expect(no.proposals).toEqual([]);
+    expect(no.content).toContain('не найден');
+    const dup = await call(withChanges({ change, reused: true }));
+    expect(dup.proposals).toEqual([]);
+    expect(dup.content).toContain('уже ждёт решения');
+  });
+  it('в описании: применяет администратор, писать «предложил», а не «изменил»', () => {
+    const d = ASSISTANT_TOOLS.find((t) => t.name === 'propose_change')?.description ?? '';
+    expect(d).toContain('нажимает её администратор');
+    expect(d).toContain('«предложил», а не «изменил»');
+    expect(d).toContain('Не больше трёх карточек');
   });
 });
 

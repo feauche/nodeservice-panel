@@ -27,6 +27,7 @@ import { toolsFor } from './assistant.read-tools.js';
 import { AssistantRepository } from './assistant.repository.js';
 import { ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
+import { ChangesService } from './changes/changes.service.js';
 import { FleetProbeService } from './fleet-probe.service.js';
 import { extractDefinitions, glossaryImportReply, isPureGlossary } from './glossary-import.js';
 import { IncidentAnalysisService } from './incident-analysis.service.js';
@@ -41,6 +42,8 @@ import {
 } from './llm.provider.js';
 
 const MAX_TOOL_ROUNDS = 8;
+/** Сколько карточек изменений Джарвис может выдать за один ответ. */
+const MAX_CHANGE_CARDS = 3;
 /** Сколько раз за ход можно «подтолкнуть» модель, если она ответила пустотой или пообещала вызов без вызова. */
 const MAX_NUDGES = 2;
 const PROMISE_RE =
@@ -80,6 +83,7 @@ export class AssistantService {
     private readonly autochecks: AutochecksStore,
     private readonly incidentSettings: IncidentsSettingsStore,
     private readonly analysis: IncidentAnalysisService,
+    private readonly changes: ChangesService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
   ) {}
 
@@ -200,6 +204,7 @@ export class AssistantService {
 
     if (glossaryHint) appendUserText(messages, glossaryHint);
 
+    let changeCards = 0;
     const deps: ToolDeps = {
       servers: this.servers,
       incidents: this.incidents,
@@ -217,6 +222,16 @@ export class AssistantService {
       assistant: { level },
       autoAnalysis: () => this.analysis.autoStatus(),
       permissions,
+      changes: {
+        propose: async (operation, args, reason) => {
+          changeCards += 1;
+          if (changeCards > MAX_CHANGE_CARDS)
+            return {
+              problem: `В одном ответе не больше ${MAX_CHANGE_CARDS} карточек изменений: остальные предложите следующим сообщением.`,
+            };
+          return this.changes.propose({ operation, args, reason, conversationId: conv.id });
+        },
+      },
       saveArticle: async (a) => {
         const doc = await this.knowledge.create(
           { title: a.title, content: a.content, tags: a.tags, source: 'ai' },
@@ -275,8 +290,7 @@ export class AssistantService {
             reachability.push(r);
           }
           for (const p of outcome.proposals)
-            if (!proposals.some((x) => x.incidentId === p.incidentId && x.preset === p.preset))
-              proposals.push(p);
+            if (!proposals.some((x) => proposalKey(x) === proposalKey(p))) proposals.push(p);
           results.push({ type: 'tool_result', tool_use_id: use.id, content: outcome.content });
         } catch (err) {
           // Падение одного инструмента не должно ронять весь чат: логируем и даём модели
@@ -344,6 +358,9 @@ export class AssistantService {
     return { conversationId: conv.id, message: out[out.length - 1] as AssistantMessage, messages: out };
   }
 }
+
+const proposalKey = (p: AssistantProposal): string =>
+  p.kind === 'autofix' ? `autofix:${p.incidentId}:${p.preset}` : `change:${p.changeId}`;
 
 const textOf = (blocks: LlmBlock[]): string =>
   blocks

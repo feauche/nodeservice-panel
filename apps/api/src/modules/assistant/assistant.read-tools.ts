@@ -181,6 +181,7 @@ export const TOOL_PERMISSION: Readonly<Record<string, AssistantPermission>> = {
   check_certificate: 'inspect',
   inspect_logs: 'serviceLogs',
   propose_action: 'proposals',
+  propose_change: 'changes',
 };
 
 /** Список инструментов без тех, что выключены в разрешениях: модель их не видит и не пытается звать. */
@@ -234,13 +235,13 @@ export function findServer(servers: Server[], key: string): Server | undefined {
 export function profileBrief(s: Server, nowMs: number = Date.now()) {
   const p = s.profile;
   const filled =
-    Boolean(p.role) ||
+    p.roles.length > 0 ||
     p.importance !== 'normal' ||
     Boolean(p.maintenanceWindow) ||
     p.expectedContainers.length > 0 ||
     p.expectedPorts.length > 0;
   return {
-    role: p.role ? SERVER_ROLE_LABELS[p.role] : null,
+    roles: p.roles.map((r) => SERVER_ROLE_LABELS[r]),
     importance: SERVER_IMPORTANCE_LABELS[p.importance],
     maintenanceWindow: p.maintenanceWindow,
     expected: { containers: p.expectedContainers, ports: p.expectedPorts },
@@ -620,7 +621,7 @@ export async function runReadTool(
   }
 
   const need = TOOL_PERMISSION[name];
-  if (need && need !== 'proposals' && !deps.permissions[need]) {
+  if (need && need !== 'proposals' && need !== 'changes' && !deps.permissions[need]) {
     const what: Record<string, string> = {
       reach: 'проверка доступности снаружи',
       processes: 'осмотр процессов',

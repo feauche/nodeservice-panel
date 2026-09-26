@@ -3,21 +3,34 @@ import {
   EXPECTED_CONTAINERS_MAX,
   EXPECTED_PORTS_MAX,
   MAINTENANCE_WINDOW_MAX,
+  type NodeWatch,
   normalizeProfilePatch,
   portNumberSchema,
   SERVER_IMPORTANCE,
+  SERVER_IMPORTANCE_HINTS,
   SERVER_IMPORTANCE_LABELS,
+  SERVER_ROLE_HINTS,
   SERVER_ROLE_LABELS,
   SERVER_ROLES,
   type Server,
   type ServerInventory,
   type ServerProfile,
+  type ServerRole,
 } from '@nodeservice/shared';
-import { CheckIcon, Loader2Icon, PlusIcon, RefreshCwIcon, TriangleAlertIcon, XIcon } from 'lucide-react';
+import {
+  CheckIcon,
+  InfoIcon,
+  Loader2Icon,
+  PlusIcon,
+  RefreshCwIcon,
+  TriangleAlertIcon,
+  XIcon,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatAgo } from '@/features/security/security-format';
+import { NodeStatePill, NodeWatchSegments } from '@/features/servers/node-watch-select';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -35,12 +48,13 @@ interface Row {
 /** Порядок и вид, в котором профиль хранит панель: по нему определяем, есть ли несохранённые правки. */
 function canon(p: ServerProfile): ServerProfile {
   const n = normalizeProfilePatch({
+    roles: p.roles,
     expectedContainers: p.expectedContainers,
     expectedPorts: p.expectedPorts,
     maintenanceWindow: p.maintenanceWindow,
   });
   return {
-    role: p.role,
+    roles: n.roles ?? [],
     importance: p.importance,
     maintenanceWindow: n.maintenanceWindow ?? null,
     expectedContainers: n.expectedContainers ?? [],
@@ -237,26 +251,88 @@ function StatusCell({ row }: { row: Row }) {
   );
 }
 
+const H3 = 'm-0 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase';
+
+/** Метка у полей, которые можно не заполнять. */
+function Optional() {
+  return (
+    <span className="rounded-[6px] bg-surface-3 px-[7px] py-px text-[11px] font-medium whitespace-nowrap text-text-3">
+      Необязательно
+    </span>
+  );
+}
+
+/** Функция сервера: галочка с названием и пояснением, отмечать можно несколько. */
+function RoleCard({
+  role,
+  on,
+  onToggle,
+  wide,
+}: {
+  role: ServerRole;
+  on: boolean;
+  onToggle: () => void;
+  wide?: boolean;
+}) {
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: карточка-галочка с названием и пояснением, нативный чекбокс здесь не подходит
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={on}
+      aria-labelledby={`pf-role-${role}-l`}
+      aria-describedby={`pf-role-${role}-d`}
+      onClick={onToggle}
+      className={cn(
+        'flex min-w-0 cursor-pointer items-start gap-2.5 rounded-[11px] border px-3 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-brand',
+        wide && 'sm:col-span-2',
+        on ? 'border-brand/55 bg-brand-soft' : 'border-border bg-surface hover:bg-surface-3',
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          'mt-0.5 grid size-4 flex-none place-items-center rounded-[5px] border-[1.5px]',
+          on ? 'border-brand bg-brand text-cta-foreground' : 'border-border-2 text-transparent',
+        )}
+      >
+        <CheckIcon className="size-[11px]" />
+      </span>
+      <span className="min-w-0">
+        <b id={`pf-role-${role}-l`} className="block text-[13px] font-semibold">
+          {SERVER_ROLE_LABELS[role]}
+        </b>
+        <small id={`pf-role-${role}-d`} className="mt-px block text-[12px] leading-snug text-text-2">
+          {SERVER_ROLE_HINTS[role]}
+        </small>
+      </span>
+    </button>
+  );
+}
+
 /**
- * Вкладка «Профиль» (J3, вариант A5): роль, важность, окно обслуживания и таблица «ожидается / сейчас».
- * Профиль читает Джарвис; расхождения считает панель по снимку состояния, снятому по SSH.
+ * Вкладка «Профиль» (J3, вариант A5 + R2): нода Remnawave, функции сервера, важность, окно обслуживания и
+ * таблица «ожидается / сейчас». Профиль читает Джарвис; расхождения считает панель по снимку состояния по SSH.
  */
 export function ProfileTab({ server }: { server: Server }) {
   const update = useUpdateServer();
   const refresh = useRefreshInventory();
   const saved = canon(server.profile);
-  const savedKey = JSON.stringify(saved);
+  const savedKey = JSON.stringify([saved, server.nodeWatch]);
   const [draft, setDraft] = useState<ServerProfile>(saved);
-  const dirty = JSON.stringify(canon(draft)) !== savedKey;
+  const [nodeWatch, setNodeWatch] = useState<NodeWatch>(server.nodeWatch);
+  const dirty = JSON.stringify([canon(draft), nodeWatch]) !== savedKey;
+  const reset = () => {
+    setDraft(saved);
+    setNodeWatch(server.nodeWatch);
+  };
 
-  // Другой сервер или профиль изменился со стороны (и своих правок нет): показываем сохранённое.
+  // Другой сервер или сохранённое изменилось со стороны (и своих правок нет): показываем сохранённое.
   // biome-ignore lint/correctness/useExhaustiveDependencies: сброс нужен при смене сервера и сохранённого профиля
-  useEffect(() => {
-    setDraft((cur) => (JSON.stringify(canon(cur)) === savedKey ? cur : saved));
-  }, [server.id]);
+  useEffect(reset, [server.id]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: см. выше
   useEffect(() => {
-    if (!dirty) setDraft(saved);
+    if (!dirty) reset();
   }, [savedKey]);
 
   const inventory = server.inventory;
@@ -265,6 +341,10 @@ export function ProfileTab({ server }: { server: Server }) {
   const expectedCount = draft.expectedContainers.length + draft.expectedPorts.length;
 
   const patch = (over: Partial<ServerProfile>) => setDraft((d) => ({ ...d, ...over }));
+  const toggleRole = (role: ServerRole) =>
+    patch({
+      roles: SERVER_ROLES.filter((r) => (r === role ? !draft.roles.includes(r) : draft.roles.includes(r))),
+    });
   const remove = (r: Row) =>
     patch(
       r.kind === 'container'
@@ -304,12 +384,13 @@ export function ProfileTab({ server }: { server: Server }) {
         id: server.id,
         patch: {
           profile: {
-            role: c.role,
+            roles: c.roles,
             importance: c.importance,
             maintenanceWindow: c.maintenanceWindow,
             expectedContainers: c.expectedContainers,
             expectedPorts: c.expectedPorts,
           },
+          nodeWatch,
         },
       });
       toast.success('Профиль сохранён.');
@@ -332,10 +413,14 @@ export function ProfileTab({ server }: { server: Server }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="m-0 text-[12.5px] leading-normal text-text-3">
-        Профиль читает Джарвис: он учитывает роль и важность в советах и сверяет ожидаемое с тем, что реально
-        запущено. Сам он профиль не меняет.
-      </p>
+      <div className="flex items-start gap-2.5 rounded-[10px] border border-l-[3px] border-border border-l-brand bg-surface px-3 py-2.5 text-[12.5px] leading-normal text-text-2">
+        <InfoIcon className="mt-0.5 size-[15px] flex-none text-brand" aria-hidden="true" />
+        <p className="m-0">
+          <b className="font-semibold text-foreground">Зачем.</b> Джарвис по этим данным понимает, что
+          сломается при сбое, и осторожнее предлагает перезапуск. Заполнять необязательно: без профиля он
+          работает как раньше.
+        </p>
+      </div>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span
@@ -371,51 +456,110 @@ export function ProfileTab({ server }: { server: Server }) {
         </Button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="flex flex-col gap-1.5">
-          <span className="text-[13px] font-semibold">Роль</span>
-          <Choice
-            label="Роль сервера в парке"
-            items={[...SERVER_ROLES].map((r) => ({ key: r, label: SERVER_ROLE_LABELS[r] }))}
-            value={draft.role}
-            onChange={(role) => patch({ role })}
-            clearable
-          />
-          <span className="text-[11.5px] text-text-3">Зачем сервер нужен в вашей схеме.</span>
+      <section
+        aria-labelledby="pf-node"
+        className="flex flex-col gap-2 rounded-2xl border border-border bg-surface-2/40 p-4"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 id="pf-node" className={H3}>
+            Нода Remnawave на сервере
+          </h3>
+          <NodeStatePill server={{ node: server.node, nodeWatch }} />
         </div>
-        <div className="flex flex-col gap-1.5">
-          <span className="text-[13px] font-semibold">Важность</span>
+        <p className="m-0 text-[12px] leading-normal text-text-3">
+          Первый вопрос: от него зависят инциденты. Панель следит за контейнером ноды и сообщает, если он
+          остановился.
+        </p>
+        <NodeWatchSegments value={nodeWatch} disabled={update.isPending} onChange={setNodeWatch} />
+      </section>
+
+      <section aria-labelledby="pf-roles" className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 id="pf-roles" className={H3}>
+            Что делает сервер
+          </h3>
+          <Optional />
+        </div>
+        <fieldset className="m-0 grid min-w-0 gap-2 border-0 p-0 sm:grid-cols-2">
+          <legend className="sr-only">Что делает сервер</legend>
+          {SERVER_ROLES.map((r) => (
+            <RoleCard
+              key={r}
+              role={r}
+              on={draft.roles.includes(r)}
+              onToggle={() => toggleRole(r)}
+              wide={r === 'other'}
+            />
+          ))}
+        </fieldset>
+        <p className="m-0 text-[12px] leading-normal text-text-3">
+          Отметьте всё, что подходит. В простой схеме один сервер и принимает клиентов, и выпускает трафик.
+        </p>
+      </section>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[13px] font-semibold">Важность</span>
+            <Optional />
+          </div>
           <Choice
             label="Важность сервера"
             items={[...SERVER_IMPORTANCE].map((i) => ({ key: i, label: SERVER_IMPORTANCE_LABELS[i] }))}
             value={draft.importance}
             onChange={(importance) => importance && patch({ importance })}
           />
-          <span className="text-[11.5px] text-text-3">
-            Для критичного Джарвис называет последствия и окно обслуживания.
-          </span>
+          <ul
+            aria-label="Что значит каждая важность"
+            className="m-0 flex list-none flex-col gap-1 p-0 text-[12px] leading-snug"
+          >
+            {SERVER_IMPORTANCE.map((i) => {
+              const on = draft.importance === i;
+              return (
+                <li
+                  key={i}
+                  data-selected={on}
+                  className={cn(
+                    'rounded-[9px] px-2.5 py-1.5',
+                    on ? 'bg-brand-soft text-text-2' : 'text-text-3',
+                  )}
+                >
+                  <b className={cn('font-semibold', on ? 'text-foreground' : 'text-text-2')}>
+                    {SERVER_IMPORTANCE_LABELS[i]}.
+                  </b>{' '}
+                  {SERVER_IMPORTANCE_HINTS[i]}
+                </li>
+              );
+            })}
+          </ul>
+          <p className="m-0 text-[11.5px] text-text-3">Сейчас важность влияет только на советы Джарвиса.</p>
         </div>
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="sm-window" className="text-[13px] font-semibold">
-          Окно обслуживания
-        </label>
-        <Input
-          id="sm-window"
-          value={draft.maintenanceWindow ?? ''}
-          maxLength={MAINTENANCE_WINDOW_MAX}
-          placeholder="Например, ночью по Москве, 03:00–05:00"
-          onChange={(e) => patch({ maintenanceWindow: e.target.value })}
-          className="h-10 rounded-[10px] bg-surface-2"
-        />
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="sm-window" className="text-[13px] font-semibold">
+              Окно обслуживания
+            </label>
+            <Optional />
+          </div>
+          <Input
+            id="sm-window"
+            value={draft.maintenanceWindow ?? ''}
+            maxLength={MAINTENANCE_WINDOW_MAX}
+            placeholder="Например, ночью по Москве, 03:00–05:00"
+            onChange={(e) => patch({ maintenanceWindow: e.target.value })}
+            className="h-10 rounded-[10px] bg-surface-2"
+          />
+          <p className="m-0 text-[12px] leading-normal text-text-3">
+            Когда можно обновлять и перезагружать сервер. Джарвис учтёт это, когда будет предлагать такие
+            шаги.
+          </p>
+        </div>
       </div>
 
       <section className="rounded-2xl border border-border bg-surface-2/40 p-4">
         <div className="mb-2 flex flex-wrap items-center gap-2">
-          <h3 className="m-0 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
-            Что должно работать
-          </h3>
+          <h3 className={H3}>Что должно работать</h3>
+          <Optional />
           <span className="flex-1" />
           {inventory && (
             <button
@@ -428,11 +572,15 @@ export function ProfileTab({ server }: { server: Server }) {
           )}
         </div>
 
+        <p className="m-0 mb-2 text-[12px] leading-normal text-text-3">
+          Контейнеры и порты, которые обязаны быть в порядке. Например: remnanode, порт 443. Панель сверит их
+          с состоянием сервера и покажет расхождения.
+        </p>
+
         {rows.length === 0 ? (
-          <p className="m-0 py-2 text-[12.5px] leading-normal text-text-3">
-            Ожидаемое не задано. Добавьте контейнеры и порты, которые должны работать
-            {inventory ? ', или возьмите их из текущего состояния' : ''}. Панель сверит их со снимком и
-            покажет расхождения.
+          <p className="m-0 py-1 text-[12.5px] leading-normal text-text-2">
+            Пока ничего не добавлено. Добавьте контейнеры и порты кнопками ниже
+            {inventory ? ' или возьмите их из текущего состояния' : ''}.
           </p>
         ) : (
           <table className="w-full border-collapse text-[12.5px]">
@@ -511,7 +659,7 @@ export function ProfileTab({ server }: { server: Server }) {
             type="button"
             variant="outline"
             disabled={update.isPending}
-            onClick={() => setDraft(saved)}
+            onClick={reset}
             className="rounded-[10px] px-4"
           >
             Отменить

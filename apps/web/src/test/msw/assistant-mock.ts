@@ -1,5 +1,7 @@
 import {
   ASSISTANT_PERMISSIONS_DEFAULT,
+  type AssistantChange,
+  type AssistantChangeProposal,
   type AssistantConversation,
   type AssistantLevel,
   type AssistantMessage,
@@ -8,6 +10,7 @@ import {
 } from '@nodeservice/shared';
 import { delay, HttpResponse, http } from 'msw';
 
+import { pushAuditEntry } from './audit-mock';
 import { mockIncidents } from './incidents-mock';
 import { sampleReach } from './reach-sample';
 import { mockServers } from './servers-mock';
@@ -22,6 +25,10 @@ interface AssistantMock {
   messages: Record<string, AssistantMessage[]>;
   /** Сколько «думает» мок-сервер до ответа; в тестах ноль. */
   chatDelayMs: number;
+  /** Изменения по предложению Джарвиса (J5) по id. */
+  changes: Record<string, AssistantChange>;
+  /** Карточки, которые при применении отвечают «состояние изменилось» или «ошибка»: так видны эти состояния. */
+  applyOutcome: Record<string, 'stale' | 'failed'>;
 }
 export const mockAssistant: AssistantMock = {
   enabled: false,
@@ -32,6 +39,8 @@ export const mockAssistant: AssistantMock = {
   conversations: [],
   messages: {},
   chatDelayMs: 0,
+  changes: {},
+  applyOutcome: {},
 };
 
 let seq = 0;
@@ -52,6 +61,8 @@ export function seedAssistant(): void {
   mockAssistant.conversations = [];
   mockAssistant.messages = {};
   mockAssistant.chatDelayMs = 0;
+  mockAssistant.changes = {};
+  mockAssistant.applyOutcome = {};
 }
 
 function aProblem(status: number, detail: string) {
@@ -61,8 +72,202 @@ function aProblem(status: number, detail: string) {
   );
 }
 
+type ChangeKind = 'provider' | 'tags' | 'profile' | 'notes' | 'rename' | 'close' | 'pause' | 'expired';
+
+/** Готовые изменения для демонстрации: те же тексты, что строит сервер (превью «было → станет»). */
+function makeChange(kind: ChangeKind): AssistantChangeProposal {
+  const server = mockServers.items[0]?.name ?? 'de-fra-01';
+  const openIncident = mockIncidents.items.find((i) => i.status !== 'resolved');
+  const now = new Date();
+  const base = {
+    id: uid(),
+    conversationId: null,
+    status: 'proposed' as const,
+    note: null,
+    decidedAt: null,
+    decidedBy: null,
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 24 * 3_600_000).toISOString(),
+  };
+  const serverTarget = { type: 'server' as const, id: null, label: server };
+  const defs: Record<ChangeKind, Omit<AssistantChange, keyof typeof base>> = {
+    provider: {
+      operation: 'server.provider',
+      title: 'Сменить провайдера',
+      level: 'T1',
+      target: serverTarget,
+      reason: `В панели у ${server} указан Hetzner, а вы сказали, что он у Aéza.`,
+      rows: [{ label: 'Провайдер', before: 'Hetzner', after: 'Aéza' }],
+      consequence: 'Провайдер только помечает сервер и на его работу не влияет.',
+      reversible: true,
+    },
+    tags: {
+      operation: 'server.tags',
+      title: 'Изменить теги',
+      level: 'T1',
+      target: serverTarget,
+      reason: 'Вы просили убрать «test» и пометить сервер как «vip».',
+      rows: [
+        {
+          label: 'Теги',
+          before: 'prod, de, test',
+          after: 'prod, de, vip',
+          added: ['vip'],
+          removed: ['test'],
+        },
+      ],
+      consequence: null,
+      reversible: true,
+    },
+    profile: {
+      operation: 'server.profile',
+      title: 'Изменить профиль сервера',
+      level: 'T1',
+      target: serverTarget,
+      reason: 'По снимку работают remnanode и nginx, слушаются порты 22 и 443: похоже на вход для клиентов.',
+      rows: [
+        { label: 'Функции сервера', before: '—', after: 'Вход', added: ['Вход'] },
+        { label: 'Важность', before: 'Обычный', after: 'Критичный' },
+        { label: 'Окно обслуживания', before: '—', after: 'ночью по Москве, 03:00–05:00' },
+        {
+          label: 'Ожидаемые контейнеры',
+          before: '—',
+          after: 'nginx, remnanode',
+          added: ['nginx', 'remnanode'],
+        },
+        { label: 'Ожидаемые порты', before: '—', after: '22, 443', added: ['22', '443'] },
+      ],
+      consequence:
+        'Для критичного сервера Джарвис будет называть последствия и окно обслуживания. Панель начнёт сверять ожидаемое со снимком состояния и показывать расхождения.',
+      reversible: true,
+    },
+    notes: {
+      operation: 'server.notes',
+      title: 'Изменить заметку',
+      level: 'T1',
+      target: serverTarget,
+      reason: 'Вы просили записать, кто оплачивает сервер.',
+      rows: [
+        { label: 'Заметка', before: '—', after: 'Оплачивает Lumax, аккаунт в личном кабинете хостера.' },
+      ],
+      consequence: null,
+      reversible: true,
+    },
+    rename: {
+      operation: 'server.rename',
+      title: 'Переименовать сервер',
+      level: 'T1',
+      target: serverTarget,
+      reason: 'Вы просили привести названия к единому виду.',
+      rows: [{ label: 'Название', before: server, after: 'ru-entry-9' }],
+      consequence:
+        'Новое название появится в списке серверов и в инцидентах; в прежних записях Журнала останется старое.',
+      reversible: true,
+    },
+    close: {
+      operation: 'incident.resolve',
+      title: 'Закрыть инцидент',
+      level: 'T2',
+      target: {
+        type: 'incident',
+        id: openIncident?.id ?? null,
+        label: openIncident?.title ?? 'Нода остановлена',
+      },
+      reason: 'Нода снова работает: контейнер remnanode запущен, порт 443 слушается.',
+      rows: [{ label: 'Статус', before: 'Открыт', after: 'Закрыт вручную' }],
+      consequence: 'Если проблема осталась, панель заведёт новый инцидент. Закрытие кнопкой не отменяется.',
+      reversible: false,
+    },
+    pause: {
+      operation: 'autofix.pause',
+      title: 'Поставить автопочинку на паузу',
+      level: 'T1',
+      target: { type: 'settings', id: 'incidents', label: 'Автопочинка' },
+      reason: `Вы собираетесь обновлять ${server} и не хотите, чтобы панель сама перезапускала службы.`,
+      rows: [{ label: 'Автопочинка', before: 'Работает', after: 'На паузе на 1 ч' }],
+      consequence: 'Пока пауза, панель сама ничего не чинит; инциденты по-прежнему заводятся и видны.',
+      reversible: true,
+    },
+    expired: {
+      operation: 'server.provider',
+      title: 'Сменить провайдера',
+      level: 'T1',
+      target: serverTarget,
+      reason: 'Предложение было вчера.',
+      rows: [{ label: 'Провайдер', before: 'Hetzner', after: 'Aéza' }],
+      consequence: null,
+      reversible: true,
+    },
+  };
+  const change: AssistantChange = { ...base, ...defs[kind] };
+  if (kind === 'notes') mockAssistant.applyOutcome[change.id] = 'stale';
+  if (kind === 'rename') mockAssistant.applyOutcome[change.id] = 'failed';
+  if (kind === 'expired') {
+    change.status = 'expired';
+    change.note =
+      'Предложение не применили за 24 ч: состояние могло измениться. Попросите Джарвиса предложить заново.';
+    change.createdAt = new Date(now.getTime() - 25 * 3_600_000).toISOString();
+    change.expiresAt = new Date(now.getTime() - 3_600_000).toISOString();
+  }
+  mockAssistant.changes[change.id] = change;
+  return {
+    kind: 'change',
+    changeId: change.id,
+    operation: change.operation,
+    title: change.title,
+    level: change.level,
+  };
+}
+
+/** Запись Журнала о решении по изменению, как её пишет сервер. */
+function auditChange(change: AssistantChange, kind: 'applied' | 'reverted' | 'rejected' | 'failed'): void {
+  pushAuditEntry({
+    action: `assistant.change.${kind}`,
+    category: 'assistant',
+    result: kind === 'failed' ? 'failed' : 'ok',
+    severity: kind === 'failed' ? 'warn' : 'info',
+    targetType: change.target.type,
+    targetId: change.target.id,
+    targetDisplay: change.target.label,
+    metadata: {
+      changeId: change.id,
+      operation: change.operation,
+      title: change.title,
+      reason: change.reason,
+      rows: change.rows.map((r) => ({ label: r.label, before: r.before, after: r.after })),
+      ...(change.note ? { note: change.note } : {}),
+    },
+  });
+}
+
+const CHANGE_TRIGGERS: Array<[RegExp, ChangeKind[]]> = [
+  [/предложи изменения/i, ['provider', 'tags', 'profile']],
+  [/провайдер/i, ['provider']],
+  [/тег/i, ['tags']],
+  [/профил/i, ['profile']],
+  [/заметк/i, ['notes']],
+  [/переименуй/i, ['rename']],
+  [/закр[ойы]\S* инцидент/i, ['close']],
+  [/пауз/i, ['pause']],
+  [/просроч/i, ['expired']],
+];
+
 /** Демо-ответ Джарвиса: цитаты (база знаний + инцидент) и предложение автопочинки. */
 function buildReply(text = ''): AssistantMessage {
+  const kinds = CHANGE_TRIGGERS.find(([re]) => re.test(text))?.[1];
+  if (kinds && mockAssistant.permissions.changes)
+    return {
+      id: uid(),
+      role: 'assistant',
+      content:
+        kinds.length > 1
+          ? 'Предложил три изменения. Пока вы не нажмёте «Применить» на карточке, ничего не изменится.'
+          : 'Предложил изменение. Пока вы не нажмёте «Применить» на карточке, ничего не изменится.',
+      citations: [],
+      proposals: kinds.map(makeChange),
+      reachability: [],
+      createdAt: new Date().toISOString(),
+    };
   if (/доступ|снаружи/i.test(text))
     return {
       id: uid(),
@@ -129,7 +334,83 @@ function buildFleetReplies(): AssistantMessage[] {
   ];
 }
 
+const changeOr404 = (id: unknown) => mockAssistant.changes[String(id)] ?? null;
+
+/** Итог решения человека по изменению: те же переходы и тексты, что у сервера. */
+function decide(change: AssistantChange, action: 'apply' | 'reject' | 'revert') {
+  const at = new Date().toISOString();
+  if (action === 'reject') {
+    if (change.status === 'rejected') return HttpResponse.json(change);
+    if (change.status !== 'proposed')
+      return aProblem(409, `Предложение уже в состоянии «${change.status}»: отклонить его нельзя.`);
+    Object.assign(change, { status: 'rejected', decidedAt: at, decidedBy: 'admin' });
+    auditChange(change, 'rejected');
+    return HttpResponse.json(change);
+  }
+  if (action === 'revert') {
+    if (change.status === 'reverted') return HttpResponse.json(change);
+    if (change.status !== 'applied' || !change.reversible)
+      return aProblem(
+        409,
+        change.reversible
+          ? 'Отменить можно только применённое изменение.'
+          : 'Это изменение кнопкой не отменяется.',
+      );
+    Object.assign(change, {
+      status: 'reverted',
+      decidedAt: at,
+      decidedBy: 'admin',
+      note: `Возвращено прежнее значение: ${change.rows.map((r) => `${r.label}: ${r.before}`).join('; ')}.`,
+    });
+    auditChange(change, 'reverted');
+    return HttpResponse.json(change);
+  }
+  if (change.status === 'applied' || change.status === 'expired') return HttpResponse.json(change);
+  if (change.status !== 'proposed')
+    return aProblem(409, `Это предложение уже в состоянии «${change.status}»: применить его нельзя.`);
+  const outcome = mockAssistant.applyOutcome[change.id];
+  if (outcome === 'stale')
+    Object.assign(change, {
+      status: 'stale',
+      note: 'Состояние изменилось после предложения, ничего не применено. Сейчас: Заметка: Проверка связи. Попросите Джарвиса предложить заново.',
+    });
+  else if (outcome === 'failed')
+    Object.assign(change, { status: 'failed', note: 'Название «ru-entry-9» уже занято другим сервером.' });
+  else
+    Object.assign(change, {
+      status: 'applied',
+      decidedAt: at,
+      decidedBy: 'admin',
+      note: `Проверено: ${change.rows.map((r) => `${r.label}: ${r.after}`).join('; ')}.`,
+    });
+  auditChange(change, outcome ? 'failed' : 'applied');
+  return HttpResponse.json(change);
+}
+
 export const assistantHandlers = [
+  http.get('/api/assistant/changes/summary', () => {
+    const all = Object.values(mockAssistant.changes);
+    const n = (s: string) => all.filter((c) => c.status === s).length;
+    return HttpResponse.json({
+      days: 7,
+      applied: n('applied'),
+      reverted: n('reverted'),
+      rejected: n('rejected'),
+      pending: n('proposed'),
+    });
+  }),
+  http.get('/api/assistant/changes/:id', ({ params }) => {
+    const change = changeOr404(params.id);
+    return change ? HttpResponse.json(change) : aProblem(404, 'Изменение не найдено.');
+  }),
+  http.post('/api/assistant/changes/:id/:action', ({ params }) => {
+    const change = changeOr404(params.id);
+    if (!change) return aProblem(404, 'Изменение не найдено.');
+    const action = String(params.action);
+    if (action !== 'apply' && action !== 'reject' && action !== 'revert')
+      return aProblem(404, 'Такого действия нет.');
+    return decide(change, action);
+  }),
   http.post('/api/servers/:id/terminal/hint', async ({ request }) => {
     if (!mockAssistant.enabled)
       return aProblem(409, 'Джарвис выключен: задайте провайдера, ключ и модель в «Настройки → Джарвис».');

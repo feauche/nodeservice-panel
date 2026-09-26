@@ -54,7 +54,7 @@ describe('computeDrift', () => {
 describe('профиль: проверка и приведение', () => {
   it('по умолчанию профиль пуст, важность обычная', () => {
     expect(DEFAULT_SERVER_PROFILE).toEqual({
-      role: null,
+      roles: [],
       importance: 'normal',
       maintenanceWindow: null,
       expectedContainers: [],
@@ -62,11 +62,12 @@ describe('профиль: проверка и приведение', () => {
     });
   });
   it('схема принимает верное и отвергает неверное', () => {
-    expect(serverProfilePatchSchema.safeParse({ role: 'entry', expectedPorts: ['443', 22] }).success).toBe(
-      true,
-    );
+    expect(
+      serverProfilePatchSchema.safeParse({ roles: ['entry', 'exit'], expectedPorts: ['443', 22] }).success,
+    ).toBe(true);
     for (const bad of [
-      { role: 'boss' },
+      { roles: ['boss'] },
+      { roles: 'entry' },
       { importance: 'high' },
       { expectedPorts: [0] },
       { expectedPorts: [70000] },
@@ -91,6 +92,6 @@ describe('профиль: проверка и приведение', () => {
     expect(normalizeProfilePatch({ maintenanceWindow: ' ночью по Москве ' }).maintenanceWindow).toBe(
       'ночью по Москве',
     );
-    expect(normalizeProfilePatch({ role: 'exit' })).toEqual({ role: 'exit' });
+    expect(normalizeProfilePatch({ roles: ['exit', 'entry', 'exit'] })).toEqual({ roles: ['entry', 'exit'] });
   });
 });

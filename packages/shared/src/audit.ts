@@ -153,6 +153,13 @@ export const AUDIT_ACTIONS = {
   'kb.reverted': { category: 'knowledge', label: 'Статья восстановлена из версии' },
   'kb.reviewed': { category: 'knowledge', label: 'Ревизия базы знаний' },
   'assistant.chat': { category: 'assistant', label: 'Запрос к Джарвису' },
+  'assistant.change.applied': { category: 'assistant', label: 'Применено изменение по предложению Джарвиса' },
+  'assistant.change.reverted': { category: 'assistant', label: 'Отменено изменение Джарвиса' },
+  'assistant.change.rejected': { category: 'assistant', label: 'Отклонено предложение Джарвиса' },
+  'assistant.change.failed': {
+    category: 'assistant',
+    label: 'Изменение по предложению Джарвиса не применено',
+  },
   'incident.opened': { category: 'server', label: 'Инцидент заведён' },
   'incident.resolved': { category: 'server', label: 'Инцидент закрыт' },
   'incident.acknowledged': { category: 'server', label: 'Инцидент взят в работу' },

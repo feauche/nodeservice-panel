@@ -27,7 +27,7 @@ const server = (over: Partial<Server>): Server =>
     providerId: null,
     nodeWatch: 'auto',
     profile: {
-      role: null,
+      roles: [],
       importance: 'normal',
       maintenanceWindow: null,
       expectedContainers: [],
@@ -683,7 +683,7 @@ describe('осмотр по SSH (J2)', () => {
 describe('профиль сервера в инструментах', () => {
   const profiled = server({
     profile: {
-      role: 'entry',
+      roles: ['entry', 'exit'],
       importance: 'critical',
       maintenanceWindow: 'ночью по Москве',
       expectedContainers: ['remnanode'],
@@ -706,15 +706,19 @@ describe('профиль сервера в инструментах', () => {
   });
   const d = () => deps({ servers: { list: async () => [profiled, server({ id: ID_B, name: 'nl-2' })] } });
 
-  it('сводка парка: роль и важность словами, расхождения, сколько профилей заполнено', async () => {
+  it('сводка парка: функции и важность словами, расхождения, сколько профилей заполнено', async () => {
     const { json } = await call('get_fleet_status', {}, d());
     expect(json().totals).toMatchObject({ profilesFilled: 1, withDrift: 1 });
     const row = json().servers.find((x: { name: string }) => x.name === 'de-1');
-    expect(row.profile).toMatchObject({ role: 'Входной', importance: 'Критичный', profileFilled: true });
+    expect(row.profile).toMatchObject({
+      roles: ['Принимает подключения клиентов', 'Выпускает трафик в интернет'],
+      importance: 'Критичный',
+      profileFilled: true,
+    });
     expect(row.profile.drift).toHaveLength(2);
     const other = json().servers.find((x: { name: string }) => x.name === 'nl-2');
     expect(other.profile).toMatchObject({
-      role: null,
+      roles: [],
       importance: 'Обычный',
       profileFilled: false,
       drift: [],
@@ -723,7 +727,7 @@ describe('профиль сервера в инструментах', () => {
   it('сервер: профиль, возраст снимка и сам снимок с оговоркой про свежие данные', async () => {
     const { json } = await call('get_server_detail', { serverId: 'de-1' }, d());
     expect(json().profile).toMatchObject({
-      role: 'Входной',
+      roles: ['Принимает подключения клиентов', 'Выпускает трафик в интернет'],
       maintenanceWindow: 'ночью по Москве',
       expected: { containers: ['remnanode'], ports: [443] },
       snapshotAgeHours: 5,

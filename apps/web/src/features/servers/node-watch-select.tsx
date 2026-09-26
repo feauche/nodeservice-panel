@@ -4,18 +4,18 @@ import { Pill } from '@/features/settings/settings-ui';
 import { cn } from '@/lib/utils';
 
 const SUB: Record<NodeWatch, string> = {
-  auto: 'Судим, если контейнер найден',
-  on: 'Нет контейнера — тоже инцидент',
-  off: 'Сервер без ноды',
+  auto: 'Следим, если найдём контейнер',
+  on: 'Нет контейнера тоже инцидент',
+  off: 'На сервере нет ноды',
 };
 
 const HINT: Record<NodeWatch, string> = {
-  auto: 'Зонд по SSH раз в 15 с. Остановка контейнера — инцидент сразу, автопочинка ждёт 60 с.',
-  on: 'Нода здесь обязана быть: остановлена или не найдена — инцидент сразу.',
-  off: 'Инцидентов по ноде на этом сервере не будет. Для серверов без ноды или когда нода выключена намеренно.',
+  auto: 'Панель следит за нодой, только если найдёт её контейнер. Если он остановится, будет инцидент.',
+  on: 'Нода здесь обязана быть: если контейнер остановится или пропадёт, сразу будет инцидент.',
+  off: 'За нодой на этом сервере не следим: инцидент об остановленной ноде заводиться не будет. Подходит для серверов без ноды.',
 };
 
-/** Пилюля «что зонд видел в последний раз» для шапки блока «Нода». */
+/** Пилюля «что зонд видел в последний раз» для блока «Нода Remnawave на сервере». */
 export function NodeStatePill({ server }: { server: Pick<Server, 'node' | 'nodeWatch'> }) {
   if (server.nodeWatch === 'off') return <Pill tone="muted">Слежение выключено</Pill>;
   if (server.node === 'running') return <Pill tone="ok">Контейнер работает</Pill>;
@@ -26,8 +26,8 @@ export function NodeStatePill({ server }: { server: Pick<Server, 'node' | 'nodeW
 }
 
 /**
- * «Нода на сервере» — три режима одной полосой (витрина «Нода», вариант 2): выбор в один клик,
- * подпись под каждым режимом, пояснение выбранного под полосой.
+ * «Нода Remnawave на сервере» — три режима одной полосой: выбор в один клик, подпись под каждым
+ * режимом, пояснение выбранного под полосой. Живёт на вкладке «Профиль».
  */
 export function NodeWatchSegments({
   value,
@@ -41,7 +41,7 @@ export function NodeWatchSegments({
   return (
     <div>
       <fieldset className="m-0 flex gap-[3px] rounded-[11px] border border-border bg-surface-2 p-[3px] max-sm:flex-col">
-        <legend className="sr-only">Нода на сервере</legend>
+        <legend className="sr-only">Нода Remnawave на сервере</legend>
         {NODE_WATCH_MODES.map((m) => {
           const on = m === value;
           return (

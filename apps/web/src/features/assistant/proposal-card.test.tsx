@@ -1,4 +1,4 @@
-import type { AssistantProposal } from '@nodeservice/shared';
+import type { AssistantAutofixProposal } from '@nodeservice/shared';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -14,7 +14,7 @@ const cpu = () => {
   return inc;
 };
 
-const proposal = (over: Partial<AssistantProposal> = {}): AssistantProposal => ({
+const proposal = (over: Partial<AssistantAutofixProposal> = {}): AssistantAutofixProposal => ({
   kind: 'autofix',
   incidentId: cpu().id,
   preset: 'restart_node',
@@ -25,7 +25,7 @@ const proposal = (over: Partial<AssistantProposal> = {}): AssistantProposal => (
   ...over,
 });
 
-function open(p: AssistantProposal, createdAt = new Date().toISOString()) {
+function open(p: AssistantAutofixProposal, createdAt = new Date().toISOString()) {
   const Page = () => <ProposalCard proposal={p} createdAt={createdAt} />;
   return renderPage(Page, '/assistant', ['/incidents/$id', '/incidents']);
 }

@@ -647,7 +647,7 @@ describe('проверка доступности, процессы и пред�
       const id = target().id;
       const res = await update(id, {
         profile: {
-          role: 'entry',
+          roles: ['exit', 'entry', 'exit'],
           importance: 'critical',
           maintenanceWindow: '  ночью по Москве ',
           expectedContainers: ['remnanode', 'nginx', 'nginx'],
@@ -656,7 +656,7 @@ describe('проверка доступности, процессы и пред�
       }).expect(200);
       const srv = serverSchema.parse(res.body);
       expect(srv.profile).toEqual({
-        role: 'entry',
+        roles: ['entry', 'exit'],
         importance: 'critical',
         maintenanceWindow: 'ночью по Москве',
         expectedContainers: ['nginx', 'remnanode'],
@@ -665,7 +665,7 @@ describe('проверка доступности, процессы и пред�
       expect(srv.drift).toEqual([]);
       expect(srv.inventory).toBeNull();
       for (const bad of [
-        { role: 'boss' },
+        { roles: ['boss'] },
         { expectedPorts: [0] },
         { expectedContainers: ['a b'] },
         { importance: 'high' },
@@ -712,7 +712,7 @@ describe('проверка доступности, процессы и пред�
       const copy = serverSchema.parse(
         (await agent.post(`/api/servers/${target().id}/duplicate`).set(CSRF_HEADER, csrf).expect(201)).body,
       );
-      expect(copy.profile.role).toBe('entry');
+      expect(copy.profile.roles).toEqual(['entry', 'exit']);
       expect(copy.profile.expectedPorts).toEqual([22, 443, 8443]);
       expect(copy.inventory).toBeNull();
       await agent.delete(`/api/servers/${copy.id}`).set(CSRF_HEADER, csrf);

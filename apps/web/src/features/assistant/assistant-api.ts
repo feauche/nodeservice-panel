@@ -1,6 +1,8 @@
 import {
+  type AssistantChange,
   type AssistantChatResponse,
   type AssistantStatus,
+  assistantChangeSchema,
   assistantChatResponseSchema,
   assistantConversationsResponseSchema,
   assistantHistoryResponseSchema,
@@ -8,7 +10,9 @@ import {
 } from '@nodeservice/shared';
 import { useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { z } from 'zod';
+import { incidentsKeys } from '@/features/incidents/incidents-api';
 import { knowledgeKeys } from '@/features/knowledge/knowledge-api';
+import { serversKeys } from '@/features/servers/servers-api';
 import { api } from '@/lib/api';
 
 type ConversationsResponse = z.infer<typeof assistantConversationsResponseSchema>;
@@ -29,6 +33,16 @@ export const assistantApi = {
     ),
 };
 
+/** Что человек делает с предложенным изменением: применяет, отклоняет или отменяет применённое. */
+export type ChangeAction = 'apply' | 'reject' | 'revert';
+
+export const changesApi = {
+  get: (id: string, signal?: AbortSignal): Promise<AssistantChange> =>
+    api.get(`/assistant/changes/${id}`, assistantChangeSchema, signal),
+  act: (id: string, action: ChangeAction): Promise<AssistantChange> =>
+    api.post(`/assistant/changes/${id}/${action}`, {}, assistantChangeSchema),
+};
+
 /** Выбранная беседа помнится между заходами на страницу. */
 export const LAST_CONV_KEY = 'ns.assistant.conversation';
 /** Ключ запроса чата: по нему любая страница видит, что Джарвис ещё думает, даже если запрос отправили с другой. */
@@ -43,6 +57,7 @@ export const assistantKeys = {
   status: ['assistant', 'status'] as const,
   conversations: ['assistant', 'conversations'] as const,
   history: (id: string) => ['assistant', 'history', id] as const,
+  change: (id: string) => ['assistant', 'change', id] as const,
 };
 
 export function useAssistantStatus() {
@@ -97,6 +112,29 @@ export function useSendMessage() {
       void qc.invalidateQueries({ queryKey: assistantKeys.history(res.conversationId) });
       // Агент мог создать статью — освежаем базу знаний, чтобы она сразу появилась.
       void qc.invalidateQueries({ queryKey: knowledgeKeys.all });
+    },
+  });
+}
+
+/** Состояние изменения по предложению Джарвиса: карточка берёт его отсюда, поэтому переживает перезагрузку страницы. */
+export function useChange(id: string) {
+  return useQuery({
+    queryKey: assistantKeys.change(id),
+    queryFn: ({ signal }) => changesApi.get(id, signal),
+    staleTime: 5_000,
+  });
+}
+
+export function useChangeAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, action }: { id: string; action: ChangeAction }) => changesApi.act(id, action),
+    onSuccess: (change) => {
+      qc.setQueryData(assistantKeys.change(change.id), change);
+      // Применение и откат меняют серверы, инциденты и автопочинку и добавляют запись в Журнал.
+      void qc.invalidateQueries({ queryKey: serversKeys.all });
+      void qc.invalidateQueries({ queryKey: incidentsKeys.all });
+      void qc.invalidateQueries({ queryKey: ['audit'] });
     },
   });
 }

@@ -89,4 +89,25 @@ describe('справочник Джарвиса', () => {
     expect(text).toContain('profileFilled=false');
     expect(text).toContain('Правила парка');
   });
+  it('про изменения по подтверждению: операции, проверка перед применением, откат, что не предлагается', () => {
+    const text = referenceById('changes')?.render() ?? '';
+    for (const op of [
+      'server.provider',
+      'server.tags',
+      'server.notes',
+      'server.rename',
+      'server.nodeWatch',
+      'server.profile',
+      'incident.resolve',
+      'autofix.pause',
+    ])
+      expect(text, op).toContain(op);
+    expect(text).toContain('Состояние изменилось');
+    expect(text).toContain('Отменить изменение');
+    expect(text).toContain('кнопкой не отменяется');
+    expect(text).toContain('Не больше трёх карточек');
+    expect(text).toContain('24 ч');
+    expect(text).toContain('SSH-ключи');
+    expect(text).toContain('пиши «предложил');
+  });
 });

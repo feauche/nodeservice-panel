@@ -5,6 +5,7 @@ import {
   type AuditCategory,
   type AuditResult,
   actionMeta,
+  CHANGE_OPERATIONS,
   INCIDENT_CHAINS,
   type Incident,
   KB_SOURCE_LABELS,
@@ -19,6 +20,7 @@ import { auditBrief } from './assistant.audit-brief.js';
 import { searchPastMessages, searchWords } from './assistant.conversation-search.js';
 import { READ_TOOL_DEFS, type ReadDeps, runReadTool } from './assistant.read-tools.js';
 import type { AssistantRepository } from './assistant.repository.js';
+import type { ProposeOutcome } from './changes/changes.service.js';
 import { isGlossaryArticle } from './glossary-import.js';
 import type { LlmToolDef } from './llm.provider.js';
 
@@ -132,6 +134,20 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
       required: ['incidentId', 'preset', 'reason'],
     },
   },
+  {
+    name: 'propose_change',
+    description:
+      'Предложить ИЗМЕНЕНИЕ в панели: появится карточка «было → станет» с кнопкой «Применить», нажимает её администратор, ты ничего не меняешь сам. Вызывай, когда просят что-то изменить, или когда обоснованно видишь правку (например, заполнить профиль сервера по данным снимка состояния). Операции и их args: server.provider {server, provider|null} (сменить провайдера; провайдера берите из списка провайдеров, нового так не создать); server.tags {server, add?: [..], remove?: [..]}; server.notes {server, notes|null}; server.rename {server, name}; server.nodeWatch {server, mode: auto|on|off}; server.profile {server, roles?, importance?, maintenanceWindow?, expectedContainers?, expectedPorts?} (списки заменяются целиком: передавай полный итоговый список; roles: массив из entry (принимает клиентов), exit (выпускает трафик в интернет), bridge (мост), panel (панель Remnawave), other; importance: critical|normal|low); incident.resolve {incidentId} (закрыть инцидент вручную, необратимо); autofix.pause {minutes: 0–1440} (поставить автопочинку на паузу, 0 снимает паузу). server — имя или id сервера. reason — коротко, почему именно это (до 300 знаков). Не предлагай то, что уже стоит нужным образом: инструмент откажет. После вызова скажи, что изменение вступит в силу после нажатия «Применить» на карточке; пиши «предложил», а не «изменил». Не больше трёх карточек за ответ. Всё остальное (перезагрузка, удаление, SSH-ключи, разрешения, статьи) карточкой не предлагается.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        operation: { type: 'string', enum: [...CHANGE_OPERATIONS] },
+        args: { type: 'object', description: 'Аргументы операции, см. описание инструмента' },
+        reason: { type: 'string', description: 'Коротко, почему именно это (до 300 знаков)' },
+      },
+      required: ['operation', 'args', 'reason'],
+    },
+  },
 ];
 
 export interface ToolDeps extends ReadDeps {
@@ -152,6 +168,8 @@ export interface ToolDeps extends ReadDeps {
     content: string;
     tags: string[];
   }) => Promise<{ id: string; title: string }>;
+  /** Предложение изменения (J5): создаёт карточку, ничего не меняет. Гейтится разрешением changes в самом инструменте. */
+  changes?: { propose: (operation: string, args: unknown, reason: string | null) => Promise<ProposeOutcome> };
   /** Пополнение глоссария «Пояснения». Работает всегда, отдельного разрешения нет. */
   addGlossary: (
     terms: Array<{ term: string; explain: string; update?: boolean }>,
@@ -426,6 +444,32 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
       content: `Карточка «${meta.title}» (${meta.level}) показана администратору. Запустит её он сам.`,
       citations: [],
       proposals: [proposal],
+    };
+  }
+
+  if (name === 'propose_change') {
+    if (!deps.permissions.changes)
+      return {
+        ...empty,
+        content:
+          'Изменения по подтверждению выключены в разрешениях (changes). Карточки не будет: скажите, что именно изменить и где (путь по интерфейсу), и что включить карточки можно в «Настройки → Джарвис → Разрешения».',
+      };
+    if (!deps.changes) return { ...empty, content: 'Предложение изменений сейчас недоступно.' };
+    const out = await deps.changes.propose(
+      String(arg.operation ?? ''),
+      arg.args ?? {},
+      typeof arg.reason === 'string' ? arg.reason : null,
+    );
+    if ('problem' in out) return { ...empty, content: out.problem };
+    const c = out.change;
+    return {
+      content: out.reused
+        ? `Такая карточка «${c.title}» уже ждёт решения в этой беседе, новая не создана.`
+        : `Карточка «${c.title}» (${c.level}) для «${c.target.label}» показана администратору: ${c.rows.map((r) => `${r.label}: ${r.before} → ${r.after}`).join('; ')}. До нажатия «Применить» ничего не изменено. Не пиши, что изменение сделано: напиши, что предложил и что нужно нажать кнопку.`,
+      citations: [],
+      proposals: out.reused
+        ? []
+        : [{ kind: 'change', changeId: c.id, operation: c.operation, title: c.title, level: c.level }],
     };
   }
 
