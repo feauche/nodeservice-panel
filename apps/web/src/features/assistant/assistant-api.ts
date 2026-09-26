@@ -6,7 +6,7 @@ import {
   assistantHistoryResponseSchema,
   assistantStatusSchema,
 } from '@nodeservice/shared';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { z } from 'zod';
 import { knowledgeKeys } from '@/features/knowledge/knowledge-api';
 import { api } from '@/lib/api';
@@ -28,6 +28,15 @@ export const assistantApi = {
       assistantChatResponseSchema,
     ),
 };
+
+/** Выбранная беседа помнится между заходами на страницу. */
+export const LAST_CONV_KEY = 'ns.assistant.conversation';
+/** Ключ запроса чата: по нему любая страница видит, что Джарвис ещё думает, даже если запрос отправили с другой. */
+export const CHAT_MUTATION_KEY = ['assistant', 'chat'] as const;
+export interface ChatVars {
+  message: string;
+  conversationId?: string;
+}
 
 export const assistantKeys = {
   all: ['assistant'] as const,
@@ -59,12 +68,31 @@ export function useConversationHistory(id: string | null) {
   });
 }
 
+/**
+ * Запросы чата, которые сейчас в работе. Запрос живёт в кэше запросов, а не в странице, поэтому после ухода
+ * в другой раздел и возврата «Джарвис думает» остаётся ровно столько, сколько идёт запрос.
+ */
+export function usePendingChats(): ChatVars[] {
+  return useMutationState({
+    filters: { mutationKey: CHAT_MUTATION_KEY, status: 'pending' },
+    select: (m) => m.state.variables as ChatVars,
+  });
+}
+
 export function useSendMessage() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ message, conversationId }: { message: string; conversationId?: string }) =>
-      assistantApi.chat(message, conversationId),
-    onSuccess: (res) => {
+    mutationKey: CHAT_MUTATION_KEY,
+    mutationFn: ({ message, conversationId }: ChatVars) => assistantApi.chat(message, conversationId),
+    onSuccess: (res, vars) => {
+      // Новый чат закончился, пока страницы Джарвиса не было на экране: запоминаем беседу, чтобы вернуться в неё.
+      if (!vars.conversationId) {
+        try {
+          if (!localStorage.getItem(LAST_CONV_KEY)) localStorage.setItem(LAST_CONV_KEY, res.conversationId);
+        } catch {
+          // приватный режим браузера: беседа найдётся в списке
+        }
+      }
       void qc.invalidateQueries({ queryKey: assistantKeys.conversations });
       void qc.invalidateQueries({ queryKey: assistantKeys.history(res.conversationId) });
       // Агент мог создать статью — освежаем базу знаний, чтобы она сразу появилась.

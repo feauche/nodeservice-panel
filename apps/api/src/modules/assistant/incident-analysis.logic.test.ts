@@ -59,6 +59,7 @@ describe('инструменты и промпты разбора', () => {
     const names = ANALYSIS_TOOLS.map((t) => t.name).sort();
     expect(names).toEqual(
       [
+        'check_certificate',
         'check_reachability',
         'get_incident',
         'get_maintenance',
@@ -66,7 +67,12 @@ describe('инструменты и промпты разбора', () => {
         'get_playbook',
         'get_reference',
         'get_server_detail',
+        'inspect_containers',
+        'inspect_disk',
+        'inspect_kernel',
+        'inspect_logs',
         'inspect_node_logs',
+        'inspect_ports',
         'inspect_processes',
         'list_incidents',
         'submit_analysis',

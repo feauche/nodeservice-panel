@@ -54,4 +54,15 @@ describe('системный промпт Джарвиса', () => {
     expect(s).toContain('Помечай происхождение сказанного');
     expect(s).toContain('возможно, устарело');
   });
+  it('инструменты осмотра и журналов названы только при своих разрешениях', () => {
+    const none = buildSystem('intermediate', P({ inspect: false, serviceLogs: false, nodeLogs: false }));
+    for (const n of ['inspect_containers (', 'inspect_ports (', 'inspect_logs (', 'check_certificate ('])
+      expect(none, n).not.toContain(n);
+    const inspectOnly = buildSystem('intermediate', P({ inspect: true, serviceLogs: false }));
+    expect(inspectOnly).toContain('inspect_containers (');
+    expect(inspectOnly).toContain('check_certificate (');
+    expect(inspectOnly).not.toContain('inspect_logs (');
+    expect(buildSystem('intermediate', P({ serviceLogs: true }))).toContain('inspect_logs (');
+    expect(buildSystem('intermediate', P())).toContain('get_panel_status');
+  });
 });

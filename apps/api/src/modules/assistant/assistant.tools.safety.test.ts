@@ -48,16 +48,23 @@ describe('набор инструментов Джарвиса', () => {
     expect(ASSISTANT_TOOLS.map((t) => t.name).sort()).toEqual(
       [
         'add_glossary_terms',
+        'check_certificate',
         'check_reachability',
         'get_fleet_status',
         'get_incident',
         'get_maintenance',
         'get_metrics_history',
+        'get_panel_status',
         'get_playbook',
         'get_reference',
         'get_server_detail',
         'get_settings',
+        'inspect_containers',
+        'inspect_disk',
+        'inspect_kernel',
+        'inspect_logs',
         'inspect_node_logs',
+        'inspect_ports',
         'inspect_processes',
         'list_incidents',
         'propose_action',
@@ -377,5 +384,64 @@ describe('get_settings: состояние автоматического раз
     });
     expect(r.assistant.autoAnalysisStatus.note).toContain('с момента запуска панели');
     expect(r.assistant.permissions.autoAnalysis).toBe(true);
+  });
+});
+
+describe('get_panel_status', () => {
+  it('версия, агенты по состояниям и версиям, открытые инциденты, ошибки за час, автоматический разбор', async () => {
+    let seenFilter: Record<string, unknown> | undefined;
+    const d = {
+      ...deps(),
+      servers: {
+        list: async () => [
+          { agentStatus: 'online', agentVersion: 'v0.5.4' },
+          { agentStatus: 'online', agentVersion: 'v0.5.3' },
+          { agentStatus: 'offline', agentVersion: 'v0.5.4' },
+          { agentStatus: 'not_installed', agentVersion: null },
+        ],
+      },
+      incidents: { list: async () => ({ items: [], counts: { open: 3, crit: 1, warn: 2 } }) },
+      audit: {
+        list: async (f: Record<string, unknown>) => {
+          seenFilter = f;
+          return {
+            items: [
+              {
+                id: 'e1',
+                occurredAt: '2026-09-26T10:00:00.000Z',
+                actorType: 'system',
+                actorDisplay: 'Система',
+                action: 'incident.analysis.run',
+                targetDisplay: 'Инцидент',
+                result: 'failed',
+                severity: 'warn',
+                source: 'auto',
+                changes: null,
+                metadata: { error: 'таймаут' },
+              },
+            ],
+            total: 7,
+            page: 1,
+            pageSize: 25,
+            totalPages: 1,
+          };
+        },
+      },
+      autoAnalysis: () => ({ lastRunAt: null, startedLastHour: 0, limitPerHour: 5 }),
+    } as unknown as ToolDeps;
+    const r = JSON.parse((await runTool('get_panel_status', {}, d)).content);
+    expect(r.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(r.uptimeMinutes).toBeGreaterThanOrEqual(0);
+    expect(r.uptimeNote).toContain('после обновления');
+    expect(r.servers).toEqual({
+      total: 4,
+      agents: { online: 2, offline: 1, not_installed: 1 },
+      agentVersions: { 'v0.5.4': 2, 'v0.5.3': 1 },
+    });
+    expect(r.incidents).toEqual({ open: 3, critical: 1, warning: 2 });
+    expect(r.auditLastHour.failedOrDenied).toBe(7);
+    expect(r.auditLastHour.latest[0]).toMatchObject({ who: 'панель', result: 'failed' });
+    expect(r.autoAnalysis).toMatchObject({ startedLastHour: 0, limitPerHour: 5 });
+    expect(seenFilter).toMatchObject({ result: ['failed', 'denied'], pageSize: 25 });
   });
 });

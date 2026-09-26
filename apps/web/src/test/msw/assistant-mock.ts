@@ -6,7 +6,7 @@ import {
   type AssistantPermissions,
   type AssistantProvider,
 } from '@nodeservice/shared';
-import { HttpResponse, http } from 'msw';
+import { delay, HttpResponse, http } from 'msw';
 
 import { mockIncidents } from './incidents-mock';
 import { sampleReach } from './reach-sample';
@@ -20,6 +20,8 @@ interface AssistantMock {
   permissions: AssistantPermissions;
   conversations: AssistantConversation[];
   messages: Record<string, AssistantMessage[]>;
+  /** Сколько «думает» мок-сервер до ответа; в тестах ноль. */
+  chatDelayMs: number;
 }
 export const mockAssistant: AssistantMock = {
   enabled: false,
@@ -29,6 +31,7 @@ export const mockAssistant: AssistantMock = {
   permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT },
   conversations: [],
   messages: {},
+  chatDelayMs: 0,
 };
 
 let seq = 0;
@@ -48,6 +51,7 @@ export function seedAssistant(): void {
   mockAssistant.permissions = { ...ASSISTANT_PERMISSIONS_DEFAULT };
   mockAssistant.conversations = [];
   mockAssistant.messages = {};
+  mockAssistant.chatDelayMs = 0;
 }
 
 function aProblem(status: number, detail: string) {
@@ -233,11 +237,14 @@ export const assistantHandlers = [
       reachability: [],
       createdAt: new Date().toISOString(),
     };
+    // Как на сервере: сообщение администратора сохраняется сразу, ответ приходит после раздумий.
+    mockAssistant.messages[convId] = [...(mockAssistant.messages[convId] ?? []), userMsg];
+    if (mockAssistant.chatDelayMs > 0) await delay(mockAssistant.chatDelayMs);
     const replies = /по каким серверам/i.test(body.message)
       ? buildFleetReplies()
       : [buildReply(body.message)];
     const reply = replies[replies.length - 1] as AssistantMessage;
-    mockAssistant.messages[convId] = [...(mockAssistant.messages[convId] ?? []), userMsg, ...replies];
+    mockAssistant.messages[convId] = [...(mockAssistant.messages[convId] ?? []), ...replies];
     return HttpResponse.json({ conversationId: convId, message: reply, messages: replies });
   }),
 ];

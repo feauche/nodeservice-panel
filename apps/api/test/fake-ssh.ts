@@ -7,6 +7,27 @@ import { toOpenSshPrivate } from '../src/modules/servers/panel-key.service.js';
 export const SSH_USER = 'root';
 export const SSH_PASSWORD = 'server-root-password';
 
+/** Что «печатает» тестовый сервер на узкие проверки: ключ — метка после `# ns-inspect:`. */
+export const INSPECT_OUTPUT: Record<string, string> = {
+  containers: [
+    '/remnanode|remnawave/node:latest|exited|4|137|true|2026-09-25T10:00:00Z|2026-09-25T11:00:00Z|',
+    '/nginx|nginx:1.27|running|0|0|false|2026-09-20T10:00:00Z|0001-01-01T00:00:00Z|healthy',
+    '',
+  ].join('\n'),
+  ports: [
+    'tcp   LISTEN 0      4096         0.0.0.0:443        0.0.0.0:*    users:(("xray",pid=812,fd=7))',
+    'tcp   LISTEN 0      128             [::]:22             [::]:*    users:(("sshd",pid=1,fd=3))',
+    'tcp   LISTEN 0      4096       127.0.0.1:8080      0.0.0.0:*    users:(("panel",pid=99,fd=5))',
+    '',
+  ].join('\n'),
+  disk: '@@df\n/dev/vda1 50G 45G 5G 90% /\n@@du\n30G\t/var\n@@docker\nImages 3\n@@journal\nArchived and active journals take up 1.2G in the file system.\n',
+  kernel: '[Sat Sep 26 12:00:00 2026] Out of memory: Killed process 812 (xray) total-vm:900000kB\n',
+  cert: 'subject=CN = example.com\nissuer=C = US, O = Lets Encrypt, CN = R11\nnotBefore=Aug 27 00:00:00 2026 GMT\nnotAfter=Nov 25 00:00:00 2026 GMT\nX509v3 Subject Alternative Name: \n    DNS:example.com\n',
+  'logs:agent':
+    '2026-09-26T12:00:00+0000 host nodeservice-agent[1]: connect ok\n2026-09-26T12:00:05+0000 host nodeservice-agent[1]: auth failed token=abcdef123456789 from 203.0.113.44\n',
+  'node-logs': 'xray started\nerror: timeout reading 203.0.113.44\n',
+};
+
 /** Мини-SSH-сервер в процессе (ssh2.Server): пароль, публичный ключ, exec фактов и authorized_keys. */
 export class FakeSsh {
   server!: SshServer;
@@ -55,7 +76,12 @@ export class FakeSsh {
             session.on('exec', (acceptExec, _reject, info) => {
               this.execLog.push(info.command);
               const stream = acceptExec();
-              if (info.command.includes('@@hostname')) {
+              if (info.command.includes('# ns-inspect:')) {
+                // Узкие инструменты чтения (J2): по метке в первой строке команды отдаём типичный вывод.
+                const kind = /# ns-inspect:([a-z-]+(?::[a-z]+)?)/.exec(info.command)?.[1] ?? '';
+                stream.write(INSPECT_OUTPUT[kind] ?? `неизвестная метка ${kind}\n`);
+                stream.exit(0);
+              } else if (info.command.includes('@@hostname')) {
                 stream.write(
                   '@@hostname=test-node\n@@arch=x86_64\n@@kernel=6.8.0\n@@cores=4\n@@memkb=8192000\n@@os=Ubuntu\n@@osver=24.04\n',
                 );

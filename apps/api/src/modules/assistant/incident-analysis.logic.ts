@@ -66,6 +66,12 @@ const ANALYSIS_READ = new Set([
   'check_reachability',
   'inspect_processes',
   'inspect_node_logs',
+  'inspect_containers',
+  'inspect_ports',
+  'inspect_disk',
+  'inspect_kernel',
+  'check_certificate',
+  'inspect_logs',
   'get_playbook',
   'get_reference',
 ]);
@@ -127,6 +133,12 @@ export function stepLabel(tool: string, input: unknown, kind: IncidentKind): str
   if (tool === 'check_reachability') return 'Проверяю доступность снаружи';
   if (tool === 'inspect_processes') return 'Смотрю, какие процессы грузят сервер';
   if (tool === 'inspect_node_logs') return 'Читаю последние строки журнала ноды';
+  if (tool === 'inspect_containers') return 'Смотрю контейнеры и их перезапуски';
+  if (tool === 'inspect_ports') return 'Смотрю, какие порты слушает сервер';
+  if (tool === 'inspect_disk') return 'Смотрю, что занимает диск';
+  if (tool === 'inspect_kernel') return 'Читаю события ядра: нехватка памяти, ошибки диска';
+  if (tool === 'check_certificate') return 'Проверяю сертификат';
+  if (tool === 'inspect_logs') return 'Читаю журнал службы за период';
   if (tool === 'get_playbook') return 'Сверяюсь с плейбуком';
   if (tool === 'get_reference') return 'Открываю справочник';
   if (tool === 'submit_analysis') return 'Формулирую вывод';

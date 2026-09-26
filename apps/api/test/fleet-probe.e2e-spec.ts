@@ -103,6 +103,37 @@ class FakeLlm implements LlmProvider {
         ],
       };
     }
+    if (text.includes('ОСМОТР-СЕРВЕРА') || text.includes('ОСМОТР-ЖУРНАЛА')) {
+      const logs = text.includes('ОСМОТР-ЖУРНАЛА');
+      if (!done)
+        return {
+          stopReason: 'tool_use',
+          blocks: (logs
+            ? [
+                { name: 'inspect_logs', input: { serverId: 'цель', target: 'agent', sinceMinutes: 30 } },
+                {
+                  name: 'inspect_node_logs',
+                  input: { serverId: 'цель', sinceMinutes: 30, contains: 'error' },
+                },
+              ]
+            : [
+                { name: 'inspect_containers', input: { serverId: 'цель' } },
+                { name: 'inspect_ports', input: { serverId: 'цель' } },
+                { name: 'inspect_disk', input: { serverId: 'цель' } },
+                { name: 'inspect_kernel', input: { serverId: 'цель' } },
+                { name: 'check_certificate', input: { serverId: 'цель', servername: 'example.com' } },
+                { name: 'inspect_logs', input: { serverId: 'цель', target: 'agent' } },
+              ]
+          ).map((b, i) => ({ type: 'tool_use' as const, id: `o${i}`, ...b })),
+        };
+      const results = input.messages
+        .flatMap((m) => m.content)
+        .flatMap((b) => (b.type === 'tool_result' ? [b.content] : []));
+      return {
+        stopReason: 'end',
+        blocks: [{ type: 'text', text: `РЕЗУЛЬТАТЫ:\n${results.join('\n---\n')}` }],
+      };
+    }
     if (text.includes('ДОСТУПНОСТЬ')) {
       if (done) return { stopReason: 'end', blocks: [{ type: 'text', text: 'Проверил.' }] };
       return {
@@ -521,6 +552,75 @@ describe('проверка доступности, процессы и пред�
       expect(JSON.stringify(res.body)).toContain('Подсказки в терминале выключены');
       expect(fake.hintInputs).toHaveLength(before);
       await setPerms({ terminalHints: true });
+    });
+  });
+
+  describe('осмотр по SSH (J2)', () => {
+    const setPerms = (permissions: Record<string, boolean>) =>
+      agent.put('/api/settings/assistant').set(CSRF_HEADER, csrf).send({ permissions }).expect(200);
+    const chat = async (message: string) =>
+      assistantChatResponseSchema.parse(
+        (await agent.post('/api/assistant/chat').set(CSRF_HEADER, csrf).send({ message }).expect(200)).body,
+      );
+
+    it('сервис читает контейнеры, порты, диск, ядро, сертификат и журналы по настоящему SSH', async () => {
+      const probe = app.get(FleetProbeService);
+      const id = target().id;
+      ssh.execLog.length = 0;
+      const containers = await probe.containers(id);
+      expect(containers.containers.map((c) => c.name)).toEqual(['remnanode', 'nginx']);
+      expect(containers.attention.join(' ')).toContain('OOM');
+      const ports = await probe.ports(id);
+      expect(ports.ports.map((p) => `${p.port}:${p.process}:${p.exposed}`)).toEqual([
+        '22:sshd:true',
+        '443:xray:true',
+        '8080:panel:false',
+      ]);
+      expect((await probe.disk(id)).filesystems).toContain('90% /');
+      expect((await probe.kernel(id)).events[0]).toContain('Out of memory');
+      const cert = await probe.certificate(id, 443, 'example.com');
+      expect(cert).toMatchObject({ present: true, names: ['example.com'] });
+      expect(cert.daysLeft).not.toBeNull();
+      const logs = await probe.logs(id, 'agent', { sinceMinutes: 30, lines: 50 });
+      expect(logs?.masked).toBeGreaterThanOrEqual(2);
+      expect(logs?.text).not.toMatch(/abcdef123456789|203\.0\.113\.44/);
+      expect(await probe.logs(id, 'нет-такой-цели', {})).toBeNull();
+      expect(await probe.logs(id, 'container', { container: 'a;rm -rf /' })).toBeNull();
+      const node = await probe.nodeLogs(id, { sinceMinutes: 30, contains: 'error' });
+      expect(node).toMatchObject({ found: true, matched: 1 });
+      // Ни одна команда осмотра не пишет и не останавливает: всё с меткой и только чтение.
+      const inspect = ssh.execLog.filter((c) => c.includes('# ns-inspect:'));
+      expect(inspect.length).toBe(7);
+      for (const c of inspect) expect(c).not.toMatch(/\brm\b|restart|reboot|prune|>\s*\/(?!dev\/null)/);
+    });
+
+    it('чат: по умолчанию осмотр разрешён, журналы служб выключены и это сказано прямо', async () => {
+      await setPerms({ inspect: true, serviceLogs: false });
+      const res = await chat('Что с сервером? ОСМОТР-СЕРВЕРА');
+      const text = res.message.content;
+      expect(text).toContain('remnanode');
+      expect(text).toContain('exposedCount');
+      expect(text).toContain('90% /');
+      expect(text).toContain('Out of memory');
+      expect(text).toContain('daysLeft');
+      // журналы служб выключены: инструмент отвечает отказом без выхода на сервер
+      expect(text).toContain('выключено');
+      expect(text).toContain('чтение журналов служб');
+    });
+
+    it('чат: с разрешением журнал приходит замаскированным, без него осмотр не идёт вовсе', async () => {
+      await setPerms({ inspect: true, serviceLogs: true, nodeLogs: true });
+      const on = await chat('Журналы, ОСМОТР-ЖУРНАЛА');
+      expect(on.message.content).toContain('connect ok');
+      expect(on.message.content).not.toMatch(/abcdef123456789|203\.0\.113\.44/);
+      expect(on.message.content).toContain('matched');
+
+      await setPerms({ inspect: false, serviceLogs: false, nodeLogs: false });
+      ssh.execLog.length = 0;
+      const off = await chat('Ещё раз ОСМОТР-СЕРВЕРА');
+      expect(off.message.content).toContain('осмотр служб и системы');
+      expect(ssh.execLog.filter((c) => c.includes('# ns-inspect:'))).toHaveLength(0);
+      await setPerms({ inspect: true, serviceLogs: false, nodeLogs: false });
     });
   });
 });

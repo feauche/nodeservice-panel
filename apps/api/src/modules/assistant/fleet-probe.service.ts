@@ -4,10 +4,25 @@ import type { ReachabilityResult, Server } from '@nodeservice/shared';
 import { ServersService } from '../servers/servers.service.js';
 import { SshService } from '../servers/ssh.service.js';
 import {
+  CONTAINERS_COMMAND,
+  certCommand,
+  DISK_COMMAND,
+  KERNEL_COMMAND,
+  type LogsResult,
+  logsCommand,
+  nodeLogsCommand,
+  PORTS_COMMAND,
+  parseCert,
+  parseContainers,
+  parseDisk,
+  parseKernel,
+  parsePorts,
+  prepareLogs,
+} from './fleet-inspect.logic.js';
+import {
   buildReachCommand,
   dnsSummary,
   isProbeHost,
-  NODE_LOGS_COMMAND,
   normalizePorts,
   PROCESSES_COMMAND,
   parsePs,
@@ -127,8 +142,47 @@ export class FleetProbeService {
   }
 
   /** Хвост журнала контейнера ноды с маскированием секретов и адресов. */
-  async nodeLogs(serverId: string) {
-    const res = await this.run(serverId, NODE_LOGS_COMMAND);
-    return prepareNodeLogs(res.stdout, res.code);
+  async nodeLogs(serverId: string, opts: { sinceMinutes?: number; lines?: number; contains?: string } = {}) {
+    const res = await this.run(serverId, nodeLogsCommand(opts.sinceMinutes, opts.lines ?? 80));
+    const base = prepareNodeLogs(res.stdout, res.code);
+    if (!base.found) return base;
+    const logs = prepareLogs(res.stdout, opts.contains);
+    return { found: true, ...logs };
+  }
+
+  /** Контейнеры Docker: состояние, перезапуски, коды выхода, OOM. */
+  async containers(serverId: string) {
+    return parseContainers((await this.run(serverId, CONTAINERS_COMMAND)).stdout);
+  }
+
+  /** Кто какие порты слушает. */
+  async ports(serverId: string) {
+    return parsePorts((await this.run(serverId, PORTS_COMMAND)).stdout);
+  }
+
+  /** Занятость диска, тяжёлые каталоги, Docker и журнал systemd. */
+  async disk(serverId: string) {
+    return parseDisk((await this.run(serverId, DISK_COMMAND)).stdout);
+  }
+
+  /** События ядра: OOM, ошибки диска, conntrack. */
+  async kernel(serverId: string) {
+    return parseKernel((await this.run(serverId, KERNEL_COMMAND)).stdout);
+  }
+
+  /** Сертификат, который порт отдаёт на самом сервере. */
+  async certificate(serverId: string, port: number, servername?: string) {
+    return parseCert((await this.run(serverId, certCommand(port, servername))).stdout);
+  }
+
+  /** Журнал цели за период; null — цель неизвестна или имя контейнера недопустимо (команда не собиралась). */
+  async logs(
+    serverId: string,
+    target: string,
+    opts: { sinceMinutes?: number; lines?: number; container?: string; contains?: string },
+  ): Promise<LogsResult | null> {
+    const cmd = logsCommand(target, opts.sinceMinutes ?? 60, opts.lines ?? 80, opts.container);
+    if (!cmd) return null;
+    return prepareLogs((await this.run(serverId, cmd)).stdout, opts.contains);
   }
 }

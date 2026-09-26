@@ -14,7 +14,15 @@ import {
   SendIcon,
   ServerIcon,
 } from 'lucide-react';
-import { type ComponentType, type SVGProps, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ComponentType,
+  type SVGProps,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { JarvisIcon } from '@/components/jarvis-icon';
 import { Markdown, ServerHealthContext } from '@/features/knowledge/markdown';
 import { type ServerHealth, serverHealth } from '@/features/servers/server-health';
@@ -24,9 +32,11 @@ import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import {
+  LAST_CONV_KEY,
   useAssistantStatus,
   useConversationHistory,
   useConversations,
+  usePendingChats,
   useSendMessage,
 } from './assistant-api';
 import { linkifyServers } from './link-servers';
@@ -34,7 +44,6 @@ import { ProposalCard } from './proposal-card';
 import { ReachabilityCard } from './reachability-card';
 
 // Помним последнюю открытую беседу, чтобы вернуться и продолжить после ухода со страницы.
-const LAST_CONV_KEY = 'ns.assistant.conversation';
 
 export function AssistantPage() {
   const status = useAssistantStatus();
@@ -100,7 +109,10 @@ function AssistantChat() {
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   const messages = history.data?.items ?? [];
-  const busy = send.isPending;
+  // «Думает» берём из кэша запросов, а не из состояния страницы: ушли в другой раздел и вернулись —
+  // запрос всё ещё идёт, и индикатор должен остаться, а когда ответ готов, исчезнуть.
+  const pendingHere = usePendingChats().filter((v) => (v.conversationId ?? null) === conversationId);
+  const busy = pendingHere.length > 0;
   const isNewChat = conversationId === null;
 
   // Считаем по обрезанной длине, ровно как проверит сервер, и не даём отправить переполненное поле
@@ -113,6 +125,25 @@ function AssistantChat() {
 
   // Оптимистично показываем своё сообщение сразу, до ответа модели.
   const [pendingUser, setPendingUser] = useState<string | null>(null);
+  // После возврата на страницу запрос нового чата ещё идёт, а беседы в истории пока нет: показываем его текст из кэша.
+  const restoredPending =
+    pendingUser === null && conversationId === null && pendingHere[0] ? pendingHere[0].message : null;
+  const shownPending = pendingUser ?? restoredPending;
+  // Новый чат дописался, пока страницы не было: переходим в созданную беседу (её запомнил сам запрос).
+  // Смотрим только на запрос нового чата: если человек сам ушёл из беседы кнопкой «Новый чат», назад не возвращаем.
+  const newChatBusy = conversationId === null && busy;
+  const wasNewChatBusy = useRef(false);
+  useEffect(() => {
+    if (wasNewChatBusy.current && !newChatBusy && conversationId === null) {
+      try {
+        const id = localStorage.getItem(LAST_CONV_KEY);
+        if (id) setConversationId(id);
+      } catch {
+        // приватный режим браузера: беседа есть в списке слева
+      }
+    }
+    wasNewChatBusy.current = newChatBusy;
+  }, [newChatBusy, conversationId]);
   // Сколько сообщений было в истории на момент отправки. Снимаем пузырь не по совпадению
   // текста (быстрый вопрос может дословно повторять прошлый — тогда он гас сразу),
   // а когда в истории реально прибавились сообщения — ответ пришёл.
@@ -143,13 +174,21 @@ function AssistantChat() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, busy]);
 
-  // Поле ввода растёт под текст (до предела), потом прокрутка.
+  // Поле ввода растёт под текст (до предела), потом прокрутка. Высоту меряем без подсказки: длинная
+  // подсказка переносится на вторую строку и раздувала пустое поле, а с первой буквой оно схлопывалось
+  // и весь чат подпрыгивал. Если список был прокручен до конца, после смены высоты остаётся внизу.
   // biome-ignore lint/correctness/useExhaustiveDependencies: высота пересчитывается при смене текста
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = taRef.current;
     if (!el) return;
+    const list = chatRef.current;
+    const atBottom = list ? list.scrollHeight - list.scrollTop - list.clientHeight < 24 : false;
+    const placeholder = el.placeholder;
+    el.placeholder = '';
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    el.placeholder = placeholder;
+    if (list && atBottom) list.scrollTop = list.scrollHeight;
   }, [input]);
 
   const submit = async (text: string) => {
@@ -231,7 +270,7 @@ function AssistantChat() {
           data-testid="assistant-messages"
           className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-5 sm:p-6"
         >
-          {messages.length === 0 && !busy && !pendingUser && <EmptyChat />}
+          {messages.length === 0 && !busy && !shownPending && <EmptyChat />}
           <ServerHealthContext.Provider value={healthById}>
             {messages.map((m, i) => (
               <MessageRow
@@ -241,12 +280,12 @@ function AssistantChat() {
                 interim={m.role === 'assistant' && messages[i + 1]?.role === 'assistant'}
               />
             ))}
-            {pendingUser && (
+            {shownPending && (
               <MessageRow
                 message={{
                   id: 'pending-user',
                   role: 'user',
-                  content: pendingUser,
+                  content: shownPending,
                   citations: [],
                   proposals: [],
                   reachability: [],
@@ -260,7 +299,7 @@ function AssistantChat() {
 
         {/* Композер: одно поле ввода, Джарвис сам понимает, что прислали: вопрос, статью, термины, вывод команды */}
         <div className="flex-none border-t border-border p-3 sm:p-3.5">
-          {isNewChat && messages.length === 0 && !pendingUser && (
+          {isNewChat && messages.length === 0 && !shownPending && (
             <div className="mb-2.5 flex flex-wrap gap-1.5 max-sm:[&>button:nth-child(n+4)]:hidden">
               {ASSISTANT_SUGGESTIONS.map((s) => (
                 <button
@@ -285,7 +324,7 @@ function AssistantChat() {
               disabled={busy}
               rows={1}
               aria-label="Сообщение Джарвису"
-              placeholder="Спросите о парке или вставьте статью, термины, вывод команды: Джарвис сам поймёт, что с этим сделать…"
+              placeholder="Спросите или вставьте текст…"
               className="max-h-[200px] w-full resize-none bg-transparent px-2 py-1 text-[13.5px] leading-relaxed outline-none placeholder:text-text-3"
             />
             <div className="flex items-center justify-end gap-2">
@@ -347,7 +386,11 @@ function EmptyChat() {
 
 function TypingRow() {
   return (
-    <div className="flex max-w-[84%] gap-3 animate-in fade-in-0 duration-200">
+    <div
+      role="status"
+      aria-label="Джарвис думает"
+      className="flex max-w-[84%] gap-3 animate-in fade-in-0 duration-200"
+    >
       <Avatar />
       <div className="flex items-center gap-1 py-3">
         {[0, 1, 2].map((i) => (

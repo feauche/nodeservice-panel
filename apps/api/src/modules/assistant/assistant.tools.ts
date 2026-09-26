@@ -10,6 +10,7 @@ import {
   KB_SOURCE_LABELS,
   type KbSource,
   type ReachabilityResult,
+  SHARED_VERSION,
 } from '@nodeservice/shared';
 
 import type { AuditRepository } from '../audit/audit.repository.js';
@@ -31,6 +32,12 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
     name: 'get_settings',
     description:
       'Текущие настройки панели: автопроверки (интервалы/тумблеры), инциденты (пороги CPU/памяти/диска, время реакции, автопочинка) и твои собственные настройки (assistant.level — уровень пользователя, assistant.permissions — что тебе разрешено). Без секретов. Загляни сюда, если просят действие и надо проверить разрешение.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_panel_status',
+    description:
+      'Состояние самой панели NodeService: версия, сколько она работает без перезапуска (после обновления счёт идёт заново), серверы и агенты (сколько в сети, не в сети, какие версии агентов), число открытых инцидентов, неудачные и отклонённые события Журнала за последний час, состояние автоматического разбора. Без параметров. Зови, когда спрашивают, нормально ли работает панель, что изменилось после обновления, устарели ли агенты. Данные конкретных серверов бери из get_server_detail.',
     input_schema: { type: 'object', properties: {} },
   },
   {
@@ -189,6 +196,37 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
       }),
       citations: [],
       proposals: [],
+    };
+  }
+
+  if (name === 'get_panel_status') {
+    const [servers, open, failed] = await Promise.all([
+      deps.servers.list(),
+      deps.incidents.list('open'),
+      deps.audit.list({
+        from: new Date(Date.now() - 3_600_000).toISOString(),
+        result: ['failed', 'denied'] as AuditResult[],
+        page: 1,
+        pageSize: 25,
+      }),
+    ]);
+    const agents: Record<string, number> = {};
+    const versions: Record<string, number> = {};
+    for (const srv of servers) {
+      agents[srv.agentStatus] = (agents[srv.agentStatus] ?? 0) + 1;
+      if (srv.agentVersion) versions[srv.agentVersion] = (versions[srv.agentVersion] ?? 0) + 1;
+    }
+    return {
+      ...empty,
+      content: JSON.stringify({
+        version: SHARED_VERSION,
+        uptimeMinutes: Math.round(process.uptime() / 60),
+        uptimeNote: 'Время с последнего перезапуска панели; после обновления панели счёт идёт заново.',
+        servers: { total: servers.length, agents, agentVersions: versions },
+        incidents: { open: open.counts.open, critical: open.counts.crit, warning: open.counts.warn },
+        auditLastHour: { failedOrDenied: failed.total, latest: failed.items.slice(0, 5).map(auditBrief) },
+        ...(deps.autoAnalysis ? { autoAnalysis: deps.autoAnalysis() } : {}),
+      }),
     };
   }
 

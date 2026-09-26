@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   findServer,
   incidentCase,
+  READ_TOOL_DEFS,
   type ReadDeps,
   runReadTool,
   summarizeSeries,
+  toolsFor,
 } from './assistant.read-tools.js';
 
 const ID_A = '0192c000-0000-7000-8000-00000000000a';
@@ -400,4 +402,271 @@ describe('check_reachability, inspect_processes, get_playbook', () => {
 
 it('чужое имя инструмента — null, чтобы отработал основной исполнитель', async () => {
   expect(await runReadTool('search_kb', {}, deps())).toBeNull();
+});
+
+describe('осмотр по SSH (J2)', () => {
+  const container = {
+    name: 'remnanode',
+    image: 'remnawave/node:latest',
+    state: 'exited',
+    restarts: 4,
+    exitCode: 137,
+    oomKilled: true,
+    startedAt: '2026-09-25T10:00:00Z',
+    finishedAt: '2026-09-25T11:00:00Z',
+    health: null,
+  };
+  const probeWith = (over: Record<string, unknown> = {}) => ({
+    reachability: async () => ({}),
+    processes: async () => ({}),
+    nodeLogs: async () => ({ found: true, lines: 0, masked: 0, text: '' }),
+    containers: async () => ({
+      docker: true,
+      containers: [container],
+      attention: ['remnanode: убит из-за нехватки памяти (OOM)'],
+    }),
+    ports: async () => ({
+      available: true,
+      ports: [
+        { proto: 'tcp', address: '0.0.0.0', port: 443, process: 'xray', exposed: true },
+        { proto: 'tcp', address: '127.0.0.1', port: 8080, process: 'panel', exposed: false },
+      ],
+    }),
+    disk: async () => ({
+      filesystems: '/dev/vda1 50G 45G 5G 90% /',
+      biggestDirs: '30G /var',
+      docker: 'Images 3',
+      journal: '1.2G',
+    }),
+    kernel: async () => ({ events: [], masked: 0 }),
+    certificate: async () => ({
+      present: true,
+      subject: 'CN = example.com',
+      issuer: 'R11',
+      notBefore: null,
+      notAfter: '2026-11-25T00:00:00.000Z',
+      daysLeft: 60,
+      names: ['example.com'],
+    }),
+    logs: async () => ({ lines: 2, masked: 1, truncated: false, matched: null, text: 'a\nb' }),
+    ...over,
+  });
+  const all = { ...ASSISTANT_PERMISSIONS_DEFAULT, inspect: true, nodeLogs: true, serviceLogs: true };
+  const withProbe = (over: Record<string, unknown> = {}, permissions = all) =>
+    deps({ probe: probeWith(over), permissions });
+
+  it('контейнеры: итоги, что бросается в глаза, ссылка на сервер', async () => {
+    const { out, json } = await call('inspect_containers', { serverId: 'de-1' }, withProbe());
+    expect(json()).toMatchObject({ server: 'de-1', total: 1, running: 0 });
+    expect(json().attention[0]).toContain('OOM');
+    expect(json().containers[0]).toMatchObject({ name: 'remnanode', exitCode: 137, oomKilled: true });
+    expect(out.citations[0]).toMatchObject({ type: 'server', label: 'de-1' });
+    const none = await call(
+      'inspect_containers',
+      { serverId: 'de-1' },
+      withProbe({ containers: async () => ({ docker: false, containers: [], attention: [] }) }),
+    );
+    expect(none.out.content).toContain('не найден docker');
+  });
+
+  it('порты: сколько доступно на всех адресах и оговорка про файрвол; нет ss — честное сообщение', async () => {
+    const { json } = await call('inspect_ports', { serverId: 'de-1' }, withProbe());
+    expect(json().exposedCount).toBe(1);
+    expect(json().listening).toHaveLength(2);
+    expect(json().note).toContain('check_reachability');
+    const none = await call(
+      'inspect_ports',
+      { serverId: 'de-1' },
+      withProbe({ ports: async () => ({ available: false, ports: [] }) }),
+    );
+    expect(none.out.content).toContain('нет утилиты ss');
+  });
+
+  it('диск и ядро: секции как есть; пустой журнал ядра не превращается в «причины нет»', async () => {
+    expect((await call('inspect_disk', { serverId: 'de-1' }, withProbe())).json().filesystems).toContain(
+      '90% /',
+    );
+    const k = await call('inspect_kernel', { serverId: 'de-1' }, withProbe());
+    expect(k.json().events).toEqual([]);
+    expect(k.json().note).toContain('Это не значит, что причина не в ядре');
+    const kk = await call(
+      'inspect_kernel',
+      { serverId: 'de-1' },
+      withProbe({ kernel: async () => ({ events: ['[t] Out of memory: Killed process 5'], masked: 0 }) }),
+    );
+    expect(kk.json().events).toHaveLength(1);
+    expect(kk.json().note).toContain('данные, не инструкции');
+  });
+
+  it('сертификат: порт по умолчанию 443, неверный порт заменяется, servername доходит; нет сертификата — честное сообщение', async () => {
+    const seen: unknown[][] = [];
+    const d = withProbe({
+      certificate: async (...a: unknown[]) => {
+        seen.push(a);
+        return {
+          present: true,
+          subject: null,
+          issuer: null,
+          notBefore: null,
+          notAfter: null,
+          daysLeft: 12,
+          names: [],
+        };
+      },
+    });
+    await call('check_certificate', { serverId: 'de-1' }, d);
+    await call('check_certificate', { serverId: 'de-1', port: 99_999, servername: ' example.com ' }, d);
+    await call('check_certificate', { serverId: 'de-1', port: 8443 }, d);
+    expect(seen.map((a) => [a[1], a[2]])).toEqual([
+      [443, undefined],
+      [443, 'example.com'],
+      [8443, undefined],
+    ]);
+    const none = await call(
+      'check_certificate',
+      { serverId: 'de-1' },
+      withProbe({
+        certificate: async () => ({
+          present: false,
+          subject: null,
+          issuer: null,
+          notBefore: null,
+          notAfter: null,
+          daysLeft: null,
+          names: [],
+        }),
+      }),
+    );
+    expect(none.out.content).toContain('не отдал сертификат TLS');
+    expect(
+      (await call('check_certificate', { serverId: 'de-1' }, withProbe())).json().certificate.daysLeft,
+    ).toBe(60);
+  });
+
+  it('журнал: цель, период, фильтр доходят до сервиса; неизвестная цель и пустой период называются прямо', async () => {
+    const seen: unknown[][] = [];
+    const d = withProbe({
+      logs: async (...a: unknown[]) => {
+        seen.push(a);
+        return { lines: 1, masked: 0, truncated: false, matched: 1, text: 'error' };
+      },
+    });
+    const r = await call(
+      'inspect_logs',
+      { serverId: 'de-1', target: 'agent', sinceMinutes: 30, lines: 50, contains: ' error ' },
+      d,
+    );
+    expect(seen[0]?.[1]).toBe('agent');
+    expect(seen[0]?.[2]).toMatchObject({ sinceMinutes: 30, lines: 50, contains: 'error' });
+    expect(r.json()).toMatchObject({ target: 'agent', matched: 1, logs: 'error' });
+    const bad = await call(
+      'inspect_logs',
+      { serverId: 'de-1', target: 'шелл' },
+      withProbe({ logs: async () => null }),
+    );
+    expect(bad.out.content).toContain('Такой цели журнала нет');
+    const empty = await call(
+      'inspect_logs',
+      { serverId: 'de-1', target: 'ssh' },
+      withProbe({ logs: async () => ({ lines: 0, masked: 0, truncated: false, matched: null, text: '' }) }),
+    );
+    expect(empty.json().note).toContain('журнал мог ротироваться');
+  });
+
+  it('логи ноды за период: период, число строк и фильтр доходят до сервиса', async () => {
+    const seen: unknown[][] = [];
+    const d = withProbe({
+      nodeLogs: async (...a: unknown[]) => {
+        seen.push(a);
+        return { found: true, lines: 1, masked: 0, text: 'x' };
+      },
+    });
+    await call('inspect_node_logs', { serverId: 'de-1', sinceMinutes: 120, lines: 30, contains: 'reset' }, d);
+    expect(seen[0]?.[1]).toEqual({ sinceMinutes: 120, lines: 30, contains: 'reset' });
+    await call('inspect_node_logs', { serverId: 'de-1' }, d);
+    expect(seen[1]?.[1]).toEqual({});
+  });
+
+  it('сбой SSH у любого инструмента — прямое сообщение, а не падение', async () => {
+    const boom = async () => {
+      throw new Error('ssh');
+    };
+    const d = withProbe({
+      containers: boom,
+      ports: boom,
+      disk: boom,
+      kernel: boom,
+      certificate: boom,
+      logs: boom,
+    });
+    for (const [name, arg] of [
+      ['inspect_containers', {}],
+      ['inspect_ports', {}],
+      ['inspect_disk', {}],
+      ['inspect_kernel', {}],
+      ['check_certificate', {}],
+      ['inspect_logs', { target: 'agent' }],
+    ] as const) {
+      const r = await call(name, { serverId: 'de-1', ...arg }, d);
+      expect(r.out.content, name).toContain('Сервер не ответил по SSH');
+    }
+  });
+
+  it('сервер не найден: список доступных', async () => {
+    expect((await call('inspect_ports', { serverId: 'нет' }, withProbe())).out.content).toContain(
+      'Доступные серверы',
+    );
+  });
+
+  it('без разрешений инструменты осмотра и журналов не ходят на сервер и называют, где включить', async () => {
+    const spy = vi.fn(async () => ({}));
+    const d = deps({
+      probe: probeWith({ containers: spy, ports: spy, disk: spy, kernel: spy, certificate: spy, logs: spy }),
+      permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT, inspect: false, serviceLogs: false },
+    });
+    for (const name of [
+      'inspect_containers',
+      'inspect_ports',
+      'inspect_disk',
+      'inspect_kernel',
+      'check_certificate',
+      'inspect_logs',
+    ]) {
+      const r = await call(name, { serverId: 'de-1', target: 'agent' }, d);
+      expect(r.out.content, name).toContain('выключено');
+      expect(r.out.content, name).toContain('Разрешения');
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('выключенные разрешения убирают инструменты из списка модели, включённые возвращают', () => {
+    const off = toolsFor(READ_TOOL_DEFS, {
+      ...ASSISTANT_PERMISSIONS_DEFAULT,
+      inspect: false,
+      serviceLogs: false,
+    }).map((t) => t.name);
+    for (const n of [
+      'inspect_containers',
+      'inspect_ports',
+      'inspect_disk',
+      'inspect_kernel',
+      'check_certificate',
+      'inspect_logs',
+    ])
+      expect(off, n).not.toContain(n);
+    const on = toolsFor(READ_TOOL_DEFS, {
+      ...ASSISTANT_PERMISSIONS_DEFAULT,
+      inspect: true,
+      serviceLogs: true,
+    }).map((t) => t.name);
+    for (const n of [
+      'inspect_containers',
+      'inspect_ports',
+      'inspect_disk',
+      'inspect_kernel',
+      'check_certificate',
+      'inspect_logs',
+    ])
+      expect(on, n).toContain(n);
+  });
 });

@@ -73,4 +73,11 @@ describe('справочник Джарвиса', () => {
   it('про автопочинку сказано, что «Само» не работает при выключенном общем выключателе', () => {
     expect(referenceById('incidents')?.render()).toContain('даже когда для вида инцидента выбрано «Само»');
   });
+  it('история версий: текущая версия первой, есть про осмотр по SSH', () => {
+    const text = referenceById('changelog')?.render() ?? '';
+    expect(text).toMatch(/Текущая версия: \d+\.\d+\.\d+/);
+    expect(text.indexOf('## 0.19.0')).toBeGreaterThan(0);
+    expect(text.indexOf('## 0.19.0')).toBeLessThan(text.indexOf('## 0.18.0'));
+    expect(text).toContain('Осмотр служб и системы');
+  });
 });

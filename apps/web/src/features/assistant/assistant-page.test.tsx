@@ -148,14 +148,128 @@ describe('AssistantPage', () => {
     const input = await screen.findByLabelText('Сообщение Джарвису');
     expect(screen.queryByRole('button', { name: 'Анализ' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Собрать статью' })).not.toBeInTheDocument();
-    expect(input).toHaveAttribute(
-      'placeholder',
-      expect.stringContaining('вставьте статью, термины, вывод команды'),
-    );
+    expect(input).toHaveAttribute('placeholder', 'Спросите или вставьте текст…');
     expect(screen.getByRole('button', { name: 'Отправить' })).toBeInTheDocument();
     expect(
       screen.getByText(/Статью Джарвис сохранит в базу знаний, термины добавит в «Пояснения»/),
     ).toBeInTheDocument();
+  });
+
+  it('высота пустого поля не зависит от подсказки: с первой буквой чат не подпрыгивает', async () => {
+    // В jsdom нет вёрстки: имитируем браузер, где длинная подсказка переносится и раздувает пустое поле.
+    const orig = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight');
+    Object.defineProperty(Element.prototype, 'scrollHeight', {
+      configurable: true,
+      get() {
+        const el = this as HTMLElement;
+        return el.tagName === 'TEXTAREA' ? ((el as HTMLTextAreaElement).placeholder ? 52 : 30) : 0;
+      },
+    });
+    try {
+      mockAssistant.enabled = true;
+      renderPage(AssistantPage, '/assistant');
+      const user = userEvent.setup();
+      const input = await screen.findByLabelText('Сообщение Джарвису');
+      expect(input.style.height).toBe('30px');
+      expect(input).toHaveAttribute('placeholder', 'Спросите или вставьте текст…');
+      await user.type(input, 'п');
+      expect(input.style.height).toBe('30px');
+    } finally {
+      if (orig) Object.defineProperty(Element.prototype, 'scrollHeight', orig);
+    }
+  });
+
+  describe('«Джарвис думает» и переходы между разделами', () => {
+    const typing = () => screen.queryByRole('status', { name: 'Джарвис думает' });
+    // Тестовый роутер не знает про «/other» в типах приложения.
+    const go = (router: unknown, to: string) =>
+      (router as { navigate: (o: { to: string }) => Promise<unknown> }).navigate({ to });
+    const setup = () => {
+      try {
+        localStorage.clear();
+      } catch {
+        // без localStorage тест не имеет смысла, но и падать не должен
+      }
+      mockAssistant.enabled = true;
+      return renderPage(AssistantPage, '/assistant', ['/other'], '/assistant', {
+        '/other': () => <div data-testid="other-page" />,
+      });
+    };
+    const ask = async (text: string) => {
+      const user = userEvent.setup();
+      await user.type(await screen.findByLabelText('Сообщение Джарвису'), text);
+      await user.keyboard('{Enter}');
+    };
+
+    it('в существующей беседе индикатор остаётся после ухода и возврата и пропадает вместе с ответом', async () => {
+      const { router } = setup();
+      await ask('Первый вопрос');
+      await waitFor(() => expect(Object.values(mockAssistant.messages)[0]?.length).toBeGreaterThanOrEqual(2));
+      mockAssistant.chatDelayMs = 900;
+      await ask('Второй вопрос');
+      expect(await screen.findByRole('status', { name: 'Джарвис думает' })).toBeInTheDocument();
+
+      await go(router, '/other');
+      await screen.findByTestId('other-page');
+      expect(typing()).toBeNull();
+      await go(router, '/assistant');
+
+      // Запрос ещё идёт: индикатор на месте сразу, поле ввода занято, вопрос показан один раз.
+      expect(await screen.findByRole('status', { name: 'Джарвис думает' })).toBeInTheDocument();
+      expect(await screen.findByLabelText('Сообщение Джарвису')).toBeDisabled();
+      expect(screen.getAllByText('Второй вопрос')).toHaveLength(1);
+
+      // Ответ пришёл: индикатора нет, поле свободно.
+      await waitFor(() => expect(typing()).toBeNull(), { timeout: 4000 });
+      await waitFor(() => expect(screen.getByLabelText('Сообщение Джарвису')).not.toBeDisabled());
+      expect(screen.getAllByText('Второй вопрос')).toHaveLength(1);
+      expect(Object.values(mockAssistant.messages)[0]?.length).toBe(4);
+    });
+
+    it('в новом чате после возврата виден вопрос и индикатор, а по готовности открывается созданная беседа', async () => {
+      const { router } = setup();
+      mockAssistant.chatDelayMs = 900;
+      await ask('Вопрос в новом чате');
+      expect(await screen.findByRole('status', { name: 'Джарвис думает' })).toBeInTheDocument();
+
+      await go(router, '/other');
+      await screen.findByTestId('other-page');
+      await go(router, '/assistant');
+
+      expect(await screen.findByRole('status', { name: 'Джарвис думает' })).toBeInTheDocument();
+      expect(screen.getAllByText('Вопрос в новом чате')).toHaveLength(1);
+      expect(
+        screen.queryByText('Спросите об инцидентах, серверах или о том, как что-то починить'),
+      ).toBeNull();
+
+      await waitFor(() => expect(typing()).toBeNull(), { timeout: 4000 });
+      // Беседа открылась сама: вопрос показан из истории, ответ на месте, поле свободно.
+      await waitFor(() => expect(screen.getAllByText('Вопрос в новом чате')).toHaveLength(1));
+      await waitFor(() => expect(Object.values(mockAssistant.messages)[0]?.length).toBe(2));
+      await waitFor(() => expect(screen.getByLabelText('Сообщение Джарвису')).not.toBeDisabled());
+    });
+
+    it('индикатор есть только у той беседы, где идёт запрос', async () => {
+      const { router } = setup();
+      await ask('Вопрос про первую беседу');
+      await waitFor(() => expect(Object.values(mockAssistant.messages)[0]?.length).toBeGreaterThanOrEqual(2));
+      await waitFor(() => expect(screen.getByLabelText('Сообщение Джарвису')).not.toBeDisabled());
+      mockAssistant.chatDelayMs = 900;
+      await ask('Ещё вопрос');
+      expect(await screen.findByRole('status', { name: 'Джарвис думает' })).toBeInTheDocument();
+      // Новый чат рядом не думает и принимает вопросы.
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Новый чат' }));
+      expect(typing()).toBeNull();
+      expect(screen.getByLabelText('Сообщение Джарвису')).not.toBeDisabled();
+      await go(router, '/other');
+      await waitFor(
+        () => expect(mockAssistant.messages[mockAssistant.conversations[0]?.id ?? '']?.length).toBe(4),
+        {
+          timeout: 4000,
+        },
+      );
+    });
   });
 
   it('слишком длинный текст: кнопка заблокирована, счётчик и пояснение на виду', async () => {
