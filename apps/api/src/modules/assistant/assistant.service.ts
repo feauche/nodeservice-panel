@@ -32,6 +32,7 @@ import { AssistantRepository } from './assistant.repository.js';
 import { ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
 import { FleetProbeService } from './fleet-probe.service.js';
+import { glossaryImportReply, isPureGlossary, parseGlossaryText } from './glossary-import.js';
 import { LLM_PROVIDER, type LlmBlock, type LlmMsg, type LlmProvider } from './llm.provider.js';
 
 const MAX_TOOL_ROUNDS = 8;
@@ -83,8 +84,9 @@ const ANSWER_STYLE = `ОФОРМЛЕНИЕ ОТВЕТОВ:
 
 const KB_RULES = `БАЗА ЗНАНИЙ И ГЛОССАРИЙ:
 - ПЕРЕД созданием статьи обязательно сделай search_kb. Если такая статья уже есть — не создавай дубликат: дополни существующую или просто сошлись на неё.
-- ГЛОССАРИЙ (важно, базовое поведение): всякий раз, когда объясняешь термин или аббревиатуру — даже базовые (SSH, CPU, conntrack) — добавляй их в общий глоссарий «Пояснения» инструментом add_glossary_terms. Делай это ВСЕГДА, в любом режиме, попутно с ответом. Дубликаты инструмент отсекает сам. Отдельную статью на один термин НЕ создавай — термины идут только в глоссарий.
-- save_kb_article — для полноценных инструкций/руководств, а не для одной строчки.`;
+- ГЛОССАРИЙ (важно, базовое поведение): всякий раз, когда объясняешь термин или аббревиатуру — даже базовые (SSH, CPU, conntrack) — добавляй их в общий глоссарий «Пояснения» инструментом add_glossary_terms. Делай это ВСЕГДА, в любом режиме, попутно с ответом. Повторы (тот же термин или тот же перевод в скобках) инструмент пропускает и называет в своём ответе: дубликаты в глоссарии бесполезны, поэтому не повторяй уже добавленное, а существующее пояснение меняй только если оно неверное или явно хуже (update: true). Отдельную статью на один термин НЕ создавай — термины идут только в глоссарий.
+- save_kb_article — для полноценных инструкций/руководств, а не для одной строчки.
+- Статью-глоссарий или «словарь терминов» отдельной статьёй создавать нельзя: все термины живут только в общей статье «Пояснения» и добавляются в неё через add_glossary_terms (инструмент сам дополняет существующий список и пропускает повторы).`;
 
 /** Инструкция под уровень пользователя — подробность и терминология. */
 function levelRule(level: AssistantLevel): string {
@@ -95,7 +97,9 @@ function levelRule(level: AssistantLevel): string {
   return 'УРОВЕНЬ — СРЕДНИЙ: по делу, но поясняй неочевидные термины и шаги. Баланс между подробностью и краткостью.';
 }
 
-const ANALYSIS_TASK = `РЕЖИМ «АНАЛИЗ»: пользователь прислал текст или скопированную страницу на разбор. Твоя задача — собрать из него аккуратную статью-инструкцию (или несколько) для базы знаний, НИЧЕГО полезного не потеряв:
+const ANALYSIS_TASK = `РЕЖИМ «АНАЛИЗ»: пользователь прислал текст или скопированную страницу на разбор. Твоя задача — собрать из него аккуратную статью-инструкцию (или несколько) для базы знаний, НИЧЕГО полезного не потеряв.
+ТЕРМИНЫ — ВСЕГДА, ОТДЕЛЬНО ОТ СТАТЕЙ: в любом присланном тексте найди все термины и аббревиатуры (в том числе строки-определения вида «термин: объяснение») и добавь их в общий глоссарий «Пояснения» вызовами add_glossary_terms: до 40 терминов за вызов, если их больше — несколько вызовов подряд. Повторы не добавляй: инструмент пропускает термины, которые уже есть в глоссарии, и называет их в ответе; существующее пояснение меняй только если оно неверное или явно хуже (update: true). Если текст сам объясняет термин, возьми это объяснение и сократи до одной-двух фраз простыми словами; если не объясняет — напиши короткое объяснение сам. Термины идут В ДОПОЛНЕНИЕ к статье, а не вместо неё, и никогда не становятся отдельной статьёй. Если присланный текст — ТОЛЬКО набор терминов и определений, статью не создавай вообще: для статьи там мало содержания, всё уходит в глоссарий. В ответе скажи, сколько терминов добавлено, и что статью не создавал, если это так.
+СТАТЬИ:
 - СОХРАНИ ВСЁ содержательное из присланного. Не выкидывай разделы, шаги, команды, таблицы и темы. Выбрасывать можно только воду, рекламу, навигацию сайта и артефакты вёрстки — но не полезные разделы.
 - Если в тексте НЕСКОЛЬКО разных тем/инструкций (например «как выбрать SNI-донор» и «self-steal на nginx») — не сваливай их в одну статью и НЕ бросай часть. Сделай ОТДЕЛЬНУЮ статью на каждую самостоятельную тему: вызови save_kb_article несколько раз, по разу на тему.
 - Каждая статья: заголовок, короткое «что это», затем суть ПО ШАГАМ (нумерованный список), простыми словами и подробно — по уровню пользователя.
@@ -184,6 +188,39 @@ export class AssistantService {
     return (await this.repo.messages(conversationId)).map((r) => this.toMessage(r));
   }
 
+  /** Словарь терминов из режима «Анализ»: разбор по строкам, дополнение существующего глоссария, ответ без модели. */
+  private async importGlossary(
+    conv: { id: string; title: string },
+    message: string,
+    model: string,
+  ): Promise<AssistantChatResponse> {
+    const terms = parseGlossaryText(message);
+    const res = await this.knowledge.appendGlossary(terms, { auditSource: 'auto' });
+    const content = glossaryImportReply(terms.length, res.added, res.skipped);
+    const row = await this.repo.addMessage({
+      conversationId: conv.id,
+      role: 'assistant',
+      content,
+      citations: [{ type: 'kb', id: res.id, label: 'Пояснения' }],
+    });
+    await this.audit.record({
+      action: 'assistant.chat',
+      target: { type: 'assistant', id: conv.id, display: conv.title },
+      metadata: {
+        question: previewText(message),
+        answer: previewText(content),
+        model,
+        mode: 'analysis',
+        glossaryImport: { found: terms.length, added: res.added },
+        toolCalls: 0,
+        messages: 1,
+        proposals: 0,
+      },
+    });
+    const out = this.toMessage(row);
+    return { conversationId: conv.id, message: out, messages: [out] };
+  }
+
   async chat(
     message: string,
     conversationId: string | undefined,
@@ -203,6 +240,10 @@ export class AssistantService {
     const system = buildSystem(level, permissions, effectiveMode);
 
     await this.repo.addMessage({ conversationId: conv.id, role: 'user', content: message });
+
+    // Присланный текст целиком словарь терминов: статья тут не нужна, всё уходит в «Пояснения» без модели.
+    if (effectiveMode === 'analysis' && isPureGlossary(message))
+      return this.importGlossary(conv, message, model);
 
     // История беседы → сообщения модели (только текст; предыдущий tool-контекст не тащим).
     const prior = await this.repo.messages(conv.id);

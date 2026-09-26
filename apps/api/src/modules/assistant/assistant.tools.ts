@@ -10,6 +10,7 @@ import {
 import type { AuditRepository } from '../audit/audit.repository.js';
 import type { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
 import { READ_TOOL_DEFS, type ReadDeps, runReadTool } from './assistant.read-tools.js';
+import { isGlossaryArticle } from './glossary-import.js';
 import type { LlmToolDef } from './llm.provider.js';
 
 /** Определения инструментов для модели (read-only + propose_action). */
@@ -59,7 +60,7 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   {
     name: 'add_glossary_terms',
     description:
-      'Добавить термины и аббревиатуры в общий глоссарий «Пояснения» (таблица «термин → простое объяснение»). Вызывай ВСЕГДА, когда объясняешь пользователю непонятный термин/аббревиатуру — даже базовые (SSH, CPU, conntrack). Дубликаты инструмент отсекает сам. Пояснения — короткие, простыми словами.',
+      'Добавить термины и аббревиатуры в общий глоссарий «Пояснения» (таблица «термин → простое объяснение»). Вызывай ВСЕГДА, когда объясняешь пользователю непонятный термин/аббревиатуру — даже базовые (SSH, CPU, conntrack). Повторы инструмент отсекает сам (термин с тем же названием или переводом в скобках не добавляется второй раз) и называет их в ответе; существующие пояснения не переписывай без причины, поправить неверное можно, передав термин с update: true. Инструмент дополняет существующий список, отдельной статьи не создаёт. До 40 терминов за вызов; если терминов больше, вызывай несколько раз подряд. Пояснения — короткие, простыми словами.',
     input_schema: {
       type: 'object',
       properties: {
@@ -67,7 +68,15 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
           type: 'array',
           items: {
             type: 'object',
-            properties: { term: { type: 'string' }, explain: { type: 'string' } },
+            properties: {
+              term: { type: 'string' },
+              explain: { type: 'string' },
+              update: {
+                type: 'boolean',
+                description:
+                  'true только если термин уже есть, а его пояснение неверно или явно хуже: заменит пояснение. Без этого повтор пропускается.',
+              },
+            },
             required: ['term', 'explain'],
           },
         },
@@ -105,7 +114,9 @@ export interface ToolDeps extends ReadDeps {
     tags: string[];
   }) => Promise<{ id: string; title: string }>;
   /** Пополнение глоссария «Пояснения». Работает всегда, отдельного разрешения нет. */
-  addGlossary: (terms: Array<{ term: string; explain: string }>) => Promise<{ id: string; added: number }>;
+  addGlossary: (
+    terms: Array<{ term: string; explain: string; update?: boolean }>,
+  ) => Promise<{ id: string; added: number; skipped: string[]; updated: string[] }>;
 }
 
 /** Результат выполнения инструмента: текст для модели + накопленные цитаты/предложения. */
@@ -186,6 +197,12 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
     const title = String(arg.title ?? '').trim();
     if (!title) return { ...empty, content: 'Не задан заголовок статьи — сохранить не могу.' };
     const content = String(arg.content ?? '');
+    if (isGlossaryArticle(title, content))
+      return {
+        ...empty,
+        content:
+          'Статья-глоссарий не создана: термины хранятся только в общей статье «Пояснения». Добавь все термины из этого текста вызовами add_glossary_terms (до 40 за вызов, при необходимости несколько вызовов подряд). Если в тексте есть и содержательная инструкция, сохрани отдельной статьёй только её, без словаря.',
+      };
     const tags = Array.isArray(arg.tags)
       ? arg.tags
           .map((t) => String(t))
@@ -205,14 +222,26 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
     const terms = rawTerms
       .map((t) => {
         const o = (t ?? {}) as Record<string, unknown>;
-        return { term: String(o.term ?? '').trim(), explain: String(o.explain ?? '').trim() };
+        return {
+          term: String(o.term ?? '').trim(),
+          explain: String(o.explain ?? '').trim(),
+          ...(o.update === true ? { update: true } : {}),
+        };
       })
       .filter((t) => t.term && t.explain)
-      .slice(0, 30);
+      .slice(0, 300);
     if (terms.length === 0) return { ...empty, content: 'Нет терминов для добавления.' };
     const res = await deps.addGlossary(terms);
+    const names = (list: string[]) => list.slice(0, 20).join(', ') + (list.length > 20 ? '…' : '');
     return {
-      content: `Глоссарий «Пояснения» пополнен (добавлено новых: ${res.added}).`,
+      content: [
+        `Глоссарий «Пояснения»: получено ${terms.length}, добавлено новых ${res.added}, уже были ${res.skipped.length}, пояснений исправлено ${res.updated.length}.`,
+        res.skipped.length > 0
+          ? `Уже были, не добавлены: ${names(res.skipped)}. Их пояснения не менялись.`
+          : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
       citations: [{ type: 'kb', id: res.id, label: 'Пояснения' }],
       proposals: [],
     };

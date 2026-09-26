@@ -12,6 +12,7 @@ import { problem } from '../../common/filters/problem-details.filter.js';
 import type { KbDocumentRow } from '../../infra/db/schema/index.js';
 import { diffChanges } from '../audit/audit.diff.js';
 import { AuditService } from '../audit/audit.service.js';
+import { type IncomingTerm, mergeTerms } from './glossary-merge.js';
 import { KnowledgeRepository } from './knowledge.repository.js';
 
 /** База знаний: CRUD markdown-статей с полнотекстовым поиском. */
@@ -149,39 +150,29 @@ export class KnowledgeService implements OnModuleInit {
    * Дубликаты (по термину, без учёта регистра) не добавляются. Создаёт статью, если её ещё нет.
    */
   async appendGlossary(
-    terms: Array<{ term: string; explain: string }>,
+    terms: IncomingTerm[],
     opts?: { auditSource?: AuditSource },
-  ): Promise<{ id: string; added: number }> {
+  ): Promise<{ id: string; added: number; skipped: string[]; updated: string[] }> {
     const existing = await this.repo.findByTitle(GLOSSARY_TITLE);
-    const byKey = new Map<string, { term: string; explain: string }>();
-    if (existing) for (const r of parseGlossary(existing.content)) byKey.set(r.term.toLowerCase(), r);
-
-    let added = 0;
-    for (const t of terms) {
-      const term = t.term.trim();
-      const explain = t.explain
-        .trim()
-        .replace(/\s*\|\s*/g, '/')
-        .replace(/\s+/g, ' ');
-      if (!term || !explain || byKey.has(term.toLowerCase())) continue;
-      byKey.set(term.toLowerCase(), { term, explain });
-      added += 1;
-    }
-    const content = renderGlossary([...byKey.values()].sort((a, b) => a.term.localeCompare(b.term, 'ru')));
+    const merged = mergeTerms(existing ? parseGlossary(existing.content) : [], terms);
+    const changed = merged.added.length + merged.updated.length > 0;
+    const content = renderGlossary(merged.entries);
+    const result = { added: merged.added.length, skipped: merged.skipped, updated: merged.updated };
 
     if (existing) {
+      // Ничего нового и ничего не исправлено: статью не трогаем, лишней версии в истории не будет.
+      if (!changed) return { id: existing.id, ...result };
       const row = await this.repo.update(existing.id, { content });
-      if (added > 0)
-        await this.audit.record({
-          action: 'kb.updated',
-          target: { type: 'kb', id: existing.id, display: GLOSSARY_TITLE },
-          ...(opts?.auditSource ? { source: opts.auditSource } : {}),
-        });
-      return { id: row?.id ?? existing.id, added };
+      await this.audit.record({
+        action: 'kb.updated',
+        target: { type: 'kb', id: existing.id, display: GLOSSARY_TITLE },
+        ...(opts?.auditSource ? { source: opts.auditSource } : {}),
+      });
+      return { id: row?.id ?? existing.id, ...result };
     }
     const doc = await this.ensureGlossary();
-    await this.repo.update(doc.id, { content });
-    return { id: doc.id, added };
+    if (changed) await this.repo.update(doc.id, { content });
+    return { id: doc.id, ...result };
   }
 
   async remove(id: string): Promise<void> {

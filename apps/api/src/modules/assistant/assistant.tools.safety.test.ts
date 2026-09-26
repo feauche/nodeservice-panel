@@ -156,3 +156,89 @@ describe('propose_action', () => {
     expect(r.proposals[0]?.incidentId).toBe(INC_ID);
   });
 });
+
+describe('глоссарий и статьи', () => {
+  const kbDeps = (over: Record<string, unknown> = {}) =>
+    ({
+      ...deps(),
+      addGlossary: async () => ({ id: 'g1', added: 1, skipped: ['SSH', 'CPU'], updated: [] }),
+      saveArticle: async () => ({ id: 'a1', title: 'Готово' }),
+      ...over,
+    }) as unknown as ToolDeps;
+
+  it('ответ инструмента называет повторы: модель видит, что они не добавлены', async () => {
+    const r = await runTool(
+      'add_glossary_terms',
+      {
+        terms: [
+          { term: 'SSH', explain: 'Удалённый доступ' },
+          { term: 'CPU', explain: 'Процессор' },
+          { term: 'OOM', explain: 'Нет памяти' },
+        ],
+      },
+      kbDeps(),
+    );
+    expect(r.content).toContain('получено 3, добавлено новых 1, уже были 2');
+    expect(r.content).toContain('Уже были, не добавлены: SSH, CPU');
+    expect(r.citations).toEqual([{ type: 'kb', id: 'g1', label: 'Пояснения' }]);
+  });
+  it('флаг update доходит до глоссария, остальные поля не теряются', async () => {
+    let seen: unknown;
+    await runTool(
+      'add_glossary_terms',
+      {
+        terms: [
+          { term: 'OOM', explain: 'Нет памяти', update: true },
+          { term: 'CPU', explain: 'Процессор' },
+        ],
+      },
+      kbDeps({
+        addGlossary: async (t: unknown) => {
+          seen = t;
+          return { id: 'g1', added: 0, skipped: [], updated: ['OOM'] };
+        },
+      }),
+    );
+    expect(seen).toEqual([
+      { term: 'OOM', explain: 'Нет памяти', update: true },
+      { term: 'CPU', explain: 'Процессор' },
+    ]);
+  });
+  it('больше тридцати терминов за вызов принимается (словарь целиком)', async () => {
+    let count = 0;
+    const terms = Array.from({ length: 120 }, (_, i) => ({
+      term: `Термин${i}`,
+      explain: 'Пояснение к термину',
+    }));
+    await runTool(
+      'add_glossary_terms',
+      { terms },
+      kbDeps({
+        addGlossary: async (t: unknown[]) => {
+          count = t.length;
+          return { id: 'g1', added: t.length, skipped: [], updated: [] };
+        },
+      }),
+    );
+    expect(count).toBe(120);
+  });
+  it('статья-глоссарий не сохраняется, обычная статья сохраняется', async () => {
+    const table = Array.from(
+      { length: 6 },
+      (_, i) => `Термин${i}: система у оператора, которая смотрит на вид трафика`,
+    ).join('\n');
+    const refused = await runTool(
+      'save_kb_article',
+      { title: 'Глоссарий терминов', content: table },
+      kbDeps(),
+    );
+    expect(refused.content).toContain('Статья-глоссарий не создана');
+    expect(refused.citations).toEqual([]);
+    const ok = await runTool(
+      'save_kb_article',
+      { title: 'Установка ноды', content: '# Установка\n\n1. Поставьте Docker\n2. Запустите контейнер' },
+      kbDeps(),
+    );
+    expect(ok.content).toContain('Статья сохранена');
+  });
+});

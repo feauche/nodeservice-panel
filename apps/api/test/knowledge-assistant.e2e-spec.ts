@@ -23,6 +23,7 @@ import { setupHttp } from '../src/common/http/setup-http.js';
 import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
+import { GLOSSARY_TEXT, GLOSSARY_TEXT_TERMS } from '../src/modules/assistant/glossary-import.fixture.js';
 import { KbReviewService } from '../src/modules/assistant/kb-review.service.js';
 import {
   LLM_PROVIDER,
@@ -45,7 +46,10 @@ const FAKE_INCIDENT = '0192c000-0000-7000-8000-0000000000aa';
  */
 class FakeLlm implements LlmProvider {
   calls = 0;
+  /** Сколько раз вообще спрашивали модель: словарь терминов должен разбираться без неё. */
+  runs = 0;
   async run(input: LlmRunInput): Promise<LlmResp> {
+    this.runs += 1;
     const done = input.messages.some((m) => m.content.some((b) => b.type === 'tool_result'));
     const userText = input.messages
       .filter((m) => m.role === 'user')
@@ -92,6 +96,32 @@ class FakeLlm implements LlmProvider {
     // Ревизия базы знаний: возвращаем причёсанный вариант (длиннее оригинала → пройдёт предохранитель).
     if (input.system.includes('редактор базы знаний')) {
       return { stopReason: 'end', blocks: [{ type: 'text', text: `${userText}\n\nПроверено ревизией.` }] };
+    }
+    if (input.system.includes('РЕЖИМ «АНАЛИЗ»') && userText.includes('СЛОВАРЬ-СТАТЬЯ')) {
+      if (!done)
+        return {
+          stopReason: 'tool_use',
+          blocks: [
+            {
+              type: 'tool_use',
+              id: 'a9',
+              name: 'save_kb_article',
+              input: {
+                title: 'Глоссарий терминов VPN',
+                content: GLOSSARY_TEXT,
+                tags: ['ai'],
+              },
+            },
+          ],
+        };
+      const seen = input.messages
+        .flatMap((m) => m.content)
+        .map((b) => (b.type === 'tool_result' ? String(b.content) : ''))
+        .join(' ');
+      return {
+        stopReason: 'end',
+        blocks: [{ type: 'text', text: `Ответ инструмента: ${seen.slice(0, 120)}` }],
+      };
     }
     if (input.system.includes('РЕЖИМ «АНАЛИЗ»')) {
       if (!done)
@@ -454,6 +484,71 @@ describe('knowledge + assistant e2e', () => {
     );
     expect(audit.items.some((e) => e.action === 'kb.reviewed')).toBe(true);
     await agent.delete(`/api/knowledge/${created.id}`).set(CSRF_HEADER, csrf).expect(204);
+  });
+
+  it('режим «Анализ»: присланный словарь терминов целиком уходит в «Пояснения», отдельной статьи нет, модель не нужна', async () => {
+    const titles = async () =>
+      kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body).items;
+    const before = await titles();
+    const runs = fake.runs;
+    const send = async () =>
+      assistantChatResponseSchema.parse(
+        (
+          await agent
+            .post('/api/assistant/chat')
+            .set(CSRF_HEADER, csrf)
+            .send({ message: GLOSSARY_TEXT, mode: 'analysis' })
+            .expect(200)
+        ).body,
+      );
+    const first = await send();
+    expect(first.message.content).toContain('отдельную статью я не создавал');
+    expect(first.message.content).toContain(`Найдено терминов: ${GLOSSARY_TEXT_TERMS}`);
+    expect(fake.runs).toBe(runs);
+    const after = await titles();
+    expect(after.map((d) => d.title).sort()).toEqual(before.map((d) => d.title).sort());
+    const gloss = after.find((d) => d.title === 'Пояснения');
+    expect(first.message.citations).toEqual([{ type: 'kb', id: gloss?.id, label: 'Пояснения' }]);
+    const doc = kbDocSchema.parse((await agent.get(`/api/knowledge/${gloss?.id}`).expect(200)).body);
+    // строка, которую администратор дописал вручную в прошлом тесте, осталась на месте
+    for (const t of [
+      'DPI (Deep Packet Inspection)',
+      'sendThrough',
+      'Гео-файлы',
+      '| VPN | Защищённый канал |',
+    ])
+      expect(doc.content, t).toContain(t);
+    expect(doc.content).not.toContain('Панель: что с чем связано');
+
+    // повторная отправка ничего не дублирует, повторы называются в ответе, версия статьи не плодится
+    const versionsBefore = kbVersionsResponseSchema.parse(
+      (await agent.get(`/api/knowledge/${gloss?.id}/versions`).expect(200)).body,
+    ).items.length;
+    const again = await send();
+    expect(again.message.content).toContain('Добавлено новых: 0');
+    expect(again.message.content).toContain(`Уже были в глоссарии: ${GLOSSARY_TEXT_TERMS}`);
+    expect(again.message.content).toContain('DPI (Deep Packet Inspection)');
+    const versionsAfter = kbVersionsResponseSchema.parse(
+      (await agent.get(`/api/knowledge/${gloss?.id}/versions`).expect(200)).body,
+    ).items.length;
+    expect(versionsAfter).toBe(versionsBefore);
+    const doc2 = kbDocSchema.parse((await agent.get(`/api/knowledge/${gloss?.id}`).expect(200)).body);
+    expect(doc2.content.match(/\| DPI \(Deep Packet Inspection\) \|/g)).toHaveLength(1);
+  });
+
+  it('режим «Анализ»: попытка сохранить словарь отдельной статьёй отклоняется, модель получает подсказку про «Пояснения»', async () => {
+    const res = assistantChatResponseSchema.parse(
+      (
+        await agent
+          .post('/api/assistant/chat')
+          .set(CSRF_HEADER, csrf)
+          .send({ message: 'Собери статью, СЛОВАРЬ-СТАТЬЯ', mode: 'analysis' })
+          .expect(200)
+      ).body,
+    );
+    expect(res.message.content).toContain('Статья-глоссарий не создана');
+    const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
+    expect(list.items.some((d) => /Глоссарий терминов/.test(d.title))).toBe(false);
   });
 
   it('ключ можно стереть — Джарвис снова выключен', async () => {
