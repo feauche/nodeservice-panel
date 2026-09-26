@@ -54,6 +54,7 @@ describe('набор инструментов Джарвиса', () => {
         'get_maintenance',
         'get_metrics_history',
         'get_playbook',
+        'get_reference',
         'get_server_detail',
         'get_settings',
         'inspect_node_logs',

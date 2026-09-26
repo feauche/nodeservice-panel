@@ -361,7 +361,7 @@ export class IncidentAnalysisService implements OnModuleInit {
       return await this.incidents.get(id);
     } catch (err) {
       if (err instanceof HttpException) throw err;
-      throw problem(HttpStatus.BAD_GATEWAY, { detail: explain(err) });
+      throw problem(HttpStatus.FAILED_DEPENDENCY, { detail: explain(err) });
     } finally {
       this.running.delete(id);
     }

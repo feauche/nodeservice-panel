@@ -42,7 +42,7 @@ const FAKE_INCIDENT = '0192c000-0000-7000-8000-0000000000aa';
 
 /**
  * Сценарный LLM. Режим «Агент»: круг 1 — поиск в БЗ; круг 2 — предложение; круг 3 — итог.
- * Режим «Анализ» (в системном промпте есть маркер) — зовёт save_kb_article, затем итог.
+ * Присланная статья (маркер МАНУАЛ в тексте) — зовёт save_kb_article, затем итог.
  */
 class FakeLlm implements LlmProvider {
   calls = 0;
@@ -97,7 +97,32 @@ class FakeLlm implements LlmProvider {
     if (input.system.includes('редактор базы знаний')) {
       return { stopReason: 'end', blocks: [{ type: 'text', text: `${userText}\n\nПроверено ревизией.` }] };
     }
-    if (input.system.includes('РЕЖИМ «АНАЛИЗ»') && userText.includes('СЛОВАРЬ-СТАТЬЯ')) {
+    if (userText.includes('СБОЙ-ПРОВАЙДЕРА')) throw new Error('zveno.ai ответил 400: неверный запрос');
+    if (userText.includes('СБОЙ-ТАЙМАУТ'))
+      throw Object.assign(new Error('signal timed out'), { name: 'TimeoutError' });
+    // Модель пишет «добавил», не вызвав инструмент: после толчка вызывает (ЛОЖЬ-ПОТОМ) или упорствует (ЛОЖЬ-УПОРНО).
+    if (userText.includes('ЛОЖЬ-ПОТОМ') || userText.includes('ЛОЖЬ-УПОРНО')) {
+      const nudged = userText.includes('ни один инструмент не вызывали');
+      if (userText.includes('ЛОЖЬ-ПОТОМ') && nudged && !done)
+        return {
+          stopReason: 'tool_use',
+          blocks: [
+            {
+              type: 'tool_use',
+              id: 'l1',
+              name: 'add_glossary_terms',
+              input: { terms: [{ term: 'Ложный термин', explain: 'Термин, добавленный после толчка' }] },
+            },
+          ],
+        };
+      if (done)
+        return { stopReason: 'end', blocks: [{ type: 'text', text: 'Готово, добавил в глоссарий.' }] };
+      return {
+        stopReason: 'end',
+        blocks: [{ type: 'text', text: 'Добавил термин в глоссарий «Пояснения».' }],
+      };
+    }
+    if (userText.includes('СЛОВАРЬ-СТАТЬЯ')) {
       if (!done)
         return {
           stopReason: 'tool_use',
@@ -123,7 +148,7 @@ class FakeLlm implements LlmProvider {
         blocks: [{ type: 'text', text: `Ответ инструмента: ${seen.slice(0, 120)}` }],
       };
     }
-    if (input.system.includes('РЕЖИМ «АНАЛИЗ»')) {
+    if (userText.includes('МАНУАЛ')) {
       if (!done)
         return {
           stopReason: 'tool_use',
@@ -339,13 +364,13 @@ describe('knowledge + assistant e2e', () => {
     expect(chatEvent?.category).toBe('assistant');
   });
 
-  it('режим «Анализ»: агент сам создаёт статью (source=ai) при разрешении kbWrite', async () => {
+  it('присланный мануал: агент сам создаёт статью (source=ai) при разрешении kbWrite', async () => {
     const res = assistantChatResponseSchema.parse(
       (
         await agent
           .post('/api/assistant/chat')
           .set(CSRF_HEADER, csrf)
-          .send({ message: 'Вот скопированная страница про Reality…', mode: 'analysis' })
+          .send({ message: 'Вот скопированная страница про Reality… МАНУАЛ' })
           .expect(200)
       ).body,
     );
@@ -357,7 +382,7 @@ describe('knowledge + assistant e2e', () => {
     expect(made?.source).toBe('ai');
   });
 
-  it('режим «Анализ»: без разрешения kbWrite статья не создаётся', async () => {
+  it('присланный мануал: без разрешения kbWrite статья не создаётся', async () => {
     await agent
       .put('/api/settings/assistant')
       .set(CSRF_HEADER, csrf)
@@ -366,7 +391,7 @@ describe('knowledge + assistant e2e', () => {
     await agent
       .post('/api/assistant/chat')
       .set(CSRF_HEADER, csrf)
-      .send({ message: 'Ещё одна страница про Reality…', mode: 'analysis' })
+      .send({ message: 'Ещё одна страница про Reality… МАНУАЛ' })
       .expect(200);
     const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
     // новых статей с этим заголовком больше не появилось (осталась ровно одна из прошлого теста)
@@ -486,7 +511,7 @@ describe('knowledge + assistant e2e', () => {
     await agent.delete(`/api/knowledge/${created.id}`).set(CSRF_HEADER, csrf).expect(204);
   });
 
-  it('режим «Анализ»: присланный словарь терминов целиком уходит в «Пояснения», отдельной статьи нет, модель не нужна', async () => {
+  it('присланный словарь терминов целиком уходит в «Пояснения», отдельной статьи нет, модель не нужна', async () => {
     const titles = async () =>
       kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body).items;
     const before = await titles();
@@ -497,7 +522,7 @@ describe('knowledge + assistant e2e', () => {
           await agent
             .post('/api/assistant/chat')
             .set(CSRF_HEADER, csrf)
-            .send({ message: GLOSSARY_TEXT, mode: 'analysis' })
+            .send({ message: GLOSSARY_TEXT })
             .expect(200)
         ).body,
       );
@@ -536,19 +561,67 @@ describe('knowledge + assistant e2e', () => {
     expect(doc2.content.match(/\| DPI \(Deep Packet Inspection\) \|/g)).toHaveLength(1);
   });
 
-  it('режим «Анализ»: попытка сохранить словарь отдельной статьёй отклоняется, модель получает подсказку про «Пояснения»', async () => {
+  it('попытка сохранить словарь отдельной статьёй отклоняется, модель получает подсказку про «Пояснения»', async () => {
     const res = assistantChatResponseSchema.parse(
       (
         await agent
           .post('/api/assistant/chat')
           .set(CSRF_HEADER, csrf)
-          .send({ message: 'Собери статью, СЛОВАРЬ-СТАТЬЯ', mode: 'analysis' })
+          .send({ message: 'Собери статью, СЛОВАРЬ-СТАТЬЯ' })
           .expect(200)
       ).body,
     );
     expect(res.message.content).toContain('Статья-глоссарий не создана');
     const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
     expect(list.items.some((d) => /Глоссарий терминов/.test(d.title))).toBe(false);
+  });
+
+  it('модель написала «добавил», не вызвав инструмент: после толчка запись действительно происходит', async () => {
+    const res = assistantChatResponseSchema.parse(
+      (
+        await agent
+          .post('/api/assistant/chat')
+          .set(CSRF_HEADER, csrf)
+          .send({ message: 'Запиши термин ЛОЖЬ-ПОТОМ' })
+          .expect(200)
+      ).body,
+    );
+    expect(res.message.content).toContain('Готово');
+    expect(res.message.content).not.toContain('ничего не сохранено');
+    const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
+    const gloss = list.items.find((d) => d.title === 'Пояснения');
+    const doc = kbDocSchema.parse((await agent.get(`/api/knowledge/${gloss?.id}`).expect(200)).body);
+    expect(doc.content).toContain('Ложный термин');
+  });
+
+  it('модель упорствует в «добавил» без вызова: ответ честно предупреждает, что ничего не сохранено', async () => {
+    const res = assistantChatResponseSchema.parse(
+      (
+        await agent
+          .post('/api/assistant/chat')
+          .set(CSRF_HEADER, csrf)
+          .send({ message: 'Запиши термин ЛОЖЬ-УПОРНО' })
+          .expect(200)
+      ).body,
+    );
+    expect(res.message.content).toContain('Добавил термин в глоссарий');
+    expect(res.message.content).toContain('инструменты не вызывались');
+  });
+
+  it('сбой провайдера модели: понятный текст со статусом 424, а не «Что-то пошло не так на сервере»', async () => {
+    const bad = await agent
+      .post('/api/assistant/chat')
+      .set(CSRF_HEADER, csrf)
+      .send({ message: 'СБОЙ-ПРОВАЙДЕРА' })
+      .expect(424);
+    expect(bad.body.detail).toContain('Провайдер модели вернул ошибку 400');
+    expect(bad.body.detail).not.toContain('Что-то пошло не так');
+    const slow = await agent
+      .post('/api/assistant/chat')
+      .set(CSRF_HEADER, csrf)
+      .send({ message: 'СБОЙ-ТАЙМАУТ' })
+      .expect(424);
+    expect(slow.body.detail).toContain('не ответил за 90 секунд');
   });
 
   it('ключ можно стереть — Джарвис снова выключен', async () => {

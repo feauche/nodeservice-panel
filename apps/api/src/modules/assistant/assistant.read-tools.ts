@@ -21,6 +21,7 @@ import type { VmReaderService } from '../metrics/vm-reader.service.js';
 import type { ProvidersService } from '../providers/providers.service.js';
 import type { ServersService } from '../servers/servers.service.js';
 import { PLAYBOOKS, playbookById, renderPlaybook } from './assistant.playbooks.js';
+import { REFERENCE, referenceById } from './assistant.reference.js';
 import type { ToolOutcome } from './assistant.tools.js';
 import type { FleetProbeService } from './fleet-probe.service.js';
 import type { LlmToolDef } from './llm.provider.js';
@@ -117,6 +118,11 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
     name: 'get_playbook',
     description:
       'Плейбук диагностики: порядок проверок, как читать результат, что можно предлагать и чего панель не видит. Без id возвращает список плейбуков. id: node_offline | server_unreachable | disk_full | high_load | conntrack_full | tspu_degradation | domain_blocked | gemini_ru. Сверяйся с плейбуком перед разбором сбоя.',
+    input_schema: { type: 'object', properties: { id: { type: 'string' } } },
+  },
+  {
+    name: 'get_reference',
+    description: `Справочник Джарвиса: подробные знания по теме. Без id возвращает список тем. Открывайте нужную тему до ответа, когда вопрос про устройство панели и инцидентов, метрики, VPN-стек, блокировки, Linux, обслуживание, работу с базой знаний, безопасность или про то, как строить ответ. id: ${REFERENCE.map((t) => t.id).join(' | ')}. Данные о конкретных серверах берите не отсюда, а из инструментов чтения.`,
     input_schema: { type: 'object', properties: { id: { type: 'string' } } },
   },
   {
@@ -623,6 +629,13 @@ export async function runReadTool(
     return none(
       p ? renderPlaybook(p) : `Плейбука «${id}» нет. Доступные: ${PLAYBOOKS.map((x) => x.id).join(', ')}.`,
     );
+  }
+
+  if (name === 'get_reference') {
+    const id = String(arg.id ?? '').trim();
+    if (!id) return none(JSON.stringify(REFERENCE.map((t) => ({ id: t.id, title: t.title, when: t.when }))));
+    const t = referenceById(id);
+    return none(t ? t.render() : `Темы «${id}» нет. Доступные: ${REFERENCE.map((x) => x.id).join(', ')}.`);
   }
 
   if (name === 'get_maintenance') {

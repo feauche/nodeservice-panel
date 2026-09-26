@@ -381,6 +381,13 @@ describe('check_reachability, inspect_processes, get_playbook', () => {
     }
     expect(spy).not.toHaveBeenCalled();
   });
+  it('справочник: список тем без id, текст по id, подсказка по неверному id', async () => {
+    const list = await call('get_reference', {});
+    const ids = JSON.parse(list.out.content).map((t: { id: string }) => t.id);
+    expect(ids).toEqual(expect.arrayContaining(['incidents', 'actions', 'metrics', 'kb', 'security']));
+    expect((await call('get_reference', { id: 'metrics' })).out.content).toContain('conntrackCount');
+    expect((await call('get_reference', { id: 'нет' })).out.content).toContain('Доступные:');
+  });
   it('плейбук: список без id, текст по id, подсказка по неверному id', async () => {
     const list = await call('get_playbook', {});
     expect(JSON.parse(list.out.content).map((p: { id: string }) => p.id)).toContain('node_offline');

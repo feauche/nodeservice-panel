@@ -3,15 +3,12 @@ import {
   type AssistantConversation,
   type AssistantLevel,
   type AssistantMessage,
-  type AssistantMode,
   type AssistantPermissions,
   type AssistantProvider,
-  type KbDoc,
 } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
 
 import { mockIncidents } from './incidents-mock';
-import { mockKnowledge } from './knowledge-mock';
 import { sampleReach } from './reach-sample';
 import { mockServers } from './servers-mock';
 
@@ -128,45 +125,6 @@ function buildFleetReplies(): AssistantMessage[] {
   ];
 }
 
-/** Режим «Анализ»: если разрешено — создаём статью в БЗ и ссылаемся на неё; иначе — про разрешение. */
-function buildAnalysisReply(): AssistantMessage {
-  const now = new Date().toISOString();
-  if (!mockAssistant.permissions.kbWrite) {
-    return {
-      id: uid(),
-      role: 'assistant',
-      content:
-        'Разбор готов, но создание статей выключено — включите «Настройки → Джарвис → Разрешения». Пока черновик статьи ниже, в ответе.',
-      citations: [],
-      proposals: [],
-      reachability: [],
-      createdAt: now,
-    };
-  }
-  const article: KbDoc = {
-    id: uid(),
-    title: 'Настройка Xray Reality (из анализа)',
-    content:
-      '# Настройка Xray Reality\n\n## Что это\n\nReality — маскировка VLESS под настоящий TLS-сайт.\n\n## Шаги\n\n1. Установи Xray: `bash <(curl -fsSL install)`\n2. Сгенерируй ключи: `xray x25519`\n3. Пропиши `dest` и `serverNames` в конфиг.\n\n```json\n{ "flow": "xtls-rprx-vision" }\n```',
-    tags: ['xray', 'reality', 'инструкция'],
-    archived: false,
-    pinned: false,
-    source: 'ai',
-    createdAt: now,
-    updatedAt: now,
-  };
-  mockKnowledge.items = [article, ...mockKnowledge.items];
-  return {
-    id: uid(),
-    role: 'assistant',
-    content: `Собрал статью **«${article.title}»** и сохранил в базу знаний (метка AI).`,
-    citations: [{ type: 'kb', id: article.id, label: article.title }],
-    proposals: [],
-    reachability: [],
-    createdAt: now,
-  };
-}
-
 export const assistantHandlers = [
   http.post('/api/servers/:id/terminal/hint', async ({ request }) => {
     if (!mockAssistant.enabled)
@@ -253,7 +211,6 @@ export const assistantHandlers = [
     const body = (await request.json()) as {
       message: string;
       conversationId?: string;
-      mode?: AssistantMode;
     };
     const convId = body.conversationId ?? uid();
     const existing = mockAssistant.conversations.find((c) => c.id === convId);
@@ -262,14 +219,11 @@ export const assistantHandlers = [
         {
           id: convId,
           title: body.message.slice(0, 60),
-          mode: body.mode ?? 'agent',
           createdAt: new Date().toISOString(),
         },
         ...mockAssistant.conversations,
       ];
     }
-    // Режим закреплён за беседой: в существующей берём её режим, иначе — из запроса.
-    const effMode: AssistantMode = existing ? existing.mode : (body.mode ?? 'agent');
     const userMsg: AssistantMessage = {
       id: uid(),
       role: 'user',
@@ -279,12 +233,9 @@ export const assistantHandlers = [
       reachability: [],
       createdAt: new Date().toISOString(),
     };
-    const replies =
-      effMode === 'analysis'
-        ? [buildAnalysisReply()]
-        : /по каким серверам/i.test(body.message)
-          ? buildFleetReplies()
-          : [buildReply(body.message)];
+    const replies = /по каким серверам/i.test(body.message)
+      ? buildFleetReplies()
+      : [buildReply(body.message)];
     const reply = replies[replies.length - 1] as AssistantMessage;
     mockAssistant.messages[convId] = [...(mockAssistant.messages[convId] ?? []), userMsg, ...replies];
     return HttpResponse.json({ conversationId: convId, message: reply, messages: replies });

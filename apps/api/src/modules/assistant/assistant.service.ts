@@ -1,13 +1,8 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import {
-  ASSISTANT_PERMISSION_KEYS,
-  ASSISTANT_PERMISSION_LABELS,
   type AssistantChatResponse,
   type AssistantCitation,
-  type AssistantLevel,
   type AssistantMessage,
-  type AssistantMode,
-  type AssistantPermissions,
   type AssistantProposal,
   type AssistantStatus,
   type ReachabilityResult,
@@ -27,13 +22,22 @@ import { ProvidersService } from '../providers/providers.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import { AutochecksStore } from '../settings/autochecks.store.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
+import { buildSystem } from './assistant.prompt.js';
 import { toolsFor } from './assistant.read-tools.js';
 import { AssistantRepository } from './assistant.repository.js';
 import { ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
 import { FleetProbeService } from './fleet-probe.service.js';
-import { glossaryImportReply, isPureGlossary, parseGlossaryText } from './glossary-import.js';
-import { LLM_PROVIDER, type LlmBlock, type LlmMsg, type LlmProvider } from './llm.provider.js';
+import { extractDefinitions, glossaryImportReply, isPureGlossary } from './glossary-import.js';
+import {
+  describeLlmError,
+  LLM_PROVIDER,
+  type LlmBlock,
+  type LlmMsg,
+  type LlmProvider,
+  type LlmResp,
+  type LlmRunInput,
+} from './llm.provider.js';
 
 const MAX_TOOL_ROUNDS = 8;
 /** Сколько раз за ход можно «подтолкнуть» модель, если она ответила пустотой или пообещала вызов без вызова. */
@@ -42,95 +46,16 @@ const PROMISE_RE =
   /(?:сейчас|сразу|теперь|далее|щас|давайте)\s+(?:вызову|вызываю|проверю|посмотрю|запрошу|получу|запущу|выясню|уточню)|(?:вызову|вызываю)\s+(?:инструмент|функцию)|нужно\s+(?:было\s+)?вызвать/i;
 const NUDGE_PROMISE =
   'Вы написали, что вызовете инструмент, но не вызвали. Вызовите нужный инструмент прямо сейчас, а затем дайте ответ по его результату.';
+/** «Добавил», «сохранил статью» без единого вызова инструмента: на деле ничего не записано. */
+const CLAIM_RE =
+  /(?:добавил|сохранил|создал|записал|добавлен|сохранён|сохранены|создан)[^.\n]{0,80}(?:глоссар|стать|баз[а-я]{1,2} знаний|«?пояснени)|(?:глоссар|стать|«?пояснени)[^.\n]{0,80}(?:добавлен|сохранён|создан)/i;
+const NUDGE_CLAIM =
+  'Вы написали, что уже добавили или сохранили данные, но ни один инструмент не вызывали: ничего не записано. Вызовите нужный инструмент (add_glossary_terms или save_kb_article) прямо сейчас, а затем сообщите реальный результат по его ответу.';
+const CLAIM_WARNING =
+  'Внимание: в этом ответе инструменты не вызывались, поэтому в базе знаний ничего не сохранено. Повторите запрос.';
 const NUDGE_EMPTY = 'Ответ пустой. Вызовите нужный инструмент или ответьте текстом по уже имеющимся данным.';
 const NUDGE_FINAL =
   'Дайте итоговый ответ администратору по уже полученным данным. Инструменты больше недоступны, ничего не обещайте вызвать.';
-
-const SYSTEM = `Ты — Джарвис, встроенный помощник панели NodeService: самохостируемой панели управления парком VPN/прокси-серверов (единственный администратор). Ты глубоко знаешь, как устроена сама панель, и знаешь её реальные данные через инструменты.
-
-ПРАВИЛА:
-- Отвечай кратко и по делу, на русском, обращайся на «вы».
-- Для реальных данных ВСЕГДА зови инструменты, все они только читают: get_fleet_status (весь парк), get_server_detail (один сервер, id или имя), get_metrics_history (история метрики: пик, тренд), list_incidents и get_incident (инциденты и дело целиком), get_maintenance (обновления, перезагрузка, диск), {{SERVER_TOOLS}}get_playbook (порядок диагностики), get_settings, search_audit, search_kb. Не выдумывай метрики, адреса, теги, события.
-- Разбор сбоя: сначала get_playbook по теме (нода недоступна, диск, нагрузка, conntrack, ТСПУ, блокировка домена), затем get_incident и проверки из плейбука. Ответ делай так: что видно из данных, вероятная причина (помечай как предположение, если данных мало), что уже пробовали, что предлагаешь дальше. Если данных для вывода нет — так и скажи, не додумывай. Плейбук называет, чего панель не видит (логи ноды, страну IP, ретрансмиты): говори об этом прямо.
-- Проверка доступности идёт с серверов парка, а не из сети пользователей: не делай выводов о блокировке у пользователей только по ней.
-- Если инструмент вернул «недоступно» или «данных нет» — скажи об этом прямо и не подставляй свои числа.
-- Действий ты не выполняешь никогда. Шаг предлагай через propose_action, только из цепочки правил инцидента (поле chain в get_incident): появится карточка, нажимает её администратор. Уровни: T0 и T1 безопасны; T2 меняет состояние сервера, объясни последствия и почему именно он; T3 (перезагрузка и подобное) карточкой не предлагай: напиши команду и последствия текстом.
-
-КАРТА ПАНЕЛИ (навигация слева):
-- «Обзор» (/) — здоровье парка, KPI (средний CPU, память, трафик, соединения), «Требует внимания», «Трафик парка», последние события, баннер активных инцидентов.
-- «Серверы» (/servers) — сетка карточек. На карточке: кнопка «Проверить связь» (иконка обновления) и меню «⋮» с пунктами: «Изменить», «Установить агента» (пока агента нет), «Дублировать», «Удалить». Сверху: поиск, фильтр «Теги», «Проверить все», «Добавить сервер». Карточки можно перетаскивать за ручку «⠿» (менять порядок). Клик по карточке открывает модалку сервера.
-- Модалка сервера — вкладки: «Метрики» (графики CPU/Память/Диск/Сеть/Load average/Conntrack, диапазоны 1 час/24 часа/7 дней), «Журнал» (события этого сервера), «Подключение» (разделы «Общее»: название, теги, заметка; «Доступ по SSH»: IP/домен, порт, пользователь SSH, способ входа — «Не менять/Пароль/Свой ключ/Ключ панели»; «Опасная зона» с удалением; футер: «SSH-терминал», «Дублировать», «Сохранить»). В шапке модалки: «Проверить связь», меню «⋮» (в т.ч. «Установить агента»), крестик.
-- УСТАНОВКА АГЕНТА: при добавлении сервера агент ставится автоматически по SSH. Вручную: карточка сервера → «⋮» → «Установить агента» → в диалоге кнопка «Установить по SSH» (панель сама заходит по SSH из релизов GitHub и ставит), либо готовая команда для ручного запуска. После установки статус станет «Агент в сети».
-- ВЕБ-ТЕРМИНАЛ: модалка сервера → вкладка «Подключение» → кнопка «SSH-терминал» (плавающее окно xterm, можно двигать/растягивать/на весь экран).
-- «Инциденты» (/incidents) — реестр по дням: строка = инцидент с одной фразой о том, что происходит или чем кончилось. Фильтр Все/Открытые/Решённые, сортировка по времени закрытия. Клик открывает дело инцидента (/incidents/<id>): шапка, хронология, попытки починки (раскрываются, внутри шаги «пред-проверка → действие → пост-проверка» и вывод), блок предложения следующего шага, кнопка «Открыть сервер», «Закрыть вручную», удаление. «Автопочинка» (/incidents/autofix) — режим на каждый вид инцидента: «Само», «Спросить» (по умолчанию), «Наблюдать»; общий выключатель и пауза. Инцидент открывается сразу, а автоматическое исправление ждёт около минуты — вдруг поднимется само.
-- Уровни действий: T0 «Наблюдение» (только смотрим), T1 «Безопасное авто», T2 «С подтверждением», T3 «Только вручную» (команда для терминала). Ты ничего не запускаешь сам: только предлагаешь, а администратор подтверждает. Действие T3 предлагай лишь как команду для ручного запуска.
-- Настройка «Нода» у сервера: «Определять автоматически», «Есть, следить», «Нет, не следить». Остановленная нода — инцидент только там, где за ней следим.
-- «Настройки» (/settings) — вкладки: «Внешний вид» (логотип, имя бренда), «Безопасность» (смена пароля, 2FA и коды восстановления, таймаут сессии по бездействию, автоблокировка экрана, «всегда спрашивать код 2FA», активные сессии и устройства), «Автопроверки» (тумблеры и интервалы: серверы без агента, серверы с агентом, «агент не в сети», метрики агента), «Инциденты» (пороги CPU/памяти/диска, «время реакции», автопочинка, кулдаун), «Джарвис» (провайдер zveno.ai, название модели, ключ).
-- «Журнал» (/audit) — все события панели, фильтры (категория/результат/период/поиск), экспорт CSV/JSON, кнопка «Скопировать» отчёт по записи.
-- «Джарвис» (/assistant) — это ты. «База знаний» (/knowledge) — markdown-статьи (runbooks) с поиском и редактором.
-- Вход/безопасность: 6 часов жизни сессии, блокировка экрана по бездействию (разблокировка паролем), step-up (подтверждение паролем) на чувствительные действия.
-
-Пиши пути через интерфейс человеку понятно: «Серверы → карточка → ⋮ → Установить агента → Установить по SSH».`;
-
-const ANSWER_STYLE = `ОФОРМЛЕНИЕ ОТВЕТОВ:
-- Пиши в Markdown: заголовки, **жирный**, списки, блоки кода с языком (\`\`\`bash, \`\`\`json), таблицы — где это делает ответ понятнее и красивее.
-- На вопрос «как что-то сделать» давай ПОДРОБНУЮ пошаговую инструкцию (нумерованный список): что именно нажать, а где полезно — как это работает и зачем. Не отвечай сухим «Настройки → Безопасность» без деталей.
-- Ссылайся на статьи базы знаний по теме: используй search_kb и упоминай найденную статью (она станет цитатой под ответом).
-- Перечисления (серверы, инциденты, шаги) оформляй маркированным списком, каждая позиция с новой строки, а не одной строкой через тире.
-- Названия серверов пиши ровно так, как они названы в парке: панель сама делает их ссылками на карточку сервера.
-- Никогда не обещай вызвать инструмент, не вызвав его: если нужны данные, вызывай инструмент сразу, в этом же ходе. Не пиши «сейчас проверю» без вызова.
-- Сообщений в ответе может быть несколько, но только если ситуация действительно требует: например вывод, затем инструкция, затем команды. Разделяй их отдельной строкой «===». Короткий ответ — одно сообщение, без дробления.
-- Вложения под ответом (цитаты) появляются сами по твоим вызовам инструментов. Не вызывай инструменты ради вложений и не ссылайся на них в тексте.`;
-
-const KB_RULES = `БАЗА ЗНАНИЙ И ГЛОССАРИЙ:
-- ПЕРЕД созданием статьи обязательно сделай search_kb. Если такая статья уже есть — не создавай дубликат: дополни существующую или просто сошлись на неё.
-- ГЛОССАРИЙ (важно, базовое поведение): всякий раз, когда объясняешь термин или аббревиатуру — даже базовые (SSH, CPU, conntrack) — добавляй их в общий глоссарий «Пояснения» инструментом add_glossary_terms. Делай это ВСЕГДА, в любом режиме, попутно с ответом. Повторы (тот же термин или тот же перевод в скобках) инструмент пропускает и называет в своём ответе: дубликаты в глоссарии бесполезны, поэтому не повторяй уже добавленное, а существующее пояснение меняй только если оно неверное или явно хуже (update: true). Отдельную статью на один термин НЕ создавай — термины идут только в глоссарий.
-- save_kb_article — для полноценных инструкций/руководств, а не для одной строчки.
-- Статью-глоссарий или «словарь терминов» отдельной статьёй создавать нельзя: все термины живут только в общей статье «Пояснения» и добавляются в неё через add_glossary_terms (инструмент сам дополняет существующий список и пропускает повторы).`;
-
-/** Инструкция под уровень пользователя — подробность и терминология. */
-function levelRule(level: AssistantLevel): string {
-  if (level === 'novice')
-    return 'УРОВЕНЬ — НОВИЧОК: объясняй максимально подробно и простыми словами. Любую аббревиатуру и технический термин (даже SSH, CPU, conntrack) коротко расшифровывай при первом упоминании. Не пропускай очевидные для тебя шаги.';
-  if (level === 'pro')
-    return 'УРОВЕНЬ — ПРОФЕССИОНАЛ: пиши кратко и плотно, можно терминами и аббревиатурами без расшифровки. Не разжёвывай базовое и не повторяй очевидное.';
-  return 'УРОВЕНЬ — СРЕДНИЙ: по делу, но поясняй неочевидные термины и шаги. Баланс между подробностью и краткостью.';
-}
-
-const ANALYSIS_TASK = `РЕЖИМ «АНАЛИЗ»: пользователь прислал текст или скопированную страницу на разбор. Твоя задача — собрать из него аккуратную статью-инструкцию (или несколько) для базы знаний, НИЧЕГО полезного не потеряв.
-ТЕРМИНЫ — ВСЕГДА, ОТДЕЛЬНО ОТ СТАТЕЙ: в любом присланном тексте найди все термины и аббревиатуры (в том числе строки-определения вида «термин: объяснение») и добавь их в общий глоссарий «Пояснения» вызовами add_glossary_terms: до 40 терминов за вызов, если их больше — несколько вызовов подряд. Повторы не добавляй: инструмент пропускает термины, которые уже есть в глоссарии, и называет их в ответе; существующее пояснение меняй только если оно неверное или явно хуже (update: true). Если текст сам объясняет термин, возьми это объяснение и сократи до одной-двух фраз простыми словами; если не объясняет — напиши короткое объяснение сам. Термины идут В ДОПОЛНЕНИЕ к статье, а не вместо неё, и никогда не становятся отдельной статьёй. Если присланный текст — ТОЛЬКО набор терминов и определений, статью не создавай вообще: для статьи там мало содержания, всё уходит в глоссарий. В ответе скажи, сколько терминов добавлено, и что статью не создавал, если это так.
-СТАТЬИ:
-- СОХРАНИ ВСЁ содержательное из присланного. Не выкидывай разделы, шаги, команды, таблицы и темы. Выбрасывать можно только воду, рекламу, навигацию сайта и артефакты вёрстки — но не полезные разделы.
-- Если в тексте НЕСКОЛЬКО разных тем/инструкций (например «как выбрать SNI-донор» и «self-steal на nginx») — не сваливай их в одну статью и НЕ бросай часть. Сделай ОТДЕЛЬНУЮ статью на каждую самостоятельную тему: вызови save_kb_article несколько раз, по разу на тему.
-- Каждая статья: заголовок, короткое «что это», затем суть ПО ШАГАМ (нумерованный список), простыми словами и подробно — по уровню пользователя.
-- Оформи красиво в Markdown: списки, блоки кода с языком, таблицы. Сохрани полезную разметку из исходника или добавь свою.
-- Сохрани готовые статьи инструментом save_kb_article (метка AI ставится сама). В ответе перечисли, какие статьи собрал, и явно скажи, если какую-то тему из текста НЕ включил и почему.
-- Если создание статей запрещено — не сохраняй, а верни готовый текст статьи прямо в ответе и скажи, что сохранить не можешь (нет разрешения).`;
-
-/** Полный системный промпт с учётом уровня, разрешений и режима работы. */
-function buildSystem(level: AssistantLevel, permissions: AssistantPermissions, mode: AssistantMode): string {
-  const perms = ASSISTANT_PERMISSION_KEYS.map(
-    (k) => `${ASSISTANT_PERMISSION_LABELS[k]} — ${permissions[k] ? 'разрешено' : 'запрещено'}`,
-  ).join('; ');
-  const serverTools = [
-    permissions.reach && 'check_reachability (доступность адреса снаружи с 2–3 независимых серверов парка)',
-    permissions.processes && 'inspect_processes (тяжёлые процессы)',
-    permissions.nodeLogs && 'inspect_node_logs (последние строки журнала ноды, секреты скрыты)',
-  ].filter(Boolean);
-  const modeBlock = mode === 'analysis' ? `\n\n${ANALYSIS_TASK}` : '';
-  const now = new Date().toISOString();
-  return `ТЕКУЩЕЕ ВРЕМЯ СЕРВЕРА (UTC): ${now}. Отвечая про периоды («за час», «за сутки», «сегодня»), опирайся на него и зови search_audit с sinceMinutes (час = 60).
-
-${SYSTEM.replace('{{SERVER_TOOLS}}', serverTools.length > 0 ? `${serverTools.join(', ')}, ` : '')}
-
-${ANSWER_STYLE}
-
-${KB_RULES}
-
-${levelRule(level)}
-
-РАЗРЕШЕНИЯ (сейчас): ${perms}. Свои разрешения смотри через get_settings. Настройки ты только читаешь — менять их не можешь. Если просят действие, на которое нет разрешения, честно скажи об этом и подскажи, что включается это в «Настройки → Джарвис → Разрешения».${modeBlock}`;
-}
 
 /** Джарвис: цикл tool-use, предложения действий (human-in-the-loop), беседы в БД. */
 @Injectable()
@@ -177,7 +102,6 @@ export class AssistantService {
     return rows.map((r) => ({
       id: r.id,
       title: r.title,
-      mode: r.mode,
       createdAt: r.createdAt.toISOString(),
     }));
   }
@@ -188,15 +112,15 @@ export class AssistantService {
     return (await this.repo.messages(conversationId)).map((r) => this.toMessage(r));
   }
 
-  /** Словарь терминов из режима «Анализ»: разбор по строкам, дополнение существующего глоссария, ответ без модели. */
-  private async importGlossary(
+  /** Словарь терминов из режима «Анализ»: ответ без модели, термины уже дописаны в «Пояснения». */
+  private async finishGlossaryImport(
     conv: { id: string; title: string },
     message: string,
     model: string,
+    found: number,
+    res: { id: string; added: number; skipped: string[] },
   ): Promise<AssistantChatResponse> {
-    const terms = parseGlossaryText(message);
-    const res = await this.knowledge.appendGlossary(terms, { auditSource: 'auto' });
-    const content = glossaryImportReply(terms.length, res.added, res.skipped);
+    const content = glossaryImportReply(found, res.added, res.skipped);
     const row = await this.repo.addMessage({
       conversationId: conv.id,
       role: 'assistant',
@@ -210,8 +134,7 @@ export class AssistantService {
         question: previewText(message),
         answer: previewText(content),
         model,
-        mode: 'analysis',
-        glossaryImport: { found: terms.length, added: res.added },
+        glossaryImport: `найдено ${found}, добавлено ${res.added}`,
         toolCalls: 0,
         messages: 1,
         proposals: 0,
@@ -221,11 +144,19 @@ export class AssistantService {
     return { conversationId: conv.id, message: out, messages: [out] };
   }
 
-  async chat(
-    message: string,
-    conversationId: string | undefined,
-    mode: AssistantMode = 'agent',
-  ): Promise<AssistantChatResponse> {
+  /** Вызов модели: сбой провайдера не должен превращаться в «Что-то пошло не так на сервере». */
+  private async runLlm(input: LlmRunInput): Promise<LlmResp> {
+    try {
+      return await this.llm.run(input);
+    } catch (err) {
+      this.log.warn(
+        `Провайдер модели вернул ошибку: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`,
+      );
+      throw problem(HttpStatus.FAILED_DEPENDENCY, { detail: describeLlmError(err) });
+    }
+  }
+
+  async chat(message: string, conversationId: string | undefined): Promise<AssistantChatResponse> {
     const cfg = await this.settings.config();
     if (!cfg)
       throw problem(HttpStatus.CONFLICT, {
@@ -233,17 +164,26 @@ export class AssistantService {
       });
     const { apiKey, model, level, permissions } = cfg;
 
-    // Режим закреплён за беседой: в существующем чате нельзя переключить агента на анализ.
     const existing = conversationId ? await this.repo.findConversation(conversationId) : undefined;
-    const conv = existing ?? (await this.repo.createConversation(message.slice(0, 60), mode));
-    const effectiveMode: AssistantMode = existing ? (conv.mode as AssistantMode) : mode;
-    const system = buildSystem(level, permissions, effectiveMode);
+    const conv = existing ?? (await this.repo.createConversation(message.slice(0, 60)));
+    const system = buildSystem(level, permissions);
 
     await this.repo.addMessage({ conversationId: conv.id, role: 'user', content: message });
 
-    // Присланный текст целиком словарь терминов: статья тут не нужна, всё уходит в «Пояснения» без модели.
-    if (effectiveMode === 'analysis' && isPureGlossary(message))
-      return this.importGlossary(conv, message, model);
+    // Строки-определения из присланного текста сервер дописывает в «Пояснения» сам, не полагаясь на модель.
+    // Если весь текст словарь, статья не нужна и модель не зовётся; если это инструкция с терминами, модель
+    // строит статью из остального и знает, что термины уже добавлены.
+    let glossaryLine: string | null = null;
+    let glossaryCitation: AssistantCitation | null = null;
+    let glossaryHint: string | null = null;
+    const defs = extractDefinitions(message);
+    if (defs) {
+      const res = await this.knowledge.appendGlossary(defs, { auditSource: 'auto' });
+      if (isPureGlossary(message)) return this.finishGlossaryImport(conv, message, model, defs.length, res);
+      glossaryLine = `Термины из строк-определений: найдено ${defs.length}, добавлено новых в «Пояснения» ${res.added}, уже были ${res.skipped.length}.`;
+      glossaryCitation = { type: 'kb', id: res.id, label: 'Пояснения' };
+      glossaryHint = `СЕРВЕР УЖЕ ДОБАВИЛ в глоссарий «Пояснения» термины из строк-определений этого текста (найдено ${defs.length}, новых ${res.added}). Не добавляй их повторно и не включай эти определения в статьи. Если это была инструкция, строй статью из остального содержания; другие термины и аббревиатуры, которые есть в тексте не в виде строк-определений, добавь через add_glossary_terms.`;
+    }
 
     // История беседы → сообщения модели (только текст; предыдущий tool-контекст не тащим).
     const prior = await this.repo.messages(conv.id);
@@ -253,6 +193,8 @@ export class AssistantService {
         role: m.role as 'user' | 'assistant',
         content: [{ type: 'text', text: m.content }],
       }));
+
+    if (glossaryHint) appendUserText(messages, glossaryHint);
 
     const deps: ToolDeps = {
       servers: this.servers,
@@ -287,7 +229,7 @@ export class AssistantService {
     let nudges = 0;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-      const res = await this.llm.run({
+      const res = await this.runLlm({
         apiKey,
         model,
         system,
@@ -300,10 +242,12 @@ export class AssistantService {
       );
       if (uses.length === 0) {
         // Пустой ответ или обещание вызвать инструмент без вызова: один-два толчка вместо «Не удалось сформировать ответ».
-        if (nudges < MAX_NUDGES && round < MAX_TOOL_ROUNDS - 1 && (!text || PROMISE_RE.test(text))) {
+        const promised = PROMISE_RE.test(text);
+        const claimed = toolCalls === 0 && CLAIM_RE.test(text);
+        if (nudges < MAX_NUDGES && round < MAX_TOOL_ROUNDS - 1 && (!text || promised || claimed)) {
           nudges += 1;
           if (text) messages.push({ role: 'assistant', content: res.blocks });
-          appendUserText(messages, text ? NUDGE_PROMISE : NUDGE_EMPTY);
+          appendUserText(messages, !text ? NUDGE_EMPTY : promised ? NUDGE_PROMISE : NUDGE_CLAIM);
           continue;
         }
         answer = text;
@@ -346,11 +290,15 @@ export class AssistantService {
     if (!answer) {
       // Раунды кончились на вызовах инструментов или ответа так и нет: просим итог по собранному, без инструментов.
       appendUserText(messages, NUDGE_FINAL);
-      const res = await this.llm.run({ apiKey, model, system, messages, tools: [] });
+      const res = await this.runLlm({ apiKey, model, system, messages, tools: [] });
       answer = textOf(res.blocks);
     }
 
-    const finalText = answer || 'Не удалось получить ответ. Повторите вопрос.';
+    let finalText = answer || 'Не удалось получить ответ. Повторите вопрос.';
+    // Модель заявила «сохранил», а инструменты так и не вызвала: честно говорим, что записи нет.
+    if (toolCalls === 0 && CLAIM_RE.test(finalText)) finalText = `${finalText}\n\n${CLAIM_WARNING}`;
+    if (glossaryLine) finalText = `${finalText}\n\n${glossaryLine}`;
+    if (glossaryCitation) citations.push(glossaryCitation);
     // Ответ можно разбить на несколько сообщений строкой «===»: вывод, затем инструкция, затем команды.
     const parts = finalText
       .split(/\n[ \t]*={3,}[ \t]*\n/)
@@ -380,7 +328,6 @@ export class AssistantService {
         question: previewText(message),
         answer: previewText(finalText),
         model,
-        mode: effectiveMode,
         toolCalls,
         messages: texts.length,
         proposals: proposals.length,

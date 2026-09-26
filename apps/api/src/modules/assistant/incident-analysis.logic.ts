@@ -67,6 +67,7 @@ const ANALYSIS_READ = new Set([
   'inspect_processes',
   'inspect_node_logs',
   'get_playbook',
+  'get_reference',
 ]);
 export const ANALYSIS_TOOLS: LlmToolDef[] = [
   ...READ_TOOL_DEFS.filter((t) => ANALYSIS_READ.has(t.name)),
@@ -127,6 +128,7 @@ export function stepLabel(tool: string, input: unknown, kind: IncidentKind): str
   if (tool === 'inspect_processes') return 'Смотрю, какие процессы грузят сервер';
   if (tool === 'inspect_node_logs') return 'Читаю последние строки журнала ноды';
   if (tool === 'get_playbook') return 'Сверяюсь с плейбуком';
+  if (tool === 'get_reference') return 'Открываю справочник';
   if (tool === 'submit_analysis') return 'Формулирую вывод';
   return `Проверяю: ${kind}`;
 }

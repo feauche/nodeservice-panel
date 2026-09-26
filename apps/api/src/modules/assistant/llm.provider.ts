@@ -34,6 +34,22 @@ export interface LlmProvider {
 
 export const LLM_PROVIDER = Symbol('LLM_PROVIDER');
 
+/**
+ * Что показать администратору вместо техподробностей сбоя провайдера модели. Статус нельзя брать из 5xx:
+ * фильтр ошибок подменяет текст любой ошибки от 500 на общий, поэтому вызывающий код отвечает 424.
+ */
+export function describeLlmError(err: unknown, seconds = 90): string {
+  const m = err instanceof Error ? `${err.name} ${err.message}` : String(err);
+  if (/Timeout|Abort/i.test(m))
+    return `Провайдер модели не ответил за ${seconds} секунд. Повторите вопрос; если так каждый раз, выберите модель побыстрее в «Настройки → Джарвис».`;
+  if (/ответил (401|403)/.test(m)) return 'Провайдер отклонил ключ. Проверьте ключ в «Настройки → Джарвис».';
+  if (/ответил 429/.test(m)) return 'Провайдер ограничил число запросов. Повторите чуть позже.';
+  const status = /ответил (\d{3})/.exec(m)?.[1];
+  if (status)
+    return `Провайдер модели вернул ошибку ${status}. Повторите вопрос или смените модель в «Настройки → Джарвис».`;
+  return 'Не удалось получить ответ Джарвиса. Повторите вопрос.';
+}
+
 /** Реальный провайдер поверх Anthropic SDK. */
 export class AnthropicProvider implements LlmProvider {
   async run(input: LlmRunInput): Promise<LlmResp> {

@@ -107,7 +107,7 @@ export class TerminalHintService {
       if (err instanceof HttpException) throw err;
       this.log.warn(`Подсказка к терминалу: ${err instanceof Error ? err.message : err}`);
       const m = err instanceof Error ? `${err.name} ${err.message}` : '';
-      throw problem(HttpStatus.BAD_GATEWAY, {
+      throw problem(HttpStatus.FAILED_DEPENDENCY, {
         detail: /Timeout|Abort/i.test(m)
           ? 'Провайдер не ответил за 60 секунд. Повторите.'
           : /ответил (401|403)/.test(m)
@@ -115,7 +115,8 @@ export class TerminalHintService {
             : 'Не удалось получить ответ Джарвиса. Повторите.',
       });
     }
-    if (!result) throw problem(HttpStatus.BAD_GATEWAY, { detail: 'Джарвис не дал подсказки. Повторите.' });
+    if (!result)
+      throw problem(HttpStatus.FAILED_DEPENDENCY, { detail: 'Джарвис не дал подсказки. Повторите.' });
 
     await this.audit.record({
       action: 'server.terminal.hint',

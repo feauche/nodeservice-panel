@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { GLOSSARY_TEXT, GLOSSARY_TEXT_TERMS } from './glossary-import.fixture.js';
 import {
+  extractDefinitions,
   glossaryImportReply,
   isGlossaryArticle,
   isPureGlossary,
@@ -122,5 +123,38 @@ describe('glossaryImportReply', () => {
     expect(text).toContain('Добавлено новых: 60');
     expect(text).toContain('Уже были в глоссарии: 2 (SSH, CPU)');
     expect(text).toContain('Повторы не добавлялись');
+  });
+});
+
+describe('вставка из браузера и чужие форматы', () => {
+  it('переносы строк Safari и Word (CR, CRLF, U+2028) не мешают разбору', () => {
+    for (const nl of ['\r\n', '\r', '\u2028', '\u2029', '\u000b']) {
+      const text = GLOSSARY_TEXT.replace(/\n/g, nl);
+      expect(parseGlossaryText(text), JSON.stringify(nl)).toHaveLength(GLOSSARY_TEXT_TERMS);
+      expect(isPureGlossary(text), JSON.stringify(nl)).toBe(true);
+    }
+  });
+  it('лог, вывод docker и настройки словарём не считаются', () => {
+    const log = Array.from(
+      { length: 12 },
+      (_, i) =>
+        `2026-09-26 12:00:${String(i).padStart(2, '0')} INFO xray: connection from client accepted after handshake ok`,
+    ).join('\n');
+    const cfg = Array.from({ length: 12 }, (_, i) => `listen_port_${i}: 44${i}`).join('\n');
+    const docker = `CONTAINER ID   IMAGE   STATUS\n${Array.from({ length: 10 }, (_, i) => `abc${i}   remnawave/node:latest   Up ${i} hours [healthy]`).join('\n')}`;
+    expect(extractDefinitions(log), 'лог').toBeNull();
+    expect(isPureGlossary(log), 'лог').toBe(false);
+    expect(isPureGlossary(cfg), 'настройки').toBe(false);
+    expect(isPureGlossary(docker), 'docker').toBe(false);
+  });
+  it('extractDefinitions отдаёт термины и из смешанного текста с разделом «Термины»', () => {
+    const guide = Array.from(
+      { length: 20 },
+      (_, i) =>
+        `Шаг ${i + 1}. Подробно опишите, что нужно сделать на этом этапе установки, какие команды выполнить и как проверить результат, чтобы не возвращаться к нему позже.`,
+    ).join('\n\n');
+    const mixed = `# Установка Reality\n\n${guide}\n\n## Термины\n${GLOSSARY_TEXT.split('\n').slice(6, 22).join('\n')}`;
+    expect(extractDefinitions(mixed)?.length).toBeGreaterThanOrEqual(8);
+    expect(isPureGlossary(mixed)).toBe(false);
   });
 });

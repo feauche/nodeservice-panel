@@ -1,4 +1,4 @@
-import type { AssistantMode, KbSource } from '@nodeservice/shared';
+import type { KbSource } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import { boolean, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
@@ -44,7 +44,8 @@ export type KbDocumentVersionRow = typeof kbDocumentVersions.$inferSelect;
 export const assistantConversations = pgTable('assistant_conversations', {
   id: uuid('id').primaryKey().default(sql`uuidv7()`),
   title: text('title').notNull().default('Новый чат'),
-  mode: text('mode').$type<AssistantMode>().notNull().default('agent'),
+  /** Осталось от режима «Анализ»: режимов больше нет, колонка не используется, у всех бесед 'agent'. */
+  mode: text('mode').notNull().default('agent'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 export type AssistantConversationRow = typeof assistantConversations.$inferSelect;

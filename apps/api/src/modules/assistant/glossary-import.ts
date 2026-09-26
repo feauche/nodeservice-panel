@@ -32,6 +32,8 @@ function isTerm(term: string): boolean {
   if (!/\p{L}/u.test(term)) return false;
   if (!/^[\p{L}\p{N}«"'(]/u.test(term)) return false;
   if (/[.!?]\s|[.!?]$|:\/\//.test(term)) return false;
+  // Метки времени, скобки и «ключ=значение» — это лог или конфиг, а не термин.
+  if (/\d{2}:\d{2}|\d{4}-\d{2}-\d{2}|[[\]{}<>=\\]/.test(term)) return false;
   return !NOT_TERM.test(term);
 }
 
@@ -59,8 +61,15 @@ export function parseTermLine(raw: string): GlossaryTerm | null {
   return { term, explain: explain.slice(0, EXPLAIN_MAX) };
 }
 
+/** Safari и Word при копировании дают не только \n: возврат каретки, разделитель строк U+2028 и абзацев U+2029. */
+const BREAKS =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: вертикальная табуляция и разрыв страницы тоже приходят при копировании
+  /\r\n?|[\u2028\u2029\u000b\u000c\u0085]/g;
+const normalizeBreaks = (text: string): string => text.replace(BREAKS, '\n');
+
 /** Все строки-определения из текста, без повторов внутри самого текста. */
-export function parseGlossaryText(text: string): GlossaryTerm[] {
+export function parseGlossaryText(raw: string): GlossaryTerm[] {
+  const text = normalizeBreaks(raw);
   const seen = new Set<string>();
   const out: GlossaryTerm[] = [];
   for (const line of text.split('\n')) {
@@ -73,16 +82,25 @@ export function parseGlossaryText(text: string): GlossaryTerm[] {
 }
 
 /**
+ * Строки-определения текста, если их достаточно, чтобы считать их словарём: не меньше восьми, объяснения
+ * содержательные (а не «порт: 443»). Годится и для целого словаря, и для раздела «Термины» внутри статьи.
+ */
+export function extractDefinitions(raw: string): GlossaryTerm[] | null {
+  const terms = parseGlossaryText(raw);
+  if (terms.length < PURE_MIN_TERMS) return null;
+  const avg = terms.reduce((n, t) => n + t.explain.length, 0) / terms.length;
+  return avg >= PURE_AVG_EXPLAIN ? terms : null;
+}
+
+/**
  * Текст целиком — словарь терминов: много строк-определений с содержательными объяснениями и почти
  * ничего кроме них. Для такого текста статья не нужна, всё уходит в глоссарий. Блоки кода и список
  * коротких «ключ: значение» под это не подходят.
  */
-export function isPureGlossary(text: string): boolean {
+export function isPureGlossary(raw: string): boolean {
+  const text = normalizeBreaks(raw);
   if (text.includes('```')) return false;
-  const terms = parseGlossaryText(text);
-  if (terms.length < PURE_MIN_TERMS) return false;
-  const avg = terms.reduce((n, t) => n + t.explain.length, 0) / terms.length;
-  if (avg < PURE_AVG_EXPLAIN) return false;
+  if (!extractDefinitions(text)) return false;
   const total = text.replace(/\s+/g, '').length;
   const inTerms = text
     .split('\n')

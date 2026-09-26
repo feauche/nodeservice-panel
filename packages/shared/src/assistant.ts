@@ -19,23 +19,11 @@ export const ASSISTANT_PROVIDER_LABELS: Record<AssistantProvider, string> = {
 
 export const ASSISTANT_MODEL_MAX = 80;
 
-/** Режим работы: обычный агент-ответчик или разбор вставленного текста в статью. */
-export const ASSISTANT_MODES = ['agent', 'analysis'] as const;
-export type AssistantMode = (typeof ASSISTANT_MODES)[number];
-export const ASSISTANT_MODE_LABELS: Record<AssistantMode, string> = {
-  agent: 'Агент',
-  analysis: 'Анализ',
-};
-
-/** Верхний предел обычного сообщения агенту. */
-export const ASSISTANT_MESSAGE_MAX = 20_000;
-/** В режиме «Анализ» вставляют целую статью/мануал — предел заметно выше. */
-export const ASSISTANT_ANALYSIS_MAX = 100_000;
-
-/** Предел длины сообщения зависит от режима. */
-export function assistantMessageMax(mode: AssistantMode): number {
-  return mode === 'analysis' ? ASSISTANT_ANALYSIS_MAX : ASSISTANT_MESSAGE_MAX;
-}
+/**
+ * Верхний предел сообщения Джарвису. Режима «Анализ» больше нет: Джарвис сам понимает, что ему прислали
+ * (вопрос, статью, словарь терминов, вывод команды), поэтому в чат можно вставить целый мануал.
+ */
+export const ASSISTANT_MESSAGE_MAX = 100_000;
 
 /**
  * Подробность ответов Джарвиса. Ключи остались прежними (novice, intermediate, pro), поэтому старые
@@ -275,19 +263,13 @@ export const assistantChatRequestSchema = z
   .object({
     message: z.string().trim().min(1),
     conversationId: z.uuid().optional(),
-    mode: z.enum(ASSISTANT_MODES).default('agent'),
   })
   .superRefine((val, ctx) => {
-    // Предел зависит от режима: в «Анализ» вставляют целый мануал, в «Агент» — короткий вопрос.
-    const max = assistantMessageMax(val.mode);
-    if (val.message.length > max) {
+    if (val.message.length > ASSISTANT_MESSAGE_MAX) {
       ctx.addIssue({
         code: 'custom',
         path: ['message'],
-        message:
-          val.mode === 'analysis'
-            ? `Слишком длинный текст: ${val.message.length} из ${max} символов. Разбей мануал на части и собери их по очереди.`
-            : `Сообщение слишком длинное: ${val.message.length} из ${max} символов.`,
+        message: `Слишком длинный текст: ${val.message.length} из ${ASSISTANT_MESSAGE_MAX} знаков. Разбейте его на части и отправьте по очереди.`,
       });
     }
   });
@@ -305,7 +287,6 @@ export type AssistantChatResponse = z.infer<typeof assistantChatResponseSchema>;
 export const assistantConversationSchema = z.object({
   id: z.uuid(),
   title: z.string(),
-  mode: z.enum(ASSISTANT_MODES),
   createdAt: z.iso.datetime(),
 });
 export type AssistantConversation = z.infer<typeof assistantConversationSchema>;

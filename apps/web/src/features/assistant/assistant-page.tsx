@@ -1,11 +1,8 @@
 import {
-  ASSISTANT_MODE_LABELS,
-  ASSISTANT_MODES,
+  ASSISTANT_MESSAGE_MAX,
   ASSISTANT_SUGGESTIONS,
   type AssistantCitation,
   type AssistantMessage,
-  type AssistantMode,
-  assistantMessageMax,
 } from '@nodeservice/shared';
 import { Link } from '@tanstack/react-router';
 import {
@@ -16,7 +13,6 @@ import {
   MessageSquarePlusIcon,
   SendIcon,
   ServerIcon,
-  WandSparklesIcon,
 } from 'lucide-react';
 import { type ComponentType, type SVGProps, useEffect, useMemo, useRef, useState } from 'react';
 import { JarvisIcon } from '@/components/jarvis-icon';
@@ -74,6 +70,14 @@ function AssistantDisabled() {
   );
 }
 
+/**
+ * Высота окна = область контента оболочки минус верхний отступ и такой же нижний. Оболочка оставляет снизу
+ * 60px, поэтому лишнее «съедаем» отрицательным полем: на десктопе и планшете верх и низ по 24px (лишние 36px),
+ * на телефоне по 16px (лишние 44px). Так же устроена страница «База знаний».
+ */
+const PAGE =
+  'grid -mb-11 h-[calc(100dvh-90px)] min-h-[440px] gap-4 md:-mb-9 md:h-[calc(100dvh-124px)] lg:min-h-[460px] lg:grid-cols-[236px_minmax(0,1fr)]';
+
 function AssistantChat() {
   const [conversationId, setConversationId] = useState<string | null>(() => {
     try {
@@ -92,21 +96,17 @@ function AssistantChat() {
   }, [serversQuery.data]);
   const send = useSendMessage();
   const [input, setInput] = useState('');
-  // Режим для НОВОГО чата. В существующей беседе режим закреплён и не меняется.
-  const [newChatMode, setNewChatMode] = useState<AssistantMode>('agent');
   const chatRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   const messages = history.data?.items ?? [];
   const busy = send.isPending;
   const isNewChat = conversationId === null;
-  const activeConv = conversations.data?.items.find((c) => c.id === conversationId);
-  const mode: AssistantMode = isNewChat ? newChatMode : (activeConv?.mode ?? 'agent');
 
-  // Лимит длины зависит от режима: в «Анализ» вставляют целый мануал. Считаем по обрезанной длине —
-  // ровно как проверит сервер, — и не даём отправить переполненное поле (мгновенная обратная связь).
+  // Считаем по обрезанной длине, ровно как проверит сервер, и не даём отправить переполненное поле
+  // (мгновенная обратная связь): в чат можно вставить целую статью, поэтому предел большой.
   const trimmedLen = input.trim().length;
-  const maxLen = assistantMessageMax(mode);
+  const maxLen = ASSISTANT_MESSAGE_MAX;
   const overLimit = trimmedLen > maxLen;
   // Счётчик показываем только когда текст уже длинный, чтобы не мозолил глаза при обычном вопросе.
   const showCounter = trimmedLen > maxLen * 0.7;
@@ -155,12 +155,12 @@ function AssistantChat() {
   const submit = async (text: string) => {
     const message = text.trim();
     if (!message || busy) return;
-    if (message.length > assistantMessageMax(mode)) return; // защита: кнопка уже заблокирована
+    if (message.length > ASSISTANT_MESSAGE_MAX) return; // защита: кнопка уже заблокирована
     setInput('');
     pendingBaseCount.current = messages.length;
     setPendingUser(message);
     try {
-      const res = await send.mutateAsync({ message, mode, ...(conversationId ? { conversationId } : {}) });
+      const res = await send.mutateAsync({ message, ...(conversationId ? { conversationId } : {}) });
       setConversationId(res.conversationId);
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -177,7 +177,7 @@ function AssistantChat() {
   };
 
   return (
-    <div className="grid h-[calc(100dvh-150px)] min-h-[440px] gap-4 lg:grid-cols-[236px_minmax(0,1fr)]">
+    <div className={PAGE}>
       {/* История бесед */}
       <aside className="hidden min-h-0 flex-col gap-3 rounded-2xl border border-border bg-surface p-3.5 lg:flex">
         <div className="flex items-center justify-between gap-2">
@@ -212,11 +212,7 @@ function AssistantChat() {
                       : 'text-text-2 hover:bg-surface-2 hover:text-foreground',
                   )}
                 >
-                  {c.mode === 'analysis' ? (
-                    <WandSparklesIcon className="size-3.5 flex-none text-text-3" aria-hidden="true" />
-                  ) : (
-                    <FileClockIcon className="size-3.5 flex-none text-text-3" aria-hidden="true" />
-                  )}
+                  <FileClockIcon className="size-3.5 flex-none text-text-3" aria-hidden="true" />
                   <span className="truncate">{c.title}</span>
                 </button>
               </li>
@@ -262,10 +258,10 @@ function AssistantChat() {
           </ServerHealthContext.Provider>
         </div>
 
-        {/* Композер: одно поле ввода; режим — тумблер (новый чат) или бейдж (беседа закреплена) */}
+        {/* Композер: одно поле ввода, Джарвис сам понимает, что прислали: вопрос, статью, термины, вывод команды */}
         <div className="flex-none border-t border-border p-3 sm:p-3.5">
-          {isNewChat && mode === 'agent' && messages.length === 0 && !pendingUser && (
-            <div className="mb-2.5 flex flex-wrap gap-1.5">
+          {isNewChat && messages.length === 0 && !pendingUser && (
+            <div className="mb-2.5 flex flex-wrap gap-1.5 max-sm:[&>button:nth-child(n+4)]:hidden">
               {ASSISTANT_SUGGESTIONS.map((s) => (
                 <button
                   key={s}
@@ -288,20 +284,11 @@ function AssistantChat() {
               onKeyDown={onKeyDown}
               disabled={busy}
               rows={1}
-              aria-label={mode === 'analysis' ? 'Текст для анализа' : 'Сообщение Джарвису'}
-              placeholder={
-                mode === 'analysis'
-                  ? 'Вставьте текст или скопированную страницу — соберу инструкцию…'
-                  : 'Спросите о парке, метриках или о том, как что-то починить…'
-              }
+              aria-label="Сообщение Джарвису"
+              placeholder="Спросите о парке или вставьте статью, термины, вывод команды: Джарвис сам поймёт, что с этим сделать…"
               className="max-h-[200px] w-full resize-none bg-transparent px-2 py-1 text-[13.5px] leading-relaxed outline-none placeholder:text-text-3"
             />
-            <div className="flex items-center justify-between gap-2">
-              {isNewChat ? (
-                <ModeToggle value={newChatMode} onChange={setNewChatMode} disabled={busy} />
-              ) : (
-                <ModeBadge mode={mode} />
-              )}
+            <div className="flex items-center justify-end gap-2">
               <div className="flex items-center gap-2.5">
                 {showCounter && (
                   <span
@@ -317,19 +304,11 @@ function AssistantChat() {
                   type="button"
                   onClick={() => void submit(input)}
                   disabled={busy || trimmedLen === 0 || overLimit}
-                  aria-label={mode === 'analysis' ? 'Собрать статью' : 'Отправить'}
-                  className={cn(
-                    'inline-flex h-9 flex-none items-center justify-center gap-1.5 rounded-[10px] bg-cta text-[13px] font-semibold text-cta-foreground transition-[filter,opacity] hover:brightness-105 disabled:opacity-40',
-                    mode === 'analysis' ? 'px-3.5' : 'size-9',
-                  )}
+                  aria-label="Отправить"
+                  className="inline-flex size-9 flex-none items-center justify-center rounded-[10px] bg-cta text-cta-foreground transition-[filter,opacity] hover:brightness-105 disabled:opacity-40"
                 >
                   {busy ? (
                     <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
-                  ) : mode === 'analysis' ? (
-                    <>
-                      <WandSparklesIcon className="size-4" aria-hidden="true" />
-                      Собрать
-                    </>
                   ) : (
                     <SendIcon className="size-4" aria-hidden="true" />
                   )}
@@ -337,68 +316,14 @@ function AssistantChat() {
               </div>
             </div>
           </div>
-          <p className="mt-1.5 px-1 text-[11px] text-text-3">
+          <p className={cn('mt-1.5 px-1 text-[11px]', overLimit ? 'text-destructive' : 'text-text-3')}>
             {overLimit
-              ? mode === 'analysis'
-                ? 'Текст длиннее предела — разбей мануал на части и собери их по очереди.'
-                : 'Сообщение длиннее предела — сократи его.'
-              : mode === 'analysis'
-                ? 'Соберу инструкцию по шагам и, если нужно, сохраню статью (с меткой AI). Термины из текста добавлю в «Пояснения», повторы пропущу.'
-                : 'Enter — отправить, Shift+Enter — перенос строки.'}
+              ? 'Текст длиннее предела: разбейте его на части и отправьте по очереди.'
+              : 'Enter — отправить, Shift+Enter — перенос строки. Статью Джарвис сохранит в базу знаний, термины добавит в «Пояснения».'}
           </p>
         </div>
       </div>
     </div>
-  );
-}
-
-/** Тумблер режима: плавно скользящая подсветка между «Агент» и «Анализ». */
-function ModeToggle({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: AssistantMode;
-  onChange: (m: AssistantMode) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="relative inline-flex rounded-[9px] bg-surface-3 p-[3px]">
-      <span
-        className="pointer-events-none absolute inset-y-[3px] left-[3px] w-[72px] rounded-[7px] bg-surface shadow-sm transition-transform duration-200 ease-out"
-        style={{ transform: value === 'analysis' ? 'translateX(72px)' : 'translateX(0)' }}
-        aria-hidden="true"
-      />
-      {ASSISTANT_MODES.map((m) => (
-        <button
-          key={m}
-          type="button"
-          disabled={disabled}
-          aria-pressed={value === m}
-          onClick={() => onChange(m)}
-          className={cn(
-            'relative z-10 w-[72px] cursor-pointer rounded-[7px] py-1 text-center text-[12px] font-medium transition-colors disabled:cursor-not-allowed',
-            value === m ? 'text-foreground' : 'text-text-3 hover:text-text-2',
-          )}
-        >
-          {ASSISTANT_MODE_LABELS[m]}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** Бейдж режима в закреплённой беседе — сменить нельзя. */
-function ModeBadge({ mode }: { mode: AssistantMode }) {
-  const Icon = mode === 'analysis' ? WandSparklesIcon : JarvisIcon;
-  return (
-    <span
-      title="Режим беседы задан при её создании"
-      className="inline-flex items-center gap-1.5 rounded-full bg-surface-3 px-2.5 py-1 text-[11.5px] font-medium text-text-3"
-    >
-      <Icon className="size-3" aria-hidden="true" />
-      {ASSISTANT_MODE_LABELS[mode]}
-    </span>
   );
 }
 

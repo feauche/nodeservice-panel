@@ -1,5 +1,4 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { AssistantMode } from '@nodeservice/shared';
 import { asc, desc, eq } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
@@ -14,8 +13,8 @@ import {
 export class AssistantRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
 
-  async createConversation(title: string, mode: AssistantMode): Promise<AssistantConversationRow> {
-    const [row] = await this.db.insert(assistantConversations).values({ title, mode }).returning();
+  async createConversation(title: string): Promise<AssistantConversationRow> {
+    const [row] = await this.db.insert(assistantConversations).values({ title }).returning();
     if (!row) throw new Error('Не удалось создать беседу');
     return row;
   }

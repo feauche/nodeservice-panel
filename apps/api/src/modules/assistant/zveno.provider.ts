@@ -73,7 +73,7 @@ export class ZvenoProvider implements LlmProvider {
             }
           : {}),
       }),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(90_000),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');

@@ -49,6 +49,6 @@ export class AssistantController {
   @ApiOperation({ summary: 'Отправить сообщение Джарвису (tool-use, предложения действий)' })
   @ApiOkResponse({ type: AssistantChatResponseDto })
   chat(@Body() body: AssistantChatRequestDto): Promise<AssistantChatResponseDto> {
-    return this.assistant.chat(body.message, body.conversationId, body.mode);
+    return this.assistant.chat(body.message, body.conversationId);
   }
 }

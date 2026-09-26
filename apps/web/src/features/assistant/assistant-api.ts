@@ -1,6 +1,5 @@
 import {
   type AssistantChatResponse,
-  type AssistantMode,
   type AssistantStatus,
   assistantChatResponseSchema,
   assistantConversationsResponseSchema,
@@ -22,14 +21,10 @@ export const assistantApi = {
     api.get('/assistant/conversations', assistantConversationsResponseSchema, signal),
   history: (id: string, signal?: AbortSignal): Promise<HistoryResponse> =>
     api.get(`/assistant/conversations/${id}`, assistantHistoryResponseSchema, signal),
-  chat: (
-    message: string,
-    conversationId?: string,
-    mode: AssistantMode = 'agent',
-  ): Promise<AssistantChatResponse> =>
+  chat: (message: string, conversationId?: string): Promise<AssistantChatResponse> =>
     api.post(
       '/assistant/chat',
-      { message, mode, ...(conversationId ? { conversationId } : {}) },
+      { message, ...(conversationId ? { conversationId } : {}) },
       assistantChatResponseSchema,
     ),
 };
@@ -67,15 +62,8 @@ export function useConversationHistory(id: string | null) {
 export function useSendMessage() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      message,
-      conversationId,
-      mode,
-    }: {
-      message: string;
-      conversationId?: string;
-      mode?: AssistantMode;
-    }) => assistantApi.chat(message, conversationId, mode),
+    mutationFn: ({ message, conversationId }: { message: string; conversationId?: string }) =>
+      assistantApi.chat(message, conversationId),
     onSuccess: (res) => {
       void qc.invalidateQueries({ queryKey: assistantKeys.conversations });
       void qc.invalidateQueries({ queryKey: assistantKeys.history(res.conversationId) });

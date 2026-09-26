@@ -1,3 +1,4 @@
+import { ASSISTANT_MESSAGE_MAX } from '@nodeservice/shared';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
@@ -141,14 +142,48 @@ describe('AssistantPage', () => {
     expect(await screen.findByText('Перезапустить контейнер ноды')).toBeInTheDocument();
   });
 
-  it('режим «Анализ»: собирает статью и показывает ссылку на неё', async () => {
+  it('режима «Анализ» нет: одно поле для всего, кнопка «Отправить», подсказка про статьи и термины', async () => {
+    mockAssistant.enabled = true;
+    renderPage(AssistantPage, '/assistant');
+    const input = await screen.findByLabelText('Сообщение Джарвису');
+    expect(screen.queryByRole('button', { name: 'Анализ' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Собрать статью' })).not.toBeInTheDocument();
+    expect(input).toHaveAttribute(
+      'placeholder',
+      expect.stringContaining('вставьте статью, термины, вывод команды'),
+    );
+    expect(screen.getByRole('button', { name: 'Отправить' })).toBeInTheDocument();
+    expect(
+      screen.getByText(/Статью Джарвис сохранит в базу знаний, термины добавит в «Пояснения»/),
+    ).toBeInTheDocument();
+  });
+
+  it('слишком длинный текст: кнопка заблокирована, счётчик и пояснение на виду', async () => {
     mockAssistant.enabled = true;
     renderPage(AssistantPage, '/assistant');
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: 'Анализ' }));
-    await user.type(screen.getByLabelText('Текст для анализа'), 'Скопированная страница про Reality');
-    await user.click(screen.getByRole('button', { name: 'Собрать статью' }));
-    expect(await screen.findByRole('link', { name: /Настройка Xray Reality/ })).toBeInTheDocument();
+    const input = await screen.findByLabelText('Сообщение Джарвису');
+    await user.click(input);
+    await user.paste('а'.repeat(ASSISTANT_MESSAGE_MAX + 1));
+    expect(screen.getByRole('button', { name: 'Отправить' })).toBeDisabled();
+    expect(
+      screen.getByText('Текст длиннее предела: разбейте его на части и отправьте по очереди.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/100 001 \/ 100 000/)).toBeInTheDocument();
+    // в пределе отправка снова доступна
+    await user.clear(input);
+    await user.paste('Что с CPU?');
+    expect(screen.getByRole('button', { name: 'Отправить' })).toBeEnabled();
+  });
+
+  it('длинную статью можно отправить целиком: предел один на все сообщения', async () => {
+    mockAssistant.enabled = true;
+    renderPage(AssistantPage, '/assistant');
+    const user = userEvent.setup();
+    await user.click(await screen.findByLabelText('Сообщение Джарвису'));
+    await user.paste(`Что с CPU? ${'б'.repeat(30_000)}`);
+    await user.click(screen.getByRole('button', { name: 'Отправить' }));
+    expect(await screen.findByText('Перезапустить контейнер ноды')).toBeInTheDocument();
   });
 
   it('оптимистичный пузырь не гаснет, если такой же текст уже есть в истории', async () => {
@@ -158,7 +193,7 @@ describe('AssistantPage', () => {
     const convId = '0192f000-0000-7000-8000-000000000abc';
     const question = 'Повторяющийся вопрос';
     const iso = new Date().toISOString();
-    mockAssistant.conversations = [{ id: convId, title: question, mode: 'agent', createdAt: iso }];
+    mockAssistant.conversations = [{ id: convId, title: question, createdAt: iso }];
     mockAssistant.messages = {
       [convId]: [
         {
