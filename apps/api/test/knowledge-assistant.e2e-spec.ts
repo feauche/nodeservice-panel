@@ -461,6 +461,17 @@ describe('knowledge + assistant e2e', () => {
       .expect(200);
     list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
     expect(list.items.filter((d) => d.title === 'Пояснения')).toHaveLength(1);
+
+    // 4) пополнение Джарвисом видно в истории версий: одна версия на серию (состояние до неё), повтор ничего не пишет
+    const versions = (await agent.get(`/api/knowledge/${gloss.id}/versions`).expect(200)).body
+      .items as Array<{
+      reason: string;
+      title: string;
+    }>;
+    expect(versions.map((v) => v.reason)).toEqual(['glossary']);
+    expect(versions[0]?.title).toBe('Пояснения');
+    const audit = JSON.stringify((await agent.get('/api/audit?category=knowledge').expect(200)).body);
+    expect(audit).toContain('"via":"glossary"');
   });
 
   it('инструменты чтения подключены: парк, инциденты, история, обслуживание', async () => {

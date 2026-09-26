@@ -39,6 +39,7 @@ const VERSION_REASON: Record<string, string> = {
   edit: 'Правка',
   revert: 'Откат',
   review: 'Ревизия',
+  glossary: 'Термины от Джарвиса',
 };
 const fmtVersionTime = new Intl.DateTimeFormat('ru-RU', {
   day: '2-digit',

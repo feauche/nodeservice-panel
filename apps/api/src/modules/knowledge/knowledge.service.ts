@@ -153,6 +153,17 @@ export class KnowledgeService implements OnModuleInit {
     });
   }
 
+  /**
+   * Снимок перед пополнением глоссария Джарвисом. Пока идёт серия дополнений (несколько вызовов за один разговор),
+   * версия одна: она хранит состояние до всей серии, а история не забивается копиями всего словаря.
+   */
+  private async snapshotGlossary(row: KbDocumentRow): Promise<void> {
+    const [last] = await this.repo.listVersions(row.id, 1);
+    if (last?.reason === 'glossary' && Date.now() - last.createdAt.getTime() < GLOSSARY_SNAPSHOT_GAP_MS)
+      return;
+    await this.snapshot(row, 'glossary');
+  }
+
   async update(id: string, patch: KbDocUpdate, opts?: { reason?: string }): Promise<KbDoc> {
     const before = await this.repo.findById(id);
     if (!before) throw problem(HttpStatus.NOT_FOUND, { detail: 'Статья не найдена.' });
@@ -195,16 +206,27 @@ export class KnowledgeService implements OnModuleInit {
     if (existing) {
       // Ничего нового и ничего не исправлено: статью не трогаем, лишней версии в истории не будет.
       if (!changed) return { id: existing.id, ...result };
+      // Перед правкой сохраняем прежнее состояние, как и при ручной правке: иначе пополнение не видно в истории версий.
+      await this.snapshotGlossary(existing);
       const row = await this.repo.update(existing.id, { content });
       await this.audit.record({
         action: 'kb.updated',
         target: { type: 'kb', id: existing.id, display: GLOSSARY_TITLE },
         ...(opts?.auditSource ? { source: opts.auditSource } : {}),
+        metadata: glossaryAuditMeta(merged),
       });
       return { id: row?.id ?? existing.id, ...result };
     }
     const doc = await this.ensureGlossary();
-    if (changed) await this.repo.update(doc.id, { content });
+    if (changed) {
+      await this.repo.update(doc.id, { content });
+      await this.audit.record({
+        action: 'kb.updated',
+        target: { type: 'kb', id: doc.id, display: GLOSSARY_TITLE },
+        ...(opts?.auditSource ? { source: opts.auditSource } : {}),
+        metadata: glossaryAuditMeta(merged),
+      });
+    }
     return { id: doc.id, ...result };
   }
 
@@ -254,6 +276,17 @@ export class KnowledgeService implements OnModuleInit {
     return this.toDoc(row);
   }
 }
+
+/** Серия пополнений глоссария Джарвисом в пределах этого срока пишет одну версию истории, а не по копии на каждый вызов. */
+const GLOSSARY_SNAPSHOT_GAP_MS = 10 * 60_000;
+
+/** Что попало в Журнал о пополнении: какие термины добавлены и исправлены (не больше 30 названий). */
+const glossaryAuditMeta = (m: { added: string[]; updated: string[]; skipped: string[] }) => ({
+  via: 'glossary',
+  added: m.added.slice(0, 30),
+  updated: m.updated.slice(0, 30),
+  skipped: m.skipped.length,
+});
 
 /** Служебная статья-глоссарий. Заголовок фиксирован — по нему её находим и пополняем. */
 const GLOSSARY_TITLE = 'Пояснения';

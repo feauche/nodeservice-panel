@@ -59,6 +59,7 @@ describe('KnowledgePage', () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: /Лимит conntrack/ }));
     await screen.findByRole('heading', { name: 'Лимит conntrack' });
+    console.log('DBG2', JSON.stringify(Object.keys(mockKnowledge.versions)));
     await user.click(screen.getByRole('button', { name: 'Удалить (в архив)' }));
     const dialog = await screen.findByRole('alertdialog');
     await user.click(within(dialog).getByRole('button', { name: 'В архив' }));
@@ -113,6 +114,35 @@ describe('KnowledgePage', () => {
     expect(within(header).getByText(/^Обновлено /)).toBeInTheDocument();
     expect(within(header).getByRole('button', { name: 'Изменить' })).toBeInTheDocument();
     expect(within(header).getByRole('button', { name: 'История версий' })).toBeInTheDocument();
+  });
+
+  it('история версий: подписи причин, в том числе «Термины от Джарвиса» для пополнения глоссария', async () => {
+    const first = mockKnowledge.items.find((d) => d.title === 'Лимит conntrack');
+    if (!first) throw new Error('нет статьи в моке');
+    const snap = (id: string, reason: string) => ({
+      id,
+      title: first.title,
+      content: 'Прежний текст',
+      tags: first.tags,
+      source: first.source,
+      archived: false,
+      reason,
+      createdAt: new Date().toISOString(),
+    });
+    mockKnowledge.versions[first.id] = [
+      snap('0192e000-0000-7000-8000-0000000000a1', 'glossary'),
+      snap('0192e000-0000-7000-8000-0000000000a2', 'edit'),
+      snap('0192e000-0000-7000-8000-0000000000a3', 'review'),
+    ];
+    renderPage(KnowledgePage, '/knowledge');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /Лимит conntrack/ }));
+    await screen.findByRole('heading', { name: 'Лимит conntrack' });
+    await user.click(await screen.findByRole('button', { name: 'История версий' }));
+    const dialog = await screen.findByRole('dialog', { name: 'История версий' });
+    expect(await within(dialog).findByText(/^Термины от Джарвиса · /)).toBeInTheDocument();
+    expect(within(dialog).getByText(/^Правка · /)).toBeInTheDocument();
+    expect(within(dialog).getByText(/^Ревизия · /)).toBeInTheDocument();
   });
 
   describe('«Правила парка» — пометка «Читает Джарвис»', () => {
