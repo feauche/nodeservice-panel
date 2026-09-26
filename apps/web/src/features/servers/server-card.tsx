@@ -269,7 +269,7 @@ export function ServerCardGhost({
   const health = serverHealth(server, metrics);
   const provider = useServerProvider(server);
   return (
-    <div className="relative flex cursor-grabbing flex-col gap-3 rounded-2xl border border-border-2 bg-surface p-4 shadow-float">
+    <div className="relative flex h-full cursor-grabbing flex-col gap-3 rounded-2xl border border-border-2 bg-surface p-4 shadow-float">
       <div className="flex items-start gap-2.5">
         <HealthDot health={health} className="mt-[7px]" />
         <div className="min-w-0 flex-1">
