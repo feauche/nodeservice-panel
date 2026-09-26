@@ -1,4 +1,9 @@
-import type { MaintenanceCheck, MaintenanceKind, MaintenanceStep } from '@nodeservice/shared';
+import type {
+  MaintenanceCheck,
+  MaintenanceKind,
+  MaintenanceStep,
+  ServerInventory,
+} from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import {
   bigint,
@@ -77,6 +82,14 @@ export const servers = pgTable('servers', {
   sshOk: boolean('ssh_ok'),
   lastSshCheckAt: timestamp('last_ssh_check_at', { withTimezone: true }),
   lastSshOkAt: timestamp('last_ssh_ok_at', { withTimezone: true }),
+  /* профиль в парке (миграция 0034): знание владельца и снимок фактического состояния */
+  role: text('role'),
+  importance: text('importance').notNull().default('normal'),
+  maintenanceWindow: text('maintenance_window'),
+  expectedContainers: jsonb('expected_containers').$type<string[]>().notNull().default([]),
+  expectedPorts: jsonb('expected_ports').$type<number[]>().notNull().default([]),
+  inventory: jsonb('inventory').$type<Omit<ServerInventory, 'at'>>(),
+  inventoryAt: timestamp('inventory_at', { withTimezone: true }),
   /** Ручной порядок карточек (drag-and-drop). */
   sortOrder: integer('sort_order').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

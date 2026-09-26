@@ -141,3 +141,14 @@ describe('pickAutoAnalysis', () => {
     expect(pickAutoAnalysis(items, NOW, 5, 60_000)).toEqual([]);
   });
 });
+
+describe('правила парка в разборе', () => {
+  it('без правил блока нет, с правилами он добавляется после плейбука', () => {
+    expect(analysisSystem('intermediate', null, null)).not.toContain('ПРАВИЛА ПАРКА');
+    const s = analysisSystem('intermediate', 'ПЛЕЙБУК «Диск»', '## Нормы\nCPU до 60 %.');
+    expect(s).toContain('ПРАВИЛА ПАРКА');
+    expect(s).toContain('CPU до 60 %.');
+    expect(s.indexOf('ПЛЕЙБУК')).toBeLessThan(s.indexOf('ПРАВИЛА ПАРКА'));
+    expect(s).toContain('окно обслуживания');
+  });
+});

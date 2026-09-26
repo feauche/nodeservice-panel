@@ -26,6 +26,15 @@ const server = (over: Partial<Server>): Server =>
     notes: null,
     providerId: null,
     nodeWatch: 'auto',
+    profile: {
+      role: null,
+      importance: 'normal',
+      maintenanceWindow: null,
+      expectedContainers: [],
+      expectedPorts: [],
+    },
+    inventory: null,
+    drift: [],
     node: 'running',
     facts: { os: 'Ubuntu', osVersion: '24.04', arch: 'x86_64', cpuCores: 2, memoryMb: 2048 },
     hostKeyFingerprint: 'SHA256:secret-fingerprint',
@@ -668,5 +677,61 @@ describe('осмотр по SSH (J2)', () => {
       'inspect_logs',
     ])
       expect(on, n).toContain(n);
+  });
+});
+
+describe('профиль сервера в инструментах', () => {
+  const profiled = server({
+    profile: {
+      role: 'entry',
+      importance: 'critical',
+      maintenanceWindow: 'ночью по Москве',
+      expectedContainers: ['remnanode'],
+      expectedPorts: [443],
+    },
+    inventory: {
+      at: new Date(Date.now() - 5 * 3_600_000).toISOString(),
+      docker: true,
+      containers: [{ name: 'remnanode', state: 'exited', restarts: 3 }],
+      ports: [],
+    },
+    drift: [
+      {
+        kind: 'container_not_running',
+        subject: 'remnanode',
+        detail: 'Контейнер «remnanode» не работает (состояние: exited).',
+      },
+      { kind: 'port_not_listening', subject: '443', detail: 'Порт 443 никто не слушает.' },
+    ],
+  });
+  const d = () => deps({ servers: { list: async () => [profiled, server({ id: ID_B, name: 'nl-2' })] } });
+
+  it('сводка парка: роль и важность словами, расхождения, сколько профилей заполнено', async () => {
+    const { json } = await call('get_fleet_status', {}, d());
+    expect(json().totals).toMatchObject({ profilesFilled: 1, withDrift: 1 });
+    const row = json().servers.find((x: { name: string }) => x.name === 'de-1');
+    expect(row.profile).toMatchObject({ role: 'Входной', importance: 'Критичный', profileFilled: true });
+    expect(row.profile.drift).toHaveLength(2);
+    const other = json().servers.find((x: { name: string }) => x.name === 'nl-2');
+    expect(other.profile).toMatchObject({
+      role: null,
+      importance: 'Обычный',
+      profileFilled: false,
+      drift: [],
+    });
+  });
+  it('сервер: профиль, возраст снимка и сам снимок с оговоркой про свежие данные', async () => {
+    const { json } = await call('get_server_detail', { serverId: 'de-1' }, d());
+    expect(json().profile).toMatchObject({
+      role: 'Входной',
+      maintenanceWindow: 'ночью по Москве',
+      expected: { containers: ['remnanode'], ports: [443] },
+      snapshotAgeHours: 5,
+    });
+    expect(json().snapshot.containers[0]).toMatchObject({ name: 'remnanode', state: 'exited' });
+    expect(json().snapshot.note).toContain('inspect_containers');
+    const none = await call('get_server_detail', { serverId: 'nl-2' }, d());
+    expect(none.json().snapshot).toBeNull();
+    expect(none.json().profile.snapshotAgeHours).toBeNull();
   });
 });

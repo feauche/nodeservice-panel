@@ -85,6 +85,33 @@ function SourceBadge({ source }: { source: KbSource }) {
   );
 }
 
+/** Закреплённая статья, которую пишет владелец, а Джарвис только читает (J3). */
+const FLEET_RULES_TITLE = 'Правила парка';
+const isFleetRules = (d: { pinned: boolean; title: string }): boolean =>
+  d.pinned && d.title === FLEET_RULES_TITLE;
+
+/** Пометка «Читает Джарвис»: показывает, что текст статьи попадает в его инструкции. */
+function JarvisReadsPill() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-ai-soft px-[9px] py-[3px] text-[11.5px] leading-none font-semibold whitespace-nowrap text-ai">
+      <JarvisIcon className="size-3" aria-hidden="true" />
+      Читает Джарвис
+    </span>
+  );
+}
+
+function JarvisReadsBanner() {
+  return (
+    <p
+      data-testid="fleet-rules-banner"
+      className="mb-4 rounded-[10px] bg-brand-soft px-3 py-2 text-[12.5px] leading-snug font-medium text-brand"
+    >
+      Джарвис читает эту статью в начале каждой беседы и разбора инцидента, но сам не меняет. Пустые разделы
+      он не видит.
+    </p>
+  );
+}
+
 type Selection = { mode: 'view'; id: string } | { mode: 'edit'; id: string } | { mode: 'new' } | null;
 
 /** Сводка статьи в списке: серверная выдержка начинается с заголовка — его повторять незачем. */
@@ -210,7 +237,7 @@ export function KnowledgePage({
       ) : (
         <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
           {/* Список статей */}
-          <aside className="flex min-h-0 flex-col gap-3 rounded-2xl border border-border bg-surface p-3 max-lg:max-h-[360px]">
+          <aside className="flex min-h-0 flex-col gap-3 rounded-2xl border border-border bg-surface p-3 max-lg:max-h-[440px]">
             <div className="flex items-center gap-2 rounded-[10px] border border-border bg-surface-2 px-3">
               <SearchIcon className="size-4 flex-none text-text-3" aria-hidden="true" />
               <Input
@@ -392,6 +419,7 @@ function Viewer({ id, onEdit, onDeleted }: { id: string; onEdit: () => void; onD
           <h2 className="min-w-0 font-heading text-[20px] leading-tight font-bold">{d.title}</h2>
           {d.archived && <Pill tone="warn">В архиве</Pill>}
           <SourceBadge source={d.source} />
+          {isFleetRules(d) && <JarvisReadsPill />}
           {d.tags.map((t) => (
             <span
               key={t}
@@ -455,6 +483,7 @@ function Viewer({ id, onEdit, onDeleted }: { id: string; onEdit: () => void; onD
 
       <div className="flex min-h-0 flex-1 gap-5 overflow-hidden pr-2 pl-6 sm:pl-7">
         <div ref={contentRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto py-5 pr-4 sm:py-6">
+          {isFleetRules(d) && <JarvisReadsBanner />}
           <Markdown content={d.content} headingIds className="text-[13.5px]" />
         </div>
         {toc.length >= 2 && <ArticleToc items={toc} containerRef={contentRef} />}

@@ -311,6 +311,12 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
     const title = String(arg.title ?? '').trim();
     if (!title) return { ...empty, content: 'Не задан заголовок статьи — сохранить не могу.' };
     const content = String(arg.content ?? '');
+    if (['пояснения', 'правила парка'].includes(title.toLowerCase()))
+      return {
+        ...empty,
+        content:
+          'Это служебная статья: «Пояснения» пополняются через add_glossary_terms, «Правила парка» пишет только владелец. Новая статья с таким названием не создана.',
+      };
     if (isGlossaryArticle(title, content))
       return {
         ...empty,

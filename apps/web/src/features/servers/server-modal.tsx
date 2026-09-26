@@ -16,6 +16,7 @@ import {
   RefreshCwIcon,
   TerminalIcon,
   Trash2Icon,
+  TriangleAlertIcon,
   XIcon,
 } from 'lucide-react';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
@@ -51,17 +52,19 @@ import { AgentPill, HealthDot, osLine, SshPill } from './server-card';
 import { JournalTab } from './server-detail/journal-tab';
 import { MaintenanceTab } from './server-detail/maintenance-tab';
 import { MetricsTab } from './server-detail/metrics-tab';
+import { ProfileTab } from './server-detail/profile-tab';
 import { TerminalHistoryTab } from './server-detail/terminal-history-tab';
 import { serverHealth } from './server-health';
 import { useCheckServer, useDeleteServer, useDuplicateServer, useUpdateServer } from './servers-api';
 
-export type ServerModalTab = 'metrics' | 'journal' | 'terminal' | 'maintenance' | 'connection';
+export type ServerModalTab = 'metrics' | 'journal' | 'terminal' | 'maintenance' | 'profile' | 'connection';
 
 const TABS: Array<{ key: ServerModalTab; label: string }> = [
   { key: 'metrics', label: 'Метрики' },
   { key: 'journal', label: 'Журнал' },
   { key: 'terminal', label: 'Терминал' },
   { key: 'maintenance', label: 'Обслуживание' },
+  { key: 'profile', label: 'Профиль' },
   { key: 'connection', label: 'Подключение' },
 ];
 
@@ -186,6 +189,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
       {tab === 'journal' && <JournalTab serverId={s.id} />}
       {tab === 'terminal' && <TerminalHistoryTab serverId={s.id} />}
       {tab === 'maintenance' && <MaintenanceTab server={s} />}
+      {tab === 'profile' && <ProfileTab server={s} />}
       {tab === 'connection' && <ConnectionTab server={s} />}
     </>
   );
@@ -244,6 +248,18 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
     <>
       <AgentPill server={s} />
       <SshPill server={s} />
+      {s.drift.length > 0 && (
+        <button
+          type="button"
+          data-testid="drift-pill"
+          onClick={() => setTab('profile')}
+          title="Показать, что не совпадает с ожидаемым"
+          className="inline-flex h-[22px] flex-none cursor-pointer items-center gap-1.5 rounded-full bg-warn-soft px-2.5 text-[11.5px] font-semibold whitespace-nowrap text-warn transition-opacity hover:opacity-80"
+        >
+          <TriangleAlertIcon className="size-3" aria-hidden="true" />
+          Расхождения: {s.drift.length}
+        </button>
+      )}
     </>
   );
   const factsList = (
@@ -290,6 +306,10 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
       )}
       <DialogContent
         showCloseButton={false}
+        // Escape в маленьком поле внутри вкладки закрывает только поле, а не всю карточку с несохранённым.
+        onEscapeKeyDown={(e) => {
+          if (e.target instanceof HTMLElement && e.target.closest('[data-escape-local]')) e.preventDefault();
+        }}
         onPointerDownOutside={(e) => e.preventDefault()}
         onInteractOutside={(e) => e.preventDefault()}
         className={cn(

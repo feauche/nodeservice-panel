@@ -168,7 +168,9 @@ export class AssistantService {
 
     const existing = conversationId ? await this.repo.findConversation(conversationId) : undefined;
     const conv = existing ?? (await this.repo.createConversation(message.slice(0, 60)));
-    const system = buildSystem(level, permissions);
+    // Правила парка пишет владелец; ошибка чтения не должна ронять чат.
+    const fleetRules = await this.knowledge.fleetRules().catch(() => null);
+    const system = buildSystem(level, permissions, { fleetRules });
 
     await this.repo.addMessage({ conversationId: conv.id, role: 'user', content: message });
 

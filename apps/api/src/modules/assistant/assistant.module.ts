@@ -13,6 +13,8 @@ import { AssistantRepository } from './assistant.repository.js';
 import { AssistantService } from './assistant.service.js';
 import { ReadDepsService } from './assistant-read-deps.service.js';
 import { AssistantSettingsModule } from './assistant-settings.module.js';
+import { FleetInventoryController } from './fleet-inventory.controller.js';
+import { FleetInventoryService } from './fleet-inventory.service.js';
 import { FleetProbeService } from './fleet-probe.service.js';
 import { IncidentAnalysisController } from './incident-analysis.controller.js';
 import { IncidentAnalysisService } from './incident-analysis.service.js';
@@ -35,11 +37,17 @@ import { ZvenoProvider } from './zveno.provider.js';
     AssistantSettingsModule,
     SettingsModule,
   ],
-  controllers: [AssistantController, IncidentAnalysisController, TerminalHintController],
+  controllers: [
+    AssistantController,
+    IncidentAnalysisController,
+    TerminalHintController,
+    FleetInventoryController,
+  ],
   providers: [
     AssistantService,
     IncidentAnalysisService,
     FleetProbeService,
+    FleetInventoryService,
     ReadDepsService,
     TerminalHintService,
     AssistantRepository,

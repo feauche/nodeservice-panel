@@ -5,6 +5,8 @@ import {
   assistantChatResponseSchema,
   CSRF_HEADER,
   incidentSchema,
+  kbDocSchema,
+  kbListResponseSchema,
   type Server,
   serverSchema,
   terminalHintResponseSchema,
@@ -45,7 +47,10 @@ class FakeLlm implements LlmProvider {
   preset = 'tmp_clean';
   /** Что ушло модели в подсказках к терминалу: проверяем, что секреты замаскированы. */
   hintInputs: string[] = [];
+  /** Системные инструкции всех обращений: проверяем, что в них попали правила парка. */
+  systems: string[] = [];
   async run(input: LlmRunInput): Promise<LlmResp> {
+    this.systems.push(input.system);
     const done = input.messages.some((m) => m.content.some((b) => b.type === 'tool_result'));
     const text = input.messages
       .flatMap((m) => m.content)
@@ -103,6 +108,8 @@ class FakeLlm implements LlmProvider {
         ],
       };
     }
+    if (text.includes('ТОЛЬКО-ОТВЕТ'))
+      return { stopReason: 'end', blocks: [{ type: 'text', text: 'Принято.' }] };
     if (text.includes('ОСМОТР-СЕРВЕРА') || text.includes('ОСМОТР-ЖУРНАЛА')) {
       const logs = text.includes('ОСМОТР-ЖУРНАЛА');
       if (!done)
@@ -233,6 +240,8 @@ describe('проверка доступности, процессы и пред�
       sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents, assistant_conversations cascade`,
     );
     await db.execute(sql`delete from app_meta where key like 'settings.%' or key = 'panel.ssh-key'`);
+    // Служебная статья переживает запуски тестов: сбрасываем, чтобы проверять её с чистого шаблона.
+    await db.execute(sql`delete from kb_documents where title = 'Правила парка'`);
     await app.get<Redis>(VALKEY).flushdb();
     await app.init();
     agent = request.agent(app.getHttpServer());
@@ -621,6 +630,140 @@ describe('проверка доступности, процессы и пред�
       expect(off.message.content).toContain('осмотр служб и системы');
       expect(ssh.execLog.filter((c) => c.includes('# ns-inspect:'))).toHaveLength(0);
       await setPerms({ inspect: true, serviceLogs: false, nodeLogs: false });
+    });
+  });
+
+  describe('профиль парка (J3)', () => {
+    const update = (id: string, body: object) =>
+      agent.patch(`/api/servers/${id}`).set(CSRF_HEADER, csrf).send(body);
+    const getServer = async (id: string) =>
+      serverSchema.parse((await agent.get(`/api/servers/${id}`).expect(200)).body);
+    const chat = async (message: string) =>
+      assistantChatResponseSchema.parse(
+        (await agent.post('/api/assistant/chat').set(CSRF_HEADER, csrf).send({ message }).expect(200)).body,
+      );
+
+    it('профиль сохраняется приведённым к порядку и попадает в Журнал; неверное отвергается', async () => {
+      const id = target().id;
+      const res = await update(id, {
+        profile: {
+          role: 'entry',
+          importance: 'critical',
+          maintenanceWindow: '  ночью по Москве ',
+          expectedContainers: ['remnanode', 'nginx', 'nginx'],
+          expectedPorts: [443, 22, 443],
+        },
+      }).expect(200);
+      const srv = serverSchema.parse(res.body);
+      expect(srv.profile).toEqual({
+        role: 'entry',
+        importance: 'critical',
+        maintenanceWindow: 'ночью по Москве',
+        expectedContainers: ['nginx', 'remnanode'],
+        expectedPorts: [22, 443],
+      });
+      expect(srv.drift).toEqual([]);
+      expect(srv.inventory).toBeNull();
+      for (const bad of [
+        { role: 'boss' },
+        { expectedPorts: [0] },
+        { expectedContainers: ['a b'] },
+        { importance: 'high' },
+      ])
+        expect([400, 422], JSON.stringify(bad)).toContain((await update(id, { profile: bad })).status);
+      const audit = JSON.stringify((await agent.get('/api/audit?category=server').expect(200)).body);
+      expect(audit).toContain('expectedPorts');
+      expect(audit).toContain('importance');
+    });
+
+    it('снимок по SSH считает расхождения с ожидаемым; лишнее расхождением не считается', async () => {
+      const id = target().id;
+      const refreshed = serverSchema.parse(
+        (await agent.post(`/api/servers/${id}/inventory`).set(CSRF_HEADER, csrf).expect(200)).body,
+      );
+      expect(refreshed.inventory?.containers.map((c) => `${c.name}:${c.state}`)).toEqual([
+        'remnanode:exited',
+        'nginx:running',
+      ]);
+      expect(refreshed.inventory?.ports.map((p) => p.port)).toEqual([22, 443, 8080]);
+      // ожидались nginx и remnanode, порты 22 и 443: не работает только remnanode
+      expect(refreshed.drift.map((d) => `${d.kind}:${d.subject}`)).toEqual([
+        'container_not_running:remnanode',
+      ]);
+
+      await update(id, {
+        profile: { expectedPorts: [22, 443, 8443], expectedContainers: ['nginx', 'remnanode', 'grafana'] },
+      }).expect(200);
+      const after = await getServer(id);
+      expect(after.drift.map((d) => `${d.kind}:${d.subject}`).sort()).toEqual([
+        'container_missing:grafana',
+        'container_not_running:remnanode',
+        'port_not_listening:8443',
+      ]);
+      // возраст снимка сохраняется и не выдумывается заново
+      expect(after.inventory?.at).toBe(refreshed.inventory?.at);
+      await agent
+        .post('/api/servers/0192c000-0000-7000-8000-0000000000ff/inventory')
+        .set(CSRF_HEADER, csrf)
+        .expect(404);
+    });
+
+    it('дубликат сервера копирует профиль, но не снимок', async () => {
+      const copy = serverSchema.parse(
+        (await agent.post(`/api/servers/${target().id}/duplicate`).set(CSRF_HEADER, csrf).expect(201)).body,
+      );
+      expect(copy.profile.role).toBe('entry');
+      expect(copy.profile.expectedPorts).toEqual([22, 443, 8443]);
+      expect(copy.inventory).toBeNull();
+      await agent.delete(`/api/servers/${copy.id}`).set(CSRF_HEADER, csrf);
+    });
+
+    it('Джарвис видит профиль и расхождения; ответ на вопросы про парк не падает', async () => {
+      const res = await chat('ТОЛЬКО-ОТВЕТ как дела');
+      expect(res.message.content).toBe('Принято.');
+    });
+
+    it('«Правила парка»: статья есть всегда, закреплена, защищена; пока шаблон не тронут, в инструкцию ничего не идёт', async () => {
+      const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
+      const rules = list.items.find((d) => d.title === 'Правила парка');
+      expect(rules).toMatchObject({ pinned: true, source: 'self' });
+      const id = rules?.id ?? '';
+      await agent.delete(`/api/knowledge/${id}`).set(CSRF_HEADER, csrf).expect(409);
+      await agent.put(`/api/knowledge/${id}`).set(CSRF_HEADER, csrf).send({ archived: true }).expect(409);
+      await agent.put(`/api/knowledge/${id}`).set(CSRF_HEADER, csrf).send({ title: 'Другое' }).expect(409);
+      await agent
+        .post('/api/knowledge')
+        .set(CSRF_HEADER, csrf)
+        .send({ title: 'Правила парка', content: 'дубликат', tags: [], source: 'self' })
+        .expect(409);
+
+      fake.systems.length = 0;
+      await chat('ТОЛЬКО-ОТВЕТ шаблон');
+      expect(fake.systems.at(-1)).not.toContain('ПРАВИЛА ПАРКА (их написал');
+    });
+
+    it('когда владелец пишет правила, они попадают в инструкцию Джарвису; шаблонные подсказки — нет', async () => {
+      const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
+      const id = list.items.find((d) => d.title === 'Правила парка')?.id ?? '';
+      const doc = kbDocSchema.parse((await agent.get(`/api/knowledge/${id}`).expect(200)).body);
+      const owner = doc.content.replace(
+        '## Критичные серверы\n',
+        '## Критичные серверы\n- ru-entry-1: единственный вход для LTE, перезагружать только с 03:00 до 05:00 по Москве.\n',
+      );
+      await agent.put(`/api/knowledge/${id}`).set(CSRF_HEADER, csrf).send({ content: owner }).expect(200);
+
+      fake.systems.length = 0;
+      await chat('ТОЛЬКО-ОТВЕТ с правилами');
+      const system = fake.systems.at(-1) ?? '';
+      expect(system).toContain('ПРАВИЛА ПАРКА (их написал владелец');
+      expect(system).toContain('ru-entry-1: единственный вход для LTE');
+      expect(system).not.toContain('Какие серверы нельзя ронять и почему');
+      expect(system).not.toContain('## Окна обслуживания');
+
+      // Джарвис не может подменить служебную статью: сохранение с таким названием отклоняется инструментом
+      // (проверено юнит-тестом), а ревизия базы знаний закреплённые статьи не трогает.
+      const after = kbDocSchema.parse((await agent.get(`/api/knowledge/${id}`).expect(200)).body);
+      expect(after.content).toBe(owner);
     });
   });
 });

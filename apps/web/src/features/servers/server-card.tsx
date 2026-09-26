@@ -40,6 +40,7 @@ import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
 import { HEALTH_COLORS, HEALTH_LABELS, type ServerHealth, serverHealth } from './server-health';
+import { DriftDot, RoleMark } from './server-marks';
 import { useCheckServer, useDeleteServer, useDuplicateServer, useTrustHostKey } from './servers-api';
 
 /** ОС + версия + архитектура одной строкой (требование 3.10). */
@@ -236,6 +237,18 @@ function useServerProvider(server: Server): Provider | null {
   return server.providerId ? (providers.data?.items.find((p) => p.id === server.providerId) ?? null) : null;
 }
 
+/** Название сервера и значок роли справа от него (B3); без профиля вёрстка та же, что была. */
+function NameRow({ server }: { server: Server }) {
+  return (
+    <div className="flex min-h-[20.5px] min-w-0 items-start gap-1.5">
+      <h2 className="line-clamp-2 min-w-0 font-heading text-[15px] leading-[1.25] font-bold tracking-[-0.01em]">
+        {server.name}
+      </h2>
+      <RoleMark server={server} />
+    </div>
+  );
+}
+
 /** Адрес SSH. Провайдер живёт в нижней строке карточки, а не здесь: адрес — про подключение. */
 function AddressLine({ server }: { server: Server }) {
   return (
@@ -260,11 +273,10 @@ export function ServerCardGhost({
       <div className="flex items-start gap-2.5">
         <HealthDot health={health} className="mt-[7px]" />
         <div className="min-w-0 flex-1">
-          <h2 className="line-clamp-2 font-heading text-[15px] leading-[1.25] font-bold tracking-[-0.01em]">
-            {server.name}
-          </h2>
+          <NameRow server={server} />
           <AddressLine server={server} />
         </div>
+        <DriftDot server={server} />
       </div>
       <StatusPills server={server} />
       <Gauges metrics={metrics} offline={health === 'crit'} />
@@ -371,12 +383,11 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
       <div className="flex items-start gap-2.5">
         <HealthDot health={health} className="mt-[7px]" />
         <div className="min-w-0 flex-1">
-          <h2 className="line-clamp-2 font-heading text-[15px] leading-[1.25] font-bold tracking-[-0.01em]">
-            {server.name}
-          </h2>
+          <NameRow server={server} />
           <AddressLine server={server} />
         </div>
-        <div className="flex flex-none items-center gap-1">
+        <div className="flex flex-none items-center gap-1.5">
+          <DriftDot server={server} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button

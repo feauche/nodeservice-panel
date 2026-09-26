@@ -9,7 +9,9 @@ import {
   metricRangeSchema,
   NODE_STATE_LABELS,
   NODE_WATCH_LABELS,
+  SERVER_IMPORTANCE_LABELS,
   SERVER_METRIC_KEYS,
+  SERVER_ROLE_LABELS,
   type Server,
   VM_METRIC_NAMES,
 } from '@nodeservice/shared';
@@ -228,6 +230,28 @@ export function findServer(servers: Server[], key: string): Server | undefined {
   return part.length === 1 ? part[0] : undefined;
 }
 
+/** Профиль сервера в парке для Джарвиса: роль, важность, что ожидается и расхождения со снимком. */
+export function profileBrief(s: Server, nowMs: number = Date.now()) {
+  const p = s.profile;
+  const filled =
+    Boolean(p.role) ||
+    p.importance !== 'normal' ||
+    Boolean(p.maintenanceWindow) ||
+    p.expectedContainers.length > 0 ||
+    p.expectedPorts.length > 0;
+  return {
+    role: p.role ? SERVER_ROLE_LABELS[p.role] : null,
+    importance: SERVER_IMPORTANCE_LABELS[p.importance],
+    maintenanceWindow: p.maintenanceWindow,
+    expected: { containers: p.expectedContainers, ports: p.expectedPorts },
+    profileFilled: filled,
+    snapshotAgeHours: s.inventory
+      ? Math.max(0, Math.round((nowMs - Date.parse(s.inventory.at)) / 3_600_000))
+      : null,
+    drift: s.drift.map((d) => d.detail),
+  };
+}
+
 const notFound = (servers: Server[]): ToolOutcome => ({
   content: `Сервер не найден или имя неоднозначно. Доступные серверы: ${
     servers.map((s) => s.name).join(', ') || 'нет ни одного'
@@ -396,6 +420,7 @@ export async function runReadTool(
         memPct: pct(latest.mem),
         diskPct: pct(latest.disk),
         lastCheck: s.lastSshCheckAt,
+        profile: profileBrief(s),
         openIncidents: inc.map((i) => ({ id: i.id, title: i.title, severity: i.severity })),
       };
     });
@@ -408,6 +433,8 @@ export async function runReadTool(
           sshDown: servers.filter((s) => s.sshOk === false).length,
           nodeStopped: servers.filter((s) => s.node === 'stopped').length,
           openIncidents: open.items.length,
+          profilesFilled: servers.filter((s) => profileBrief(s).profileFilled).length,
+          withDrift: servers.filter((s) => s.drift.length > 0).length,
         },
         servers: rows,
       }),
@@ -463,6 +490,16 @@ export async function runReadTool(
         agent: { status: s.agentStatus, version: s.agentVersion, lastSeenAt: s.agentLastSeenAt },
         ssh: { ok: s.sshOk, lastCheckAt: s.lastSshCheckAt, lastOkAt: s.lastSshOkAt },
         node: { watch: NODE_WATCH_LABELS[s.nodeWatch], state: s.node ? NODE_STATE_LABELS[s.node] : null },
+        profile: profileBrief(s),
+        snapshot: s.inventory
+          ? {
+              at: s.inventory.at,
+              docker: s.inventory.docker,
+              containers: s.inventory.containers,
+              ports: s.inventory.ports,
+              note: 'Снимок по SSH раз в сутки: свежее состояние даёт inspect_containers и inspect_ports.',
+            }
+          : null,
         facts: s.facts,
         metrics: {
           cpuPct: cpu,

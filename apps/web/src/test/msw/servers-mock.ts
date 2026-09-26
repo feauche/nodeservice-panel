@@ -1,6 +1,9 @@
 import {
   AUTH_PROBLEM,
+  computeDrift,
   createServerRequestSchema,
+  DEFAULT_SERVER_PROFILE,
+  normalizeProfilePatch,
   SERVER_PROBLEM,
   type Server,
   type ServerFacts,
@@ -28,6 +31,19 @@ const FACTS: ServerFacts = {
   memoryMb: 8192,
 };
 
+/** Что «видит» мок-сервер по SSH: нода остановилась, порт ноды слушается. */
+export const mockInventory = {
+  docker: true,
+  containers: [
+    { name: 'remnanode', state: 'exited', restarts: 3 },
+    { name: 'nginx', state: 'running', restarts: 0 },
+  ],
+  ports: [
+    { proto: 'tcp' as const, port: 22, process: 'sshd', exposed: true },
+    { proto: 'tcp' as const, port: 443, process: 'nginx', exposed: true },
+  ],
+};
+
 interface ServersMock {
   items: Server[];
   /** Следующая проверка: сервер «переустановлен» — отпечаток другой. */
@@ -52,6 +68,9 @@ function makeServer(patch: Partial<Server>): Server {
     notes: null,
     providerId: null,
     nodeWatch: 'auto',
+    profile: { ...DEFAULT_SERVER_PROFILE },
+    inventory: null,
+    drift: [],
     node: null,
     facts: { ...FACTS },
     hostKeyFingerprint: MOCK_SSH.fingerprint,
@@ -251,7 +270,28 @@ export const serversHandlers = [
     const idx = mockServers.items.findIndex((x) => x.id === params.id);
     if (idx < 0) return problem(404, 'about:blank', 'Сервер не найден');
     const current = mockServers.items[idx] as Server;
-    const next: Server = { ...current, ...parsed.data, updatedAt: new Date().toISOString() } as Server;
+    const { profile: profilePatch, ...rest } = parsed.data;
+    const profile = {
+      ...current.profile,
+      ...(profilePatch ? normalizeProfilePatch(profilePatch) : {}),
+    } as Server['profile'];
+    const next: Server = {
+      ...current,
+      ...rest,
+      profile,
+      drift: computeDrift(profile, current.inventory),
+      updatedAt: new Date().toISOString(),
+    } as Server;
+    mockServers.items[idx] = next;
+    return HttpResponse.json(next);
+  }),
+  // Снимок состояния по SSH: как на сервере, читает контейнеры и порты, а расхождения считает панель.
+  http.post('/api/servers/:id/inventory', ({ params }) => {
+    const idx = mockServers.items.findIndex((x) => x.id === params.id);
+    if (idx < 0) return problem(404, 'about:blank', 'Сервер не найден');
+    const current = mockServers.items[idx] as Server;
+    const inventory = { at: new Date().toISOString(), ...mockInventory };
+    const next: Server = { ...current, inventory, drift: computeDrift(current.profile, inventory) };
     mockServers.items[idx] = next;
     return HttpResponse.json(next);
   }),

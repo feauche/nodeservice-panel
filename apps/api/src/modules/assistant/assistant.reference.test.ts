@@ -80,4 +80,13 @@ describe('справочник Джарвиса', () => {
     expect(text.indexOf('## 0.19.0')).toBeLessThan(text.indexOf('## 0.18.0'));
     expect(text).toContain('Осмотр служб и системы');
   });
+  it('про профиль парка: расхождение считается только по ожидаемому, снимок перепроверяют, правила не правит Джарвис', () => {
+    const text = referenceById('fleet')?.render() ?? '';
+    expect(text).toContain('Расхождением считается только ожидаемое, чего нет');
+    expect(text).toContain('snapshotAgeHours');
+    expect(text).toContain('inspect_containers');
+    expect(text).toContain('Сам ты статью не меняешь');
+    expect(text).toContain('profileFilled=false');
+    expect(text).toContain('Правила парка');
+  });
 });

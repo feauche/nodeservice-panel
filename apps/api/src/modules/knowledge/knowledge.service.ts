@@ -12,6 +12,7 @@ import { problem } from '../../common/filters/problem-details.filter.js';
 import type { KbDocumentRow } from '../../infra/db/schema/index.js';
 import { diffChanges } from '../audit/audit.diff.js';
 import { AuditService } from '../audit/audit.service.js';
+import { FLEET_RULES_TEMPLATE, FLEET_RULES_TITLE, fleetRulesText } from './fleet-rules.js';
 import { type IncomingTerm, mergeTerms } from './glossary-merge.js';
 import { KnowledgeRepository } from './knowledge.repository.js';
 
@@ -32,6 +33,33 @@ export class KnowledgeService implements OnModuleInit {
     } catch (err) {
       this.log.warn(`Не удалось подготовить глоссарий: ${err instanceof Error ? err.message : err}`);
     }
+    try {
+      await this.ensureFleetRules();
+    } catch (err) {
+      this.log.warn(`Не удалось подготовить «Правила парка»: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /** «Правила парка» есть всегда и закреплены: пишет владелец, Джарвис только читает. */
+  async ensureFleetRules(): Promise<KbDocumentRow> {
+    const existing = await this.repo.findByTitle(FLEET_RULES_TITLE);
+    if (existing) {
+      if (existing.pinned && !existing.archived) return existing;
+      return (await this.repo.update(existing.id, { pinned: true, archived: false })) ?? existing;
+    }
+    return this.repo.insert({
+      title: FLEET_RULES_TITLE,
+      content: FLEET_RULES_TEMPLATE,
+      tags: ['правила'],
+      source: 'self',
+      pinned: true,
+    });
+  }
+
+  /** Текст правил для инструкции Джарвиса; null — владелец ещё ничего не написал. */
+  async fleetRules(): Promise<string | null> {
+    const doc = await this.repo.findByTitle(FLEET_RULES_TITLE);
+    return doc ? fleetRulesText(doc.content) : null;
   }
 
   async ensureGlossary(): Promise<KbDocumentRow> {
@@ -92,6 +120,11 @@ export class KnowledgeService implements OnModuleInit {
   }
 
   async create(input: KbDocCreate, opts?: { auditSource?: AuditSource }): Promise<KbDoc> {
+    // Служебные статьи одни на всех: вторую с тем же названием не заводим, иначе непонятно, какую читать.
+    if (RESERVED_TITLES.has(input.title.trim()) && (await this.repo.findByTitle(input.title.trim())))
+      throw problem(HttpStatus.CONFLICT, {
+        detail: 'Такая служебная статья уже есть: откройте её и измените.',
+      });
     const row = await this.repo.insert({
       title: input.title,
       content: input.content,
@@ -224,6 +257,8 @@ export class KnowledgeService implements OnModuleInit {
 
 /** Служебная статья-глоссарий. Заголовок фиксирован — по нему её находим и пополняем. */
 const GLOSSARY_TITLE = 'Пояснения';
+/** Названия служебных закреплённых статей: обычную статью с таким названием не создаём. */
+const RESERVED_TITLES = new Set([GLOSSARY_TITLE, FLEET_RULES_TITLE]);
 const GLOSSARY_HEADER = `# Пояснения
 
 Короткий словарь терминов и аббревиатур — что это простыми словами. Пополняется Джарвисом автоматически.

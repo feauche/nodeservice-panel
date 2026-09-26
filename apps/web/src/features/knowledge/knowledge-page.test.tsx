@@ -16,10 +16,13 @@ describe('KnowledgePage', () => {
   it('список статей и просмотр выбранной', async () => {
     renderPage(KnowledgePage, '/knowledge');
     expect(await screen.findByRole('button', { name: /Лимит conntrack/ })).toBeInTheDocument();
-    // первой идёт закреплённая «Пояснения», она открыта автоматически — виден её markdown
-    expect(await screen.findByRole('heading', { name: 'Пояснения' })).toBeInTheDocument();
-    const list = screen.getAllByRole('button', { name: /Пояснения|Лимит conntrack|Перезапуск Xray/ });
-    expect(list[0]).toHaveTextContent('Пояснения');
+    // сверху закреплённые («Правила парка» обновлены позже), первая открыта автоматически — виден её markdown
+    expect(await screen.findByRole('heading', { name: 'Правила парка' })).toBeInTheDocument();
+    const list = screen.getAllByRole('button', {
+      name: /Правила парка|Пояснения|Лимит conntrack|Перезапуск Xray/,
+    });
+    expect(list[0]).toHaveTextContent('Правила парка');
+    expect(list[1]).toHaveTextContent('Пояснения');
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /Лимит conntrack/ }));
     expect(await screen.findByRole('heading', { name: 'Лимит conntrack' })).toBeInTheDocument();
@@ -66,11 +69,14 @@ describe('KnowledgePage', () => {
     });
   });
 
-  it('закреплённая «Пояснения»: сверху, без кнопки удаления', async () => {
+  it('закреплённые «Правила парка» и «Пояснения»: сверху, без кнопки удаления', async () => {
     renderPage(KnowledgePage, '/knowledge');
+    const user = userEvent.setup();
+    expect(await screen.findByRole('heading', { name: 'Правила парка' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Удалить/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Пояснения/ }));
     expect(await screen.findByRole('heading', { name: 'Пояснения' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Удалить/ })).not.toBeInTheDocument();
-    const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /Лимит conntrack/ }));
     await screen.findByRole('heading', { name: 'Лимит conntrack' });
     expect(screen.getByRole('button', { name: 'Удалить (в архив)' })).toBeInTheDocument();
@@ -78,12 +84,15 @@ describe('KnowledgePage', () => {
 
   it('закреплённая в списке: булавка и разделитель под ней, у остальных булавки нет', async () => {
     renderPage(KnowledgePage, '/knowledge');
-    const pinned = await screen.findByRole('button', { name: /Пояснения/ });
+    const rules = await screen.findByRole('button', { name: /Правила парка/ });
+    const pinned = screen.getByRole('button', { name: /Пояснения/ });
+    expect(rules.querySelector('svg.lucide-pin')).not.toBeNull();
     expect(pinned.querySelector('svg.lucide-pin')).not.toBeNull();
     const other = screen.getByRole('button', { name: /Лимит conntrack/ });
     expect(other.querySelector('svg.lucide-pin')).toBeNull();
-    // разделитель стоит сразу под закреплённой статьёй
+    // разделитель стоит сразу под последней закреплённой статьёй
     expect(pinned.closest('li')?.nextElementSibling?.getAttribute('aria-hidden')).toBe('true');
+    expect(rules.closest('li')?.nextElementSibling?.getAttribute('aria-hidden')).not.toBe('true');
     // в карточке списка нет ни удаления, ни архива
     expect(within(pinned).queryByRole('button')).not.toBeInTheDocument();
   });
@@ -104,6 +113,48 @@ describe('KnowledgePage', () => {
     expect(within(header).getByText(/^Обновлено /)).toBeInTheDocument();
     expect(within(header).getByRole('button', { name: 'Изменить' })).toBeInTheDocument();
     expect(within(header).getByRole('button', { name: 'История версий' })).toBeInTheDocument();
+  });
+
+  describe('«Правила парка» — пометка «Читает Джарвис»', () => {
+    const BANNER =
+      'Джарвис читает эту статью в начале каждой беседы и разбора инцидента, но сам не меняет. Пустые разделы он не видит.';
+
+    it('у «Правил парка» есть пометка в шапке и плашка над текстом', async () => {
+      renderPage(KnowledgePage, '/knowledge');
+      const title = await screen.findByRole('heading', { name: 'Правила парка' });
+      const header = title.closest('header') as HTMLElement;
+      expect(within(header).getByText('Читает Джарвис')).toBeInTheDocument();
+      expect(within(header).getByText('Вручную')).toBeInTheDocument();
+      expect(screen.getByTestId('fleet-rules-banner')).toHaveTextContent(BANNER);
+    });
+
+    it('у других статей, в том числе закреплённой «Пояснения», пометки и плашки нет', async () => {
+      renderPage(KnowledgePage, '/knowledge');
+      const user = userEvent.setup();
+      await screen.findByRole('heading', { name: 'Правила парка' });
+      for (const title of ['Пояснения', 'Лимит conntrack']) {
+        await user.click(screen.getByRole('button', { name: new RegExp(title) }));
+        await screen.findByRole('heading', { name: title });
+        expect(screen.queryByText('Читает Джарвис')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('fleet-rules-banner')).not.toBeInTheDocument();
+      }
+    });
+
+    it('в списке пометки нет, она только в открытой статье', async () => {
+      renderPage(KnowledgePage, '/knowledge');
+      const item = await screen.findByRole('button', { name: /Правила парка/ });
+      expect(within(item).queryByText('Читает Джарвис')).not.toBeInTheDocument();
+    });
+
+    it('в редакторе плашки и пометки нет', async () => {
+      renderPage(KnowledgePage, '/knowledge');
+      const user = userEvent.setup();
+      await screen.findByTestId('fleet-rules-banner');
+      await user.click(screen.getByRole('button', { name: 'Изменить' }));
+      await screen.findByLabelText('Содержимое');
+      expect(screen.queryByTestId('fleet-rules-banner')).not.toBeInTheDocument();
+      expect(screen.queryByText('Читает Джарвис')).not.toBeInTheDocument();
+    });
   });
 
   describe('редактор', () => {

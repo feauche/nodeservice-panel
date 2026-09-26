@@ -11,6 +11,7 @@ import {
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { AuditService } from '../audit/audit.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
+import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import { playbookForKind, renderPlaybook } from './assistant.playbooks.js';
 import { incidentCase, type ReadDeps, runReadTool, toolsFor } from './assistant.read-tools.js';
 import { ReadDepsService } from './assistant-read-deps.service.js';
@@ -69,6 +70,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     private readonly incidents: IncidentsService,
     private readonly readDepsService: ReadDepsService,
     private readonly audit: AuditService,
+    private readonly knowledge: KnowledgeService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
   ) {}
 
@@ -208,6 +210,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     const deadline = Date.now() + TOTAL_MS;
     try {
       const deps = this.readDeps(cfg);
+      const fleetRules = await this.knowledge.fleetRules().catch(() => null);
       const book = playbookForKind(inc.kind);
       const playbook = book ? renderPlaybook(book) : null;
       let metricText: string | null = null;
@@ -233,7 +236,7 @@ export class IncidentAnalysisService implements OnModuleInit {
         const res = await this.llm.run({
           apiKey: cfg.apiKey,
           model: cfg.model,
-          system: analysisSystem(cfg.level, playbook),
+          system: analysisSystem(cfg.level, playbook, fleetRules),
           messages,
           tools: toolsFor(ANALYSIS_TOOLS, cfg.permissions),
         });

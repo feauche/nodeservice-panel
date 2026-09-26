@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+import {
+  serverDriftItemSchema,
+  serverInventorySchema,
+  serverProfilePatchSchema,
+  serverProfileSchema,
+} from './server-profile.js';
+
 /**
  * Контракт серверов (этап 4): инвентарь + добавление по SSH.
  *
@@ -146,6 +153,12 @@ export const serverSchema = z.object({
   /** Хостер из справочника провайдеров; null — не указан. */
   providerId: z.uuid().nullable(),
   nodeWatch: nodeWatchSchema,
+  /** Роль, важность, окно обслуживания и то, что должно работать на сервере (знание владельца). */
+  profile: serverProfileSchema,
+  /** Что реально запущено и слушает порты по последнему снимку по SSH; null — снимка ещё нет. */
+  inventory: serverInventorySchema.nullable(),
+  /** Расхождения ожидаемого профилем и фактического по снимку. */
+  drift: z.array(serverDriftItemSchema),
   /** Последнее, что видел зонд контейнера; null — ещё не проверяли или слежение выключено. */
   node: nodeStateSchema.nullable(),
   facts: serverFactsSchema,
@@ -214,6 +227,8 @@ export const updateServerRequestSchema = z.object({
   notes: z.string().trim().max(SERVER_NOTES_MAX).nullable().optional(),
   providerId: z.uuid().nullable().optional(),
   nodeWatch: nodeWatchSchema.optional(),
+  /** Профиль сервера: поля меняются по отдельности, списки заменяются целиком. */
+  profile: serverProfilePatchSchema.optional(),
   /** Новые доступы SSH: панель проверит их реальным подключением (пароль, как и при добавлении, не сохраняется). */
   auth: sshAuthSchema.optional(),
 });

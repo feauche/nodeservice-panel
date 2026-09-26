@@ -2,11 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   type CreateServerRequest,
+  computeDrift,
   ENROLLMENT_TOKEN_TTL_HOURS,
   type EnrollmentTokenResponse,
+  normalizeProfilePatch,
   SERVER_NAME_MAX,
   type Server,
   type ServerFacts,
+  type ServerInventory,
+  type ServerProfile,
   type SshAuth,
   type TestConnectionRequest,
   type TestConnectionResponse,
@@ -42,6 +46,15 @@ export class ServersService {
   ) {}
 
   toDto(row: ServerRow): Server {
+    const profile: ServerProfile = {
+      role: (row.role as ServerProfile['role']) ?? null,
+      importance: (row.importance as ServerProfile['importance']) ?? 'normal',
+      maintenanceWindow: row.maintenanceWindow,
+      expectedContainers: row.expectedContainers ?? [],
+      expectedPorts: row.expectedPorts ?? [],
+    };
+    const inventory =
+      row.inventory && row.inventoryAt ? { at: row.inventoryAt.toISOString(), ...row.inventory } : null;
     return {
       id: row.id,
       name: row.name,
@@ -53,6 +66,9 @@ export class ServersService {
       notes: row.notes,
       providerId: row.providerId ?? null,
       nodeWatch: row.nodeWatch as Server['nodeWatch'],
+      profile,
+      inventory,
+      drift: computeDrift(profile, inventory),
       node: row.nodeWatch === 'off' ? null : ((row.nodeState as Server['node']) ?? null),
       facts: {
         hostname: row.hostname,
@@ -219,6 +235,13 @@ export class ServersService {
   }
 
   /** Дубль: копия записи (адрес, доступы, факты), имя получает номер -2/-3/… Один клик — новый сервер. */
+  /** Записать снимок фактического состояния сервера (кто запущен, какие порты слушаются). */
+  async saveInventory(id: string, inventory: Omit<ServerInventory, 'at'>): Promise<Server> {
+    const updated = await this.repo.update(id, { inventory, inventoryAt: new Date() });
+    if (!updated) throw serverProblems.notFound();
+    return this.toDto(updated);
+  }
+
   async duplicate(id: string): Promise<Server> {
     const row = await this.repo.findById(id);
     if (!row) throw serverProblems.notFound();
@@ -246,6 +269,11 @@ export class ServersService {
       memoryMb: row.memoryMb,
       hostKeyFp: row.hostKeyFp,
       nodeWatch: row.nodeWatch,
+      role: row.role,
+      importance: row.importance,
+      maintenanceWindow: row.maintenanceWindow,
+      expectedContainers: row.expectedContainers ?? [],
+      expectedPorts: row.expectedPorts ?? [],
       // Агент привязан к конкретной записи — копия начинает без него.
       agentStatus: 'not_installed',
       sshOk: row.sshOk,
@@ -332,14 +360,23 @@ export class ServersService {
         lastSshOkAt: now,
       };
     }
-    const before = {
-      name: row.name,
-      host: row.host,
-      port: row.port,
-      sshUser: row.sshUser,
-      tags: row.tags,
-      notes: row.notes,
-    };
+    const profilePatch = patch.profile ? normalizeProfilePatch(patch.profile) : undefined;
+    const audited = (r: ServerRow) => ({
+      name: r.name,
+      host: r.host,
+      port: r.port,
+      sshUser: r.sshUser,
+      tags: r.tags,
+      notes: r.notes,
+      providerId: r.providerId,
+      nodeWatch: r.nodeWatch,
+      role: r.role,
+      importance: r.importance,
+      maintenanceWindow: r.maintenanceWindow,
+      expectedContainers: r.expectedContainers,
+      expectedPorts: r.expectedPorts,
+    });
+    const before = audited(row);
     const updated = await this.repo.update(id, {
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.host !== undefined ? { host: patch.host } : {}),
@@ -349,20 +386,22 @@ export class ServersService {
       ...(patch.notes !== undefined ? { notes: patch.notes?.trim() ? patch.notes.trim() : null } : {}),
       ...(patch.providerId !== undefined ? { providerId: await this.resolveProvider(patch.providerId) } : {}),
       ...(patch.nodeWatch !== undefined ? { nodeWatch: patch.nodeWatch } : {}),
+      ...(profilePatch?.role !== undefined ? { role: profilePatch.role } : {}),
+      ...(profilePatch?.importance !== undefined ? { importance: profilePatch.importance } : {}),
+      ...(profilePatch?.maintenanceWindow !== undefined
+        ? { maintenanceWindow: profilePatch.maintenanceWindow }
+        : {}),
+      ...(profilePatch?.expectedContainers !== undefined
+        ? { expectedContainers: profilePatch.expectedContainers }
+        : {}),
+      ...(profilePatch?.expectedPorts !== undefined ? { expectedPorts: profilePatch.expectedPorts } : {}),
       ...(endpointChanged && !patch.auth
         ? { hostKeyFp: null, sshOk: null, lastSshCheckAt: null, lastSshOkAt: null }
         : {}),
       ...authUpdate,
     });
     if (!updated) throw serverProblems.notFound();
-    const after = {
-      name: updated.name,
-      host: updated.host,
-      port: updated.port,
-      sshUser: updated.sshUser,
-      tags: updated.tags,
-      notes: updated.notes,
-    };
+    const after = audited(updated);
     await this.audit.record({
       action: 'server.updated',
       target: { type: 'server', id, display: updated.name },

@@ -77,7 +77,9 @@ export class KbReviewService {
     if (!cfg) return { reviewed: 0, changed: 0, skipped: 'Джарвис выключен' };
     if (!cfg.permissions.kbReview) return { reviewed: 0, changed: 0, skipped: 'нет разрешения kbReview' };
 
-    const docs = (await this.repo.list(undefined, false)).filter((d) => !SKIP_TITLES.has(d.title));
+    const docs = (await this.repo.list(undefined, false)).filter(
+      (d) => !d.pinned && !SKIP_TITLES.has(d.title),
+    );
     let changed = 0;
     const changedTitles: string[] = [];
     for (const doc of docs) {

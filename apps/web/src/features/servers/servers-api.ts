@@ -35,6 +35,7 @@ export const serversApi = {
   duplicate: (id: string): Promise<Server> => api.post(`/servers/${id}/duplicate`, {}, serverSchema),
   trustHostKey: (id: string, fingerprint: string): Promise<Server> =>
     api.post(`/servers/${id}/trust-host-key`, { fingerprint }, serverSchema),
+  refreshInventory: (id: string): Promise<Server> => api.post(`/servers/${id}/inventory`, {}, serverSchema),
   installAgent: (id: string): Promise<Server> => api.post(`/servers/${id}/agent/install`, {}, serverSchema),
   enrollmentToken: (id: string): Promise<EnrollmentTokenResponse> =>
     api.post(`/servers/${id}/enrollment-token`, {}, enrollmentTokenResponseSchema),
@@ -98,6 +99,15 @@ export function useUpdateServer() {
   const apply = useApplyServer();
   return useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: UpdateServerRequest }) => serversApi.update(id, patch),
+    onSuccess: apply,
+  });
+}
+
+/** Снять состояние сервера по SSH (контейнеры и порты) и сравнить с профилем. */
+export function useRefreshInventory() {
+  const apply = useApplyServer();
+  return useMutation({
+    mutationFn: (id: string) => serversApi.refreshInventory(id),
     onSuccess: apply,
   });
 }

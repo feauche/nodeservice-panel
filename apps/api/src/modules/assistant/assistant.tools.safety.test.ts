@@ -445,3 +445,21 @@ describe('get_panel_status', () => {
     expect(seenFilter).toMatchObject({ result: ['failed', 'denied'], pageSize: 25 });
   });
 });
+
+describe('служебные статьи', () => {
+  it('статью с названием «Правила парка» или «Пояснения» Джарвис не создаёт', async () => {
+    let saved = 0;
+    const d = {
+      ...deps(),
+      saveArticle: async () => {
+        saved += 1;
+        return { id: 'a', title: 'x' };
+      },
+    } as unknown as ToolDeps;
+    for (const title of ['Правила парка', ' правила ПАРКА ', 'Пояснения']) {
+      const r = await runTool('save_kb_article', { title, content: '# Текст\n\n1. Шаг' }, d);
+      expect(r.content, title).toContain('служебная статья');
+    }
+    expect(saved).toBe(0);
+  });
+});

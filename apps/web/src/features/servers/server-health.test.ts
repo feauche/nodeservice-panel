@@ -1,4 +1,9 @@
-import { EMPTY_FACTS, type OverviewServerMetrics, type Server } from '@nodeservice/shared';
+import {
+  DEFAULT_SERVER_PROFILE,
+  EMPTY_FACTS,
+  type OverviewServerMetrics,
+  type Server,
+} from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
 
 import { serverHealth } from './server-health';
@@ -14,6 +19,9 @@ const base: Server = {
   notes: null,
   providerId: null,
   nodeWatch: 'auto',
+  profile: DEFAULT_SERVER_PROFILE,
+  inventory: null,
+  drift: [],
   node: null,
   facts: EMPTY_FACTS,
   hostKeyFingerprint: null,

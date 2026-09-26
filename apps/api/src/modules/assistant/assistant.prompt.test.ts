@@ -65,4 +65,20 @@ describe('системный промпт Джарвиса', () => {
     expect(buildSystem('intermediate', P({ serviceLogs: true }))).toContain('inspect_logs (');
     expect(buildSystem('intermediate', P())).toContain('get_panel_status');
   });
+  it('правила парка попадают в инструкцию только когда владелец их написал', () => {
+    expect(buildSystem('intermediate', P())).not.toContain('ПРАВИЛА ПАРКА (их написал');
+    expect(buildSystem('intermediate', P(), { fleetRules: null })).not.toContain('ПРАВИЛА ПАРКА (их написал');
+    const s = buildSystem('intermediate', P(), { fleetRules: '## Нормы\nCPU до 60 %.' });
+    expect(s).toContain('ПРАВИЛА ПАРКА (их написал владелец');
+    expect(s).toContain('CPU до 60 %.');
+    expect(s.indexOf('ПРАВИЛА ПАРКА (их написал')).toBeLessThan(s.indexOf('КАРТА ПАНЕЛИ'));
+  });
+  it('про профиль сервера: критичный, снимок перепроверяют, опрос владельца, статью не меняют', () => {
+    const s = buildSystem('intermediate', P());
+    expect(s).toContain('КРИТИЧНОГО сервера');
+    expect(s).toContain('перепроверь свежим inspect_containers');
+    expect(s).toContain('profileFilled=false');
+    expect(s).toContain('задавай короткие вопросы по одному блоку');
+    expect(s).toContain('Саму статью ты не меняешь');
+  });
 });
