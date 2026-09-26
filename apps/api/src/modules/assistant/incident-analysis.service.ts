@@ -18,6 +18,7 @@ import { AssistantSettingsStore } from './assistant-settings.store.js';
 import {
   ANALYSIS_TOOLS,
   ASK_TOOLS,
+  AUTO_ANALYSIS_PER_HOUR,
   analysisSystem,
   askSystem,
   chartName,
@@ -84,6 +85,17 @@ export class IncidentAnalysisService implements OnModuleInit {
 
   /** Когда запускали разборы сами: почасовой лимит считаем по этим меткам. */
   private readonly autoStarts: number[] = [];
+  private lastAutoRunAt: number | null = null;
+
+  /** Состояние автоматического разбора для настроек и Джарвиса; данные с момента запуска панели. */
+  autoStatus(): { lastRunAt: string | null; startedLastHour: number; limitPerHour: number } {
+    const nowMs = Date.now();
+    return {
+      lastRunAt: this.lastAutoRunAt ? new Date(this.lastAutoRunAt).toISOString() : null,
+      startedLastHour: this.autoStarts.filter((t) => nowMs - t <= 3_600_000).length,
+      limitPerHour: AUTO_ANALYSIS_PER_HOUR,
+    };
+  }
 
   /** Раз в минуту: при включённом «Автоматическом разборе» берёт свежие открытые инциденты без разбора. */
   @Interval(60_000)
@@ -115,6 +127,7 @@ export class IncidentAnalysisService implements OnModuleInit {
       try {
         await this.start(id, 'auto');
         this.autoStarts.push(Date.now());
+        this.lastAutoRunAt = Date.now();
         started.push(id);
       } catch (err) {
         this.log.warn(

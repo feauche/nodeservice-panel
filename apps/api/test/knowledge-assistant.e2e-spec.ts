@@ -97,6 +97,28 @@ class FakeLlm implements LlmProvider {
     if (input.system.includes('редактор базы знаний')) {
       return { stopReason: 'end', blocks: [{ type: 'text', text: `${userText}\n\nПроверено ревизией.` }] };
     }
+    // Поиск по прошлым беседам и Журналу: зовём инструмент и отдаём его ответ в тексте.
+    if (userText.includes('НАЙДИ-В-БЕСЕДАХ') || userText.includes('НАЙДИ-В-ЖУРНАЛЕ')) {
+      if (!done) {
+        const journal = userText.includes('НАЙДИ-В-ЖУРНАЛЕ');
+        return {
+          stopReason: 'tool_use',
+          blocks: [
+            {
+              type: 'tool_use',
+              id: 's1',
+              name: journal ? 'search_audit' : 'search_conversations',
+              input: journal ? { category: 'assistant', limit: 25 } : { query: 'уникальныймаркерпамяти' },
+            },
+          ],
+        };
+      }
+      const seen = input.messages
+        .flatMap((m) => m.content)
+        .map((b) => (b.type === 'tool_result' ? String(b.content) : ''))
+        .join(' ');
+      return { stopReason: 'end', blocks: [{ type: 'text', text: `ИНСТРУМЕНТ: ${seen}` }] };
+    }
     if (userText.includes('СБОЙ-ПРОВАЙДЕРА')) throw new Error('zveno.ai ответил 400: неверный запрос');
     if (userText.includes('СБОЙ-ТАЙМАУТ'))
       throw Object.assign(new Error('signal timed out'), { name: 'TimeoutError' });
@@ -622,6 +644,50 @@ describe('knowledge + assistant e2e', () => {
       .send({ message: 'СБОЙ-ТАЙМАУТ' })
       .expect(424);
     expect(slow.body.detail).toContain('не ответил за 90 секунд');
+  });
+
+  it('память: search_conversations находит прошлую беседу и не показывает текущую', async () => {
+    // Прошлая беседа с редким словом.
+    await agent
+      .post('/api/assistant/chat')
+      .set(CSRF_HEADER, csrf)
+      .send({ message: 'Запомни уникальныймаркерпамяти про сервер ru' })
+      .expect(200);
+    // Новая беседа ищет это слово: текущая (сама формулировка запроса) в результат не попадает.
+    const res = assistantChatResponseSchema.parse(
+      (
+        await agent
+          .post('/api/assistant/chat')
+          .set(CSRF_HEADER, csrf)
+          .send({ message: 'Что я говорил про уникальныймаркерпамяти? НАЙДИ-В-БЕСЕДАХ' })
+          .expect(200)
+      ).body,
+    );
+    expect(res.message.content).toContain('ИНСТРУМЕНТ:');
+    expect(res.message.content).toContain('Запомни уникальныймаркерпамяти про сервер ru');
+    expect(res.message.content).not.toContain('НАЙДИ-В-БЕСЕДАХ');
+  });
+
+  it('Журнал: search_audit отдаёт кто, результат и вопрос с ответом у запросов к Джарвису', async () => {
+    const res = assistantChatResponseSchema.parse(
+      (
+        await agent
+          .post('/api/assistant/chat')
+          .set(CSRF_HEADER, csrf)
+          .send({ message: 'Покажи запросы, НАЙДИ-В-ЖУРНАЛЕ' })
+          .expect(200)
+      ).body,
+    );
+    const raw = res.message.content.replace(/^ИНСТРУМЕНТ: /, '');
+    const body = JSON.parse(raw) as {
+      total: number;
+      items: Array<{ who: string; result: string; action: string; details?: string }>;
+    };
+    expect(body.total).toBeGreaterThan(0);
+    const chat = body.items.find((i) => i.action === 'assistant.chat' && i.details?.includes('question:'));
+    expect(chat, 'запись «Запрос к Джарвису» с вопросом').toBeDefined();
+    expect(chat?.who).toBe('admin');
+    expect(chat?.result).toBe('ok');
   });
 
   it('ключ можно стереть — Джарвис снова выключен', async () => {

@@ -63,6 +63,7 @@ describe('набор инструментов Джарвиса', () => {
         'propose_action',
         'save_kb_article',
         'search_audit',
+        'search_conversations',
         'search_kb',
       ].sort(),
     );
@@ -241,5 +242,140 @@ describe('глоссарий и статьи', () => {
       kbDeps(),
     );
     expect(ok.content).toContain('Статья сохранена');
+  });
+});
+
+describe('search_audit и search_conversations', () => {
+  const auditEntry = {
+    id: 'e1',
+    occurredAt: '2026-09-26T10:00:00.000Z',
+    actorType: 'admin',
+    actorDisplay: 'lumaxadmnode',
+    action: 'assistant.chat',
+    targetDisplay: 'Беседа',
+    result: 'ok',
+    severity: 'info',
+    source: 'manual',
+    changes: null,
+    metadata: { question: 'Что с ru?', answer: 'Нода остановлена' },
+  };
+  const withAudit = (seen: { filter?: Record<string, unknown> } = {}) =>
+    ({
+      ...deps(),
+      audit: {
+        list: async (f: Record<string, unknown>) => {
+          seen.filter = f;
+          return { items: [auditEntry], total: 40, page: 1, pageSize: 5, totalPages: 8 };
+        },
+      },
+    }) as unknown as ToolDeps;
+
+  it('журнал: кто, результат, выдержка из деталей и общее число; фильтры доходят до запроса', async () => {
+    const seen: { filter?: Record<string, unknown> } = {};
+    const r = await runTool(
+      'search_audit',
+      { query: 'ru', sinceMinutes: 60, category: 'assistant', failuresOnly: true, limit: 200 },
+      withAudit(seen),
+    );
+    const body = JSON.parse(r.content);
+    expect(body.total).toBe(40);
+    expect(body.shown).toBe(1);
+    expect(body.items[0]).toMatchObject({ who: 'lumaxadmnode', result: 'ok', target: 'Беседа' });
+    expect(body.items[0].details).toContain('question: Что с ru?');
+    expect(seen.filter).toMatchObject({
+      q: 'ru',
+      category: ['assistant'],
+      result: ['failed', 'denied'],
+      pageSize: 25,
+    });
+    expect(seen.filter?.from).toBeTruthy();
+  });
+  it('журнал: неизвестный раздел игнорируется, размер страницы не меньше пяти', async () => {
+    const seen: { filter?: Record<string, unknown> } = {};
+    await runTool('search_audit', { category: 'что-то', limit: 1 }, withAudit(seen));
+    expect(seen.filter).not.toHaveProperty('category');
+    expect(seen.filter?.pageSize).toBe(5);
+  });
+
+  const withPast = (rows: unknown[], seen: { exclude?: string } = {}) =>
+    ({
+      ...deps(),
+      conversationId: 'cur',
+      conversations: {
+        recentMessages: async (_n: number, exclude?: string) => {
+          seen.exclude = exclude;
+          return rows;
+        },
+      },
+    }) as unknown as ToolDeps;
+
+  it('прошлые беседы: находит, исключает текущую, при пустом результате не даёт уверенно отрицать', async () => {
+    const seen: { exclude?: string } = {};
+    const rows = [
+      {
+        conversationId: 'c1',
+        title: 'Про ru',
+        role: 'user',
+        content: 'Почему упал сервер ru?',
+        createdAt: new Date('2026-09-25T10:00:00Z'),
+      },
+    ];
+    const hit = await runTool('search_conversations', { query: 'упал ru' }, withPast(rows, seen));
+    expect(seen.exclude).toBe('cur');
+    expect(JSON.parse(hit.content).items[0]).toMatchObject({ chat: 'Про ru', who: 'администратор' });
+    const none = await runTool('search_conversations', { query: 'nginx' }, withPast(rows));
+    expect(none.content).toContain('ничего не найдено');
+    expect(none.content).toContain('Не утверждайте');
+    const empty = await runTool('search_conversations', { query: 'а' }, withPast(rows));
+    expect(empty.content).toContain('Пустой запрос');
+  });
+});
+
+describe('search_kb: свежесть и происхождение', () => {
+  it('у статьи есть дата, возраст в днях, происхождение и теги', async () => {
+    const old = new Date(Date.now() - 400 * 86_400_000);
+    const d = {
+      ...deps(),
+      kb: {
+        searchForContext: async () => [
+          {
+            id: 'k1',
+            title: 'Лимит conntrack',
+            content: 'Текст',
+            updatedAt: old,
+            source: 'ai',
+            tags: ['conntrack'],
+          },
+          { id: 'k2', title: 'Reality', content: 'Текст', updatedAt: new Date(), source: 'self', tags: [] },
+        ],
+      },
+    } as unknown as ToolDeps;
+    const r = await runTool('search_kb', { query: 'conntrack' }, d);
+    const items = JSON.parse(r.content);
+    expect(items[0]).toMatchObject({ id: 'k1', origin: 'Джарвис', tags: ['conntrack'] });
+    expect(items[0].ageDays).toBeGreaterThanOrEqual(399);
+    expect(items[0].updated).toBe(old.toISOString().slice(0, 10));
+    expect(items[1]).toMatchObject({ origin: 'Вручную', ageDays: 0 });
+    expect(r.citations.map((c) => c.id)).toEqual(['k1', 'k2']);
+  });
+});
+
+describe('get_settings: состояние автоматического разбора', () => {
+  it('показывает последний запуск и счётчик за час, если панель их отдаёт', async () => {
+    const d = {
+      ...deps(),
+      permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT, autoAnalysis: true },
+      autochecks: { get: async () => ({}) },
+      incidentSettings: { get: async () => ({}) },
+      autoAnalysis: () => ({ lastRunAt: '2026-09-26T10:00:00.000Z', startedLastHour: 2, limitPerHour: 5 }),
+    } as unknown as ToolDeps;
+    const r = JSON.parse((await runTool('get_settings', {}, d)).content);
+    expect(r.assistant.autoAnalysisStatus).toMatchObject({
+      lastRunAt: '2026-09-26T10:00:00.000Z',
+      startedLastHour: 2,
+      limitPerHour: 5,
+    });
+    expect(r.assistant.autoAnalysisStatus.note).toContain('с момента запуска панели');
+    expect(r.assistant.permissions.autoAnalysis).toBe(true);
   });
 });

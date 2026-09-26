@@ -489,7 +489,10 @@ describe('проверка доступности, процессы и пред�
       expect(await analysis.autoRun()).toEqual([]);
       expect(fresh).not.toBe('');
       const old = await openIncident(5 * 60_000);
+      expect(analysis.autoStatus().startedLastHour).toBe(0);
       expect(await analysis.autoRun()).toEqual([old]);
+      expect(analysis.autoStatus()).toMatchObject({ startedLastHour: 1, limitPerHour: 5 });
+      expect(analysis.autoStatus().lastRunAt).not.toBeNull();
       const done = await waitDone(old);
       expect(done.analysis?.status).toBe('done');
       expect(await analysis.autoRun()).toEqual([]);

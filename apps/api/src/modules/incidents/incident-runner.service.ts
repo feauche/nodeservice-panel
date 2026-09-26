@@ -77,6 +77,14 @@ const iso = () => new Date().toISOString();
 const policyFor = (cfg: { policy: Record<string, string> }, kind: string): AutofixPolicy =>
   (cfg.policy[kind] as AutofixPolicy | undefined) ?? DEFAULT_AUTOFIX_POLICY;
 /** Автопочинка включена и не на паузе. */
+/** Почему первый шаг предлагается, а не выполняется: «Само» при выключенной автопочинке не срабатывает, и это не выбор «Спросить». */
+export const proposalReason = (level: string, policy: AutofixPolicy): string =>
+  level !== 'T1'
+    ? 'первый шаг цепочки'
+    : policy === 'auto'
+      ? 'для этого сигнала выбрано «Само», но автопочинка выключена или на паузе'
+      : 'для этого сигнала выбрано «Спросить»';
+
 const autofixActive = (cfg: { autofixEnabled: boolean; pausedUntil: string | null }): boolean =>
   cfg.autofixEnabled && !(cfg.pausedUntil && new Date(cfg.pausedUntil).getTime() > Date.now());
 
@@ -341,11 +349,7 @@ export class IncidentRunnerService implements OnModuleInit {
     if (policy === 'watch') return 'none';
     const autoAllowed = autofixActive(cfg) && policy === 'auto' && action.level === 'T1';
     if (!autoAllowed) {
-      await this.propose(
-        row,
-        first,
-        action.level === 'T1' ? 'для этого сигнала выбрано «Спросить»' : 'первый шаг цепочки',
-      );
+      await this.propose(row, first, proposalReason(action.level, policy));
       return 'proposed';
     }
     if (Date.now() - row.openedAt.getTime() < T.graceMs) return 'waiting';

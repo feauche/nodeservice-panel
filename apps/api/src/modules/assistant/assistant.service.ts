@@ -29,6 +29,7 @@ import { ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
 import { FleetProbeService } from './fleet-probe.service.js';
 import { extractDefinitions, glossaryImportReply, isPureGlossary } from './glossary-import.js';
+import { IncidentAnalysisService } from './incident-analysis.service.js';
 import {
   describeLlmError,
   LLM_PROVIDER,
@@ -78,6 +79,7 @@ export class AssistantService {
     private readonly audit: AuditService,
     private readonly autochecks: AutochecksStore,
     private readonly incidentSettings: IncidentsSettingsStore,
+    private readonly analysis: IncidentAnalysisService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
   ) {}
 
@@ -206,9 +208,12 @@ export class AssistantService {
       probe: this.probe,
       kb: this.kb,
       audit: this.auditRepo,
+      conversations: this.repo,
+      conversationId: conv.id,
       autochecks: this.autochecks,
       incidentSettings: this.incidentSettings,
       assistant: { level },
+      autoAnalysis: () => this.analysis.autoStatus(),
       permissions,
       saveArticle: async (a) => {
         const doc = await this.knowledge.create(

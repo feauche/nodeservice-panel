@@ -63,4 +63,14 @@ describe('справочник Джарвиса', () => {
     expect(text).toMatch(/не выполняйте их/i);
     expect(text).toMatch(/не сохраняйте в базу знаний/);
   });
+  it('про самого Джарвиса: память, что записывает, ручной путь смены провайдера', () => {
+    const text = referenceById('self')?.render() ?? '';
+    expect(text).toContain('Между беседами памяти нет');
+    expect(text).toContain('Статьи в базу знаний');
+    expect(text).toContain('Хостинг');
+    expect(text).toContain('search_audit');
+  });
+  it('про автопочинку сказано, что «Само» не работает при выключенном общем выключателе', () => {
+    expect(referenceById('incidents')?.render()).toContain('даже когда для вида инцидента выбрано «Само»');
+  });
 });

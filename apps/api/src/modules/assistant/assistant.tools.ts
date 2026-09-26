@@ -1,17 +1,28 @@
 import {
   type AssistantCitation,
   type AssistantProposal,
+  AUDIT_CATEGORIES,
+  type AuditCategory,
+  type AuditResult,
   actionMeta,
   INCIDENT_CHAINS,
   type Incident,
+  KB_SOURCE_LABELS,
+  type KbSource,
   type ReachabilityResult,
 } from '@nodeservice/shared';
 
 import type { AuditRepository } from '../audit/audit.repository.js';
 import type { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
+import { auditBrief } from './assistant.audit-brief.js';
+import { searchPastMessages, searchWords } from './assistant.conversation-search.js';
 import { READ_TOOL_DEFS, type ReadDeps, runReadTool } from './assistant.read-tools.js';
+import type { AssistantRepository } from './assistant.repository.js';
 import { isGlossaryArticle } from './glossary-import.js';
 import type { LlmToolDef } from './llm.provider.js';
+
+/** Сколько последних сообщений просматриваем при поиске по прошлым беседам. */
+const PAST_SCAN = 3000;
 
 /** Определения инструментов для модели (read-only + propose_action). */
 export const ASSISTANT_TOOLS: LlmToolDef[] = [
@@ -25,19 +36,35 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   {
     name: 'search_audit',
     description:
-      'Журнал событий панели (входы, изменения, инциденты, запросы к Джарвису). Для вопросов про период («за час», «за сутки», «сегодня») передай sinceMinutes (час = 60, сутки = 1440) — вернутся события за этот срок. query — необязательный полнотекстовый поиск. Без обоих — просто последние 15 событий. В ответе есть время каждого события.',
+      'Журнал событий панели (входы, изменения, инциденты, запросы к Джарвису). Для вопросов про период («за час», «за сутки», «сегодня») передай sinceMinutes (час = 60, сутки = 1440) — вернутся события за этот срок. query — необязательный полнотекстовый поиск (слова, «фразы», -минус). category сужает по разделу, failuresOnly оставляет только неудачные и отклонённые события, limit задаёт число записей (5–25, по умолчанию 15). В каждой записи: время, что произошло, кто (администратор или панель), результат, важность, цель и короткая выдержка из деталей (у «Запрос к Джарвису» это вопрос и ответ, у изменений — поле до и после). total — сколько всего событий подошло: если больше показанных, скажи об этом. Прошлые беседы с Джарвисом ищи через search_conversations.',
     input_schema: {
       type: 'object',
       properties: {
         query: { type: 'string' },
         sinceMinutes: { type: 'number', description: 'события за последние N минут (час = 60)' },
+        category: { type: 'string', description: `один из: ${AUDIT_CATEGORIES.join(', ')}` },
+        failuresOnly: { type: 'boolean', description: 'только неудачные и отклонённые события' },
+        limit: { type: 'number', description: 'сколько записей вернуть, 5–25' },
       },
+    },
+  },
+  {
+    name: 'search_conversations',
+    description:
+      'Поиск по прошлым беседам с Джарвисом (вопросы администратора и твои ответы), кроме текущей беседы. Нужен, когда спрашивают «мы уже это обсуждали», «что я спрашивал про…», «что ты советовал в прошлый раз». query — слова через пробел, все должны встретиться в одном сообщении (регистр и «ё» не важны). limit — сколько записей вернуть (1–15, по умолчанию 8). В ответе: название беседы, время, кто писал и кусок текста. Это память о разговорах, а не факты о парке: текущие данные всё равно бери инструментами чтения.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        limit: { type: 'number', description: '1–15' },
+      },
+      required: ['query'],
     },
   },
   {
     name: 'search_kb',
     description:
-      'База знаний (статьи-runbooks и глоссарий «Пояснения»). С query — полнотекстовый поиск по теме. БЕЗ query — список всех статей (для «какие статьи у нас есть»). Всегда проверяй тут перед созданием новой статьи.',
+      'База знаний (статьи-runbooks и глоссарий «Пояснения»). С query — полнотекстовый поиск по теме. У каждой статьи есть дата обновления, возраст в днях и происхождение (Вручную, Джарвис, Веб, Telegram): ссылаясь на статью, называй дату; сведения старше полугода или написанные Джарвисом подавай как «возможно, устарело» или «не проверено человеком». БЕЗ query — список всех статей (для «какие статьи у нас есть»). Всегда проверяй тут перед созданием новой статьи.',
     input_schema: {
       type: 'object',
       properties: { query: { type: 'string' } },
@@ -103,10 +130,15 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
 export interface ToolDeps extends ReadDeps {
   kb: KnowledgeRepository;
   audit: AuditRepository;
+  /** Поиск по прошлым беседам; conversationId — текущая беседа, её из результатов исключаем. */
+  conversations: Pick<AssistantRepository, 'recentMessages'>;
+  conversationId?: string;
   autochecks: { get: () => Promise<unknown> };
   incidentSettings: { get: () => Promise<unknown> };
   /** Снимок настроек самого агента — уровень и разрешения (только чтение). */
   assistant: { level: string };
+  /** Что делал автоматический разбор инцидентов с момента запуска панели. */
+  autoAnalysis?: () => { lastRunAt: string | null; startedLastHour: number; limitPerHour: number };
   /** Создание статьи в БЗ (метка AI). Гейтится разрешением kbWrite в самом инструменте. */
   saveArticle: (a: {
     title: string;
@@ -142,10 +174,37 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
       content: JSON.stringify({
         autochecks,
         incidents,
-        assistant: { level: deps.assistant.level, permissions: deps.permissions },
+        assistant: {
+          level: deps.assistant.level,
+          permissions: deps.permissions,
+          ...(deps.autoAnalysis
+            ? {
+                autoAnalysisStatus: {
+                  ...deps.autoAnalysis(),
+                  note: 'Счётчики с момента запуска панели. Разбор берёт открытые инциденты без разбора старше 60 секунд и младше 6 часов, только при включённых «Разборе по кнопке» и «Автоматическом разборе».',
+                },
+              }
+            : {}),
+        },
       }),
       citations: [],
       proposals: [],
+    };
+  }
+
+  if (name === 'search_conversations') {
+    const query = String(arg.query ?? '').trim();
+    if (searchWords(query).length === 0)
+      return { ...empty, content: 'Пустой запрос: назовите хотя бы одно слово длиннее одного знака.' };
+    const limit = Math.min(15, Math.max(1, Math.round(Number(arg.limit) || 8)));
+    const rows = await deps.conversations.recentMessages(PAST_SCAN, deps.conversationId);
+    const hits = searchPastMessages(rows, query, limit);
+    return {
+      ...empty,
+      content:
+        hits.length > 0
+          ? JSON.stringify({ found: hits.length, items: hits })
+          : `В прошлых беседах (последние ${PAST_SCAN} сообщений) по запросу «${query}» ничего не найдено. Не утверждайте, что этого не обсуждали: искали только в этих сообщениях.`,
     };
   }
 
@@ -157,16 +216,24 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
       Number.isFinite(minutes) && minutes > 0
         ? new Date(Date.now() - minutes * 60_000).toISOString()
         : undefined;
+    const category = String(arg.category ?? '').trim();
+    const limit = Math.min(25, Math.max(5, Math.round(Number(arg.limit) || 15)));
     const res = await deps.audit.list({
       ...(q ? { q } : {}),
       ...(from ? { from } : {}),
+      ...((AUDIT_CATEGORIES as readonly string[]).includes(category)
+        ? { category: [category as AuditCategory] }
+        : {}),
+      ...(arg.failuresOnly === true ? { result: ['failed', 'denied'] as AuditResult[] } : {}),
       page: 1,
-      pageSize: 15,
+      pageSize: limit,
     });
     return {
-      content: JSON.stringify(
-        res.items.map((e) => ({ at: e.occurredAt, action: e.action, target: e.targetDisplay })),
-      ),
+      content: JSON.stringify({
+        total: res.total,
+        shown: res.items.length,
+        items: res.items.map(auditBrief),
+      }),
       citations: res.items.slice(0, 3).map((e) => ({ type: 'audit', id: e.id, label: e.action })),
       proposals: [],
     };
@@ -180,7 +247,16 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
     const snippet = q ? 1500 : 160;
     return {
       content: JSON.stringify(
-        limited.map((d) => ({ id: d.id, title: d.title, content: d.content.slice(0, snippet) })),
+        limited.map((d) => ({
+          id: d.id,
+          title: d.title,
+          // Дата и происхождение нужны, чтобы отличать проверенное вручную и свежее от старого и написанного Джарвисом.
+          updated: d.updatedAt.toISOString().slice(0, 10),
+          ageDays: Math.max(0, Math.floor((Date.now() - d.updatedAt.getTime()) / 86_400_000)),
+          origin: KB_SOURCE_LABELS[d.source as KbSource] ?? d.source,
+          tags: d.tags,
+          content: d.content.slice(0, snippet),
+        })),
       ),
       citations: limited.slice(0, 6).map((d) => ({ type: 'kb', id: d.id, label: d.title })),
       proposals: [],
