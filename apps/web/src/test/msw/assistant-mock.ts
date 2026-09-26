@@ -72,7 +72,17 @@ function aProblem(status: number, detail: string) {
   );
 }
 
-type ChangeKind = 'provider' | 'tags' | 'profile' | 'notes' | 'rename' | 'close' | 'pause' | 'expired';
+type ChangeKind =
+  | 'provider'
+  | 'tags'
+  | 'profile'
+  | 'notes'
+  | 'rename'
+  | 'close'
+  | 'pause'
+  | 'cleanup'
+  | 'policy'
+  | 'expired';
 
 /** Готовые изменения для демонстрации: те же тексты, что строит сервер (превью «было → станет»). */
 function makeChange(kind: ChangeKind): AssistantChangeProposal {
@@ -82,6 +92,7 @@ function makeChange(kind: ChangeKind): AssistantChangeProposal {
   const base = {
     id: uid(),
     conversationId: null,
+    live: false,
     status: 'proposed' as const,
     note: null,
     decidedAt: null,
@@ -188,6 +199,34 @@ function makeChange(kind: ChangeKind): AssistantChangeProposal {
       consequence: 'Пока пауза, панель сама ничего не чинит; инциденты по-прежнему заводятся и видны.',
       reversible: true,
     },
+    cleanup: {
+      operation: 'maintenance.run',
+      title: 'Очистить диск',
+      level: 'T2',
+      target: serverTarget,
+      reason: 'Диск заполнен на 82 %, по проверке есть что убрать.',
+      rows: [
+        {
+          label: 'Диск',
+          before: 'Занято 82\u00A0%',
+          after: 'Уберём ненужные пакеты, старые ядра, кеш apt, журнал сожмём до 200 МБ',
+        },
+      ],
+      consequence:
+        'Данные и настройки не трогаем. Старые ядра удаляются, поэтому очистку кнопкой не отменить.',
+      reversible: false,
+    },
+    policy: {
+      operation: 'autofix.policy',
+      title: 'Изменить режим автопочинки',
+      level: 'T2',
+      target: { type: 'settings', id: 'incidents', label: 'Автопочинка: Диск заполняется' },
+      reason: 'Очистка диска помогала в трёх случаях из трёх.',
+      rows: [{ label: 'Режим для «Диск заполняется»', before: 'Спросить', after: 'Само' }],
+      consequence:
+        'Панель сама выполнит безопасные шаги (T1) при этом виде инцидента, без вашего нажатия. Шаги с подтверждением (T2) по-прежнему только по вашему решению.',
+      reversible: true,
+    },
     expired: {
       operation: 'server.provider',
       title: 'Сменить провайдера',
@@ -249,6 +288,8 @@ const CHANGE_TRIGGERS: Array<[RegExp, ChangeKind[]]> = [
   [/переименуй/i, ['rename']],
   [/закр[ойы]\S* инцидент/i, ['close']],
   [/пауз/i, ['pause']],
+  [/очист/i, ['cleanup']],
+  [/режим автопочинки/i, ['policy']],
   [/просроч/i, ['expired']],
 ];
 
@@ -376,6 +417,14 @@ function decide(change: AssistantChange, action: 'apply' | 'reject' | 'revert') 
     });
   else if (outcome === 'failed')
     Object.assign(change, { status: 'failed', note: 'Название «ru-entry-9» уже занято другим сервером.' });
+  else if (change.operation === 'maintenance.run')
+    Object.assign(change, {
+      status: 'applied',
+      live: true,
+      decidedAt: at,
+      decidedBy: 'admin',
+      note: `Запущено: ${change.title}. Идёт: Подключение по SSH.`,
+    });
   else
     Object.assign(change, {
       status: 'applied',
@@ -401,7 +450,14 @@ export const assistantHandlers = [
   }),
   http.get('/api/assistant/changes/:id', ({ params }) => {
     const change = changeOr404(params.id);
-    return change ? HttpResponse.json(change) : aProblem(404, 'Изменение не найдено.');
+    if (!change) return aProblem(404, 'Изменение не найдено.');
+    // Фоновое обслуживание в моке заканчивается через несколько секунд после запуска.
+    if (change.live && change.decidedAt && Date.now() - Date.parse(change.decidedAt) > 6_000)
+      Object.assign(change, {
+        live: false,
+        note: `${change.title}: готово за 14 с. Подробности: вкладка «Обслуживание» сервера.`,
+      });
+    return HttpResponse.json(change);
   }),
   http.post('/api/assistant/changes/:id/:action', ({ params }) => {
     const change = changeOr404(params.id);

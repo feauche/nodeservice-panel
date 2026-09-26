@@ -20,7 +20,7 @@ export class ChangesRepository {
 
   async update(
     id: string,
-    patch: Partial<Pick<AssistantChangeRow, 'status' | 'note' | 'decidedBy' | 'decidedAt'>>,
+    patch: Partial<Pick<AssistantChangeRow, 'status' | 'note' | 'decidedBy' | 'decidedAt' | 'plan'>>,
   ): Promise<AssistantChangeRow | undefined> {
     const [row] = await this.db
       .update(assistantChanges)

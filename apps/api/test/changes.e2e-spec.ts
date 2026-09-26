@@ -396,6 +396,82 @@ describe('изменения по предложению Джарвиса e2e (J
       .expect(200);
   });
 
+  it('режим автопочинки по виду инцидента: «Само» это T2, применяется, виден в политике и откатывается', async () => {
+    const policyOf = async (kind: string) =>
+      incidentPolicyResponseSchema
+        .parse((await agent.get('/api/incidents/policy').expect(200)).body)
+        .items.find((i) => i.kind === kind)?.policy;
+    const c = await propose('autofix.policy', { kind: 'disk_high', policy: 'auto' });
+    expect(c).toMatchObject({ level: 'T2', reversible: true, target: { type: 'settings' } });
+    expect(await policyOf('disk_high')).toBe('ask');
+    await act(c.id, 'apply');
+    expect(await policyOf('disk_high')).toBe('auto');
+    await act(c.id, 'revert');
+    expect(await policyOf('disk_high')).toBe('ask');
+    const no = await chat([
+      {
+        name: 'propose_change',
+        input: { operation: 'autofix.policy', args: { kind: 'ssh_down', policy: 'auto' }, reason: 'x' },
+      },
+    ]);
+    expect(no.message.proposals).toEqual([]);
+    expect(no.message.content).toContain('нет безопасного шага');
+  });
+
+  it('обслуживание: проверка запускается по карточке, ход виден в карточке, остальные действия ждут данных проверки', async () => {
+    const waitIdle = async () => {
+      for (let i = 0; i < 100; i += 1) {
+        const st = (await agent.get(`/api/servers/${srv.id}/maintenance`).expect(200)).body;
+        if (!st.running) return st;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      throw new Error('обслуживание не завершилось');
+    };
+    // До первой проверки очистка и автообновления не предлагаются
+    const early = await chat([
+      {
+        name: 'propose_change',
+        input: { operation: 'maintenance.run', args: { server: 'ru-entry-1', kind: 'cleanup' }, reason: 'x' },
+      },
+    ]);
+    expect(early.message.proposals).toEqual([]);
+    expect(early.message.content).toContain('операцию «check»');
+
+    const c = await propose('maintenance.run', { server: 'ru-entry-1', kind: 'check' });
+    expect(c).toMatchObject({ level: 'T0', reversible: false, title: 'Проверить сервер' });
+    const applied = assistantChangeSchema.parse((await act(c.id, 'apply')).body);
+    expect(applied.status).toBe('applied');
+    expect(applied.note).toContain('Проверить сервер');
+    await waitIdle();
+    const after = assistantChangeSchema.parse(
+      (await agent.get(`/api/assistant/changes/${c.id}`).expect(200)).body,
+    );
+    expect(after).toMatchObject({ status: 'applied', live: false });
+    expect(after.note).toContain('готово');
+    expect(await auditActions()).toContain('server.maintenance.check');
+    await act(c.id, 'revert', 409);
+
+    // Теперь есть данные: диск занят на 16 %, чистить нечего; агент уже нужной версии или последняя неизвестна
+    const clean = await chat([
+      {
+        name: 'propose_change',
+        input: { operation: 'maintenance.run', args: { server: 'ru-entry-1', kind: 'cleanup' }, reason: 'x' },
+      },
+    ]);
+    expect(clean.message.proposals).toEqual([]);
+    expect(clean.message.content).toContain('чистить нечего');
+
+    const u = await propose('maintenance.run', { server: 'ru-entry-1', kind: 'unattended_enable' });
+    expect(u).toMatchObject({ level: 'T2', rows: [{ before: 'Выключены', after: 'Включены' }] });
+    await act(u.id, 'apply');
+    await waitIdle();
+    const uAfter = assistantChangeSchema.parse(
+      (await agent.get(`/api/assistant/changes/${u.id}`).expect(200)).body,
+    );
+    expect(uAfter.live).toBe(false);
+    expect(uAfter.note).toMatch(/готово|ошибка/);
+  });
+
   it('просроченное предложение не применяется', async () => {
     const c = await propose('server.notes', { server: 'ru-entry-1', notes: 'Устареет' });
     const db = app.get<Db>(DB);

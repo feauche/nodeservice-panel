@@ -18,6 +18,8 @@ export const CHANGE_OPERATIONS = [
   'server.profile',
   'incident.resolve',
   'autofix.pause',
+  'autofix.policy',
+  'maintenance.run',
 ] as const;
 export const changeOperationSchema = z.enum(CHANGE_OPERATIONS);
 export type ChangeOperation = z.infer<typeof changeOperationSchema>;
@@ -31,6 +33,8 @@ export const CHANGE_OPERATION_TITLES: Record<ChangeOperation, string> = {
   'server.profile': 'Изменить профиль сервера',
   'incident.resolve': 'Закрыть инцидент',
   'autofix.pause': 'Автопочинка: пауза',
+  'autofix.policy': 'Изменить режим автопочинки',
+  'maintenance.run': 'Запустить обслуживание',
 };
 
 /** proposed — ждёт решения; expired — не применили за сутки, состояние могло уйти вперёд. */
@@ -88,6 +92,8 @@ export const assistantChangeSchema = z.object({
   consequence: z.string().nullable(),
   /** Можно ли после применения вернуть прежнее значение кнопкой. */
   reversible: z.boolean(),
+  /** Работа после применения ещё идёт в фоне (обслуживание): в `note` свежий ход, карточку стоит перечитывать. */
+  live: z.boolean().default(false),
   status: changeStatusSchema,
   /** Пояснение к состоянию: итог проверки, причина отказа, что сейчас на сервере. */
   note: z.string().nullable(),

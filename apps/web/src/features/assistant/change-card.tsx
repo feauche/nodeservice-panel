@@ -136,7 +136,11 @@ function StatePill({ change, applying }: { change: AssistantChange; applying: bo
         </span>
       );
     case 'applied':
-      return <Pill tone="ok">{CHANGE_STATUS_LABELS.applied}</Pill>;
+      return change.live ? (
+        <Pill tone="muted">Выполняется</Pill>
+      ) : (
+        <Pill tone="ok">{CHANGE_STATUS_LABELS.applied}</Pill>
+      );
     case 'stale':
       return <Pill tone="warn">{CHANGE_STATUS_LABELS.stale}</Pill>;
     case 'failed':

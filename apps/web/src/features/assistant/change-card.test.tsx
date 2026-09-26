@@ -44,6 +44,7 @@ function seed(over: Partial<AssistantChange> = {}, outcome?: 'stale' | 'failed')
     status: 'proposed',
     note: null,
     conversationId: null,
+    live: false,
     createdAt: NOW(),
     decidedAt: null,
     decidedBy: null,
@@ -349,6 +350,33 @@ describe('ChangeCard (J5, A1)', () => {
     expect(await within(c).findByText('Применено')).toBeInTheDocument();
     expect(within(c).queryByRole('button', { name: 'Применить' })).not.toBeInTheDocument();
   });
+
+  it('обслуживание идёт в фоне: «Выполняется», ход обновляется сам, потом «Применено» без кнопки отмены', async () => {
+    const change = seed({
+      operation: 'maintenance.run',
+      title: 'Очистить диск',
+      level: 'T2',
+      reversible: false,
+      status: 'applied',
+      live: true,
+      decidedBy: 'admin',
+      decidedAt: NOW(),
+      note: 'Запущено: Очистить диск. Идёт: Подключение по SSH.',
+    });
+    open(change);
+    const c = await card();
+    expect(await within(c).findByText('Выполняется')).toBeInTheDocument();
+    expect(within(c).getByText(/Идёт: Подключение по SSH/)).toBeInTheDocument();
+    expect(within(c).queryByRole('button', { name: 'Отменить изменение' })).not.toBeInTheDocument();
+
+    mockAssistant.changes[change.id] = {
+      ...change,
+      live: false,
+      note: 'Очистить диск: готово за 14 с. Подробности: вкладка «Обслуживание» сервера.',
+    };
+    expect(await within(c).findByText('Применено', {}, { timeout: 6000 })).toBeInTheDocument();
+    expect(within(c).getByText(/готово за 14 с/)).toBeInTheDocument();
+  }, 10_000);
 
   it('не загрузилось: сообщение и кнопка «Повторить»', async () => {
     const change = seed();

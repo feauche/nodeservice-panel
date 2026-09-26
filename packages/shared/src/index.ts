@@ -3,7 +3,7 @@
  * Этап 1: auth API, настройки. Этап 2: Журнал (аудит). Этап 5 добавит протокол агента (v1).
  */
 /** Версия панели x.y.z. Поднимается каждой поставкой: `node scripts/bump-version.mjs patch` (фиксы) или `minor` (новые возможности). */
-export const SHARED_VERSION = '0.21.0';
+export const SHARED_VERSION = '0.22.0';
 export * from './agent-protocol.js';
 export * from './assistant.js';
 export * from './assistant-changes.js';

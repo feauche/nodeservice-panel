@@ -102,6 +102,9 @@ describe('справочник Джарвиса', () => {
       'autofix.pause',
     ])
       expect(text, op).toContain(op);
+    for (const op of ['autofix.policy', 'maintenance.run']) expect(text, op).toContain(op);
+    expect(text).toContain('apt upgrade');
+    expect(text).toContain('Очистка предлагается от 70 %');
     expect(text).toContain('Состояние изменилось');
     expect(text).toContain('Отменить изменение');
     expect(text).toContain('кнопкой не отменяется');

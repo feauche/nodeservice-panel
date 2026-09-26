@@ -15,6 +15,7 @@ import type { AssistantChangeRow } from '../../../infra/db/schema/index.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { CLS_USER } from '../../auth/cls-keys.js';
 import { IncidentsService } from '../../incidents/incidents.service.js';
+import { MaintenanceService } from '../../maintenance/maintenance.service.js';
 import { ProvidersService } from '../../providers/providers.service.js';
 import { ServersService } from '../../servers/servers.service.js';
 import { CHANGE_OPS, type ChangeCtx, type ChangePlan, type Json, same } from './change-ops.js';
@@ -49,12 +50,18 @@ export class ChangesService {
     private readonly servers: ServersService,
     private readonly providers: ProvidersService,
     private readonly incidents: IncidentsService,
+    private readonly maintenance: MaintenanceService,
     private readonly audit: AuditService,
     private readonly cls: ClsService,
   ) {}
 
   private ctx(): ChangeCtx {
-    return { servers: this.servers, providers: this.providers, incidents: this.incidents };
+    return {
+      servers: this.servers,
+      providers: this.providers,
+      incidents: this.incidents,
+      maintenance: this.maintenance,
+    };
   }
 
   private actor(): string {
@@ -75,12 +82,13 @@ export class ChangesService {
       id: row.id,
       operation: op,
       title: plan.title || CHANGE_OPERATION_TITLES[op],
-      level: CHANGE_OPS[op].level,
+      level: plan.level ?? CHANGE_OPS[op].level,
       target: plan.target,
       reason: row.reason,
       rows: plan.rows,
       consequence: plan.consequence,
       reversible: plan.reversible,
+      live: false,
       status: row.status as ChangeStatus,
       note: row.note,
       conversationId: row.conversationId,
@@ -89,6 +97,17 @@ export class ChangesService {
       decidedBy: row.decidedBy,
       expiresAt: row.expiresAt.toISOString(),
     };
+  }
+
+  /** Карточка для показа: у применённых фоновых операций (обслуживание) свежий ход и признак «ещё идёт». */
+  private async present(row: AssistantChangeRow): Promise<AssistantChange> {
+    const dto = this.toDto(row);
+    const op = CHANGE_OPS[row.operation as ChangeOperation];
+    if (row.status !== 'applied' || !op.progress) return dto;
+    const prog = await op
+      .progress(row.args as Record<string, Json>, this.planOf(row), this.ctx())
+      .catch(() => null);
+    return prog ? { ...dto, note: prog.note, live: prog.live } : dto;
   }
 
   /** Строка изменения; ожидавшее решения и просроченное помечается «Устарело». */
@@ -106,7 +125,7 @@ export class ChangesService {
   }
 
   async get(id: string): Promise<AssistantChange> {
-    return this.toDto(await this.load(id));
+    return this.present(await this.load(id));
   }
 
   /** Джарвис предлагает изменение: проверяем допустимость, считаем превью по живому состоянию, сохраняем. Ничего не меняем. */
@@ -134,7 +153,7 @@ export class ChangesService {
       const dup = (await this.repo.findPending(input.conversationId, input.operation)).find(
         (r) => same(r.args, built.args) && r.expiresAt.getTime() > Date.now(),
       );
-      if (dup) return { change: this.toDto(dup), reused: true };
+      if (dup) return { change: await this.present(dup), reused: true };
     }
     const row = await this.repo.insert({
       conversationId: input.conversationId,
@@ -145,7 +164,7 @@ export class ChangesService {
       status: 'proposed',
       expiresAt: new Date(Date.now() + CHANGE_TTL_HOURS * 3_600_000),
     });
-    return { change: this.toDto(row), reused: false };
+    return { change: await this.present(row), reused: false };
   }
 
   private async finish(
@@ -176,7 +195,7 @@ export class ChangesService {
           ...(note ? { note } : {}),
         },
       });
-    return this.toDto(updated);
+    return this.present(updated);
   }
 
   /** Применить изменение по нажатию человека: свежая проверка состояния, применение, проверка результата. */
@@ -188,8 +207,8 @@ export class ChangesService {
     this.busy.add(id);
     try {
       const row = await this.load(id);
-      if (row.status === 'applied') return this.toDto(row);
-      if (row.status === 'expired') return this.toDto(row);
+      if (row.status === 'applied') return this.present(row);
+      if (row.status === 'expired') return this.present(row);
       if (row.status !== 'proposed')
         throw problem(HttpStatus.CONFLICT, {
           detail: `Это предложение уже в состоянии «${CHANGE_STATUS_LABELS[row.status as ChangeStatus].toLowerCase()}»: применить его нельзя.`,
@@ -221,29 +240,38 @@ export class ChangesService {
         );
       }
 
+      let outcome: unknown;
       try {
-        await op.apply(args, plan, ctx);
+        outcome = await op.apply(args, plan, ctx);
       } catch (err) {
         this.log.warn(
           `Изменение ${id} (${row.operation}) не применено: ${err instanceof HttpException ? errorText(err) : err instanceof Error ? err.message : String(err)}`,
         );
         return this.finish(row, 'failed', errorText(err), { audit: 'failed' });
       }
+      const done: ChangePlan = outcome === undefined ? plan : { ...plan, outcome: outcome as Json };
+      const doneRow =
+        outcome === undefined
+          ? row
+          : ((await this.repo.update(row.id, { plan: done as unknown as Record<string, unknown> })) ?? row);
 
-      let after: Json;
+      let verified: boolean;
       try {
-        after = await op.read(args, ctx);
+        verified = op.verify ? await op.verify(args, done, ctx) : same(await op.read(args, ctx), plan.after);
       } catch {
-        after = null;
+        verified = false;
       }
-      if (!same(after, plan.after))
+      if (!verified)
         return this.finish(
-          row,
+          doneRow,
           'failed',
           'Изменение выполнено, но проверка не подтвердила результат. Проверьте значение вручную.',
           { audit: 'failed' },
         );
-      return this.finish(row, 'applied', `Проверено: ${rowsText(plan.rows, 'after')}.`, { audit: 'applied' });
+      const prog = op.progress ? await op.progress(args, done, ctx).catch(() => null) : null;
+      return this.finish(doneRow, 'applied', prog?.note ?? `Проверено: ${rowsText(plan.rows, 'after')}.`, {
+        audit: 'applied',
+      });
     } finally {
       this.busy.delete(id);
     }
@@ -255,7 +283,7 @@ export class ChangesService {
         detail: 'Изменение сейчас применяется: отклонить его уже нельзя.',
       });
     const row = await this.load(id);
-    if (row.status === 'rejected') return this.toDto(row);
+    if (row.status === 'rejected') return this.present(row);
     if (row.status !== 'proposed')
       throw problem(HttpStatus.CONFLICT, {
         detail: `Предложение уже в состоянии «${CHANGE_STATUS_LABELS[row.status as ChangeStatus].toLowerCase()}»: отклонить его нельзя.`,
@@ -272,7 +300,7 @@ export class ChangesService {
     this.busy.add(id);
     try {
       const row = await this.load(id);
-      if (row.status === 'reverted') return this.toDto(row);
+      if (row.status === 'reverted') return this.present(row);
       const plan = this.planOf(row);
       const op = CHANGE_OPS[row.operation as ChangeOperation];
       if (row.status !== 'applied' || !plan.reversible || !op.revert)

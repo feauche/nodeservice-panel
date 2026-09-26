@@ -122,6 +122,8 @@ export function useChange(id: string) {
     queryKey: assistantKeys.change(id),
     queryFn: ({ signal }) => changesApi.get(id, signal),
     staleTime: 5_000,
+    // Обслуживание идёт в фоне: пока оно идёт, ход в карточке обновляется сам.
+    refetchInterval: (query) => (query.state.data?.live ? 3_000 : false),
   });
 }
 
