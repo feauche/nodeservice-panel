@@ -14,6 +14,8 @@ import {
   DISK_CLEANUP_OFFER_PCT,
   INCIDENT_KINDS,
   type Incident,
+  KB_CONTENT_MAX,
+  KB_TITLE_MAX,
   MAINTENANCE_KIND_LABELS,
   MAINTENANCE_TIERS,
   type MaintenanceKind,
@@ -34,6 +36,7 @@ import {
 import { z } from 'zod';
 
 import type { IncidentsService } from '../../incidents/incidents.service.js';
+import type { KnowledgeService } from '../../knowledge/knowledge.service.js';
 import type { MaintenanceService } from '../../maintenance/maintenance.service.js';
 import type { ProvidersService } from '../../providers/providers.service.js';
 import type { ServersService } from '../../servers/servers.service.js';
@@ -46,6 +49,7 @@ export interface ChangeCtx {
   providers: Pick<ProvidersService, 'list'>;
   incidents: Pick<IncidentsService, 'get' | 'resolveManual' | 'policy' | 'updatePolicy'>;
   maintenance: Pick<MaintenanceService, 'start' | 'state' | 'runs'>;
+  knowledge: Pick<KnowledgeService, 'create' | 'get'>;
 }
 
 /** То, что показывается человеку и что хранится вместе с изменением. */
@@ -599,6 +603,64 @@ const incidentResolve: ChangeOp = {
   },
 };
 
+/** J6: после решённого инцидента — запись «что было, что помогло» в базу знаний (тег runbook). */
+const kbRunbook: ChangeOp = {
+  level: 'T2',
+  schema: z.object({
+    incidentId: z.uuid(),
+    title: z.string().trim().min(1, 'Нужен заголовок').max(KB_TITLE_MAX),
+    content: z.string().trim().min(1, 'Нужен текст').max(KB_CONTENT_MAX),
+  }),
+  async build(raw, ctx) {
+    let inc: Incident;
+    try {
+      inc = await ctx.incidents.get(String(raw.incidentId));
+    } catch {
+      return {
+        problem: 'Инцидент с таким id не найден. Возьмите id из list_incidents. Карточка не создана.',
+      };
+    }
+    if (inc.status !== 'resolved')
+      return {
+        problem:
+          'Инцидент ещё не закрыт: записывать в базу знаний имеет смысл по решённому случаю. Карточка не создана.',
+      };
+    const title = String(raw.title).trim();
+    const content = String(raw.content).trim();
+    return {
+      args: { incidentId: inc.id, title, content },
+      plan: {
+        title: 'Записать в базу знаний',
+        target: { type: 'incident', id: inc.id, label: inc.title },
+        rows: [{ label: 'Новая статья', before: 'Нет', after: title }],
+        consequence:
+          'Появится статья с меткой «Джарвис» и тегом runbook, её можно будет открыть, поправить или удалить как обычную статью в базе знаний.',
+        reversible: false,
+        before: { created: false },
+        after: { created: true },
+      },
+    };
+  },
+  async read() {
+    return { created: false };
+  },
+  async apply(args, _plan, ctx) {
+    const doc = await ctx.knowledge.create(
+      { title: String(args.title), content: String(args.content), tags: ['runbook'], source: 'ai' },
+      { auditSource: 'auto' },
+    );
+    return { docId: doc.id };
+  },
+  async verify(_args, plan, ctx) {
+    const docId = (plan.outcome as { docId?: string } | undefined)?.docId;
+    if (!docId) return false;
+    return ctx.knowledge
+      .get(docId)
+      .then(() => true)
+      .catch(() => false);
+  },
+};
+
 const pauseLabel = (minutes: number): string =>
   minutes % 60 === 0 && minutes >= 60 ? `${minutes / 60} ч` : `${minutes} мин`;
 
@@ -873,4 +935,5 @@ export const CHANGE_OPS: Readonly<Record<ChangeOperation, ChangeOp>> = {
   'autofix.pause': autofixPause,
   'autofix.policy': autofixPolicy,
   'maintenance.run': maintenanceRun,
+  'kb.runbook': kbRunbook,
 };

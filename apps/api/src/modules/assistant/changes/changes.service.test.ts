@@ -87,6 +87,7 @@ interface World {
     runs: Array<Record<string, unknown>>;
     started: Array<{ serverId: string; kind: string }>;
   };
+  kb: { docs: Map<string, { id: string; title: string; content: string; tags: string[]; source: string }> };
   audit: Array<Record<string, unknown>>;
 }
 
@@ -117,6 +118,7 @@ function make() {
       runs: [],
       started: [],
     },
+    kb: { docs: new Map() },
     audit: [],
   };
   const repo = new FakeRepo();
@@ -184,6 +186,19 @@ function make() {
       return run;
     },
   };
+  const knowledge = {
+    create: async (input: { title: string; content: string; tags: string[]; source: string }) => {
+      const id = `0192c000-0000-7000-8000-00000000d${world.kb.docs.size + 1}`.padEnd(36, '0').slice(0, 36);
+      const doc = { id, ...input };
+      world.kb.docs.set(id, doc);
+      return doc;
+    },
+    get: async (id: string) => {
+      const doc = world.kb.docs.get(id);
+      if (!doc) throw new HttpException('нет', 404);
+      return doc;
+    },
+  };
   const audit = { record: async (e: Record<string, unknown>) => void world.audit.push(e) };
   const cls = { isActive: () => true, get: () => ({ id: 'u1', login: 'admin' }) };
   const svc = new ChangesService(
@@ -192,6 +207,7 @@ function make() {
     providers as never,
     incidents as never,
     maintenance as never,
+    knowledge as never,
     audit as never,
     cls as never,
   );
@@ -783,6 +799,49 @@ describe('ChangesService: страна сервера', () => {
     );
     expect(await refusal(ctx.svc, 'server.country', { server: 'ru-entry-1', country: 'Польша' })).toContain(
       'Аргументы не подходят',
+    );
+  });
+});
+
+describe('ChangesService: база знаний (J6)', () => {
+  let ctx: ReturnType<typeof make>;
+  beforeEach(() => {
+    ctx = make();
+  });
+
+  it('по решённому инциденту: карточка, применение создаёт статью с тегом runbook и меткой Джарвиса', async () => {
+    ctx.world.incident.status = 'resolved';
+    const c = await propose(ctx.svc, 'kb.runbook', {
+      incidentId: INC,
+      title: 'Диск заполнялся из-за кэша сборки Docker',
+      content: 'Диск дошёл до 92%. Помогла очистка build cache и старых образов Docker.',
+    });
+    expect(c).toMatchObject({ level: 'T2', reversible: false, title: 'Записать в базу знаний' });
+    expect(c.rows[0]).toEqual({
+      label: 'Новая статья',
+      before: 'Нет',
+      after: 'Диск заполнялся из-за кэша сборки Docker',
+    });
+    const done = await ctx.svc.apply(c.id);
+    expect(done.status).toBe('applied');
+    expect(ctx.world.kb.docs.size).toBe(1);
+    const doc = [...ctx.world.kb.docs.values()][0] as { title: string; tags: string[]; source: string };
+    expect(doc.tags).toEqual(['runbook']);
+    expect(doc.source).toBe('ai');
+    expect(doc.title).toBe('Диск заполнялся из-за кэша сборки Docker');
+  });
+
+  it('инцидент ещё открыт — отказ, карточка не создаётся', async () => {
+    ctx.world.incident.status = 'open';
+    expect(await refusal(ctx.svc, 'kb.runbook', { incidentId: INC, title: 'x', content: 'y' })).toContain(
+      'ещё не закрыт',
+    );
+    expect(ctx.world.kb.docs.size).toBe(0);
+  });
+
+  it('инцидент не найден — отказ', async () => {
+    expect(await refusal(ctx.svc, 'kb.runbook', { incidentId: OTHER, title: 'x', content: 'y' })).toContain(
+      'не найден',
     );
   });
 });

@@ -108,12 +108,12 @@ describe('справочник Джарвиса', () => {
       'autofix.pause',
     ])
       expect(text, op).toContain(op);
-    for (const op of ['autofix.policy', 'maintenance.run']) expect(text, op).toContain(op);
+    for (const op of ['autofix.policy', 'maintenance.run', 'kb.runbook']) expect(text, op).toContain(op);
     expect(text).toContain('apt upgrade');
     expect(text).toContain('Очистка предлагается от 70 %');
     expect(text).toContain('Состояние изменилось');
     expect(text).toContain('Отменить изменение');
-    expect(text).toContain('кнопкой не отменяется');
+    expect(text).toContain('кнопкой не отменяются');
     expect(text).toContain('Не больше трёх карточек');
     expect(text).toContain('24 ч');
     expect(text).toContain('SSH-ключи');

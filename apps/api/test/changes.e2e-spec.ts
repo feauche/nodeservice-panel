@@ -34,6 +34,7 @@ import {
 } from '../src/modules/assistant/llm.provider.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
 import { IncidentsRepository } from '../src/modules/incidents/incidents.repository.js';
+import { IncidentsService } from '../src/modules/incidents/incidents.service.js';
 import { FakeSsh, SSH_PASSWORD, SSH_USER } from './fake-ssh.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -341,6 +342,34 @@ describe('изменения по предложению Джарвиса e2e (J
     ]);
     expect(res.message.proposals).toEqual([]);
     expect(res.message.content).toContain('уже закрыт');
+  });
+
+  it('запись в базу знаний (J6): по решённому инциденту создаёт статью с тегом runbook, кнопкой не отменяется', async () => {
+    const row = await app.get(IncidentsRepository).open({
+      serverId: srv.id,
+      serverName: srv.name,
+      kind: 'agent_offline',
+      severity: 'crit',
+      title: 'Агент не в сети',
+      detail: 'Агент молчит.',
+      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+    });
+    await app.get(IncidentsService).resolveManual(row?.id ?? '');
+    const c = await propose('kb.runbook', {
+      incidentId: row?.id,
+      title: 'Агент отваливался из-за нестабильности сети у хостера',
+      content:
+        'Агент и SSH пропали одновременно, порт был закрыт снаружи. Само восстановилось через 10 минут.',
+    });
+    expect(c).toMatchObject({ level: 'T2', reversible: false, target: { type: 'incident' } });
+    const applied = assistantChangeSchema.parse((await act(c.id, 'apply')).body);
+    expect(applied.status).toBe('applied');
+    const list = (await agent.get('/api/knowledge').expect(200)).body as {
+      items: Array<{ id: string; title: string; tags: string[]; source: string }>;
+    };
+    const doc = list.items.find((d) => d.title === 'Агент отваливался из-за нестабильности сети у хостера');
+    expect(doc).toMatchObject({ tags: ['runbook'], source: 'ai' });
+    await act(c.id, 'revert', 409);
   });
 
   it('пауза автопочинки: при выключенной отказ, при включённой ставится и снимается откатом', async () => {

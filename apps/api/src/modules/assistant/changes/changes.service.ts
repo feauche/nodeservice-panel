@@ -15,6 +15,7 @@ import type { AssistantChangeRow } from '../../../infra/db/schema/index.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { CLS_USER } from '../../auth/cls-keys.js';
 import { IncidentsService } from '../../incidents/incidents.service.js';
+import { KnowledgeService } from '../../knowledge/knowledge.service.js';
 import { MaintenanceService } from '../../maintenance/maintenance.service.js';
 import { ProvidersService } from '../../providers/providers.service.js';
 import { ServersService } from '../../servers/servers.service.js';
@@ -51,6 +52,7 @@ export class ChangesService {
     private readonly providers: ProvidersService,
     private readonly incidents: IncidentsService,
     private readonly maintenance: MaintenanceService,
+    private readonly knowledge: KnowledgeService,
     private readonly audit: AuditService,
     private readonly cls: ClsService,
   ) {}
@@ -61,6 +63,7 @@ export class ChangesService {
       providers: this.providers,
       incidents: this.incidents,
       maintenance: this.maintenance,
+      knowledge: this.knowledge,
     };
   }
 
