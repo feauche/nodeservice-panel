@@ -1,4 +1,4 @@
-import type { KbSource } from '@nodeservice/shared';
+import type { KbSource, KbVersionSummary } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import { boolean, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
@@ -35,6 +35,9 @@ export const kbDocumentVersions = pgTable(
     source: text('source').$type<KbSource>().notNull(),
     archived: boolean('archived').notNull().default(false),
     reason: text('reason'),
+    /** Что конкретно изменилось (пока только для reason='glossary': какие термины добавлены/уточнены);
+     * для остальных причин панель это не считает, поле остаётся пустым. */
+    summary: jsonb('summary').$type<KbVersionSummary | null>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('kb_versions_doc_idx').on(t.docId, t.createdAt)],

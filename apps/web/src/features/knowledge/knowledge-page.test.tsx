@@ -119,7 +119,11 @@ describe('KnowledgePage', () => {
   it('история версий: подписи причин, в том числе «Термины от Джарвиса» для пополнения глоссария', async () => {
     const first = mockKnowledge.items.find((d) => d.title === 'Лимит conntrack');
     if (!first) throw new Error('нет статьи в моке');
-    const snap = (id: string, reason: string) => ({
+    const snap = (
+      id: string,
+      reason: string,
+      summary: { added: string[]; updated: string[] } | null = null,
+    ) => ({
       id,
       title: first.title,
       content: 'Прежний текст',
@@ -127,10 +131,11 @@ describe('KnowledgePage', () => {
       source: first.source,
       archived: false,
       reason,
+      summary,
       createdAt: new Date().toISOString(),
     });
     mockKnowledge.versions[first.id] = [
-      snap('0192e000-0000-7000-8000-0000000000a1', 'glossary'),
+      snap('0192e000-0000-7000-8000-0000000000a1', 'glossary', { added: ['SNI'], updated: ['ТСПУ'] }),
       snap('0192e000-0000-7000-8000-0000000000a2', 'edit'),
       snap('0192e000-0000-7000-8000-0000000000a3', 'review'),
     ];
@@ -143,6 +148,9 @@ describe('KnowledgePage', () => {
     expect(await within(dialog).findByText(/^Термины от Джарвиса · /)).toBeInTheDocument();
     expect(within(dialog).getByText(/^Правка · /)).toBeInTheDocument();
     expect(within(dialog).getByText(/^Ревизия · /)).toBeInTheDocument();
+    // Пополнение глоссария показывает, какие термины добавлены и уточнены, а не просто «Термины от Джарвиса».
+    expect(within(dialog).getByText('Добавлено: SNI')).toBeInTheDocument();
+    expect(within(dialog).getByText('Уточнено: ТСПУ')).toBeInTheDocument();
   });
 
   describe('«Правила парка» — пометка «Читает Джарвис»', () => {

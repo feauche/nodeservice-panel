@@ -23,11 +23,13 @@ interface Sample {
 }
 
 /**
- * J10: аномалия онлайна ноды Remnawave (решения владельца 27.09.2026). Раз в минуту сравнивает
- * свежий снимок Remnawave с предыдущим по каждой ноде; сами данные обновляются реже (см.
- * REMNAWAVE_SYNC_INTERVAL_MIN), поэтому по факту сравнение идёт между двумя последними РАЗНЫМИ
- * снимками — этого достаточно для порога «за 5 минут». Найдено резкое падение — проверка блокировки
- * с российских серверов парка (NodeBlockCheckService), инцидент заводится только по результату.
+ * J10: аномалия онлайна ноды Remnawave (решения владельца 27.09.2026, уточнение 28.09.2026). Раз в
+ * минуту сравнивает свежий снимок Remnawave с предыдущим по каждой ноде; сами данные обновляются реже
+ * (см. REMNAWAVE_SYNC_INTERVAL_MIN), поэтому по факту сравнение идёт между двумя последними РАЗНЫМИ
+ * снимками — этого достаточно для порога «за 5 минут». Само резкое падение онлайна уже достойно
+ * внимания (нода могла упасть и по другой причине), поэтому инцидент заводится всегда, но важность и
+ * заголовок честно отражают результат встречной проверки: подтвердилась блокировка — крит, проверка
+ * прошла чисто или не смогла отработать — предупреждение без слова «блокировка» в заголовке.
  */
 @Injectable()
 export class NodeAnomalyJob {
@@ -93,22 +95,29 @@ export class NodeAnomalyJob {
       allServers,
     );
     const dropLine = `Онлайн ноды «${node.name}» упал с ${before} до ${after} (это ${Math.round(((before - after) / before) * 100)} %) за короткое время.`;
+    // «Подтвердилось» — хоть один пробующий сервер реально дозвонился и нашёл что-то, кроме «всё в
+    // порядке» (сюда же честный «порт не отвечает» с настоящей пробы, не только ТСПУ/16–20 КБ).
+    const confirmed = result.probes.length > 0 && result.verdict !== 'ok';
+    let title: string;
     let detail: string;
     if (result.probes.length === 0) {
+      title = `Резко упал онлайн, проверить не удалось · ${node.name}`;
       detail = inbound?.sni
         ? `${dropLine} Проверить не удалось: нет ни одного российского сервера парка с рабочим SSH для встречной проверки.`
         : `${dropLine} Проверить не удалось: не получилось определить имя маскировки (SNI) этой ноды в Remnawave.`;
     } else {
       const fromList = result.probes.map((p) => p.from).join(', ');
       const perProbe = result.probes.map((p) => `${p.from} — ${p.detail}`).join('; ');
+      title = confirmed
+        ? `${BLOCK_VERDICT_LABELS[result.verdict]} · ${node.name}`
+        : `Резко упал онлайн, блокировка не подтвердилась · ${node.name}`;
       detail = `${dropLine} Проверено с серверов парка: ${fromList}. Вывод: ${BLOCK_VERDICT_LABELS[result.verdict]}. Подробности по каждому серверу: ${perProbe}.`;
     }
-    const title = `${BLOCK_VERDICT_LABELS[result.verdict]} · ${node.name}`;
     await this.incidents.open({
       serverId: matched?.id ?? null,
       serverName: matched?.name ?? node.name,
       kind: 'node_blocked',
-      severity: 'crit',
+      severity: confirmed ? 'crit' : 'warn',
       title,
       detail,
       timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],

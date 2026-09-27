@@ -9,6 +9,7 @@ interface KbVersionSnap {
   source: KbDoc['source'];
   archived: boolean;
   reason: string;
+  summary: { added: string[]; updated: string[] } | null;
   createdAt: string;
 }
 interface KbMock {
@@ -18,7 +19,7 @@ interface KbMock {
 export const mockKnowledge: KbMock = { items: [], versions: {} };
 
 /** Снимок текущего состояния статьи в историю (как на сервере — перед изменением). */
-function snapshotVersion(doc: KbDoc, reason: string): void {
+function snapshotVersion(doc: KbDoc, reason: string, summary: KbVersionSnap['summary'] = null): void {
   const list = mockKnowledge.versions[doc.id] ?? [];
   list.unshift({
     id: uid(),
@@ -28,6 +29,7 @@ function snapshotVersion(doc: KbDoc, reason: string): void {
     source: doc.source,
     archived: doc.archived,
     reason,
+    summary,
     createdAt: new Date().toISOString(),
   });
   mockKnowledge.versions[doc.id] = list;
@@ -151,6 +153,7 @@ export function seedKnowledge(): void {
         source: first.source,
         archived: false,
         reason: 'edit',
+        summary: null,
         createdAt: iso(1),
       },
       {
@@ -161,7 +164,24 @@ export function seedKnowledge(): void {
         source: first.source,
         archived: false,
         reason: 'review',
+        summary: null,
         createdAt: iso(3),
+      },
+    ];
+  // Витрина для строки истории: пополнение глоссария всегда несёт список терминов.
+  const glossary = mockKnowledge.items.find((d) => d.title === 'Пояснения');
+  if (glossary)
+    mockKnowledge.versions[glossary.id] = [
+      {
+        id: uid(),
+        title: glossary.title,
+        content: glossary.content,
+        tags: glossary.tags,
+        source: glossary.source,
+        archived: false,
+        reason: 'glossary',
+        summary: { added: ['SNI', 'Реальность (Reality)'], updated: ['ТСПУ'] },
+        createdAt: iso(2),
       },
     ];
 }
@@ -244,7 +264,13 @@ export const knowledgeHandlers = [
   http.get('/api/knowledge/:id/versions', ({ params }) => {
     const list = mockKnowledge.versions[String(params.id)] ?? [];
     return HttpResponse.json({
-      items: list.map((v) => ({ id: v.id, title: v.title, reason: v.reason, createdAt: v.createdAt })),
+      items: list.map((v) => ({
+        id: v.id,
+        title: v.title,
+        reason: v.reason,
+        summary: v.summary,
+        createdAt: v.createdAt,
+      })),
     });
   }),
   http.post('/api/knowledge/:id/versions/:versionId/revert', ({ params }) => {

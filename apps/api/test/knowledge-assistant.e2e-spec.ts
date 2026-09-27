@@ -463,13 +463,14 @@ describe('knowledge + assistant e2e', () => {
     expect(list.items.filter((d) => d.title === 'Пояснения')).toHaveLength(1);
 
     // 4) пополнение Джарвисом видно в истории версий: одна версия на серию (состояние до неё), повтор ничего не пишет
-    const versions = (await agent.get(`/api/knowledge/${gloss.id}/versions`).expect(200)).body
-      .items as Array<{
-      reason: string;
-      title: string;
-    }>;
+    const versions = kbVersionsResponseSchema.parse(
+      (await agent.get(`/api/knowledge/${gloss.id}/versions`).expect(200)).body,
+    ).items;
     expect(versions.map((v) => v.reason)).toEqual(['glossary']);
     expect(versions[0]?.title).toBe('Пояснения');
+    // Видно не только «что-то изменилось», а какие именно термины добавлены этой версией (глоссарий
+    // существует с самого старта панели пустым — оба термина этого теста попали в одну и ту же серию).
+    expect(versions[0]?.summary).toEqual({ added: ['SSH', 'CPU'], updated: [] });
     const audit = JSON.stringify((await agent.get('/api/audit?category=knowledge').expect(200)).body);
     expect(audit).toContain('"via":"glossary"');
   });

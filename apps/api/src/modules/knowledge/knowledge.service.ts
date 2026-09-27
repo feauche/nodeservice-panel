@@ -6,6 +6,7 @@ import type {
   KbDocSummary,
   KbDocUpdate,
   KbVersion,
+  KbVersionSummary,
 } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
@@ -13,7 +14,7 @@ import type { KbDocumentRow } from '../../infra/db/schema/index.js';
 import { diffChanges } from '../audit/audit.diff.js';
 import { AuditService } from '../audit/audit.service.js';
 import { FLEET_RULES_TEMPLATE, FLEET_RULES_TITLE, fleetRulesText } from './fleet-rules.js';
-import { type IncomingTerm, mergeTerms } from './glossary-merge.js';
+import { type IncomingTerm, mergeGlossarySummary, mergeTerms } from './glossary-merge.js';
 import { KnowledgeRepository } from './knowledge.repository.js';
 
 /** База знаний: CRUD markdown-статей с полнотекстовым поиском. */
@@ -141,7 +142,7 @@ export class KnowledgeService implements OnModuleInit {
   }
 
   /** Снимок текущего состояния статьи в историю версий — чтобы можно было откатить. */
-  private async snapshot(row: KbDocumentRow, reason: string): Promise<void> {
+  private async snapshot(row: KbDocumentRow, reason: string, summary?: KbVersionSummary): Promise<void> {
     await this.repo.insertVersion({
       docId: row.id,
       title: row.title,
@@ -150,18 +151,22 @@ export class KnowledgeService implements OnModuleInit {
       source: row.source,
       archived: row.archived,
       reason,
+      summary: summary ?? null,
     });
   }
 
   /**
    * Снимок перед пополнением глоссария Джарвисом. Пока идёт серия дополнений (несколько вызовов за один разговор),
-   * версия одна: она хранит состояние до всей серии, а история не забивается копиями всего словаря.
+   * версия одна: она хранит состояние до всей серии, а история не забивается копиями всего словаря — сводка
+   * (какие термины добавлены/уточнены) при этом копится по всей серии, а не берётся только с последнего вызова.
    */
-  private async snapshotGlossary(row: KbDocumentRow): Promise<void> {
+  private async snapshotGlossary(row: KbDocumentRow, merged: KbVersionSummary): Promise<void> {
     const [last] = await this.repo.listVersions(row.id, 1);
-    if (last?.reason === 'glossary' && Date.now() - last.createdAt.getTime() < GLOSSARY_SNAPSHOT_GAP_MS)
+    if (last?.reason === 'glossary' && Date.now() - last.createdAt.getTime() < GLOSSARY_SNAPSHOT_GAP_MS) {
+      await this.repo.updateVersionSummary(last.id, mergeGlossarySummary(last.summary, merged));
       return;
-    await this.snapshot(row, 'glossary');
+    }
+    await this.snapshot(row, 'glossary', merged);
   }
 
   async update(id: string, patch: KbDocUpdate, opts?: { reason?: string }): Promise<KbDoc> {
@@ -207,7 +212,7 @@ export class KnowledgeService implements OnModuleInit {
       // Ничего нового и ничего не исправлено: статью не трогаем, лишней версии в истории не будет.
       if (!changed) return { id: existing.id, ...result };
       // Перед правкой сохраняем прежнее состояние, как и при ручной правке: иначе пополнение не видно в истории версий.
-      await this.snapshotGlossary(existing);
+      await this.snapshotGlossary(existing, { added: merged.added, updated: merged.updated });
       const row = await this.repo.update(existing.id, { content });
       await this.audit.record({
         action: 'kb.updated',
@@ -249,6 +254,7 @@ export class KnowledgeService implements OnModuleInit {
       id: v.id,
       title: v.title,
       reason: v.reason,
+      summary: v.summary ?? null,
       createdAt: v.createdAt.toISOString(),
     }));
   }

@@ -74,11 +74,20 @@ export type KbListQuery = z.infer<typeof kbListQuerySchema>;
 export const kbListResponseSchema = z.object({ items: z.array(kbDocSummarySchema) });
 export type KbListResponse = z.infer<typeof kbListResponseSchema>;
 
-/** Версия статьи в истории (для отката). Причина: edit — правка, revert — откат, review — ревизия. */
+/** Что конкретно изменилось (пока только для reason='glossary') — какие термины добавлены, какие уточнены. */
+export const kbVersionSummarySchema = z.object({
+  added: z.array(z.string()),
+  updated: z.array(z.string()),
+});
+export type KbVersionSummary = z.infer<typeof kbVersionSummarySchema>;
+
+/** Версия статьи в истории (для отката). Причина: edit — правка, revert — откат, review — ревизия,
+ * glossary — пополнение глоссария Джарвисом (единственная причина, для которой заполнен summary). */
 export const kbVersionSchema = z.object({
   id: z.uuid(),
   title: z.string(),
   reason: z.string().nullable(),
+  summary: kbVersionSummarySchema.nullable(),
   createdAt: z.iso.datetime(),
 });
 export type KbVersion = z.infer<typeof kbVersionSchema>;

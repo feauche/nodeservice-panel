@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mergeTerms, termKeys } from './glossary-merge.js';
+import { mergeGlossarySummary, mergeTerms, termKeys } from './glossary-merge.js';
 
 const E = (term: string, explain = 'Простое объяснение термина') => ({ term, explain });
 
@@ -57,5 +57,35 @@ describe('mergeTerms', () => {
   it('вертикальная черта в названии и пояснении не ломает таблицу', () => {
     const r = mergeTerms([], [E('A | B', 'первое | второе')]);
     expect(r.entries[0]).toEqual({ term: 'A/B', explain: 'первое/второе' });
+  });
+});
+
+describe('mergeGlossarySummary', () => {
+  it('первый вызов серии (нет прежней сводки) — просто берёт текущий результат', () => {
+    expect(mergeGlossarySummary(null, { added: ['SNI'], updated: [] })).toEqual({
+      added: ['SNI'],
+      updated: [],
+    });
+  });
+  it('второй вызов той же серии копит термины, а не перезаписывает', () => {
+    const prev = { added: ['SNI'], updated: [] };
+    expect(mergeGlossarySummary(prev, { added: ['TLS'], updated: ['OOM'] })).toEqual({
+      added: ['SNI', 'TLS'],
+      updated: ['OOM'],
+    });
+  });
+  it('термин, добавленный и тут же поправленный в той же серии, остаётся «добавлен», а не «уточнён»', () => {
+    const prev = { added: ['SNI'], updated: [] };
+    expect(mergeGlossarySummary(prev, { added: [], updated: ['SNI'] })).toEqual({
+      added: ['SNI'],
+      updated: [],
+    });
+  });
+  it('повтор одного и того же термина не дублируется в списке', () => {
+    const prev = { added: ['SNI'], updated: [] };
+    expect(mergeGlossarySummary(prev, { added: ['SNI'], updated: [] })).toEqual({
+      added: ['SNI'],
+      updated: [],
+    });
   });
 });

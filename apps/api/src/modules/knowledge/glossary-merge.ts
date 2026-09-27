@@ -35,6 +35,25 @@ export interface MergeResult {
   updated: string[];
 }
 
+/** Что показать в истории версий: какие термины добавлены, какие уточнены (без «пропущено» — это не изменение). */
+export interface GlossarySummary {
+  added: string[];
+  updated: string[];
+}
+
+/**
+ * Серия пополнений в пределах одного окна истории (см. GLOSSARY_SNAPSHOT_GAP_MS) пишет один снимок —
+ * сводку по нему нужно копить, а не перезаписывать последним вызовом. Термин, добавленный и тут же
+ * поправленный в той же серии, до пре-серийного состояния всё равно «новый», а не «изменённый».
+ */
+export function mergeGlossarySummary(prev: GlossarySummary | null, next: GlossarySummary): GlossarySummary {
+  const added = new Set(prev?.added ?? []);
+  const updated = new Set(prev?.updated ?? []);
+  for (const term of next.added) added.add(term);
+  for (const term of next.updated) if (!added.has(term)) updated.add(term);
+  return { added: [...added], updated: [...updated] };
+}
+
 /** Дополнить глоссарий: повторы не добавляются, у существующего можно только поправить пояснение. */
 export function mergeTerms(existing: GlossaryEntry[], incoming: IncomingTerm[]): MergeResult {
   const entries = existing.map((e) => ({ ...e }));

@@ -42,16 +42,20 @@ const CERT_OK: RemnawaveCert = {
   note: null,
 };
 
-/** Та же нода Remnawave, что и в жизни: онлайн и время снимка меняются между вызовами fetch(). */
+/**
+ * Та же единственная нода Remnawave, что и в жизни: онлайн и время снимка меняются между вызовами
+ * fetch(). Адрес ноды НАРОЧНО не совпадает ни с одним сервером панели («ru-probe» — 127.0.0.1) —
+ * доказывает, что саму упавшую ноду не нужно добавлять в NodeService, чтобы её проверить.
+ */
 class FakeRemnawaveClient implements RemnawaveClient {
-  usersOnline = 100;
+  node = { uuid: 'node-1', name: 'проверяемая-нода', address: '198.51.100.9', online: 100 };
   inbound: RemnawaveNodeInbound | null = { sni: 'www.example.com', port: 8443 };
 
   async fetch() {
     return {
       stats: {
         users: { total: 100, active: 100, disabled: 0, limited: 0, expired: 0 },
-        online: { now: this.usersOnline, lastDay: 100, lastWeek: 100, never: 0 },
+        online: { now: this.node.online, lastDay: 100, lastWeek: 100, never: 0 },
         nodesOnline: 1,
         nodesTotal: 1,
         trafficBytesLifetime: '0',
@@ -60,15 +64,15 @@ class FakeRemnawaveClient implements RemnawaveClient {
       },
       nodes: [
         {
-          uuid: 'node-1',
-          name: 'проверяемая-нода',
-          address: '198.51.100.9',
+          uuid: this.node.uuid,
+          name: this.node.name,
+          address: this.node.address,
           countryCode: 'DE',
           isConnected: true,
           isDisabled: false,
           isConnecting: false,
           lastStatusMessage: null,
-          usersOnline: this.usersOnline,
+          usersOnline: this.node.online,
           trafficUsedBytes: 0,
           trafficLimitBytes: null,
         },
@@ -161,8 +165,8 @@ describe('J10: аномалия онлайна → проверка блокир
     expect(list.items.some((i) => i.kind === 'node_blocked')).toBe(false);
   });
 
-  it('падение онлайна на 90% + тихий обрыв на этапе TLS с российского сервера парка → «похоже на ТСПУ»', async () => {
-    fake.usersOnline = 10;
+  it('падение онлайна на 90% + тихий обрыв на этапе TLS с российского сервера парка → крит, «похоже на ТСПУ»', async () => {
+    fake.node.online = 10;
     ssh.blockCheckOutput = '{"stage":"tls","ok":false,"stalledAtKb":null}';
     await app.get(RemnawaveService).refresh();
     await app.get(NodeAnomalyJob).run();
@@ -175,9 +179,55 @@ describe('J10: аномалия онлайна → проверка блокир
     expect(inc?.severity).toBe('crit');
     expect(inc?.title).toContain('ТСПУ');
     expect(inc?.title).toContain('проверяемая-нода');
+    // Адрес ноды (198.51.100.9) ни с одним сервером панели не совпал — саму ноду добавлять не нужно.
+    expect(inc?.serverName).toBe('проверяемая-нода');
     expect(inc?.detail).toContain('ru-probe');
     expect(inc?.detail).toContain('упал с 100 до 10');
     expect(inc?.detail).toContain('90');
     expect(inc?.timeline[0]?.result).toBe('detect');
+  });
+
+  it('падение онлайна, но проверка с российского сервера прошла чисто → предупреждение, без слова «блокировка» в заголовке', async () => {
+    // Новая нода (свежий uuid) — у прошлой сейчас действует пауза в 30 минут на повтор проверки.
+    fake.node = { uuid: 'node-2', name: 'вторая-нода', address: '198.51.100.10', online: 100 };
+    ssh.blockCheckOutput = '{"stage":"data","ok":true,"stalledAtKb":null}';
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run(); // базовый снимок для новой ноды, тревоги ещё нет
+
+    fake.node.online = 10;
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run();
+
+    const list = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=open').expect(200)).body,
+    );
+    const inc = list.items.find((i) => i.serverName === 'вторая-нода');
+    expect(inc).toBeTruthy();
+    expect(inc?.severity).toBe('warn');
+    expect(inc?.title).not.toContain('Похоже');
+    expect(inc?.title).toContain('не подтвердилась');
+    expect(inc?.detail).toContain('ru-probe');
+    expect(inc?.detail).toContain('упал с 100 до 10');
+  });
+
+  it('падение онлайна, но проверить нечем (нет имени маскировки у ноды) → предупреждение «проверить не удалось», не крит', async () => {
+    fake.node = { uuid: 'node-3', name: 'третья-нода', address: '198.51.100.11', online: 100 };
+    fake.inbound = { sni: null, port: null };
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run(); // базовый снимок
+
+    fake.node.online = 10;
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run();
+
+    const list = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=open').expect(200)).body,
+    );
+    const inc = list.items.find((i) => i.serverName === 'третья-нода');
+    expect(inc).toBeTruthy();
+    expect(inc?.severity).toBe('warn');
+    expect(inc?.title).not.toContain('блокировк');
+    expect(inc?.title).toContain('проверить не удалось');
+    expect(inc?.detail).toContain('не получилось определить имя маскировки');
   });
 });

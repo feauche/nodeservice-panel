@@ -9,6 +9,7 @@ interface Version {
   title: string;
   content: string;
   reason: string | null;
+  summary: { added: string[]; updated: string[] } | null;
   createdAt: Date;
 }
 
@@ -52,6 +53,13 @@ function make() {
     },
     async listVersions(docId: string, limit = 50) {
       return versions.filter((v) => v.docId === docId).slice(0, limit);
+    },
+    async findVersion(id: string) {
+      return versions.find((v) => v.id === id);
+    },
+    async updateVersionSummary(id: string, summary: Version['summary']) {
+      const v = versions.find((x) => x.id === id);
+      if (v) v.summary = summary;
     },
   };
   const auditSvc = { record: async (e: Record<string, unknown>) => void audit.push(e) };
@@ -146,5 +154,43 @@ describe('KnowledgeService: пополнение глоссария и исто�
     await ctx.svc.appendGlossary([term('RAM')]);
     expect(ctx.versions.map((v) => v.reason)).toEqual(['glossary', 'edit', 'glossary']);
     expect(ctx.versions[0]?.content).toContain('Ручной');
+  });
+});
+
+describe('KnowledgeService: сводка «что изменилось» в истории версий', () => {
+  let ctx: ReturnType<typeof make>;
+  beforeEach(async () => {
+    ctx = make();
+    await ctx.svc.ensureGlossary();
+  });
+  const glossary = () => [...ctx.docs.values()].find((d) => d.title === 'Пояснения') as KbDocumentRow;
+  const age = (v: Version | undefined, min = 20) => {
+    if (v) v.createdAt = new Date(Date.now() - min * 60_000);
+  };
+
+  it('пополнение глоссария пишет в версию, какие термины добавлены', async () => {
+    await ctx.svc.appendGlossary([term('SSH')]);
+    age(ctx.versions[0]);
+    await ctx.svc.appendGlossary([term('CPU')]);
+    expect(ctx.versions[0]?.summary).toEqual({ added: ['CPU'], updated: [] });
+  });
+
+  it('серия пополнений подряд копит термины в одну сводку, а не оставляет только последний вызов', async () => {
+    await ctx.svc.appendGlossary([term('SSH')]);
+    await ctx.svc.appendGlossary([term('CPU')]);
+    await ctx.svc.appendGlossary([term('RAM')]);
+    // SSH добавлен в этой же серии (первым вызовом) — правка его пояснения тут же не переводит его в
+    // «уточнено»: относительно состояния ДО серии он всё равно «добавлен», а не «изменён».
+    await ctx.svc.appendGlossary([{ term: 'SSH', explain: 'Новое пояснение', update: true }]);
+    expect(ctx.versions).toHaveLength(1);
+    expect(ctx.versions[0]?.summary).toEqual({ added: ['SSH', 'CPU', 'RAM'], updated: [] });
+  });
+
+  it('обычная правка человеком и откат не заполняют сводку — панель не считает разницу в тексте', async () => {
+    await ctx.svc.appendGlossary([term('SSH')]);
+    await ctx.svc.update(glossary().id, { content: `${glossary().content}\n| Ручной | Термин |` });
+    expect(ctx.versions[0]).toMatchObject({ reason: 'edit', summary: null });
+    await ctx.svc.revert(glossary().id, ctx.versions[1]?.id as string);
+    expect(ctx.versions[0]).toMatchObject({ reason: 'revert', summary: null });
   });
 });

@@ -41,6 +41,9 @@ const VERSION_REASON: Record<string, string> = {
   review: 'Ревизия',
   glossary: 'Термины от Джарвиса',
 };
+/** Длинный список терминов в одной строке истории версий не читается — показываем часть и остаток числом. */
+const joinCapped = (list: string[], max = 20): string =>
+  list.length <= max ? list.join(', ') : `${list.slice(0, max).join(', ')} и ещё ${list.length - max}`;
 const fmtVersionTime = new Intl.DateTimeFormat('ru-RU', {
   day: '2-digit',
   month: 'short',
@@ -634,6 +637,12 @@ function HistoryDialog({
                     {VERSION_REASON[v.reason ?? ''] ?? 'Изменение'} ·{' '}
                     {fmtVersionTime.format(new Date(v.createdAt))}
                   </div>
+                  {v.summary && (v.summary.added.length > 0 || v.summary.updated.length > 0) && (
+                    <div className="mt-1 flex flex-col gap-0.5 text-[11.5px] leading-snug text-text-3">
+                      {v.summary.added.length > 0 && <p>Добавлено: {joinCapped(v.summary.added)}</p>}
+                      {v.summary.updated.length > 0 && <p>Уточнено: {joinCapped(v.summary.updated)}</p>}
+                    </div>
+                  )}
                 </div>
                 <Button
                   type="button"

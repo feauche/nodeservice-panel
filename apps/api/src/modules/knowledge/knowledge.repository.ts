@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import type { KbVersionSummary } from '@nodeservice/shared';
 import { and, desc, eq, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
@@ -78,6 +79,11 @@ export class KnowledgeRepository {
   /** Снимок состояния статьи в историю версий (для отката). */
   async insertVersion(values: typeof kbDocumentVersions.$inferInsert): Promise<void> {
     await this.db.insert(kbDocumentVersions).values(values);
+  }
+
+  /** Досчитать сводку уже существующего снимка (серия пополнений глоссария в одном окне истории). */
+  async updateVersionSummary(id: string, summary: KbVersionSummary): Promise<void> {
+    await this.db.update(kbDocumentVersions).set({ summary }).where(eq(kbDocumentVersions.id, id));
   }
 
   /** История версий статьи, новые сверху. */
