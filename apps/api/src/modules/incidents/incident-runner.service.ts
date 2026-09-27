@@ -380,8 +380,7 @@ export class IncidentRunnerService implements OnModuleInit {
    */
   private async chainStepImpossible(key: ActionKey, serverId: string): Promise<boolean> {
     const spec = ACTION_SPECS[key];
-    if (!spec || (!spec.precheck.includes('ssh_ok') && !spec.precheck.includes('agent_online')))
-      return false;
+    if (!spec || (!spec.precheck.includes('ssh_ok') && !spec.precheck.includes('agent_online'))) return false;
     const server = await this.serversRepo.findById(serverId);
     if (!server) return false;
     if (spec.precheck.includes('ssh_ok') && server.sshOk === false) return true;
