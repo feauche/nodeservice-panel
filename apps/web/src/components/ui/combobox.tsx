@@ -160,7 +160,9 @@ export function Combobox({
       <PopoverPrimitive.Trigger asChild>
         <button
           type="button"
-          id={id}
+          // Не тот же id, что у внешнего <label for>: иначе клик по тексту подписи (не по самому
+          // полю) тоже открывал и закрывал список — имя поля и так на кнопке через aria-label.
+          id={id ? `${id}-trigger` : undefined}
           role="combobox"
           aria-label={ariaLabel}
           aria-expanded={open}
@@ -186,10 +188,10 @@ export function Combobox({
           sideOffset={6}
           collisionPadding={12}
           align="start"
-          className="z-[110] w-[var(--radix-popover-trigger-width)] min-w-[14rem] overflow-hidden rounded-[12px] border border-border-2 bg-surface shadow-float outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
+          className="z-[110] flex max-h-[var(--radix-popover-content-available-height)] w-[var(--radix-popover-trigger-width)] min-w-[14rem] flex-col overflow-hidden rounded-[12px] border border-border-2 bg-surface shadow-float outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
         >
           {searchable && (
-            <div className="mx-2 mt-2 mb-1 flex h-[34px] items-center gap-2 rounded-[9px] border border-border bg-surface-2 px-2.5 focus-within:border-brand/50">
+            <div className="mx-2 mt-2 mb-1 flex h-[34px] shrink-0 items-center gap-2 rounded-[9px] border border-border bg-surface-2 px-2.5 focus-within:border-brand/50">
               <SearchIcon className="size-[15px] flex-none text-text-3" aria-hidden="true" />
               <input
                 // biome-ignore lint/a11y/noAutofocus: поиск должен принимать ввод сразу после открытия списка
@@ -221,7 +223,9 @@ export function Combobox({
             tabIndex={searchable ? -1 : 0}
             aria-activedescendant={!searchable && entries.length > 0 ? optId(active) : undefined}
             onKeyDown={searchable ? undefined : onKeyDown}
-            className="max-h-[250px] overflow-y-auto py-1 outline-none"
+            // min-h-0 обязателен: без него flex-элемент не сжимается меньше своего содержимого, и
+            // список вместо прокрутки просто вылезал бы за границу окна (та же клетка не резиновая).
+            className="max-h-[250px] min-h-0 flex-1 overflow-y-auto py-1 outline-none"
           >
             {entries.map((entry, i) => {
               if (entry.kind === 'action') return null;
@@ -278,7 +282,7 @@ export function Combobox({
             )}
           </div>
           {(action || searchable) && (
-            <div className="flex items-center gap-2 border-t border-border bg-surface-2 px-3 py-1.5 text-[12px] text-text-3">
+            <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface-2 px-3 py-1.5 text-[12px] text-text-3">
               {searchable && (
                 <span aria-live="polite">
                   {q ? `Найдено ${filteredCount} из ${countable.length}` : `Всего: ${countable.length}`}

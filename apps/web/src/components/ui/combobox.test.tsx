@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Combobox } from './combobox';
+import { Label } from './label';
 
 const NAMES = [
   'Time Web',
@@ -111,6 +112,38 @@ describe('Combobox', () => {
     expect(screen.getByRole('listbox')).toHaveFocus();
     await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
     expect(trigger).toHaveTextContent('Turtle Guard');
+  });
+
+  it('клик по тексту подписи над полем не открывает и не закрывает список (id подписи и кнопки не совпадают)', async () => {
+    function LabeledHarness() {
+      const [value, setValue] = useState<string | null>(null);
+      return (
+        <div>
+          <Label htmlFor="prov-field">Провайдер</Label>
+          <Combobox
+            id="prov-field"
+            ariaLabel="Провайдер"
+            value={value}
+            onChange={setValue}
+            options={options(4)}
+            placeholder="Без провайдера"
+          />
+        </div>
+      );
+    }
+    render(<LabeledHarness />);
+    const user = userEvent.setup();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await user.click(screen.getByText('Провайдер'));
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+
+  it('список внутри окна умеет сжиматься и прокручиваться, а не вылезать за экран (поиск и счётчик — фиксированные)', async () => {
+    render(<Harness />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('combobox', { name: 'Провайдер' }));
+    expect(screen.getByRole('listbox')).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto');
+    expect(screen.getByRole('searchbox').parentElement).toHaveClass('shrink-0');
   });
 
   describe('группы, закреплённый пункт и своё содержимое поля', () => {
