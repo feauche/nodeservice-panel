@@ -1,13 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  type CountryChoice,
   type CreateServerRequest,
   computeDrift,
+  countryCodeSchema,
   ENROLLMENT_TOKEN_TTL_HOURS,
   type EnrollmentTokenResponse,
   normalizeProfilePatch,
   SERVER_NAME_MAX,
   type Server,
+  type ServerCountry,
   type ServerFacts,
   type ServerInventory,
   type ServerProfile,
@@ -19,11 +22,12 @@ import {
 
 import { CryptoService } from '../../common/crypto/crypto.service.js';
 import type { Env } from '../../config/env.schema.js';
-import type { ServerRow } from '../../infra/db/schema/index.js';
+import type { ServerRow, servers } from '../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { diffChanges } from '../audit/audit.diff.js';
 import { AuditService } from '../audit/audit.service.js';
 import { PanelKeyService } from './panel-key.service.js';
+import { ServerCountryService } from './server-country.service.js';
 import { serverProblems } from './servers.problems.js';
 import { ServersRepository } from './servers.repository.js';
 import { SshService, type SshSession, type SshTarget } from './ssh.service.js';
@@ -43,7 +47,20 @@ export class ServersService {
     private readonly crypto: CryptoService,
     private readonly audit: AuditService,
     private readonly config: ConfigService<Env, true>,
+    private readonly country: ServerCountryService,
   ) {}
+
+  /** Значения колонок страны для новой записи: страна выбрана вручную или определится по IP после добавления. */
+  private countryInsert(choice: CountryChoice | undefined): Partial<typeof servers.$inferInsert> {
+    if (choice?.mode === 'manual')
+      return {
+        country: countryCodeSchema.parse(choice.code),
+        countrySource: 'manual',
+        countryStatus: 'ok',
+        countryCheckedAt: new Date(),
+      };
+    return { countrySource: 'auto', countryStatus: 'detecting' };
+  }
 
   toDto(row: ServerRow): Server {
     const profile: ServerProfile = {
@@ -66,6 +83,15 @@ export class ServersService {
       notes: row.notes,
       providerId: row.providerId ?? null,
       nodeWatch: row.nodeWatch as Server['nodeWatch'],
+      country: {
+        code: row.country,
+        source: row.countrySource as ServerCountry['source'],
+        status: row.countryStatus as ServerCountry['status'],
+        agree: row.countryAgree,
+        total: row.countryTotal,
+        checkedAt: row.countryCheckedAt?.toISOString() ?? null,
+        note: row.countryNote,
+      },
       profile,
       inventory,
       drift: computeDrift(profile, inventory),
@@ -150,9 +176,11 @@ export class ServersService {
         notes: req.notes?.trim() ? req.notes.trim() : null,
         providerId: await this.resolveProvider(req.providerId),
         nodeWatch: req.nodeWatch,
+        ...this.countryInsert(req.country),
         agentStatus: 'not_installed',
         sshOk: null,
       });
+      if (row.countrySource === 'auto') this.country.kick(row.id);
       await this.audit.record({
         action: 'server.created',
         target: { type: 'server', id: row.id, display: row.name },
@@ -210,6 +238,7 @@ export class ServersService {
       notes: req.notes?.trim() ? req.notes.trim() : null,
       providerId: await this.resolveProvider(req.providerId),
       nodeWatch: req.nodeWatch,
+      ...this.countryInsert(req.country),
       ...facts,
       hostKeyFp,
       agentStatus: 'not_installed',
@@ -231,6 +260,7 @@ export class ServersService {
     // Агент ставится автоматически, фоном: успех/неудача — в Журнале (server.agent.install),
     // запасной путь — кнопка «Установить агента» в карточке.
     this.autoInstallAgent(row.id);
+    if (row.countrySource === 'auto') this.country.kick(row.id);
     return this.toDto(row);
   }
 
@@ -269,6 +299,13 @@ export class ServersService {
       memoryMb: row.memoryMb,
       hostKeyFp: row.hostKeyFp,
       nodeWatch: row.nodeWatch,
+      country: row.country,
+      countrySource: row.countrySource,
+      countryStatus: row.countryStatus,
+      countryAgree: row.countryAgree,
+      countryTotal: row.countryTotal,
+      countryCheckedAt: row.countryCheckedAt,
+      countryNote: row.countryNote,
       roles: row.roles ?? [],
       importance: row.importance,
       maintenanceWindow: row.maintenanceWindow,
@@ -370,6 +407,8 @@ export class ServersService {
       notes: r.notes,
       providerId: r.providerId,
       nodeWatch: r.nodeWatch,
+      country: r.country,
+      countrySource: r.countrySource,
       roles: r.roles,
       importance: r.importance,
       maintenanceWindow: r.maintenanceWindow,
@@ -386,6 +425,29 @@ export class ServersService {
       ...(patch.notes !== undefined ? { notes: patch.notes?.trim() ? patch.notes.trim() : null } : {}),
       ...(patch.providerId !== undefined ? { providerId: await this.resolveProvider(patch.providerId) } : {}),
       ...(patch.nodeWatch !== undefined ? { nodeWatch: patch.nodeWatch } : {}),
+      ...(patch.country !== undefined
+        ? {
+            ...this.countryInsert(patch.country),
+            countryAgree: null,
+            countryTotal: null,
+            countryNote: null,
+            countryCandidate: null,
+            countryCandidateCount: 0,
+            // Автоматика: страна остаётся прежней, пока определение не даст новую; ручной выбор с нуля.
+            ...(patch.country.mode === 'auto' ? { countryCheckedAt: null } : {}),
+          }
+        : // Сменился адрес сервера: при автоопределении страну нужно определить заново.
+          host !== row.host && row.countrySource === 'auto'
+          ? {
+              countryStatus: 'detecting',
+              countryAgree: null,
+              countryTotal: null,
+              countryCheckedAt: null,
+              countryNote: null,
+              countryCandidate: null,
+              countryCandidateCount: 0,
+            }
+          : {}),
       ...(profilePatch?.roles !== undefined ? { roles: profilePatch.roles } : {}),
       ...(profilePatch?.importance !== undefined ? { importance: profilePatch.importance } : {}),
       ...(profilePatch?.maintenanceWindow !== undefined
@@ -412,6 +474,7 @@ export class ServersService {
       },
     });
     if (updated.name !== row.name) await this.repo.propagateRename(id, row.name, updated.name);
+    if (updated.countrySource === 'auto' && updated.countryStatus === 'detecting') this.country.kick(id);
     return this.toDto(updated);
   }
 

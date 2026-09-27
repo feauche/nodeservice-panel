@@ -16,14 +16,24 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable';
-import type { Server, ServersResponse } from '@nodeservice/shared';
+import { countryName, type Server, type ServersResponse } from '@nodeservice/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronDownIcon, PlusIcon, RefreshCwIcon, SearchIcon, ServerIcon, TagIcon } from 'lucide-react';
+import {
+  ChevronDownIcon,
+  GlobeIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  ServerIcon,
+  TagIcon,
+} from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
+import { CountryFlag } from '@/components/country-flag';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
@@ -49,6 +59,9 @@ export interface ServersPageProps {
   onTag: (tag: string | undefined) => void;
 }
 
+/** Значение фильтра стран для серверов без страны. */
+const NO_COUNTRY = '__none';
+
 type HealthFilter = 'all' | ServerHealth;
 const HEALTH_FILTERS: Array<{ key: HealthFilter; label: string }> = [
   { key: 'all', label: 'Все' },
@@ -62,6 +75,8 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
   const overview = useOverviewMetrics();
   const [q, setQ] = useState('');
   const [health, setHealth] = useState<HealthFilter>('all');
+  /** Выбранные страны фильтра (коды) и особое значение «без страны». */
+  const [countries, setCountries] = useState<string[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [checkAllOpen, setCheckAllOpen] = useState(false);
   const checkAll = useCheckAllServers();
@@ -89,6 +104,19 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
     ? (dragOrder.map((id) => items.find((s) => s.id === id)).filter(Boolean) as Server[])
     : items;
   const allTags = useMemo(() => [...new Set(items.flatMap((s) => s.tags))].sort(), [items]);
+  /** Страны, которые есть у серверов, с числом серверов; фильтр не показывается, пока стран нет ни у одного. */
+  const countryStats = useMemo(() => {
+    const byCode = new Map<string, number>();
+    let without = 0;
+    for (const s of items) {
+      if (s.country.code) byCode.set(s.country.code, (byCode.get(s.country.code) ?? 0) + 1);
+      else without += 1;
+    }
+    const list = [...byCode.entries()]
+      .map(([code, n]) => ({ code, n, name: countryName(code) }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    return { list, without };
+  }, [items]);
   const metricsById = useMemo(
     () => new Map((overview.data?.servers ?? []).map((m) => [m.serverId, m])),
     [overview.data],
@@ -102,6 +130,7 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
   const filtered = visual.filter((s) => {
     if (health !== 'all' && healthOf(s) !== health) return false;
     if (tag && !s.tags.includes(tag)) return false;
+    if (countries.length > 0 && !countries.includes(s.country.code ?? NO_COUNTRY)) return false;
     if (q) {
       const needle = q.toLowerCase();
       const hay = [s.name, s.host, s.facts.hostname ?? '', ...s.tags].join(' ').toLowerCase();
@@ -208,6 +237,68 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
             className="h-9 rounded-[10px] bg-surface-2 pl-9 text-[13px]"
           />
         </div>
+        {countryStats.list.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                data-active={countries.length > 0}
+                className="h-9 rounded-[10px] border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:bg-surface-3 hover:text-foreground data-[active=true]:border-brand/40 data-[active=true]:text-foreground"
+              >
+                <GlobeIcon className="size-3.5" aria-hidden="true" />
+                Страны
+                {countries.length > 0 && (
+                  <span className="rounded-full bg-brand-soft px-1.5 text-[11px] font-semibold text-brand">
+                    {countries.length}
+                  </span>
+                )}
+                <ChevronDownIcon className="size-3.5 opacity-70" aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-[320px] min-w-[240px]">
+              <DropdownMenuLabel>Фильтр по стране</DropdownMenuLabel>
+              {[
+                ...countryStats.list.map((c) => ({ key: c.code, name: c.name, n: c.n, code: c.code })),
+                ...(countryStats.without > 0
+                  ? [{ key: NO_COUNTRY, name: 'Без страны', n: countryStats.without, code: null }]
+                  : []),
+              ].map((c) => (
+                <DropdownMenuCheckboxItem
+                  key={c.key}
+                  checked={countries.includes(c.key)}
+                  // Список остаётся открытым: страны выбирают по несколько.
+                  onSelect={(e) => e.preventDefault()}
+                  onCheckedChange={(on) =>
+                    setCountries((cur) => (on ? [...cur, c.key] : cur.filter((k) => k !== c.key)))
+                  }
+                  className="py-1.5 pr-8 text-[13px]"
+                >
+                  {c.code ? (
+                    <CountryFlag code={c.code} decorative />
+                  ) : (
+                    <span className="grid h-[15px] w-[20px] place-items-center rounded-[3px] border border-dashed border-border-2 text-text-3">
+                      <GlobeIcon className="size-[10px]" aria-hidden="true" />
+                    </span>
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                  <span className="mr-1 text-[11.5px] text-text-3 tabular-nums">{c.n}</span>
+                </DropdownMenuCheckboxItem>
+              ))}
+              <div className="mt-1 flex items-center gap-2 border-t border-border px-2 pt-1.5 pb-0.5 text-[12px] text-text-3">
+                <span className="flex-1">Выбрано: {countries.length}</span>
+                <button
+                  type="button"
+                  disabled={countries.length === 0}
+                  onClick={() => setCountries([])}
+                  className="cursor-pointer text-brand underline-offset-2 hover:underline disabled:cursor-default disabled:opacity-50 disabled:no-underline"
+                >
+                  Сбросить
+                </button>
+              </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         {allTags.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -319,6 +410,7 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
             onClick={() => {
               setQ('');
               setHealth('all');
+              setCountries([]);
               onTag(undefined);
             }}
           >

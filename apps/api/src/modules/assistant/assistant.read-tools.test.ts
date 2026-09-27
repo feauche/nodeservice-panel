@@ -1,4 +1,9 @@
-import { ASSISTANT_PERMISSIONS_DEFAULT, type Incident, type Server } from '@nodeservice/shared';
+import {
+  ASSISTANT_PERMISSIONS_DEFAULT,
+  DEFAULT_SERVER_COUNTRY,
+  type Incident,
+  type Server,
+} from '@nodeservice/shared';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -26,6 +31,7 @@ const server = (over: Partial<Server>): Server =>
     notes: null,
     providerId: null,
     nodeWatch: 'auto',
+    country: { ...DEFAULT_SERVER_COUNTRY },
     profile: {
       roles: [],
       importance: 'normal',
@@ -737,5 +743,55 @@ describe('профиль сервера в инструментах', () => {
     const none = await call('get_server_detail', { serverId: 'nl-2' }, d());
     expect(none.json().snapshot).toBeNull();
     expect(none.json().profile.snapshotAgeHours).toBeNull();
+  });
+});
+
+describe('страна сервера в инструментах', () => {
+  const withCountry = (country: Partial<Server['country']>) =>
+    server({ country: { ...DEFAULT_SERVER_COUNTRY, ...country } });
+  const d = (list: Server[]) => deps({ servers: { list: async () => list } });
+
+  it('определена автоматически: название, режим, сколько источников согласились', async () => {
+    const s = withCountry({
+      code: 'PL',
+      source: 'auto',
+      status: 'ok',
+      agree: 5,
+      total: 7,
+      checkedAt: '2026-09-26T10:00:00.000Z',
+    });
+    const { json } = await call('get_server_detail', { serverId: 'de-1' }, d([s]));
+    expect(json().country).toEqual({
+      code: 'PL',
+      name: 'Польша',
+      mode: 'определяется автоматически по IP',
+      status: 'определена',
+      sources: '5 из 7',
+      checkedAt: '2026-09-26T10:00:00.000Z',
+      note: null,
+    });
+  });
+
+  it('выбрана вручную: без числа источников; в сводке парка она тоже есть', async () => {
+    const s = withCountry({ code: 'NL', source: 'manual', status: 'ok' });
+    const fleet = (await call('get_fleet_status', {}, d([s]))).json();
+    expect(fleet.servers[0].country).toMatchObject({
+      code: 'NL',
+      name: 'Нидерланды',
+      mode: 'выбрана вручную',
+    });
+    expect(fleet.servers[0].country).not.toHaveProperty('sources');
+  });
+
+  it('не задана: null; идёт определение и не удалось: состояние и причина видны', async () => {
+    expect((await call('get_server_detail', { serverId: 'de-1' }, d([server()]))).json().country).toBeNull();
+    const detecting = withCountry({ status: 'detecting' });
+    expect(
+      (await call('get_server_detail', { serverId: 'de-1' }, d([detecting]))).json().country,
+    ).toMatchObject({ code: null, status: 'идёт определение' });
+    const failed = withCountry({ status: 'failed', note: 'Ответили только 2 источников из необходимых 4.' });
+    expect((await call('get_server_detail', { serverId: 'de-1' }, d([failed]))).json().country).toMatchObject(
+      { status: 'не удалось определить', note: expect.stringContaining('Ответили только 2') },
+    );
   });
 });

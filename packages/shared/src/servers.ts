@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { countryChoiceSchema, serverCountrySchema } from './countries.js';
 import {
   serverDriftItemSchema,
   serverInventorySchema,
@@ -153,6 +154,8 @@ export const serverSchema = z.object({
   /** Хостер из справочника провайдеров; null — не указан. */
   providerId: z.uuid().nullable(),
   nodeWatch: nodeWatchSchema,
+  /** Страна сервера: выбрана вручную или определена по IP (см. countries.ts). */
+  country: serverCountrySchema,
   /** Роль, важность, окно обслуживания и то, что должно работать на сервере (знание владельца). */
   profile: serverProfileSchema,
   /** Что реально запущено и слушает порты по последнему снимку по SSH; null — снимка ещё нет. */
@@ -204,6 +207,8 @@ export const createServerRequestSchema = z.object({
   notes: z.string().trim().max(SERVER_NOTES_MAX).optional(),
   providerId: z.uuid().nullable().optional(),
   nodeWatch: nodeWatchSchema.default('auto'),
+  /** Страна: не указана — определится по IP сервера после добавления. */
+  country: countryChoiceSchema.optional(),
   /**
    * Поставить ключ панели в authorized_keys и дальше ходить только по нему (по умолчанию).
    * false — остаться на своём ключе (для пароля всегда true: пароль не сохраняется).
@@ -227,6 +232,8 @@ export const updateServerRequestSchema = z.object({
   notes: z.string().trim().max(SERVER_NOTES_MAX).nullable().optional(),
   providerId: z.uuid().nullable().optional(),
   nodeWatch: nodeWatchSchema.optional(),
+  /** «Определять автоматически» (заново запускает определение) или страна, выбранная вручную. */
+  country: countryChoiceSchema.optional(),
   /** Профиль сервера: поля меняются по отдельности, списки заменяются целиком. */
   profile: serverProfilePatchSchema.optional(),
   /** Новые доступы SSH: панель проверит их реальным подключением (пароль, как и при добавлении, не сохраняется). */

@@ -18,6 +18,9 @@ import { withStepUp } from '@/features/security/step-up';
 import { api, request } from '@/lib/api';
 import { toast } from '@/lib/notify';
 
+/** Как часто перечитываем серверы, пока идёт определение страны. */
+export const COUNTRY_POLL_MS = 3_000;
+
 /** /api/servers — строго по контракту packages/shared/src/servers.ts. */
 export const serversApi = {
   list: (signal?: AbortSignal): Promise<ServersResponse> =>
@@ -53,7 +56,9 @@ export const serversListQuery = queryOptions({
   refetchOnMount: 'always',
   // Агент ставится и подключается в фоне после добавления — статусы должны доезжать без действий пользователя.
   // Живой поток приносит изменения сразу; опрос — страховка на случай обрыва.
-  refetchInterval: 60_000,
+  // Пока у какого-либо сервера идёт определение страны, список перечитывается чаще: результат появится сам.
+  refetchInterval: (query) =>
+    query.state.data?.items.some((s) => s.country.status === 'detecting') ? COUNTRY_POLL_MS : 60_000,
 });
 
 export function useServers() {
@@ -66,6 +71,8 @@ export const serverQuery = (id: string) =>
     queryFn: ({ signal }) => serversApi.get(id, signal),
     staleTime: 15_000,
     refetchOnMount: 'always' as const,
+    refetchInterval: (query: { state: { data?: Server | undefined } }) =>
+      query.state.data?.country.status === 'detecting' ? COUNTRY_POLL_MS : (false as const),
   });
 
 /** Один сервер — для детальной страницы. */

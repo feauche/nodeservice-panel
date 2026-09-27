@@ -1,5 +1,10 @@
 import { HttpException } from '@nestjs/common';
-import { type AssistantChange, DEFAULT_SERVER_PROFILE, type Server } from '@nodeservice/shared';
+import {
+  type AssistantChange,
+  DEFAULT_SERVER_COUNTRY,
+  DEFAULT_SERVER_PROFILE,
+  type Server,
+} from '@nodeservice/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { AssistantChangeRow } from '../../../infra/db/schema/index.js';
@@ -20,6 +25,7 @@ const server = (over: Partial<Server> = {}): Server =>
     notes: null,
     nodeWatch: 'auto',
     sshOk: true,
+    country: { ...DEFAULT_SERVER_COUNTRY },
     profile: { ...DEFAULT_SERVER_PROFILE },
     ...over,
   }) as Server;
@@ -121,8 +127,16 @@ function make() {
       world.updates.push({ id, patch });
       if (world.swallowUpdate) return;
       const s = world.servers.find((x) => x.id === id) as Server;
-      const { profile, ...rest } = patch;
+      const { profile, country, ...rest } = patch as {
+        profile?: object;
+        country?: { mode: string; code?: string };
+      } & Record<string, unknown>;
       Object.assign(s, rest);
+      if (country)
+        s.country =
+          country.mode === 'manual'
+            ? { ...s.country, code: country.code ?? null, source: 'manual', status: 'ok' }
+            : { ...s.country, source: 'auto', status: 'detecting' };
       if (profile) Object.assign(s.profile, profile);
     },
   };
@@ -716,5 +730,59 @@ describe('ChangesService: обслуживание', () => {
       status: 'failed',
       note: 'На этом сервере уже идёт обслуживание. Дождитесь завершения.',
     });
+  });
+});
+
+describe('ChangesService: страна сервера', () => {
+  let ctx: ReturnType<typeof make>;
+  beforeEach(() => {
+    ctx = make();
+  });
+  const srv = () => ctx.world.servers[0] as Server;
+
+  it('ручной выбор: было и станет словами, применяется, откат возвращает автоопределение', async () => {
+    const c = await propose(ctx.svc, 'server.country', { server: 'ru-entry-1', country: 'fi' });
+    expect(c).toMatchObject({ level: 'T1', reversible: true, title: 'Изменить страну сервера' });
+    expect(c.rows[0]).toEqual({
+      label: 'Страна',
+      before: 'Определяется автоматически',
+      after: 'Финляндия (вручную)',
+    });
+    expect(c.consequence).toContain('автоопределение её не изменит');
+    const done = await ctx.svc.apply(c.id);
+    expect(done.status).toBe('applied');
+    expect(srv().country).toMatchObject({ code: 'FI', source: 'manual', status: 'ok' });
+    await ctx.svc.revert(c.id);
+    expect(srv().country).toMatchObject({ source: 'auto' });
+  });
+
+  it('вернуть автоматику: предложение с пояснением про определение по IP; уже определённая автоматически не предлагается', async () => {
+    srv().country = { ...srv().country, code: 'NL', source: 'manual', status: 'ok' };
+    const c = await propose(ctx.svc, 'server.country', { server: 'ru-entry-1', country: 'auto' });
+    expect(c.rows[0]).toEqual({
+      label: 'Страна',
+      before: 'Нидерланды (вручную)',
+      after: 'Определять автоматически по IP',
+    });
+    expect(c.consequence).toContain('в течение минуты');
+    await ctx.svc.apply(c.id);
+    expect(srv().country.source).toBe('auto');
+    srv().country = { ...srv().country, code: 'PL', source: 'auto', status: 'ok' };
+    expect(await refusal(ctx.svc, 'server.country', { server: 'ru-entry-1', country: 'auto' })).toContain(
+      'уже определяется автоматически',
+    );
+  });
+
+  it('та же страна вручную и неверный код отклоняются', async () => {
+    srv().country = { ...srv().country, code: 'NL', source: 'manual', status: 'ok' };
+    expect(await refusal(ctx.svc, 'server.country', { server: 'ru-entry-1', country: 'NL' })).toContain(
+      'уже так выбрана',
+    );
+    expect(await refusal(ctx.svc, 'server.country', { server: 'ru-entry-1', country: 'ZZ' })).toContain(
+      'не код страны',
+    );
+    expect(await refusal(ctx.svc, 'server.country', { server: 'ru-entry-1', country: 'Польша' })).toContain(
+      'Аргументы не подходят',
+    );
   });
 });

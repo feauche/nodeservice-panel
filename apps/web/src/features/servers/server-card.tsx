@@ -40,7 +40,7 @@ import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
 import { HEALTH_COLORS, HEALTH_LABELS, type ServerHealth, serverHealth } from './server-health';
-import { DriftDot, RoleMark } from './server-marks';
+import { CountryMark, DriftDot, RoleMark } from './server-marks';
 import { useCheckServer, useDeleteServer, useDuplicateServer, useTrustHostKey } from './servers-api';
 
 /** ОС + версия + архитектура одной строкой (требование 3.10). */
@@ -245,6 +245,7 @@ function NameRow({ server }: { server: Server }) {
         {server.name}
       </h2>
       <RoleMark server={server} />
+      <CountryMark server={server} />
     </div>
   );
 }

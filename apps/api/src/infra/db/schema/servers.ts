@@ -88,6 +88,17 @@ export const servers = pgTable('servers', {
   maintenanceWindow: text('maintenance_window'),
   expectedContainers: jsonb('expected_containers').$type<string[]>().notNull().default([]),
   expectedPorts: jsonb('expected_ports').$type<number[]>().notNull().default([]),
+  /* страна (миграция 0037): код ISO, режим и ход определения по IP */
+  country: text('country'),
+  countrySource: text('country_source').notNull().default('auto'),
+  countryStatus: text('country_status').notNull().default('none'),
+  countryAgree: integer('country_agree'),
+  countryTotal: integer('country_total'),
+  countryCheckedAt: timestamp('country_checked_at', { withTimezone: true }),
+  countryNote: text('country_note'),
+  /** Другая страна, которую показала последняя проверка: автоматика меняет определённую страну только после подтверждения. */
+  countryCandidate: text('country_candidate'),
+  countryCandidateCount: integer('country_candidate_count').notNull().default(0),
   inventory: jsonb('inventory').$type<Omit<ServerInventory, 'at'>>(),
   inventoryAt: timestamp('inventory_at', { withTimezone: true }),
   /** Ручной порядок карточек (drag-and-drop). */

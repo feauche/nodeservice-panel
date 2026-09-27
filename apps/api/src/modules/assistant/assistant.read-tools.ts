@@ -3,6 +3,8 @@ import {
   type AssistantPermissions,
   ATTEMPT_STATUS_LABELS,
   actionMeta,
+  COUNTRY_STATUS_LABELS,
+  countryName,
   INCIDENT_CHAINS,
   type Incident,
   METRIC_RANGES,
@@ -231,6 +233,20 @@ export function findServer(servers: Server[], key: string): Server | undefined {
   return part.length === 1 ? part[0] : undefined;
 }
 
+/** Страна сервера для Джарвиса: код, название, кто задал (человек или автоопределение), доля согласных источников. */
+export function countryBrief(c: Server['country']) {
+  if (!c.code && c.status !== 'detecting' && c.status !== 'failed') return null;
+  return {
+    code: c.code,
+    name: c.code ? countryName(c.code) : null,
+    mode: c.source === 'manual' ? 'выбрана вручную' : 'определяется автоматически по IP',
+    status: COUNTRY_STATUS_LABELS[c.status],
+    ...(c.source === 'auto' && c.total ? { sources: `${c.agree ?? 0} из ${c.total}` } : {}),
+    checkedAt: c.checkedAt,
+    note: c.note,
+  };
+}
+
 /** Профиль сервера в парке для Джарвиса: роль, важность, что ожидается и расхождения со снимком. */
 export function profileBrief(s: Server, nowMs: number = Date.now()) {
   const p = s.profile;
@@ -412,6 +428,7 @@ export async function runReadTool(
         agentLastSeenAt: s.agentLastSeenAt,
         ssh: s.sshOk,
         nodeWatch: NODE_WATCH_LABELS[s.nodeWatch],
+        country: countryBrief(s.country),
         node: s.node ? NODE_STATE_LABELS[s.node] : null,
         os: [s.facts.os, s.facts.osVersion].filter(Boolean).join(' ') || null,
         arch: s.facts.arch,
@@ -491,6 +508,7 @@ export async function runReadTool(
         agent: { status: s.agentStatus, version: s.agentVersion, lastSeenAt: s.agentLastSeenAt },
         ssh: { ok: s.sshOk, lastCheckAt: s.lastSshCheckAt, lastOkAt: s.lastSshOkAt },
         node: { watch: NODE_WATCH_LABELS[s.nodeWatch], state: s.node ? NODE_STATE_LABELS[s.node] : null },
+        country: countryBrief(s.country),
         profile: profileBrief(s),
         snapshot: s.inventory
           ? {

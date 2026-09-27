@@ -1,6 +1,15 @@
 import { CheckIcon, ChevronDownIcon, SearchIcon } from 'lucide-react';
 import { Popover as PopoverPrimitive } from 'radix-ui';
-import { type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -12,6 +21,10 @@ export interface ComboOption {
   keywords?: string;
   /** Как пункт выглядит в списке и в поле, когда выбран. По умолчанию — label. */
   node?: ReactNode;
+  /** Заголовок группы: показывается над первым пунктом группы, пока не идёт поиск. Пункты одной группы идут подряд. */
+  group?: string;
+  /** Закреплённый пункт в начале списка, отделён чертой; при поиске скрыт и в счётчик не входит. */
+  pinned?: boolean;
 }
 
 const norm = (s: string): string => s.toLowerCase().replace(/ё/g, 'е').trim();
@@ -34,6 +47,7 @@ export function Combobox({
   ariaLabel,
   placeholder,
   emptyLabel,
+  display,
   searchPlaceholder = 'Найти…',
   searchFrom = 8,
   action,
@@ -49,6 +63,8 @@ export function Combobox({
   placeholder: ReactNode;
   /** Пункт «ничего не выбрано» в начале списка; без него значение сбросить нельзя. */
   emptyLabel?: string;
+  /** Что показать в поле вместо выбранного пункта (например, ход определения); значение и подсветка в списке от этого не зависят. */
+  display?: ReactNode;
   searchPlaceholder?: string;
   searchFrom?: number;
   action?: { label: string; icon?: ReactNode; onSelect: () => void };
@@ -61,7 +77,8 @@ export function Combobox({
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
-  const searchable = options.length >= searchFrom;
+  const countable = options.filter((o) => !o.pinned);
+  const searchable = countable.length >= searchFrom;
   const q = norm(query);
 
   const filtered = useMemo(
@@ -72,11 +89,16 @@ export function Combobox({
   const entries: Entry[] = useMemo(() => {
     const list: Entry[] = [];
     if (emptyLabel && !q) list.push({ kind: 'none', key: '__none' });
-    for (const option of filtered) list.push({ kind: 'option', key: option.value, option });
+    if (!q)
+      for (const option of options)
+        if (option.pinned) list.push({ kind: 'option', key: option.value, option });
+    for (const option of filtered)
+      if (!option.pinned) list.push({ kind: 'option', key: option.value, option });
     if (action) list.push({ kind: 'action', key: '__action' });
     return list;
-  }, [emptyLabel, q, filtered, action]);
+  }, [emptyLabel, q, filtered, options, action]);
 
+  const filteredCount = filtered.filter((o) => !o.pinned).length;
   const selected = options.find((o) => o.value === value) ?? null;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: сброс и подсветка нужны только в момент открытия, иначе каждый ввод сбивал бы выбор
@@ -151,7 +173,7 @@ export function Combobox({
           )}
         >
           <span className="flex min-w-0 items-center gap-2 truncate">
-            {selected ? (selected.node ?? selected.label) : placeholder}
+            {display ?? (selected ? (selected.node ?? selected.label) : placeholder)}
           </span>
           <ChevronDownIcon
             className={cn('size-4 flex-none opacity-70 transition-transform', open && 'rotate-180')}
@@ -205,32 +227,53 @@ export function Combobox({
               if (entry.kind === 'action') return null;
               const isNone = entry.kind === 'none';
               const on = isNone ? value === null : value === entry.option.value;
+              const prev = entries[i - 1];
+              const prevOption = prev?.kind === 'option' ? prev.option : null;
+              const opt = entry.kind === 'option' ? entry.option : null;
+              const heading = !q && opt && !opt.pinned && opt.group && opt.group !== prevOption?.group;
+              const afterPinned = !q && opt && !opt.pinned && prevOption?.pinned;
               return (
-                // biome-ignore lint/a11y/useKeyWithClickEvents: клавиатура обрабатывается на listbox и в поле поиска
-                <div
-                  key={entry.key}
-                  id={optId(i)}
-                  role="option"
-                  tabIndex={-1}
-                  aria-selected={on}
-                  aria-label={isNone ? emptyLabel : entry.option.label}
-                  data-index={i}
-                  onMouseMove={() => setActive(i)}
-                  onClick={() => choose(entry)}
-                  className={cn(row, i === active && 'bg-surface-2 text-foreground', on && 'text-foreground')}
-                >
-                  <span className="flex min-w-0 flex-1 items-center gap-2">
-                    {isNone ? (
-                      <span className="text-text-3">{emptyLabel}</span>
-                    ) : (
-                      (entry.option.node ?? entry.option.label)
+                <Fragment key={entry.key}>
+                  {(afterPinned || (heading && !prevOption)) && i > 0 && (
+                    <div role="presentation" className="mx-0 my-1 h-px bg-border" />
+                  )}
+                  {heading && (
+                    <div
+                      role="presentation"
+                      className="px-3.5 pt-2 pb-[3px] text-[10.5px] font-semibold tracking-[0.09em] text-text-3 uppercase"
+                    >
+                      {opt.group}
+                    </div>
+                  )}
+                  {/* biome-ignore lint/a11y/useKeyWithClickEvents: клавиатура обрабатывается на listbox и в поле поиска */}
+                  <div
+                    id={optId(i)}
+                    role="option"
+                    tabIndex={-1}
+                    aria-selected={on}
+                    aria-label={isNone ? emptyLabel : entry.option.label}
+                    data-index={i}
+                    onMouseMove={() => setActive(i)}
+                    onClick={() => choose(entry)}
+                    className={cn(
+                      row,
+                      i === active && 'bg-surface-2 text-foreground',
+                      on && 'text-foreground',
                     )}
-                  </span>
-                  {on && <CheckIcon className="size-4 flex-none text-brand" aria-hidden="true" />}
-                </div>
+                  >
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      {isNone ? (
+                        <span className="text-text-3">{emptyLabel}</span>
+                      ) : (
+                        (entry.option.node ?? entry.option.label)
+                      )}
+                    </span>
+                    {on && <CheckIcon className="size-4 flex-none text-brand" aria-hidden="true" />}
+                  </div>
+                </Fragment>
               );
             })}
-            {filtered.length === 0 && (
+            {filteredCount === 0 && (
               <div className="px-3.5 py-4 text-[13px] text-text-2">Ничего не найдено.</div>
             )}
           </div>
@@ -238,7 +281,7 @@ export function Combobox({
             <div className="flex items-center gap-2 border-t border-border bg-surface-2 px-3 py-1.5 text-[12px] text-text-3">
               {searchable && (
                 <span aria-live="polite">
-                  {q ? `Найдено ${filtered.length} из ${options.length}` : `Всего: ${options.length}`}
+                  {q ? `Найдено ${filteredCount} из ${countable.length}` : `Всего: ${countable.length}`}
                 </span>
               )}
               <span className="flex-1" />

@@ -47,6 +47,7 @@ import { toast } from '@/lib/notify';
 import { useMediaQuery } from '@/lib/use-media';
 import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
+import { CountryField, type CountryPick } from './country-field';
 import { AgentPill, HealthDot, osLine, SshPill } from './server-card';
 import { JournalTab } from './server-detail/journal-tab';
 import { MaintenanceTab } from './server-detail/maintenance-tab';
@@ -546,6 +547,8 @@ function ConnectionTab({ server }: { server: Server }) {
   const providers = useProviders();
   const [form, setForm] = useState({ name: '', host: '', port: '22', sshUser: '', tags: '', notes: '' });
   const [providerId, setProviderId] = useState<string | null>(null);
+  /** Что выбрали в поле «Страна»; null — не трогали, у сервера остаётся прежнее. */
+  const [countryPick, setCountryPick] = useState<CountryPick>(null);
   const [authTab, setAuthTab] = useState<(typeof AUTH_TABS)[number]['key']>('keep');
   const [password, setPassword] = useState('');
   const [privateKey, setPrivateKey] = useState('');
@@ -563,6 +566,7 @@ function ConnectionTab({ server }: { server: Server }) {
       notes: server.notes ?? '',
     });
     setProviderId(server.providerId);
+    setCountryPick(null);
     setAuthTab('keep');
     setPassword('');
     setPrivateKey('');
@@ -594,6 +598,7 @@ function ConnectionTab({ server }: { server: Server }) {
         .filter(Boolean),
       notes: form.notes.trim() ? form.notes.trim() : null,
       providerId,
+      ...(countryPick ? { country: countryPick } : {}),
       ...(auth ? { auth } : {}),
     });
     if (!parsed.success) {
@@ -605,6 +610,7 @@ function ConnectionTab({ server }: { server: Server }) {
     try {
       await update.mutateAsync({ id: server.id, patch: parsed.data as UpdateServerRequest });
       setErrors({});
+      setCountryPick(null);
       toast.success(`«${parsed.data.name ?? server.name}» сохранён.`);
     } catch (err) {
       if (isApiError(err) && err.errors.length > 0) {
@@ -666,37 +672,48 @@ function ConnectionTab({ server }: { server: Server }) {
           <span className="text-[12px] text-text-3">Справочник — в меню «Серверы»</span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field id="sm-provider" label="Провайдер" error={errors.providerId || undefined}>
-            <ProviderSelect
-              id="sm-provider"
-              value={providerId}
-              disabled={busy}
-              onChange={(id) => {
-                setProviderId(id);
-                setErrors((p) => ({ ...p, providerId: '', form: '' }));
-              }}
-              className="bg-surface-2"
-            />
-          </Field>
-          <div className="flex flex-col gap-1.5">
-            <span className="text-[12.5px] font-medium text-text-2">Сайт провайдера</span>
-            {chosenProvider ? (
-              <a
-                href={chosenProvider.siteUrl}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="inline-flex h-10 items-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-3 text-[13px] text-brand underline-offset-2 hover:underline"
-              >
-                <ProviderIcon provider={chosenProvider} size="sm" />
-                <span className="truncate">{chosenProvider.siteHost}</span>
-                <ExternalLinkIcon className="size-3.5 flex-none" aria-hidden="true" />
-              </a>
-            ) : (
-              <span className="inline-flex h-10 items-center rounded-[10px] border border-dashed border-border px-3 text-[12.5px] text-text-3">
-                появится после выбора провайдера
-              </span>
-            )}
+          <div className="flex min-w-0 flex-col gap-4">
+            <Field id="sm-provider" label="Провайдер" error={errors.providerId || undefined}>
+              <ProviderSelect
+                id="sm-provider"
+                value={providerId}
+                disabled={busy}
+                onChange={(id) => {
+                  setProviderId(id);
+                  setErrors((p) => ({ ...p, providerId: '', form: '' }));
+                }}
+                className="bg-surface-2"
+              />
+            </Field>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[12.5px] font-medium text-text-2">Сайт провайдера</span>
+              {chosenProvider ? (
+                <a
+                  href={chosenProvider.siteUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="inline-flex h-10 items-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-3 text-[13px] text-brand underline-offset-2 hover:underline"
+                >
+                  <ProviderIcon provider={chosenProvider} size="sm" />
+                  <span className="truncate">{chosenProvider.siteHost}</span>
+                  <ExternalLinkIcon className="size-3.5 flex-none" aria-hidden="true" />
+                </a>
+              ) : (
+                <span className="inline-flex h-10 items-center rounded-[10px] border border-dashed border-border px-3 text-[12.5px] text-text-3">
+                  появится после выбора провайдера
+                </span>
+              )}
+            </div>
           </div>
+          <CountryField
+            id="sm-country"
+            variant="server"
+            country={server.country}
+            picked={countryPick}
+            onPick={setCountryPick}
+            host={server.host}
+            disabled={busy}
+          />
         </div>
         <div className="mt-4">
           <Field id="sm-notes" label="Заметка" error={errors.notes || undefined}>

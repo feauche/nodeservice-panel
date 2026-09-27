@@ -15,6 +15,7 @@ import { ProviderSelect } from '@/features/providers/provider-select';
 import { apiErrorMessage, isApiError } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { CountryField, type CountryPick } from './country-field';
 import { useCreateServer, useTestConnection } from './servers-api';
 
 const AUTH_TABS = [
@@ -140,6 +141,8 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
   const create = useCreateServer();
   const [form, setForm] = useState({ name: '', host: '', port: '22', sshUser: 'root', tags: '', notes: '' });
   const [providerId, setProviderId] = useState<string | null>(null);
+  /** Страна: не выбрали или «Определять автоматически» — поле не шлём, панель определит по IP сама. */
+  const [countryPick, setCountryPick] = useState<CountryPick>(null);
   const [authTab, setAuthTab] = useState<(typeof AUTH_TABS)[number]['key']>('password');
   const [password, setPassword] = useState('');
   const [privateKey, setPrivateKey] = useState('');
@@ -154,6 +157,7 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
     if (!open) {
       setForm({ name: '', host: '', port: '22', sshUser: 'root', tags: '', notes: '' });
       setProviderId(null);
+      setCountryPick(null);
       setAuthTab('password');
       setPassword('');
       setPrivateKey('');
@@ -185,6 +189,7 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
       auth,
       tags,
       providerId,
+      ...(countryPick?.mode === 'manual' ? { country: countryPick } : {}),
       ...(form.notes.trim() ? { notes: form.notes } : {}),
     });
     if (!parsed.success) {
@@ -341,6 +346,14 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
               className="bg-surface-2"
             />
           </Field>
+          <CountryField
+            id="srv-country"
+            variant="create"
+            country={null}
+            picked={countryPick}
+            onPick={setCountryPick}
+            disabled={busy}
+          />
           <div className="grid gap-3.5 sm:grid-cols-[minmax(0,1fr)_100px_150px]">
             <Field id="srv-host" label={<Req>IP или домен</Req>} error={errors.host || undefined}>
               <Input

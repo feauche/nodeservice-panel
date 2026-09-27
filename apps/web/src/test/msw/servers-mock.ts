@@ -1,7 +1,9 @@
 import {
   AUTH_PROBLEM,
+  type CountryChoice,
   computeDrift,
   createServerRequestSchema,
+  DEFAULT_SERVER_COUNTRY,
   DEFAULT_SERVER_PROFILE,
   normalizeProfilePatch,
   SERVER_PROBLEM,
@@ -45,6 +47,8 @@ export const mockInventory = {
 };
 
 interface ServersMock {
+  /** Через сколько мс автоопределение страны «доходит» до результата; 0 — сразу (для тестов). */
+  countryDelayMs: number;
   items: Server[];
   /** Следующая проверка: сервер «переустановлен» — отпечаток другой. */
   hostKeyChanged: boolean;
@@ -52,7 +56,12 @@ interface ServersMock {
   unreachable: boolean;
 }
 
-export const mockServers: ServersMock = { items: [], hostKeyChanged: false, unreachable: false };
+export const mockServers: ServersMock = {
+  items: [],
+  hostKeyChanged: false,
+  unreachable: false,
+  countryDelayMs: 2500,
+};
 
 let seq = 0;
 function makeServer(patch: Partial<Server>): Server {
@@ -68,6 +77,7 @@ function makeServer(patch: Partial<Server>): Server {
     notes: null,
     providerId: null,
     nodeWatch: 'auto',
+    country: { ...DEFAULT_SERVER_COUNTRY },
     profile: { ...DEFAULT_SERVER_PROFILE },
     inventory: null,
     drift: [],
@@ -84,6 +94,51 @@ function makeServer(patch: Partial<Server>): Server {
     updatedAt: '2026-08-20T10:00:00.000Z',
     ...patch,
   };
+}
+
+/** Результат автоопределения в моке: Польша, 6 из 7 источников. */
+export const MOCK_DETECTED = { code: 'PL', agree: 6, total: 7 } as const;
+
+/** Завершить автоопределение страны у сервера (по таймеру или вручную из теста). */
+export function finishCountryDetection(id: string): void {
+  const idx = mockServers.items.findIndex((x) => x.id === id);
+  const cur = mockServers.items[idx];
+  if (!cur || cur.country.status !== 'detecting') return;
+  mockServers.items[idx] = {
+    ...cur,
+    country: {
+      code: MOCK_DETECTED.code,
+      source: 'auto',
+      status: 'ok',
+      agree: MOCK_DETECTED.agree,
+      total: MOCK_DETECTED.total,
+      checkedAt: new Date().toISOString(),
+      note: null,
+    },
+  };
+}
+
+/** Страна из поля формы: вручную — сразу; автоматически — «идёт определение» и результат через countryDelayMs. */
+function countryFor(server: Server, choice: CountryChoice | undefined): Server['country'] {
+  if (!choice) return server.country;
+  if (choice.mode === 'manual')
+    return {
+      code: String(choice.code).toUpperCase(),
+      source: 'manual',
+      status: 'ok',
+      agree: null,
+      total: null,
+      checkedAt: new Date().toISOString(),
+      note: null,
+    };
+  return { ...server.country, source: 'auto', status: 'detecting', note: null };
+}
+
+function scheduleDetection(id: string): void {
+  const server = mockServers.items.find((x) => x.id === id);
+  if (server?.country.status !== 'detecting') return;
+  if (mockServers.countryDelayMs <= 0) finishCountryDetection(id);
+  else setTimeout(() => finishCountryDetection(id), mockServers.countryDelayMs);
 }
 
 /* ---------- история терминала ---------- */
@@ -128,11 +183,21 @@ export function seedTerminalSessions(serverId: string): void {
 
 export function seedServers(): void {
   seq = 0;
+  mockServers.countryDelayMs = 2500;
   mockServers.hostKeyChanged = false;
   mockServers.unreachable = false;
   mockServers.items = [
     makeServer({
       name: 'de-fra-01',
+      country: {
+        code: 'PL',
+        source: 'auto',
+        status: 'ok',
+        agree: 6,
+        total: 7,
+        checkedAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+        note: null,
+      },
       tags: ['prod', 'de'],
       agentStatus: 'online',
       agentVersion: '0.5.4',
@@ -140,6 +205,15 @@ export function seedServers(): void {
     }),
     makeServer({
       name: 'nl-ams-02',
+      country: {
+        code: 'NL',
+        source: 'manual',
+        status: 'ok',
+        agree: null,
+        total: null,
+        checkedAt: '2026-09-01T10:00:00.000Z',
+        note: null,
+      },
       host: '198.51.100.20',
       tags: ['prod'],
       sshOk: false,
@@ -237,7 +311,10 @@ export const serversHandlers = [
             lastSshOkAt: null,
           }),
     });
+    // Не указали страну — панель определит её по IP сервера (в моке через несколько секунд).
+    server.country = countryFor(server, req.country ?? { mode: 'auto' });
     mockServers.items = [...mockServers.items, server];
+    scheduleDetection(server.id);
     return HttpResponse.json(server, { status: 201 });
   }),
   http.post('/api/servers/:id/duplicate', ({ params }) => {
@@ -270,7 +347,7 @@ export const serversHandlers = [
     const idx = mockServers.items.findIndex((x) => x.id === params.id);
     if (idx < 0) return problem(404, 'about:blank', 'Сервер не найден');
     const current = mockServers.items[idx] as Server;
-    const { profile: profilePatch, ...rest } = parsed.data;
+    const { profile: profilePatch, country: countryChoice, ...rest } = parsed.data;
     const profile = {
       ...current.profile,
       ...(profilePatch ? normalizeProfilePatch(profilePatch) : {}),
@@ -279,10 +356,12 @@ export const serversHandlers = [
       ...current,
       ...rest,
       profile,
+      country: countryFor(current, countryChoice),
       drift: computeDrift(profile, current.inventory),
       updatedAt: new Date().toISOString(),
     } as Server;
     mockServers.items[idx] = next;
+    if (countryChoice?.mode === 'auto') scheduleDetection(next.id);
     return HttpResponse.json(next);
   }),
   // Снимок состояния по SSH: как на сервере, читает контейнеры и порты, а расхождения считает панель.

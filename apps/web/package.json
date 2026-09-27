@@ -1,7 +1,7 @@
 {
   "name": "web",
   "private": true,
-  "version": "0.22.2",
+  "version": "0.23.0",
   "type": "module",
   "scripts": {
     "dev": "tsr generate && vite",
@@ -30,6 +30,7 @@
     "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "country-flag-icons": "^1.6.20",
     "highlight.js": "^11.12.0",
     "input-otp": "^1.5.0",
     "lucide-react": "^1.35.0",

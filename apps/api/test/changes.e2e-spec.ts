@@ -287,6 +287,27 @@ describe('изменения по предложению Джарвиса e2e (J
     expect((await serverNow()).nodeWatch).toBe('auto');
   });
 
+  it('страна сервера: карточка с кодом, применение ставит ручную страну, откат возвращает автоопределение', async () => {
+    const c = await propose('server.country', { server: 'ru-entry-1', country: 'fi' });
+    expect(c).toMatchObject({ level: 'T1', reversible: true });
+    expect(c.rows[0]).toMatchObject({ label: 'Страна', after: 'Финляндия (вручную)' });
+    await act(c.id, 'apply');
+    expect((await serverNow()).country).toMatchObject({ code: 'FI', source: 'manual', status: 'ok' });
+    await act(c.id, 'revert');
+    expect((await serverNow()).country.source).toBe('auto');
+    const bad = await chat([
+      {
+        name: 'propose_change',
+        input: {
+          operation: 'server.country',
+          args: { server: 'ru-entry-1', country: 'Финляндия' },
+          reason: 'x',
+        },
+      },
+    ]);
+    expect(bad.message.proposals).toEqual([]);
+  });
+
   it('переименование: карточка, применение и откат возвращают имя', async () => {
     const c = await propose('server.rename', { server: 'ru-entry-1', name: 'ru-entry-9' });
     await act(c.id, 'apply');

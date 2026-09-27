@@ -1,4 +1,5 @@
 import {
+  DEFAULT_SERVER_COUNTRY,
   DEFAULT_SERVER_PROFILE,
   EMPTY_FACTS,
   type OverviewServerMetrics,
@@ -19,6 +20,7 @@ const base: Server = {
   notes: null,
   providerId: null,
   nodeWatch: 'auto',
+  country: DEFAULT_SERVER_COUNTRY,
   profile: DEFAULT_SERVER_PROFILE,
   inventory: null,
   drift: [],

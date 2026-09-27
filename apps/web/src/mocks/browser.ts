@@ -4,6 +4,7 @@ import { handlers, resetMockState } from '@/test/msw/handlers';
 import { mockIncidents } from '@/test/msw/incidents-mock';
 import { mockMaintenance } from '@/test/msw/maintenance-mock';
 import { mockProviders } from '@/test/msw/providers-mock';
+import { mockServers } from '@/test/msw/servers-mock';
 import { installMockTerminalSocket } from './terminal-ws';
 
 /**
@@ -23,6 +24,7 @@ export async function startMockWorker(): Promise<void> {
   (window as unknown as { __nsMockIncidents: typeof mockIncidents }).__nsMockIncidents = mockIncidents;
   (window as unknown as { __nsMockMaintenance: typeof mockMaintenance }).__nsMockMaintenance =
     mockMaintenance;
+  (window as unknown as { __nsMockServers: typeof mockServers }).__nsMockServers = mockServers;
   installMockTerminalSocket();
   const worker = setupWorker(...handlers);
   await worker.start({ onUnhandledRequest: 'bypass', quiet: false });

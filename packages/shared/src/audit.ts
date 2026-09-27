@@ -118,6 +118,8 @@ export const AUDIT_ACTIONS = {
   'server.duplicated': { category: 'server', label: 'Сервер продублирован' },
   'server.reordered': { category: 'server', label: 'Порядок серверов изменён' },
   'server.updated': { category: 'server', label: 'Сервер изменён' },
+  'server.country.detected': { category: 'server', label: 'Страна сервера определена по IP' },
+  'server.country.changed': { category: 'server', label: 'Страна сервера сменилась по базам' },
   'server.deleted': { category: 'server', label: 'Сервер удалён' },
   'server.ssh.checked': { category: 'server', label: 'Проверка связи по SSH' },
   'server.host_key.trusted': { category: 'server', label: 'Доверен новый отпечаток сервера' },

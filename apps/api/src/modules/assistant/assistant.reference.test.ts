@@ -113,4 +113,14 @@ describe('справочник Джарвиса', () => {
     expect(text).toContain('SSH-ключи');
     expect(text).toContain('пиши «предложил');
   });
+  it('про страну сервера: как определяется, пороги, ручной выбор, смена в Журнале, расхождение баз', () => {
+    const text = referenceById('fleet')?.render() ?? '';
+    expect(text).toContain('Страна сервера');
+    expect(text).toContain('не меньше четырёх');
+    expect(text).toContain('60 %');
+    expect(text).toContain('Ручной выбор автоматика не трогает');
+    expect(text).toContain('server.country.changed');
+    expect(text).toContain('расхождениями, а не фактом блокировки');
+    expect(text).toContain('IP сервера при этом уходит');
+  });
 });

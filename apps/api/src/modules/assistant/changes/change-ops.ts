@@ -6,7 +6,11 @@ import {
   autofixPolicySchema,
   type ChangeOperation,
   type ChangeRow,
+  type CountryChoice,
+  type CountryCode,
   compareVersions,
+  countryChoiceSchema,
+  countryName,
   DISK_CLEANUP_OFFER_PCT,
   INCIDENT_KINDS,
   type Incident,
@@ -472,6 +476,86 @@ const profile: ChangeOp = {
   },
 };
 
+/* ---------- страна сервера ---------- */
+
+const countryLabel = (code: string | null, source: 'auto' | 'manual'): string =>
+  code
+    ? `${countryName(code)} (${source === 'manual' ? 'вручную' : 'по IP'})`
+    : source === 'auto'
+      ? 'Определяется автоматически'
+      : DASH;
+
+const countryOp: ChangeOp = {
+  level: 'T1',
+  schema: z.object({
+    server: serverRef,
+    country: z.union([z.literal('auto'), z.string().trim().min(2).max(2)]),
+  }),
+  async build(raw, ctx) {
+    const s = await findServer(ctx, String(raw.server));
+    if ('problem' in s) return s;
+    const want = String(raw.country);
+    const cur = s.server.country;
+    let choice: CountryChoice;
+    if (want.toLowerCase() === 'auto') choice = { mode: 'auto' };
+    else {
+      const code = countryChoiceSchema.safeParse({ mode: 'manual', code: want });
+      if (!code.success)
+        return {
+          problem: `«${want}» не код страны (нужен двухбуквенный ISO, например PL, или «auto»). Карточка не создана.`,
+        };
+      choice = code.data;
+    }
+    const before = { source: cur.source, code: cur.source === 'manual' ? cur.code : null };
+    const after =
+      choice.mode === 'auto' ? { source: 'auto', code: null } : { source: 'manual', code: choice.code };
+    if (same(before, after) && choice.mode === 'manual') return NO_CHANGE('Страна уже так выбрана.');
+    if (choice.mode === 'auto' && cur.source === 'auto' && cur.status === 'ok')
+      return NO_CHANGE('Страна уже определяется автоматически и определена.');
+    return {
+      args: { serverId: s.server.id, country: choice.mode === 'auto' ? 'auto' : choice.code },
+      plan: {
+        title: 'Изменить страну сервера',
+        target: serverTarget(s.server),
+        rows: [
+          {
+            label: 'Страна',
+            before: countryLabel(cur.code, cur.source),
+            after:
+              choice.mode === 'auto' ? 'Определять автоматически по IP' : countryLabel(choice.code, 'manual'),
+          },
+        ],
+        consequence:
+          choice.mode === 'auto'
+            ? 'Панель определит страну по IP сервера в течение минуты (несколько геосервисов, решает большинство) и потом будет перепроверять раз в сутки.'
+            : 'Страну поставит человек: автоопределение её не изменит, пока не вернуть режим «Определять автоматически».',
+        reversible: true,
+        before,
+        after,
+      },
+    };
+  },
+  async read(args, ctx) {
+    const c = (await currentServer(ctx, args)).country;
+    return { source: c.source, code: c.source === 'manual' ? c.code : null };
+  },
+  async apply(args, _plan, ctx) {
+    await ctx.servers.update(String(args.serverId), {
+      country:
+        args.country === 'auto'
+          ? { mode: 'auto' }
+          : { mode: 'manual', code: String(args.country) as CountryCode },
+    });
+  },
+  async revert(args, plan, ctx) {
+    const b = plan.before as { source: 'auto' | 'manual'; code: string | null };
+    await ctx.servers.update(String(args.serverId), {
+      country:
+        b.source === 'manual' && b.code ? { mode: 'manual', code: b.code as CountryCode } : { mode: 'auto' },
+    });
+  },
+};
+
 /* ---------- инциденты и автопочинка ---------- */
 
 const INCIDENT_STATUS_LABEL: Record<Incident['status'], string> = {
@@ -784,6 +868,7 @@ export const CHANGE_OPS: Readonly<Record<ChangeOperation, ChangeOp>> = {
   'server.rename': rename,
   'server.nodeWatch': nodeWatch,
   'server.profile': profile,
+  'server.country': countryOp,
   'incident.resolve': incidentResolve,
   'autofix.pause': autofixPause,
   'autofix.policy': autofixPolicy,
