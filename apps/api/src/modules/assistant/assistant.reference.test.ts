@@ -1,4 +1,4 @@
-import { INCIDENT_ACTIONS, INCIDENT_KIND_META, INCIDENT_KINDS } from '@nodeservice/shared';
+import { CHANGELOG, INCIDENT_ACTIONS, INCIDENT_KIND_META, INCIDENT_KINDS } from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
 
 import { REFERENCE, referenceById } from './assistant.reference.js';
@@ -73,12 +73,18 @@ describe('справочник Джарвиса', () => {
   it('про автопочинку сказано, что «Само» не работает при выключенном общем выключателе', () => {
     expect(referenceById('incidents')?.render()).toContain('даже когда для вида инцидента выбрано «Само»');
   });
-  it('история версий: текущая версия первой, есть про осмотр по SSH', () => {
+  it('история версий: текущая версия первой, новые записи выше старых, видно только последние десять', () => {
     const text = referenceById('changelog')?.render() ?? '';
     expect(text).toMatch(/Текущая версия: \d+\.\d+\.\d+/);
-    expect(text.indexOf('## 0.19.0')).toBeGreaterThan(0);
-    expect(text.indexOf('## 0.19.0')).toBeLessThan(text.indexOf('## 0.18.0'));
-    expect(text).toContain('Осмотр служб и системы');
+    // Захардкоженные номера версий тут не годятся: справочник показывает только последние 10 записей
+    // (CHANGELOG.slice(0, 10)), а список растёт с каждой поставкой — берём границы окна из самого CHANGELOG.
+    const [newest, second] = CHANGELOG;
+    const lastShown = CHANGELOG[9];
+    expect(newest && text.indexOf(`## ${newest.version}`)).toBeGreaterThan(0);
+    if (second)
+      expect(text.indexOf(`## ${newest?.version}`)).toBeLessThan(text.indexOf(`## ${second.version}`));
+    if (lastShown) expect(text).toContain(`## ${lastShown.version}`);
+    if (CHANGELOG[10]) expect(text).not.toContain(`## ${CHANGELOG[10].version}`);
   });
   it('про профиль парка: расхождение считается только по ожидаемому, снимок перепроверяют, правила не правит Джарвис', () => {
     const text = referenceById('fleet')?.render() ?? '';

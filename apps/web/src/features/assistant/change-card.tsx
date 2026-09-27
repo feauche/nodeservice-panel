@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils';
 import { type ChangeAction, useChange, useChangeAction } from './assistant-api';
 
 const BTN =
-  'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border bg-surface px-3 text-[12.5px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-default disabled:opacity-50';
+  'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border bg-surface px-3.5 text-[12.5px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-default disabled:opacity-50';
 const BTN_PRIMARY =
   'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] bg-cta px-3.5 text-[12.5px] font-semibold whitespace-nowrap text-cta-foreground hover:bg-(--ns-cta-hover) disabled:cursor-default disabled:opacity-50';
 
@@ -291,6 +291,11 @@ export function ChangeCard({ proposal }: { proposal: AssistantChangeProposal }) 
               <Meta icon={<span aria-hidden="true" />}>Проверяю результат после записи.</Meta>
             ) : (
               <button type="button" disabled={busy} onClick={() => void run('reject')} className={BTN}>
+                {mine === 'reject' ? (
+                  <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />
+                ) : (
+                  <XIcon className="size-3.5" aria-hidden="true" />
+                )}
                 Отклонить
               </button>
             )}

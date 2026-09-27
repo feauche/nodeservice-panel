@@ -93,11 +93,21 @@ const PILL: Record<PillTone, string> = {
   muted: 'bg-surface-2 text-text-3',
 };
 
-export function Pill({ tone = 'muted', children }: { tone?: PillTone; children: ReactNode }) {
+export function Pill({
+  tone = 'muted',
+  title,
+  children,
+}: {
+  tone?: PillTone;
+  /** Подсказка при наведении — на что именно отвечает эта пилюля, если это не очевидно из текста. */
+  title?: string;
+  children: ReactNode;
+}) {
   return (
     <span
+      title={title}
       className={cn(
-        'inline-flex rounded-full px-[9px] py-[3px] text-[11.5px] font-semibold whitespace-nowrap tabular-nums',
+        'inline-flex items-center justify-center rounded-full px-[9px] py-[3px] text-[11.5px] font-semibold whitespace-nowrap tabular-nums',
         PILL[tone],
       )}
     >

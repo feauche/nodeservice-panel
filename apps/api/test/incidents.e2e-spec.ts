@@ -126,6 +126,31 @@ describe('incidents e2e', () => {
     expect(resolved.items.some((i) => i.kind === 'agent_offline' && i.resolvedBy === 'auto')).toBe(true);
   });
 
+  it('агент офлайн и SSH тоже недоступен → «Переустановить агента» не предлагаем (шаг всё равно провалится)', async () => {
+    const db = app.get<Db>(DB);
+    const svc = app.get(IncidentsService);
+    await db.execute(sql`update servers set agent_status = 'offline', ssh_ok = false where id = ${serverId}`);
+    await svc.evaluate(noMetrics);
+
+    const list = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=open').expect(200)).body,
+    );
+    const inc = list.items.find((i) => i.kind === 'agent_offline');
+    expect(inc?.proposal).toBeNull();
+
+    // SSH снова работает — на следующем тике шаг предлагается как обычно
+    await db.execute(sql`update servers set ssh_ok = true where id = ${serverId}`);
+    await svc.evaluate(noMetrics);
+    const after = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=open').expect(200)).body,
+    );
+    const inc2 = after.items.find((i) => i.kind === 'agent_offline');
+    expect(inc2?.proposal).toMatchObject({ action: 'agent_reinstall', level: 'T2' });
+
+    await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
+    await svc.evaluate(noMetrics);
+  });
+
   /** Ждём, пока попытка по инциденту завершится (исполнитель работает в фоне). */
   const settled = async (id: string) => {
     await app.get(IncidentRunnerService).settle();

@@ -120,7 +120,10 @@ export class HttpRemnawaveClient implements RemnawaveClient {
         isDisabled: Boolean(n.isDisabled),
         isConnecting: Boolean(n.isConnecting),
         lastStatusMessage: typeof n.lastStatusMessage === 'string' ? n.lastStatusMessage : null,
-        usersOnline: metricsByUuid.has(uuid) ? (metricsByUuid.get(uuid) ?? 0) : null,
+        // Нет строки метрик у отключённой ноды — это «неприменимо» (null); у включённой это просто
+        // «сейчас никто не подключён» (0), а не «нет данных» — иначе панель у активной ноды вообще
+        // ничего не показывала бы вместо честного нуля.
+        usersOnline: metricsByUuid.has(uuid) ? (metricsByUuid.get(uuid) ?? 0) : n.isDisabled ? null : 0,
         trafficUsedBytes: typeof n.trafficUsedBytes === 'number' ? n.trafficUsedBytes : null,
         trafficLimitBytes: typeof n.trafficLimitBytes === 'number' ? n.trafficLimitBytes : null,
       };

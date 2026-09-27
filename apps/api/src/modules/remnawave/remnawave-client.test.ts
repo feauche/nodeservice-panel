@@ -101,6 +101,33 @@ describe('HttpRemnawaveClient.fetch', () => {
     expect(r.nodes[0]).toMatchObject({ usersOnline: null, countryCode: null, isDisabled: true });
   });
 
+  it('включённая нода без метрик получает usersOnline: 0 (сейчас никого нет), а не null', async () => {
+    vi.stubGlobal(
+      'fetch',
+      respond({
+        '/api/system/stats': {
+          response: { uptime: 1, users: { totalUsers: 0, statusCounts: {} }, onlineStats: {}, nodes: {} },
+        },
+        '/api/nodes': {
+          response: [
+            {
+              uuid: 'n3',
+              name: 'quiet-node',
+              address: '5.6.7.8',
+              isConnected: true,
+              isDisabled: false,
+              isConnecting: false,
+            },
+          ],
+        },
+        '/api/system/nodes/metrics': { response: { nodes: [] } },
+        '/api/system/metadata': { response: { version: '2.0.0' } },
+      }),
+    );
+    const r = await new HttpRemnawaveClient().fetch('x.example.com', 'k');
+    expect(r.nodes[0]).toMatchObject({ usersOnline: 0, isDisabled: false });
+  });
+
   it('401 даёт RemnawaveApiError(unauthorized), сетевой сбой — unreachable', async () => {
     vi.stubGlobal(
       'fetch',

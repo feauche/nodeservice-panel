@@ -193,10 +193,23 @@ function RemnawavePill({ server }: { server: Server }) {
   const status = useRemnawaveStatus();
   const node = status.data?.nodes.find((n) => n.address === server.host);
   if (!node) return null;
-  if (node.isDisabled) return <Pill tone="muted">Remnawave: не на связи</Pill>;
-  if (node.usersOnline !== null) return <Pill tone="ok">Remnawave: {node.usersOnline} онлайн</Pill>;
+  // Своя, не зависящая от «Слежение за нодой»: та настройка — про наш собственный осмотр контейнера
+  // по SSH, а эта пилюля — про то, видит ли САМА Remnawave ноду с этим адресом подключённой к себе.
+  const title = 'Подключена ли к Remnawave нода с этим адресом. Не связано со слежением за контейнером ноды.';
+  if (node.isDisabled)
+    return (
+      <Pill tone="muted" title={title}>
+        Remnawave: не на связи
+      </Pill>
+    );
+  if (node.usersOnline !== null)
+    return (
+      <Pill tone="ok" title={title}>
+        Remnawave: {node.usersOnline} онлайн
+      </Pill>
+    );
   return (
-    <Pill tone={node.isConnected ? 'ok' : 'crit'}>
+    <Pill tone={node.isConnected ? 'ok' : 'crit'} title={title}>
       {node.isConnected ? 'Remnawave: на связи' : 'Remnawave: не на связи'}
     </Pill>
   );

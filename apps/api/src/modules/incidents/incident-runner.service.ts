@@ -343,6 +343,10 @@ export class IncidentRunnerService implements OnModuleInit {
     if (!row.serverId || row.proposal || row.attempts.length > 0) return 'none';
     const first = INCIDENT_CHAINS[row.kind as IncidentKind][0];
     if (!first) return 'none';
+    // Шаг требует SSH или агента, а мы точно знаем, что их сейчас нет (не «не проверяли», а именно
+    // «недоступен») — предлагать нечего, само действие тут же провалится на предпроверке. Ничего не
+    // предлагаем и не запоминаем: как только связь вернётся, следующий тик решит заново.
+    if (row.serverId && (await this.chainStepImpossible(first, row.serverId))) return 'none';
     const action = actionByKey(first);
     const policy = policyFor(cfg, row.kind);
     // «Наблюдать»: инцидент и уведомление есть, шагов панель не предлагает.
@@ -367,6 +371,22 @@ export class IncidentRunnerService implements OnModuleInit {
       this.log.warn(`автопочинка ${row.id}: ${(err as Error).message}`),
     );
     return 'started';
+  }
+
+  /**
+   * У шага есть предпроверка `ssh_ok`/`agent_online`, а сервер прямо сейчас числится недоступным
+   * по этому каналу — значит шаг гарантированно провалится, даже не начавшись (пример: «Переустановить
+   * агента» по SSH, когда SSH сам недоступен). `null`/не проверяли — не блокируем, только точное «нет».
+   */
+  private async chainStepImpossible(key: ActionKey, serverId: string): Promise<boolean> {
+    const spec = ACTION_SPECS[key];
+    if (!spec || (!spec.precheck.includes('ssh_ok') && !spec.precheck.includes('agent_online')))
+      return false;
+    const server = await this.serversRepo.findById(serverId);
+    if (!server) return false;
+    if (spec.precheck.includes('ssh_ok') && server.sshOk === false) return true;
+    if (spec.precheck.includes('agent_online') && server.agentStatus === 'offline') return true;
+    return false;
   }
 
   /* ---------- ход попытки ---------- */

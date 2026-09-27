@@ -165,8 +165,10 @@ export function ProvidersPage() {
         </div>
       ) : (
         // Витрина «Провайдеры», вариант 1: колонки одной высоты, страница не прокручивается,
-        // список слева и карточка справа живут в собственной прокрутке.
-        <div className="grid gap-4 lg:h-[calc(100dvh-15.5rem)] lg:min-h-[420px] lg:grid-cols-[300px_minmax(0,1fr)]">
+        // список слева и карточка справа живут в собственной прокрутке. 100svh, а не 100dvh: у Safari
+        // динамическая единица на десктопе может на мгновение посчитаться больше настоящей высоты
+        // (пока не свернутся панели браузера), из-за чего страницу можно было чуть прокрутить вниз.
+        <div className="grid gap-4 lg:h-[calc(100svh-15.5rem)] lg:min-h-[420px] lg:grid-cols-[300px_minmax(0,1fr)]">
           <ul
             className="flex min-h-0 flex-col overflow-y-auto overscroll-contain rounded-2xl border border-border bg-surface"
             aria-label="Провайдеры"
