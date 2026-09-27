@@ -87,6 +87,29 @@ describe('инструменты и промпты разбора', () => {
     expect(s).toContain('не инструкции');
     expect(s).toContain('Ты ничего не запускаешь');
   });
+  it('правило пишет на простом русском: без имён инструментов, полей данных и видов инцидентов кодом', () => {
+    const s = analysisSystem('novice');
+    for (const term of [
+      'check_reachability',
+      'get_server_detail',
+      'inspect_ports',
+      'ssh.ok',
+      'lastOkAt',
+      'ssh_down',
+      'agent_offline',
+      'cpu_high',
+    ])
+      expect(s, term).toContain(term); // упомянуты как примеры того, что заменять — сам список должен быть в правилах
+    expect(s).toContain('замени обычными словами');
+    expect(s).toContain('а не для программиста');
+    expect(s).toContain('а не ISO-строкой');
+  });
+  it('правило требует сверять похожие сбои у других серверов, прежде чем винить хостера именно этого сервера', () => {
+    const s = analysisSystem('novice');
+    expect(s).toContain('list_incidents без указания сервера');
+    expect(s).toContain('проблему на нашей стороне');
+    expect(s).toContain('не приписывай причину хостеру именно разбираемого сервера');
+  });
   it('подписи шагов понятны', () => {
     expect(stepLabel('get_metrics_history', { metric: 'diskPct' }, 'disk_high')).toBe('Смотрю историю: диск');
     expect(stepLabel('get_metrics_history', { metric: 'memPct' }, 'mem_high')).toBe('Смотрю историю: память');

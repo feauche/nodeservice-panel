@@ -24,7 +24,7 @@ describe('HttpRemnawaveClient.fetch', () => {
             uptime: 86400,
             users: { totalUsers: 870, statusCounts: { ACTIVE: 800, DISABLED: 40, LIMITED: 10, EXPIRED: 20 } },
             onlineStats: { onlineNow: 236, lastDay: 500, lastWeek: 700, neverOnline: 10 },
-            nodes: { totalOnline: 1, totalBytesLifetime: '20000000000000' },
+            nodes: { totalOnline: 7438, totalBytesLifetime: '20000000000000' },
           },
         },
         '/api/nodes': {
@@ -141,5 +141,74 @@ describe('HttpRemnawaveClient.checkCertificate', () => {
   it('в тестовом окружении не подключается по TLS, статус unknown', async () => {
     const c = await new HttpRemnawaveClient().checkCertificate('example.com');
     expect(c).toMatchObject({ status: 'unknown' });
+  });
+});
+
+describe('«нод на связи» считается по списку нод, а не по nodes.totalOnline', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('на боевой панели totalOnline оказался числом сессий (в сотни раз больше нод) — не доверяем ему', async () => {
+    const respond = (byUrl: Record<string, unknown>) =>
+      vi.fn(async (url: string) => {
+        const hit = Object.entries(byUrl).find(([k]) => url.includes(k));
+        if (!hit) throw new Error(`неожиданный запрос: ${url}`);
+        return new Response(JSON.stringify(hit[1]));
+      });
+    vi.stubGlobal(
+      'fetch',
+      respond({
+        '/api/system/stats': {
+          response: {
+            uptime: 1,
+            users: { totalUsers: 0, statusCounts: {} },
+            onlineStats: {},
+            // Число сессий, не нод — ровно как в реальном ответе Remnawave, где нод было 20, а тут пришло 7438.
+            nodes: { totalOnline: 7438, totalBytesLifetime: '0' },
+          },
+        },
+        '/api/nodes': {
+          response: [
+            {
+              uuid: 'n1',
+              name: 'a',
+              address: '1.1.1.1',
+              isConnected: true,
+              isDisabled: false,
+              isConnecting: false,
+            },
+            {
+              uuid: 'n2',
+              name: 'b',
+              address: '2.2.2.2',
+              isConnected: true,
+              isDisabled: false,
+              isConnecting: false,
+            },
+            {
+              uuid: 'n3',
+              name: 'c',
+              address: '3.3.3.3',
+              isConnected: false,
+              isDisabled: false,
+              isConnecting: false,
+            },
+            // Отключена администратором — формально не «на связи», даже если isConnected почему-то true.
+            {
+              uuid: 'n4',
+              name: 'd',
+              address: '4.4.4.4',
+              isConnected: true,
+              isDisabled: true,
+              isConnecting: false,
+            },
+          ],
+        },
+        '/api/system/nodes/metrics': { response: { nodes: [] } },
+        '/api/system/metadata': { response: { version: '3.4.4' } },
+      }),
+    );
+    const r = await new HttpRemnawaveClient().fetch('vpn-panel.example.com', 'rw_pat_x');
+    expect(r.stats.nodesOnline).toBe(2);
+    expect(r.stats.nodesTotal).toBe(4);
   });
 });

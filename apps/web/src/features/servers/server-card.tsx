@@ -301,7 +301,15 @@ export function ServerCardGhost({
       <StatusPills server={server} />
       <Gauges metrics={metrics} offline={health === 'crit'} />
       <CardSpark metrics={metrics} health={health} />
-      <CardFooter server={server} provider={provider} />
+      <CardFooter
+        server={server}
+        provider={provider}
+        handle={
+          <span className="grid size-6 flex-none place-items-center rounded-[7px] text-text-3">
+            <GripVerticalIcon className="size-4" aria-hidden="true" />
+          </span>
+        }
+      />
     </div>
   );
 }

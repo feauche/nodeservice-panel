@@ -76,6 +76,13 @@ export class HttpRemnawaveClient implements RemnawaveClient {
     const counts = (users.statusCounts ?? {}) as Record<string, unknown>;
     const online = (s.onlineStats ?? {}) as Record<string, unknown>;
     const nodesStat = (s.nodes ?? {}) as Record<string, unknown>;
+    const nodesRaw = (nodesBody.response as unknown[] | undefined) ?? [];
+    // «nodes.totalOnline» в /system/stats на деле не число нод на связи (это число сессий/подключений;
+    // проверено на боевой панели: там было в сотни раз больше, чем реальных нод) — считаем сами по списку нод.
+    const nodesOnline = nodesRaw.filter((raw) => {
+      const n = raw as Record<string, unknown>;
+      return Boolean(n.isConnected) && !n.isDisabled;
+    }).length;
     const stats: RemnawaveStats = {
       users: {
         total: num(users.totalUsers),
@@ -90,10 +97,8 @@ export class HttpRemnawaveClient implements RemnawaveClient {
         lastWeek: num(online.lastWeek),
         never: num(online.neverOnline),
       },
-      nodesOnline: num(nodesStat.totalOnline),
-      nodesTotal: Array.isArray((nodesBody.response as unknown[]) ?? null)
-        ? (nodesBody.response as unknown[]).length
-        : 0,
+      nodesOnline,
+      nodesTotal: nodesRaw.length,
       trafficBytesLifetime: str(nodesStat.totalBytesLifetime) || '0',
       panelVersion: str((metaBody.response as Record<string, unknown> | undefined)?.version) || '—',
       panelUptimeSec: num(s.uptime),
@@ -103,7 +108,7 @@ export class HttpRemnawaveClient implements RemnawaveClient {
       const row = m as Record<string, unknown>;
       metricsByUuid.set(str(row.nodeUuid), num(row.usersOnline));
     }
-    const nodes: RemnawaveNode[] = ((nodesBody.response as unknown[] | undefined) ?? []).map((raw) => {
+    const nodes: RemnawaveNode[] = nodesRaw.map((raw) => {
       const n = raw as Record<string, unknown>;
       const uuid = str(n.uuid);
       return {

@@ -7,6 +7,7 @@ import { ServersModule } from '../servers/servers.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { IncidentMetricsService } from './incident-metrics.service.js';
 import { IncidentRunnerService } from './incident-runner.service.js';
+import { IncidentSshRecheckJob } from './incident-ssh-recheck.job.js';
 import { IncidentsController } from './incidents.controller.js';
 import { IncidentsJob } from './incidents.job.js';
 import { IncidentsRepository } from './incidents.repository.js';
@@ -21,6 +22,7 @@ import { NodeProbeJob } from './node-probe.job.js';
     IncidentsRepository,
     IncidentsService,
     IncidentsJob,
+    IncidentSshRecheckJob,
     NodeProbeJob,
     IncidentMetricsService,
     IncidentRunnerService,

@@ -27,6 +27,9 @@ const AUTH_TABS = [
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Предзаполнение при открытии (например, из карточки ноды Remnawave) — поля остаются обычными, редактируемыми. */
+  initialName?: string;
+  initialHost?: string;
 }
 
 /* ---------- живой ход проверки ---------- */
@@ -136,7 +139,7 @@ function Req({ children }: { children: string }) {
   );
 }
 
-export function AddServerDialog({ open, onOpenChange }: Props) {
+export function AddServerDialog({ open, onOpenChange, initialName, initialHost }: Props) {
   const test = useTestConnection();
   const create = useCreateServer();
   const [form, setForm] = useState({ name: '', host: '', port: '22', sshUser: 'root', tags: '', notes: '' });
@@ -152,22 +155,24 @@ export function AddServerDialog({ open, onOpenChange }: Props) {
   const [finishing, setFinishing] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: сброс формы только при закрытии
+  // biome-ignore lint/correctness/useExhaustiveDependencies: сброс при закрытии и предзаполнение при открытии — оба по одному триггеру open, initial* читаем только в момент открытия
   useEffect(() => {
-    if (!open) {
-      setForm({ name: '', host: '', port: '22', sshUser: 'root', tags: '', notes: '' });
-      setProviderId(null);
-      setCountryPick(null);
-      setAuthTab('password');
-      setPassword('');
-      setPrivateKey('');
-      setPassphrase('');
-      setSteps(null);
-      setFinishing(false);
-      setErrors({});
-      test.reset();
-      create.reset();
+    if (open) {
+      setForm((f) => ({ ...f, name: initialName ?? f.name, host: initialHost ?? f.host }));
+      return;
     }
+    setForm({ name: '', host: '', port: '22', sshUser: 'root', tags: '', notes: '' });
+    setProviderId(null);
+    setCountryPick(null);
+    setAuthTab('password');
+    setPassword('');
+    setPrivateKey('');
+    setPassphrase('');
+    setSteps(null);
+    setFinishing(false);
+    setErrors({});
+    test.reset();
+    create.reset();
   }, [open]);
 
   const auth = useMemo<SshAuth>(() => {

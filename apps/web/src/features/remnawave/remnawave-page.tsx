@@ -3,13 +3,14 @@ import {
   CheckIcon,
   KeyRoundIcon,
   Loader2Icon,
+  PlusIcon,
   RefreshCwIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
   ShieldQuestionIcon,
   UsersIcon,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { CountryFlag } from '@/components/country-flag';
 import { Button } from '@/components/ui/button';
@@ -17,6 +18,8 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PasswordField } from '@/features/auth/components/password-field';
 import { formatDate } from '@/features/security/security-format';
+import { AddServerDialog } from '@/features/servers/add-server-dialog';
+import { useServers } from '@/features/servers/servers-api';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -91,7 +94,7 @@ function nodeStatusKey(n: RemnawaveNode): keyof typeof NODE_STATUS {
   return n.isConnected ? 'connected' : 'down';
 }
 
-function NodeRow({ node }: { node: RemnawaveNode }) {
+function NodeRow({ node, matched, onAdd }: { node: RemnawaveNode; matched: boolean; onAdd: () => void }) {
   const status = NODE_STATUS[nodeStatusKey(node)];
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-border px-4 py-3 first:border-t-0">
@@ -110,6 +113,17 @@ function NodeRow({ node }: { node: RemnawaveNode }) {
           {formatByteTotal(node.trafficUsedBytes)}
           {node.trafficLimitBytes !== null && ` из ${formatByteTotal(node.trafficLimitBytes)}`}
         </span>
+      )}
+      {!matched && (
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onAdd}
+          className="h-7 flex-none rounded-[7px] px-2 text-[11.5px]"
+        >
+          <PlusIcon className="size-3.5" aria-hidden="true" />
+          Добавить в NodeService
+        </Button>
       )}
       {node.lastStatusMessage && !node.isConnected && !node.isDisabled && (
         <span className="w-full basis-full text-[11.5px] text-crit">{node.lastStatusMessage}</span>
@@ -250,9 +264,14 @@ function ConnectForm() {
 
 export function RemnawavePage() {
   const status = useRemnawaveStatus();
+  const servers = useServers();
   const refresh = useRefreshRemnawave();
   const disconnect = useDisconnectRemnawave();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [addNode, setAddNode] = useState<RemnawaveNode | null>(null);
+
+  /** Адреса уже добавленных серверов — по ним решаем, у какой ноды есть кнопка «Добавить в NodeService». */
+  const knownHosts = useMemo(() => new Set((servers.data?.items ?? []).map((s) => s.host)), [servers.data]);
 
   const doRefresh = async () => {
     try {
@@ -360,7 +379,12 @@ export function RemnawavePage() {
           <h2 className="border-b border-border px-4 py-3 font-heading text-[14px] font-bold">Ноды</h2>
           <ul>
             {s.nodes.map((n) => (
-              <NodeRow key={n.uuid} node={n} />
+              <NodeRow
+                key={n.uuid}
+                node={n}
+                matched={knownHosts.has(n.address)}
+                onAdd={() => setAddNode(n)}
+              />
             ))}
           </ul>
         </section>
@@ -377,6 +401,13 @@ export function RemnawavePage() {
         yesLabel="Да, отключить"
         loading={disconnect.isPending}
         onConfirm={doDisconnect}
+      />
+
+      <AddServerDialog
+        open={addNode !== null}
+        onOpenChange={(open) => !open && setAddNode(null)}
+        initialName={addNode?.name}
+        initialHost={addNode?.address}
       />
     </div>
   );

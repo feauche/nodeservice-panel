@@ -117,6 +117,39 @@ describe('RemnawavePage', () => {
     expect(screen.getByText('870')).toBeInTheDocument();
   });
 
+  it('«Добавить в NodeService»: только у несовпавшей ноды, окно открывается с готовыми, но редактируемыми полями', async () => {
+    renderPage(Page, '/servers/remnawave');
+    await screen.findByRole('heading', { name: 'Подключение' });
+    const user = userEvent.setup();
+    await fill(user, 'vpn-panel.example.com', 'rw_pat_good');
+    await user.click(screen.getByRole('button', { name: 'Проверить и сохранить' }));
+    await screen.findByRole('heading', { name: 'Подключено' });
+
+    const bridgeRow = screen.getByText('bridge').closest('li');
+    expect(bridgeRow).not.toBeNull();
+    expect(
+      within(bridgeRow as HTMLElement).queryByRole('button', { name: /Добавить в NodeService/ }),
+    ).not.toBeInTheDocument();
+
+    const exitRow = screen.getByText('exit-nl').closest('li');
+    expect(exitRow).not.toBeNull();
+    const addButton = within(exitRow as HTMLElement).getByRole('button', { name: /Добавить в NodeService/ });
+    await user.click(addButton);
+
+    expect(await screen.findByRole('heading', { name: 'Добавить сервер' })).toBeInTheDocument();
+    const nameField = screen.getByLabelText('Название') as HTMLInputElement;
+    const hostField = screen.getByLabelText('IP или домен') as HTMLInputElement;
+    expect(nameField).toHaveValue('exit-nl');
+    expect(hostField).toHaveValue('198.51.100.99');
+
+    // Поля предзаполнены, но не заблокированы — можно поправить и то, и другое.
+    expect(nameField).not.toBeDisabled();
+    expect(hostField).not.toBeDisabled();
+    await user.clear(nameField);
+    await user.type(nameField, 'exit-nl-custom');
+    expect(nameField).toHaveValue('exit-nl-custom');
+  });
+
   it('отключить: подтверждение, после — форма подключения снова', async () => {
     renderPage(Page, '/servers/remnawave');
     await screen.findByRole('heading', { name: 'Подключение' });
