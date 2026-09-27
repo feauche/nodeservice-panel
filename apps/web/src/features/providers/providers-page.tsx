@@ -10,7 +10,7 @@ import {
   SearchIcon,
   Trash2Icon,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,6 +33,40 @@ import {
 const BTN =
   'h-8 rounded-[9px] border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:bg-surface-3 hover:text-foreground';
 
+/** Совпадает с `pb-[60px]` <main> в AppShell — низ сетки должен упереться туда, а не в самый край окна. */
+const MAIN_BOTTOM_GAP_PX = 60;
+/** Совпадает с брейкпоинтом `lg:` в Tailwind — ниже него сетка идёт обычным потоком, без высоты. */
+const LG_BREAKPOINT_PX = 1024;
+
+/**
+ * Высота меряется по-настоящему (от текущего верха блока до низа окна), а не константой вида
+ * `calc(100dvh - 15.5rem)`: такая константа была то больше, то меньше настоящего остатка места
+ * (шапка, заголовок страницы, у Safari ещё и сама единица `dvh` на миг завышена) — отсюда лишний
+ * зазор внизу и скролл там, где его быть не должно.
+ */
+function useFillHeight(bottomGapPx: number, minWidthPx: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const recalc = () => {
+      if (window.innerWidth < minWidthPx) {
+        setHeight(null);
+        return;
+      }
+      const top = el.getBoundingClientRect().top;
+      setHeight(Math.max(0, window.innerHeight - top - bottomGapPx));
+    };
+    recalc();
+    // Шрифт может догрузиться и чуть сдвинуть заголовок над сеткой — пересчитаем ещё раз после этого.
+    document.fonts?.ready?.then(recalc).catch(() => {});
+    window.addEventListener('resize', recalc);
+    return () => window.removeEventListener('resize', recalc);
+  }, [bottomGapPx, minWidthPx]);
+  return { ref, height };
+}
+
 /**
  * Справочник провайдеров в две панели: слева список с поиском, справа карточка выбранного —
  * иконка, сайт, его серверы и заметка про аккаунт и оплату.
@@ -48,6 +82,7 @@ export function ProvidersPage() {
   const [editing, setEditing] = useState<Provider | null>(null);
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const fill = useFillHeight(MAIN_BOTTOM_GAP_PX, LG_BREAKPOINT_PX);
 
   const items = providers.data?.items ?? [];
   const filtered = useMemo(() => {
@@ -165,10 +200,13 @@ export function ProvidersPage() {
         </div>
       ) : (
         // Витрина «Провайдеры», вариант 1: колонки одной высоты, страница не прокручивается,
-        // список слева и карточка справа живут в собственной прокрутке. 100svh, а не 100dvh: у Safari
-        // динамическая единица на десктопе может на мгновение посчитаться больше настоящей высоты
-        // (пока не свернутся панели браузера), из-за чего страницу можно было чуть прокрутить вниз.
-        <div className="grid gap-4 lg:h-[calc(100svh-15.5rem)] lg:min-h-[420px] lg:grid-cols-[300px_minmax(0,1fr)]">
+        // список слева и карточка справа живут в собственной прокрутке. Высота измеряется по месту
+        // (см. useFillHeight), а не считается константой — так она верна при любой высоте шапки.
+        <div
+          ref={fill.ref}
+          style={fill.height !== null ? { height: fill.height } : undefined}
+          className="grid gap-4 lg:min-h-[420px] lg:grid-cols-[300px_minmax(0,1fr)]"
+        >
           <ul
             className="flex min-h-0 flex-col overflow-y-auto overscroll-contain rounded-2xl border border-border bg-surface"
             aria-label="Провайдеры"
