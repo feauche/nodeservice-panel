@@ -56,6 +56,7 @@ describe('набор инструментов Джарвиса', () => {
         'get_metrics_history',
         'get_panel_status',
         'get_playbook',
+        'get_remnawave_status',
         'get_reference',
         'get_server_detail',
         'get_settings',
@@ -462,6 +463,65 @@ describe('get_settings: состояние автоматического раз
     });
     expect(r.assistant.autoAnalysisStatus.note).toContain('с момента запуска панели');
     expect(r.assistant.permissions.autoAnalysis).toBe(true);
+  });
+});
+
+describe('get_remnawave_status', () => {
+  it('не подключена — честный ответ, без данных нет разрешения', async () => {
+    const d1 = { ...deps() } as unknown as ToolDeps;
+    expect((await runTool('get_remnawave_status', {}, d1)).content).toContain('не подключена');
+    const d2 = {
+      ...deps(),
+      remnawave: {
+        status: async () => ({
+          connected: false,
+          domain: null,
+          checkedAt: null,
+          error: null,
+          stats: null,
+          nodes: [],
+          cert: null,
+        }),
+      },
+    } as unknown as ToolDeps;
+    expect((await runTool('get_remnawave_status', {}, d2)).content).toContain('не подключена');
+  });
+
+  it('подключена — отдаёт сводку, ноды и сертификат как есть, без домыслов', async () => {
+    const st = {
+      connected: true,
+      domain: 'vpn-panel.example.com',
+      checkedAt: '2026-09-27T10:00:00.000Z',
+      error: null,
+      stats: {
+        users: { total: 870, active: 800, disabled: 40, limited: 10, expired: 20 },
+        online: { now: 236, lastDay: 500, lastWeek: 700, never: 10 },
+        nodesOnline: 4,
+        nodesTotal: 5,
+        trafficBytesLifetime: '20000000000000',
+        panelVersion: '2.1.10',
+        panelUptimeSec: 86400,
+      },
+      nodes: [
+        {
+          uuid: 'n1',
+          name: 'bridge',
+          address: '104.171.133.254',
+          countryCode: 'PL',
+          isConnected: true,
+          isDisabled: false,
+          isConnecting: false,
+          lastStatusMessage: null,
+          usersOnline: 42,
+          trafficUsedBytes: 1000,
+          trafficLimitBytes: null,
+        },
+      ],
+      cert: { status: 'warn', expiresAt: '2026-10-03T00:00:00.000Z', daysLeft: 6, note: null },
+    };
+    const d = { ...deps(), remnawave: { status: async () => st } } as unknown as ToolDeps;
+    const r = JSON.parse((await runTool('get_remnawave_status', {}, d)).content);
+    expect(r).toEqual(st);
   });
 });
 

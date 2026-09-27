@@ -123,4 +123,12 @@ describe('справочник Джарвиса', () => {
     expect(text).toContain('расхождениями, а не фактом блокировки');
     expect(text).toContain('IP сервера при этом уходит');
   });
+  it('про Remnawave: только чтение, как сопоставить ноду с сервером, сертификат важен отдельно', () => {
+    const text = referenceById('remnawave')?.render() ?? '';
+    expect(text).toContain('get_remnawave_status');
+    expect(text).toContain('только чтение');
+    expect(text).toContain('сопоставляй по адресу');
+    expect(text).toContain('нет прав на запись');
+    expect(text).toContain('срочная проблема');
+  });
 });

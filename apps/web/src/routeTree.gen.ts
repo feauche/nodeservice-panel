@@ -24,6 +24,7 @@ import { Route as IncidentsAutofixRouteImport } from './routes/incidents_.autofi
 import { Route as Login2faRouteImport } from './routes/login_.2fa';
 import { Route as LoginRecoveryRouteImport } from './routes/login_.recovery';
 import { Route as ServersProvidersRouteImport } from './routes/servers_.providers';
+import { Route as ServersRemnawaveRouteImport } from './routes/servers_.remnawave';
 import { Route as SettingsIndexRouteImport } from './routes/settings.index';
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance';
 import { Route as SettingsAssistantRouteImport } from './routes/settings.assistant';
@@ -106,6 +107,11 @@ const ServersProvidersRoute = ServersProvidersRouteImport.update({
   path: '/servers/providers',
   getParentRoute: () => rootRouteImport,
 } as any);
+const ServersRemnawaveRoute = ServersRemnawaveRouteImport.update({
+  id: '/servers_/remnawave',
+  path: '/servers/remnawave',
+  getParentRoute: () => rootRouteImport,
+} as any);
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -153,6 +159,7 @@ export interface FileRoutesByFullPath {
   '/login/2fa': typeof Login2faRoute;
   '/login/recovery': typeof LoginRecoveryRoute;
   '/servers/providers': typeof ServersProvidersRoute;
+  '/servers/remnawave': typeof ServersRemnawaveRoute;
   '/settings/appearance': typeof SettingsAppearanceRoute;
   '/settings/assistant': typeof SettingsAssistantRoute;
   '/settings/autochecks': typeof SettingsAutochecksRoute;
@@ -175,6 +182,7 @@ export interface FileRoutesByTo {
   '/login/2fa': typeof Login2faRoute;
   '/login/recovery': typeof LoginRecoveryRoute;
   '/servers/providers': typeof ServersProvidersRoute;
+  '/servers/remnawave': typeof ServersRemnawaveRoute;
   '/settings/appearance': typeof SettingsAppearanceRoute;
   '/settings/assistant': typeof SettingsAssistantRoute;
   '/settings/autochecks': typeof SettingsAutochecksRoute;
@@ -199,6 +207,7 @@ export interface FileRoutesById {
   '/login_/2fa': typeof Login2faRoute;
   '/login_/recovery': typeof LoginRecoveryRoute;
   '/servers_/providers': typeof ServersProvidersRoute;
+  '/servers_/remnawave': typeof ServersRemnawaveRoute;
   '/settings/appearance': typeof SettingsAppearanceRoute;
   '/settings/assistant': typeof SettingsAssistantRoute;
   '/settings/autochecks': typeof SettingsAutochecksRoute;
@@ -224,6 +233,7 @@ export interface FileRouteTypes {
     | '/login/2fa'
     | '/login/recovery'
     | '/servers/providers'
+    | '/servers/remnawave'
     | '/settings/appearance'
     | '/settings/assistant'
     | '/settings/autochecks'
@@ -246,6 +256,7 @@ export interface FileRouteTypes {
     | '/login/2fa'
     | '/login/recovery'
     | '/servers/providers'
+    | '/servers/remnawave'
     | '/settings/appearance'
     | '/settings/assistant'
     | '/settings/autochecks'
@@ -269,6 +280,7 @@ export interface FileRouteTypes {
     | '/login_/2fa'
     | '/login_/recovery'
     | '/servers_/providers'
+    | '/servers_/remnawave'
     | '/settings/appearance'
     | '/settings/assistant'
     | '/settings/autochecks'
@@ -293,6 +305,7 @@ export interface RootRouteChildren {
   Login2faRoute: typeof Login2faRoute;
   LoginRecoveryRoute: typeof LoginRecoveryRoute;
   ServersProvidersRoute: typeof ServersProvidersRoute;
+  ServersRemnawaveRoute: typeof ServersRemnawaveRoute;
 }
 
 declare module '@tanstack/react-router' {
@@ -402,6 +415,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ServersProvidersRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    '/servers_/remnawave': {
+      id: '/servers_/remnawave';
+      path: '/servers/remnawave';
+      fullPath: '/servers/remnawave';
+      preLoaderRoute: typeof ServersRemnawaveRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     '/settings/': {
       id: '/settings/';
       path: '/';
@@ -485,6 +505,7 @@ const rootRouteChildren: RootRouteChildren = {
   Login2faRoute: Login2faRoute,
   LoginRecoveryRoute: LoginRecoveryRoute,
   ServersProvidersRoute: ServersProvidersRoute,
+  ServersRemnawaveRoute: ServersRemnawaveRoute,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

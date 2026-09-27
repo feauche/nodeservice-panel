@@ -32,6 +32,7 @@ export const AUDIT_PREFIX_CATEGORY: Readonly<Record<string, AuditCategory>> = {
   kb: 'knowledge',
   incident: 'server',
   provider: 'server',
+  remnawave: 'settings',
 };
 
 export function auditCategoryOfPrefix(action: string): AuditCategory | undefined {
@@ -118,6 +119,10 @@ export const AUDIT_ACTIONS = {
   'server.duplicated': { category: 'server', label: 'Сервер продублирован' },
   'server.reordered': { category: 'server', label: 'Порядок серверов изменён' },
   'server.updated': { category: 'server', label: 'Сервер изменён' },
+  'remnawave.connected': { category: 'settings', label: 'Remnawave подключена' },
+  'remnawave.disconnected': { category: 'settings', label: 'Remnawave отключена' },
+  'remnawave.unreachable': { category: 'settings', label: 'Remnawave недоступна' },
+  'remnawave.reconnected': { category: 'settings', label: 'Remnawave снова на связи' },
   'server.country.detected': { category: 'server', label: 'Страна сервера определена по IP' },
   'server.country.changed': { category: 'server', label: 'Страна сервера сменилась по базам' },
   'server.deleted': { category: 'server', label: 'Сервер удалён' },

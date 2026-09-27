@@ -16,6 +16,8 @@ async function bootstrap() {
   if (import.meta.env.DEV && import.meta.env.VITE_MOCK === '1') {
     const { startMockWorker } = await import('./mocks/browser');
     await startMockWorker();
+    // Только для скриншот-сценариев: дёрнуть свежие данные после правки мока, минуя staleTime.
+    (window as unknown as { __nsQueryClient: typeof queryClient }).__nsQueryClient = queryClient;
   }
 
   const rootEl = document.getElementById('root');

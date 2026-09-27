@@ -19,6 +19,7 @@ import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import { MaintenanceService } from '../maintenance/maintenance.service.js';
 import { VmReaderService } from '../metrics/vm-reader.service.js';
 import { ProvidersService } from '../providers/providers.service.js';
+import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import { AutochecksStore } from '../settings/autochecks.store.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
@@ -84,6 +85,7 @@ export class AssistantService {
     private readonly incidentSettings: IncidentsSettingsStore,
     private readonly analysis: IncidentAnalysisService,
     private readonly changes: ChangesService,
+    private readonly remnawave: RemnawaveService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
   ) {}
 
@@ -222,6 +224,7 @@ export class AssistantService {
       assistant: { level },
       autoAnalysis: () => this.analysis.autoStatus(),
       permissions,
+      remnawave: this.remnawave,
       changes: {
         propose: async (operation, args, reason) => {
           changeCards += 1;

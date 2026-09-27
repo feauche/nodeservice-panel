@@ -63,6 +63,7 @@ const SERVERS_GROUP = {
   items: [
     { to: '/servers', label: 'Все серверы' },
     { to: '/servers/providers', label: 'Провайдеры' },
+    { to: '/servers/remnawave', label: 'Remnawave' },
   ],
 } as const;
 /** Раздел «Автоматизация» — Джарвис и база знаний. */

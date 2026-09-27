@@ -32,6 +32,7 @@ import { formatMbps, formatPct } from '@/features/overview/overview-format';
 import { Sparkline } from '@/features/overview/primitives';
 import { ProviderIcon } from '@/features/providers/provider-icon';
 import { useProviders } from '@/features/providers/providers-api';
+import { useRemnawaveStatus } from '@/features/remnawave/remnawave-api';
 import { formatAgo } from '@/features/security/security-format';
 import { StepUpCancelledError } from '@/features/security/step-up';
 import { Pill } from '@/features/settings/settings-ui';
@@ -164,6 +165,7 @@ function StatusPills({ server }: { server: Server }) {
         <AgentPill server={server} />
         <SshPill server={server} />
         <NodePill server={server} />
+        <RemnawavePill server={server} />
       </div>
       {server.agentStatus === 'installing' && (
         <div aria-hidden="true" className="h-[3px] overflow-hidden rounded-full bg-surface-3">
@@ -181,6 +183,23 @@ function NodePill({ server }: { server: Server }) {
   if (server.node === 'stopped') return <Pill tone="crit">Нода остановлена</Pill>;
   if (server.node === 'none' && server.nodeWatch === 'on') return <Pill tone="crit">Нода не найдена</Pill>;
   return null;
+}
+
+/**
+ * Нода Remnawave на этом сервере (J4): ищем по совпадению адреса, вручную сопоставлять не нужно.
+ * Не подключена Remnawave или совпадения нет — пилюли нет, высота карточки не меняется.
+ */
+function RemnawavePill({ server }: { server: Server }) {
+  const status = useRemnawaveStatus();
+  const node = status.data?.nodes.find((n) => n.address === server.host);
+  if (!node) return null;
+  if (node.isDisabled) return <Pill tone="muted">Remnawave: не на связи</Pill>;
+  if (node.usersOnline !== null) return <Pill tone="ok">Remnawave: {node.usersOnline} онлайн</Pill>;
+  return (
+    <Pill tone={node.isConnected ? 'ok' : 'crit'}>
+      {node.isConnected ? 'Remnawave: на связи' : 'Remnawave: не на связи'}
+    </Pill>
+  );
 }
 
 /** Система и ресурсы одной строкой, ниже — теги (и место под ручку перетаскивания справа). */

@@ -430,7 +430,7 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
         <SortableContext items={filtered.map((s) => s.id)} strategy={rectSortingStrategy}>
           <div
             ref={gridRef}
-            className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))] max-md:[grid-template-columns:1fr] 2xl:[grid-template-columns:repeat(4,minmax(0,1fr))]"
+            className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))] max-md:[grid-template-columns:1fr] 2xl:[grid-template-columns:repeat(3,minmax(0,1fr))]"
           >
             {filtered.map((s) => (
               <ServerCard

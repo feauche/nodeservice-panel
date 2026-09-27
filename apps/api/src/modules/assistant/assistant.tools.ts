@@ -43,6 +43,12 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
     input_schema: { type: 'object', properties: {} },
   },
   {
+    name: 'get_remnawave_status',
+    description:
+      'Подключение к панели Remnawave (только чтение, если владелец её подключил): домен, сводка (пользователи по статусам, сколько онлайн сейчас/за сутки/за неделю, сколько нод на связи, суммарный трафик, версия и аптайм самой панели Remnawave), список её нод (адрес, подключена ли, страна, сколько пользователей сейчас на ней онлайн, лимит и использованный трафик), срок TLS-сертификата домена панели. Без параметров. Если не подключена — скажи прямо и не выдумывай цифры; подключается в «Серверы → Remnawave».',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
     name: 'search_audit',
     description:
       'Журнал событий панели (входы, изменения, инциденты, запросы к Джарвису). Для вопросов про период («за час», «за сутки», «сегодня») передай sinceMinutes (час = 60, сутки = 1440) — вернутся события за этот срок. query — необязательный полнотекстовый поиск (слова, «фразы», -минус). category сужает по разделу, failuresOnly оставляет только неудачные и отклонённые события, limit задаёт число записей (5–25, по умолчанию 15). В каждой записи: время, что произошло, кто (администратор или панель), результат, важность, цель и короткая выдержка из деталей (у «Запрос к Джарвису» это вопрос и ответ, у изменений — поле до и после). total — сколько всего событий подошло: если больше показанных, скажи об этом. Прошлые беседы с Джарвисом ищи через search_conversations.',
@@ -168,6 +174,8 @@ export interface ToolDeps extends ReadDeps {
     content: string;
     tags: string[];
   }) => Promise<{ id: string; title: string }>;
+  /** Статус Remnawave (J4), если владелец её подключил; нет — инструмент честно говорит «не подключена». */
+  remnawave?: { status: () => Promise<import('@nodeservice/shared').RemnawaveStatus> };
   /** Предложение изменения (J5): создаёт карточку, ничего не меняет. Гейтится разрешением changes в самом инструменте. */
   changes?: { propose: (operation: string, args: unknown, reason: string | null) => Promise<ProposeOutcome> };
   /** Пополнение глоссария «Пояснения». Работает всегда, отдельного разрешения нет. */
@@ -215,6 +223,15 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
       citations: [],
       proposals: [],
     };
+  }
+
+  if (name === 'get_remnawave_status') {
+    if (!deps.remnawave)
+      return { ...empty, content: 'Remnawave не подключена. Подключить можно в «Серверы → Remnawave».' };
+    const st = await deps.remnawave.status();
+    if (!st.connected)
+      return { ...empty, content: 'Remnawave не подключена. Подключить можно в «Серверы → Remnawave».' };
+    return { ...empty, content: JSON.stringify(st) };
   }
 
   if (name === 'get_panel_status') {

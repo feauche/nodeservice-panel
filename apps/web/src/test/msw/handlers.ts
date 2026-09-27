@@ -10,6 +10,7 @@ import { maintenanceHandlers } from './maintenance-mock';
 import { metricsHandlers, seedMetrics } from './metrics-mock';
 import { notificationsHandlers, seedNotifications } from './notifications-mock';
 import { providersHandlers, seedProviders } from './providers-mock';
+import { remnawaveHandlers, seedRemnawave } from './remnawave-mock';
 import { mockSecurity, securityHandlers, seedSecurity } from './security-mock';
 import { seedServers, serversHandlers, terminalHistoryHandlers } from './servers-mock';
 
@@ -70,6 +71,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
   seedSecurity();
   seedServers();
   seedProviders();
+  seedRemnawave();
   seedMetrics();
   seedIncidents();
   seedNotifications();
@@ -160,6 +162,7 @@ export const handlers = [
   ...terminalHistoryHandlers,
   ...maintenanceHandlers,
   ...providersHandlers,
+  ...remnawaveHandlers,
   ...metricsHandlers,
   ...analysisHandlers,
   ...incidentsHandlers,

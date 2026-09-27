@@ -14,6 +14,7 @@ import {
   ChevronRightIcon,
   CogIcon,
   KeyRoundIcon,
+  LayersIcon,
   ServerIcon,
   SlidersHorizontalIcon,
 } from 'lucide-react';
@@ -22,6 +23,8 @@ import { useAuditList } from '@/features/audit/audit-api';
 import { formatWhen } from '@/features/audit/audit-format';
 import { ResultPill } from '@/features/audit/audit-row';
 import { useIncidents } from '@/features/incidents/incidents-api';
+import { useRemnawaveStatus } from '@/features/remnawave/remnawave-api';
+import { formatByteTotal } from '@/features/remnawave/remnawave-page';
 import {
   CPU_WARN_PCT,
   MEM_WARN_PCT,
@@ -213,6 +216,32 @@ function IncidentsBanner({ open, crit }: { open: number; crit: number }) {
   );
 }
 
+/** Короткая плитка сводки Remnawave (B1): только когда подключена, иначе ничего не показываем. */
+function RemnawaveTile() {
+  const status = useRemnawaveStatus();
+  const s = status.data;
+  if (!s?.connected || !s.stats) return null;
+  return (
+    <Link
+      to="/servers/remnawave"
+      className="flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3.5 transition-colors hover:border-border-2"
+    >
+      <span className="grid size-9 flex-none place-items-center rounded-full bg-brand-soft text-brand">
+        <LayersIcon className="size-4.5" aria-hidden="true" />
+      </span>
+      <div className="min-w-0">
+        <div className="text-[13.5px] font-semibold">
+          Remnawave: {s.stats.nodesOnline} из {s.stats.nodesTotal} нод на связи
+        </div>
+        <div className="text-[12px] text-text-3">
+          {s.stats.online.now} пользователей онлайн из {s.stats.users.total} ·{' '}
+          {formatByteTotal(s.stats.trafficBytesLifetime)} трафика
+        </div>
+      </div>
+    </Link>
+  );
+}
+
 /** «Обзор» — по демо: полоса здоровья, KPI, «Требует внимания» + «Трафик парка», события, нижняя полоса. */
 export function OverviewPage() {
   const servers = useServers();
@@ -371,6 +400,8 @@ export function OverviewPage() {
           spark={fleet?.conntrackSpark ?? []}
         />
       </div>
+
+      <RemnawaveTile />
 
       {/* Требует внимания + Трафик парка */}
       <div className="grid gap-4 lg:grid-cols-[1fr_1.15fr]">

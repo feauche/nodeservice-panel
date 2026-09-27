@@ -14,6 +14,7 @@ export const OPEN_SECTIONS: ReadonlySet<string> = new Set<string>([
   HOME_SECTION,
   '/servers',
   '/servers/providers',
+  '/servers/remnawave',
   '/audit',
   '/incidents',
   '/incidents/autofix',

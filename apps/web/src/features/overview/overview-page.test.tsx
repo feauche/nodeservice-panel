@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ServerModalHost } from '@/features/servers/server-modal-host';
@@ -6,6 +6,7 @@ import { useServerModalStore } from '@/features/servers/server-modal-store';
 import { resetMockState } from '@/test/msw/handlers';
 import { mockIncidents } from '@/test/msw/incidents-mock';
 import { mockMetrics } from '@/test/msw/metrics-mock';
+import { mockRemnawave } from '@/test/msw/remnawave-mock';
 import { mockServers, seedServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
 import { formatMbps, formatTraffic } from './overview-format';
@@ -103,6 +104,30 @@ describe('OverviewPage (по демо)', () => {
     expect(within(panel).getByText('nl-ams-02')).toBeInTheDocument();
     expect(within(panel).getByText('Агент не установлен')).toBeInTheDocument();
     expect(within(panel).getByText('Внимание')).toBeInTheDocument();
+  });
+
+  it('плитка Remnawave (B1): не показана, пока не подключено; появляется с цифрами и ведёт на страницу подключения', async () => {
+    renderPage(OverviewPage, '/', ['/servers/remnawave']);
+    await screen.findByText('1 в норме');
+    expect(screen.queryByText(/Remnawave:/)).not.toBeInTheDocument();
+
+    mockRemnawave.connected = true;
+    mockRemnawave.domain = 'vpn-panel.example.com';
+    mockRemnawave.stats = {
+      users: { total: 870, active: 812, disabled: 14, limited: 3, expired: 41 },
+      online: { now: 236, lastDay: 512, lastWeek: 640, never: 28 },
+      nodesOnline: 4,
+      nodesTotal: 5,
+      trafficBytesLifetime: '20239053209600',
+      panelVersion: '3.4.4',
+      panelUptimeSec: 361_440,
+    };
+    const { router } = renderPage(OverviewPage, '/', ['/servers/remnawave']);
+    const tile = await screen.findByText('Remnawave: 4 из 5 нод на связи');
+    expect(screen.getByText('236 пользователей онлайн из 870 · 18.4 ТБ трафика')).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(tile);
+    await waitFor(() => expect(router.state.location.pathname).toBe('/servers/remnawave'));
   });
 
   it('форматтеры трафика', () => {
