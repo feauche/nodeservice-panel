@@ -239,3 +239,128 @@ describe('«нод на связи» считается по списку нод
     expect(r.stats.nodesTotal).toBe(4);
   });
 });
+
+describe('HttpRemnawaveClient.findNodeInbound (J10)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const respond = (byUrl: Record<string, unknown>) =>
+    vi.fn(async (url: string) => {
+      const hit = Object.entries(byUrl).find(([k]) => url.includes(k));
+      if (!hit) throw new Error(`неожиданный запрос: ${url}`);
+      return new Response(JSON.stringify(hit[1]), { status: 200 });
+    });
+
+  it('достаёт SNI из serverNames активного инбаунда Reality', async () => {
+    vi.stubGlobal(
+      'fetch',
+      respond({
+        '/api/nodes': {
+          response: [
+            {
+              uuid: 'n1',
+              port: 443,
+              configProfile: {
+                activeConfigProfileUuid: 'p1',
+                activeInbounds: [
+                  {
+                    uuid: 'i1',
+                    profileUuid: 'p1',
+                    tag: 'vless-reality',
+                    type: 'vless',
+                    network: 'tcp',
+                    security: 'reality',
+                    port: 8443,
+                    rawInbound: {
+                      streamSettings: {
+                        security: 'reality',
+                        realitySettings: {
+                          serverNames: ['www.example.com', 'example.com'],
+                          dest: 'ignored:443',
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const r = await new HttpRemnawaveClient().findNodeInbound('vpn-panel.example.com', 'k', 'n1');
+    expect(r).toEqual({ sni: 'www.example.com', port: 8443 });
+  });
+
+  it('нет serverNames — берёт dest и режет порт; нет ни того ни другого — sni: null', async () => {
+    vi.stubGlobal(
+      'fetch',
+      respond({
+        '/api/nodes': {
+          response: [
+            {
+              uuid: 'n1',
+              port: 443,
+              configProfile: {
+                activeConfigProfileUuid: 'p1',
+                activeInbounds: [
+                  {
+                    uuid: 'i1',
+                    profileUuid: 'p1',
+                    tag: 'x',
+                    type: 'vless',
+                    network: 'tcp',
+                    security: 'reality',
+                    port: null,
+                    rawInbound: { streamSettings: { realitySettings: { dest: 'cdn.example.net:443' } } },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const r = await new HttpRemnawaveClient().findNodeInbound('vpn-panel.example.com', 'k', 'n1');
+    // port у инбаунда null — используем порт самой ноды.
+    expect(r).toEqual({ sni: 'cdn.example.net', port: 443 });
+  });
+
+  it('нет активного инбаунда Reality (например, только Shadowsocks) — null', async () => {
+    vi.stubGlobal(
+      'fetch',
+      respond({
+        '/api/nodes': {
+          response: [
+            {
+              uuid: 'n1',
+              port: 443,
+              configProfile: {
+                activeConfigProfileUuid: 'p1',
+                activeInbounds: [
+                  {
+                    uuid: 'i1',
+                    profileUuid: 'p1',
+                    tag: 'ss',
+                    type: 'shadowsocks',
+                    network: 'tcp',
+                    security: null,
+                    port: 8388,
+                    rawInbound: {},
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const r = await new HttpRemnawaveClient().findNodeInbound('vpn-panel.example.com', 'k', 'n1');
+    expect(r).toBeNull();
+  });
+
+  it('нода не найдена по uuid — null', async () => {
+    vi.stubGlobal('fetch', respond({ '/api/nodes': { response: [] } }));
+    const r = await new HttpRemnawaveClient().findNodeInbound('vpn-panel.example.com', 'k', 'missing');
+    expect(r).toBeNull();
+  });
+});

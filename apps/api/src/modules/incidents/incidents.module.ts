@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { MaintenanceModule } from '../maintenance/maintenance.module.js';
 import { MetricsModule } from '../metrics/metrics.module.js';
+import { RemnawaveModule } from '../remnawave/remnawave.module.js';
 import { SecurityModule } from '../security/security.module.js';
 import { ServersModule } from '../servers/servers.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
@@ -12,11 +13,13 @@ import { IncidentsController } from './incidents.controller.js';
 import { IncidentsJob } from './incidents.job.js';
 import { IncidentsRepository } from './incidents.repository.js';
 import { IncidentsService } from './incidents.service.js';
+import { NodeAnomalyJob } from './node-anomaly.job.js';
+import { NodeBlockCheckService } from './node-block-check.service.js';
 import { NodeProbeJob } from './node-probe.job.js';
 
 /** R3: инциденты, детекция с гистерезисом, реестр действий T0–T3 с пред-/пост-проверкой и откатом. */
 @Module({
-  imports: [ServersModule, SettingsModule, MetricsModule, SecurityModule, MaintenanceModule],
+  imports: [ServersModule, SettingsModule, MetricsModule, SecurityModule, MaintenanceModule, RemnawaveModule],
   controllers: [IncidentsController],
   providers: [
     IncidentsRepository,
@@ -26,6 +29,8 @@ import { NodeProbeJob } from './node-probe.job.js';
     NodeProbeJob,
     IncidentMetricsService,
     IncidentRunnerService,
+    NodeBlockCheckService,
+    NodeAnomalyJob,
   ],
   exports: [IncidentsService, IncidentRunnerService, IncidentMetricsService],
 })

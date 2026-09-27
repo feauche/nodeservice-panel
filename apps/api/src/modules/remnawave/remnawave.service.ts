@@ -3,7 +3,12 @@ import { REMNAWAVE_PROBLEM, type RemnawaveConnectRequest, type RemnawaveStatus }
 
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { AuditService } from '../audit/audit.service.js';
-import { REMNAWAVE_CLIENT, RemnawaveApiError, type RemnawaveClient } from './remnawave-client.js';
+import {
+  REMNAWAVE_CLIENT,
+  RemnawaveApiError,
+  type RemnawaveClient,
+  type RemnawaveNodeInbound,
+} from './remnawave-client.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
 
 @Injectable()
@@ -15,6 +20,18 @@ export class RemnawaveService {
     @Inject(REMNAWAVE_CLIENT) private readonly client: RemnawaveClient,
     private readonly audit: AuditService,
   ) {}
+
+  /** J10: SNI и порт ноды для проверки блокировки — только когда проверка реально запускается. */
+  async nodeInbound(nodeUuid: string): Promise<RemnawaveNodeInbound | null> {
+    const creds = await this.store.credentials();
+    if (!creds) return null;
+    try {
+      return await this.client.findNodeInbound(creds.domain, creds.apiKey, nodeUuid);
+    } catch (err) {
+      this.log.warn(`Инбаунд ноды ${nodeUuid}: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  }
 
   async status(): Promise<RemnawaveStatus> {
     const domain = await this.store.domain();

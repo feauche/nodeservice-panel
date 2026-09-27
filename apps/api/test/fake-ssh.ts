@@ -43,6 +43,8 @@ export class FakeSsh {
   reachQueue: Array<'open' | 'closed'> = [];
   reachDns = '203.0.113.7';
   maintenance = { updates: 3, security: 1, reboot: false, failStep: '' as string };
+  /** J10: что «печатает» проверка блокировки (ns-blockcheck) — одна строка JSON вида parseBlockCheckOutput. */
+  blockCheckOutput = '{"stage":"data","ok":true,"stalledAtKb":null}';
 
   async start(port = 0): Promise<void> {
     this.hostKey ??= toOpenSshPrivate(generateKeyPairSync('ed25519').privateKey, 'fake-host');
@@ -122,6 +124,9 @@ export class FakeSsh {
                   }
                   stream.exit(0);
                 }
+              } else if (info.command.includes('# ns-blockcheck')) {
+                stream.write(`${this.blockCheckOutput}\n`);
+                stream.exit(0);
               } else if (info.command.includes('ns-reach')) {
                 const state = this.reachQueue.shift() ?? 'open';
                 const ports = (info.command.match(/for p in ([0-9 ]+);/)?.[1] ?? '').trim().split(/\s+/);

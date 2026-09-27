@@ -24,13 +24,44 @@ export interface RemnawaveFetched {
   nodes: RemnawaveNode[];
 }
 
+/**
+ * SNI (маскировка) и порт активного инбаунда Reality у ноды — не часть публичного статуса
+ * (фронтенду не нужно), нужно только для проверки блокировок (J10): без него панель не знает,
+ * с каким именем сайта прикидывается нода снаружи, и не сможет повторить настоящее TLS-подключение.
+ * null — нет активного инбаунда Reality (например, только Shadowsocks) или его не удалось разобрать.
+ */
+export interface RemnawaveNodeInbound {
+  sni: string | null;
+  port: number | null;
+}
+
 /** Обёртка над публичным API Remnawave. В тестах подменяется. */
 export interface RemnawaveClient {
   fetch(domain: string, apiKey: string): Promise<RemnawaveFetched>;
   /** Срок TLS-сертификата самого домена панели Remnawave — своя проверка, не через API Remnawave. */
   checkCertificate(domain: string): Promise<RemnawaveCert>;
+  /** SNI и порт для проверки блокировки этой ноды; вызывается только когда проверка реально нужна. */
+  findNodeInbound(domain: string, apiKey: string, nodeUuid: string): Promise<RemnawaveNodeInbound | null>;
 }
 export const REMNAWAVE_CLIENT = Symbol('REMNAWAVE_CLIENT');
+
+/**
+ * Имя сайта-маскировки из сырого инбаунда Xray Reality — форма ровно как в его собственном конфиге
+ * (`streamSettings.realitySettings.serverNames` или `dest`, вида "example.com:443"). Панель не хранит
+ * и не собирает такой конфиг сама, только читает то, что уже настроено в Remnawave.
+ */
+function realitySni(rawInbound: unknown): string | null {
+  if (!rawInbound || typeof rawInbound !== 'object') return null;
+  const stream = (rawInbound as Record<string, unknown>).streamSettings;
+  if (!stream || typeof stream !== 'object') return null;
+  const reality = (stream as Record<string, unknown>).realitySettings;
+  if (!reality || typeof reality !== 'object') return null;
+  const r = reality as Record<string, unknown>;
+  const names = r.serverNames;
+  if (Array.isArray(names) && typeof names[0] === 'string' && names[0]) return names[0].split(':')[0] ?? null;
+  if (typeof r.dest === 'string' && r.dest) return r.dest.split(':')[0] ?? null;
+  return null;
+}
 
 async function getJson(url: string, apiKey: string): Promise<Record<string, unknown>> {
   let res: Response;
@@ -129,6 +160,28 @@ export class HttpRemnawaveClient implements RemnawaveClient {
       };
     });
     return { stats, nodes };
+  }
+
+  async findNodeInbound(
+    domain: string,
+    apiKey: string,
+    nodeUuid: string,
+  ): Promise<RemnawaveNodeInbound | null> {
+    const nodesBody = await getJson(`https://${domain}/api/nodes`, apiKey);
+    const nodesRaw = (nodesBody.response as unknown[] | undefined) ?? [];
+    const raw = nodesRaw.find((r) => str((r as Record<string, unknown>).uuid) === nodeUuid) as
+      | Record<string, unknown>
+      | undefined;
+    if (!raw) return null;
+    const configProfile = raw.configProfile as Record<string, unknown> | undefined;
+    const inbounds = (configProfile?.activeInbounds as unknown[] | undefined) ?? [];
+    const realityInbound = inbounds.find((i) => (i as Record<string, unknown>).security === 'reality') as
+      | Record<string, unknown>
+      | undefined;
+    if (!realityInbound) return null;
+    const sni = realitySni(realityInbound.rawInbound);
+    const port = typeof realityInbound.port === 'number' ? realityInbound.port : num(raw.port) || null;
+    return { sni, port };
   }
 
   async checkCertificate(domain: string): Promise<RemnawaveCert> {

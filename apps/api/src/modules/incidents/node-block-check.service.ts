@@ -1,0 +1,107 @@
+import { Injectable, Logger } from '@nestjs/common';
+import {
+  BLOCK_CHECK_ATTEMPTS,
+  type BlockCheckResult,
+  type BlockProbeResult,
+  type Server,
+} from '@nodeservice/shared';
+
+import { ServersService } from '../servers/servers.service.js';
+import { SshService } from '../servers/ssh.service.js';
+import {
+  buildBlockCheckCommand,
+  combineVerdicts,
+  parseBlockCheckOutput,
+  pickRuProbes,
+} from './block-check.logic.js';
+
+/**
+ * J10: запускает проверку блокировки ноды (ТСПУ / «блок 16–20 КБ») с других серверов парка в
+ * России по SSH — тем же способом, что и check_reachability, никакого нового агента не нужно.
+ * Один обрыв соединения ненадёжен (бывают случайные RST) — каждый пробующий сервер повторяет
+ * проверку несколько раз, вердикт этого сервера берётся по большинству его же попыток.
+ */
+@Injectable()
+export class NodeBlockCheckService {
+  private readonly log = new Logger(NodeBlockCheckService.name);
+
+  constructor(
+    private readonly servers: ServersService,
+    private readonly ssh: SshService,
+  ) {}
+
+  private async runOnce(serverId: string, command: string): Promise<{ stdout: string; code: number }> {
+    const { target } = await this.servers.sshTargetFor(serverId);
+    const session = await this.ssh.connect(target);
+    try {
+      const res = await session.exec(command);
+      return { stdout: res.stdout, code: res.code };
+    } finally {
+      session.end();
+    }
+  }
+
+  /** Большинство вердиктов повторных попыток с ОДНОГО и того же сервера; ничья решается по приоритету. */
+  private async probeFrom(
+    prober: Pick<Server, 'id' | 'name'>,
+    address: string,
+    port: number,
+    sni: string,
+  ): Promise<BlockProbeResult> {
+    const command = buildBlockCheckCommand(address, port, sni);
+    const attempts: BlockProbeResult[] = [];
+    for (let i = 0; i < BLOCK_CHECK_ATTEMPTS; i += 1) {
+      try {
+        const { stdout } = await this.runOnce(prober.id, command);
+        attempts.push(parseBlockCheckOutput(prober.name, stdout));
+      } catch (err) {
+        this.log.warn(`Проверка блокировки с «${prober.name}»: ${err instanceof Error ? err.message : err}`);
+        attempts.push({
+          from: prober.name,
+          verdict: 'unreachable',
+          detail: 'Не удалось подключиться к пробующему серверу.',
+          stalledAtKb: null,
+          error: 'ssh',
+        });
+      }
+    }
+    const verdict = combineVerdicts(attempts);
+    // attempts всегда непустой (BLOCK_CHECK_ATTEMPTS >= 1), а verdict всегда взят из одной из попыток.
+    const winner = (attempts.find((a) => a.verdict === verdict) ?? attempts[0]) as BlockProbeResult;
+    return { ...winner, from: prober.name };
+  }
+
+  /**
+   * Полная проверка ноды: выбрать до трёх серверов парка в России (не саму ноду), прогнать с каждого
+   * по несколько раз, вернуть общий вердикт. `sni: null` — у ноды не Reality (или не удалось разобрать
+   * маскировку), проверка невозможна технически: возвращает пустой результат с этим объяснением.
+   */
+  async check(
+    nodeName: string,
+    address: string,
+    port: number | null,
+    sni: string | null,
+    excludeServerId: string | null,
+    allServers: Server[],
+  ): Promise<BlockCheckResult> {
+    if (!sni || !port)
+      return {
+        nodeName,
+        address,
+        sniUsed: null,
+        probes: [],
+        verdict: 'unreachable',
+      };
+    const probers = pickRuProbes(excludeServerId, allServers);
+    if (probers.length === 0)
+      return {
+        nodeName,
+        address,
+        sniUsed: sni,
+        probes: [],
+        verdict: 'unreachable',
+      };
+    const probes = await Promise.all(probers.map((p) => this.probeFrom(p, address, port, sni)));
+    return { nodeName, address, sniUsed: sni, probes, verdict: combineVerdicts(probes) };
+  }
+}

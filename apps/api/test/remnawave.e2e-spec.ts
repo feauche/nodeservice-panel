@@ -86,6 +86,10 @@ class FakeRemnawaveClient implements RemnawaveClient {
   async checkCertificate(): Promise<RemnawaveCert> {
     return this.cert;
   }
+
+  async findNodeInbound() {
+    return null;
+  }
 }
 
 describe('Remnawave e2e (J4)', () => {

@@ -26,6 +26,7 @@ export const INCIDENT_KINDS = [
   'cpu_high',
   'mem_high',
   'disk_high',
+  'node_blocked',
 ] as const;
 export type IncidentKind = (typeof INCIDENT_KINDS)[number];
 
@@ -42,6 +43,7 @@ export const INCIDENT_KIND_META: Record<
   cpu_high: { label: 'Высокая нагрузка на CPU', component: 'CPU', severity: 'warn' },
   mem_high: { label: 'Память на пределе', component: 'Память', severity: 'warn' },
   disk_high: { label: 'Диск заполняется', component: 'Диск', severity: 'warn' },
+  node_blocked: { label: 'Похоже на блокировку', component: 'Блокировка', severity: 'crit' },
 };
 
 /* ---------- уровни действий и реестр (§2 мастер-плана) ---------- */
@@ -216,6 +218,8 @@ export const INCIDENT_CHAINS: Record<IncidentKind, ActionKey[]> = {
   mem_high: ['restart_node', 'reboot'],
   agent_offline: ['agent_reinstall', 'agent_logs'],
   ssh_down: [],
+  // Автопочинки для подозрения на блокировку нет: решение — сменить IP или сам сервер, это всегда T3 вручную.
+  node_blocked: [],
 };
 
 /* ---------- попытки починки ---------- */
