@@ -94,39 +94,59 @@ function nodeStatusKey(n: RemnawaveNode): keyof typeof NODE_STATUS {
   return n.isConnected ? 'connected' : 'down';
 }
 
+/** Лимит трафика 0 у Remnawave означает «без лимита», а не настоящий ноль — иначе получалось бы «161 ТБ из 0 Б». */
+function hasTrafficLimit(node: RemnawaveNode): boolean {
+  return node.trafficLimitBytes !== null && node.trafficLimitBytes > 0;
+}
+
+/**
+ * Строка колонками (не просто через gap): имя ноды разной длины иначе сдвигало бы адрес, статус,
+ * онлайн и трафик у каждой ноды по-разному — на широком экране это выглядело рябью без выравнивания.
+ * На телефоне колонки не нужны — там всё и так в одну ленту переносится.
+ */
 function NodeRow({ node, matched, onAdd }: { node: RemnawaveNode; matched: boolean; onAdd: () => void }) {
   const status = NODE_STATUS[nodeStatusKey(node)];
   return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-border px-4 py-3 first:border-t-0">
-      {node.countryCode && <CountryFlag code={node.countryCode} size="sm" />}
-      <span className="min-w-0 flex-1 basis-[140px] truncate text-[13px] font-semibold">{node.name}</span>
-      <span className="font-mono text-[11.5px] text-text-3">{node.address}</span>
+    <li className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 border-t border-border px-4 py-3.5 first:border-t-0 sm:grid sm:grid-cols-[20px_minmax(140px,1.6fr)_140px_120px_92px_150px_190px] sm:items-center sm:gap-y-0">
+      {node.countryCode ? (
+        <CountryFlag code={node.countryCode} size="md" />
+      ) : (
+        <span aria-hidden="true" className="hidden h-[15px] w-[20px] flex-none sm:inline-block" />
+      )}
+      <span className="min-w-0 truncate text-[14px] font-semibold">{node.name}</span>
+      <span className="min-w-0 truncate font-mono text-[12.5px] text-text-3" title={node.address}>
+        {node.address}
+      </span>
       <Pill tone={status.tone}>{status.label}</Pill>
-      {node.usersOnline !== null && (
-        <span className="inline-flex items-center gap-1 text-[12px] text-text-2">
-          <UsersIcon className="size-3.5 text-text-3" aria-hidden="true" />
-          {node.usersOnline} онлайн
-        </span>
-      )}
-      {node.trafficUsedBytes !== null && (
-        <span className="text-[12px] text-text-3">
-          {formatByteTotal(node.trafficUsedBytes)}
-          {node.trafficLimitBytes !== null && ` из ${formatByteTotal(node.trafficLimitBytes)}`}
-        </span>
-      )}
+      <span className="inline-flex items-center gap-1 text-[13.5px] text-text-2 sm:justify-self-end">
+        {node.usersOnline !== null && (
+          <>
+            <UsersIcon className="size-3.5 text-text-3" aria-hidden="true" />
+            <b className="font-semibold text-foreground">{node.usersOnline}</b> онлайн
+          </>
+        )}
+      </span>
+      <span className="text-[13.5px] text-text-3 sm:justify-self-end">
+        {node.trafficUsedBytes !== null && (
+          <>
+            {formatByteTotal(node.trafficUsedBytes)}
+            {hasTrafficLimit(node) && ` из ${formatByteTotal(node.trafficLimitBytes)}`}
+          </>
+        )}
+      </span>
       {!matched && (
         <Button
           type="button"
           variant="outline"
           onClick={onAdd}
-          className="h-7 flex-none rounded-[7px] px-2 text-[11.5px]"
+          className="h-7 flex-none justify-self-end rounded-[7px] px-2 text-[12px]"
         >
           <PlusIcon className="size-3.5" aria-hidden="true" />
           Добавить в NodeService
         </Button>
       )}
       {node.lastStatusMessage && !node.isConnected && !node.isDisabled && (
-        <span className="w-full basis-full text-[11.5px] text-crit">{node.lastStatusMessage}</span>
+        <span className="w-full text-[11.5px] text-crit sm:col-span-full">{node.lastStatusMessage}</span>
       )}
     </li>
   );

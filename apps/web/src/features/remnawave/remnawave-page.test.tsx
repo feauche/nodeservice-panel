@@ -117,6 +117,41 @@ describe('RemnawavePage', () => {
     expect(screen.getByText('870')).toBeInTheDocument();
   });
 
+  it('лимит трафика 0 у Remnawave — это «без лимита», «из 0 Б» не показываем', async () => {
+    mockRemnawave.connected = true;
+    mockRemnawave.domain = 'vpn-panel.example.com';
+    mockRemnawave.checkedAt = '2026-09-27T10:00:00.000Z';
+    mockRemnawave.error = null;
+    mockRemnawave.stats = {
+      users: { total: 870, active: 812, disabled: 14, limited: 3, expired: 41 },
+      online: { now: 236, lastDay: 512, lastWeek: 640, never: 28 },
+      nodesOnline: 1,
+      nodesTotal: 1,
+      trafficBytesLifetime: '20239053209600',
+      panelVersion: '3.4.4',
+      panelUptimeSec: 361_440,
+    };
+    mockRemnawave.nodes = [
+      {
+        uuid: '0192f200-0000-7000-8000-000000000009',
+        name: 'unlimited-node',
+        address: '203.0.113.200',
+        countryCode: 'DE',
+        isConnected: true,
+        isDisabled: false,
+        isConnecting: false,
+        lastStatusMessage: null,
+        usersOnline: 10,
+        trafficUsedBytes: 1_771_302_247_621,
+        trafficLimitBytes: 0,
+      },
+    ];
+    mockRemnawave.cert = null;
+    renderPage(Page, '/servers/remnawave');
+    await screen.findByText('unlimited-node');
+    expect(screen.queryByText(/из 0 Б/)).not.toBeInTheDocument();
+  });
+
   it('«Добавить в NodeService»: только у несовпавшей ноды, окно открывается с готовыми, но редактируемыми полями', async () => {
     renderPage(Page, '/servers/remnawave');
     await screen.findByRole('heading', { name: 'Подключение' });
