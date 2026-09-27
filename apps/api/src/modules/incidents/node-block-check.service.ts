@@ -11,6 +11,7 @@ import { SshService } from '../servers/ssh.service.js';
 import {
   buildBlockCheckCommand,
   combineVerdicts,
+  isSafeBlockCheckTarget,
   parseBlockCheckOutput,
   pickRuProbes,
 } from './block-check.logic.js';
@@ -84,7 +85,9 @@ export class NodeBlockCheckService {
     excludeServerId: string | null,
     allServers: Server[],
   ): Promise<BlockCheckResult> {
-    if (!sni || !port)
+    // Второе условие — не только «нет данных», но и «данные не похожи на настоящий адрес/порт/имя»:
+    // Remnawave — внешний источник, панель эти значения не проверяет на своей стороне.
+    if (!sni || !port || !isSafeBlockCheckTarget(address, port, sni))
       return {
         nodeName,
         address,

@@ -33,16 +33,39 @@ export function pickRuProbes(
     .slice(0, max);
 }
 
+/**
+ * Адрес и имя маскировки приходят из Remnawave — панель эти данные не создаёт и не проверяет на
+ * стороне Remnawave, а подставляет их в команду для ДРУГОГО сервера парка по SSH. Разрешаем только
+ * форму, которой достаточно для IPv4, IPv6 и доменного имени; в этом наборе нет ни одного символа,
+ * значимого для оболочки, — так испорченные или подставные данные не смогут вырваться из команды.
+ */
+const SAFE_HOST_RE = /^[A-Za-z0-9.:-]{1,253}$/;
+
+function isSafePort(port: number): boolean {
+  return Number.isInteger(port) && port > 0 && port < 65536;
+}
+
+/** true — адрес, порт и имя маскировки безопасно подставлять в команду проверки. */
+export function isSafeBlockCheckTarget(address: string, port: number, sni: string): boolean {
+  return SAFE_HOST_RE.test(address) && SAFE_HOST_RE.test(sni) && isSafePort(port);
+}
+
+/** Одинарные кавычки для подстановки в оболочку — тот же приём, что и в SH(). */
+const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+
 /** Команда для одного прогона на пробующем сервере — печатает ровно одну строку JSON в stdout. */
 export function buildBlockCheckCommand(address: string, port: number, sni: string): string {
+  // Проверка формы — обязательный барьер перед сборкой команды, а не только на вызывающей стороне.
+  if (!isSafeBlockCheckTarget(address, port, sni))
+    throw new Error('Проверка блокировки: подозрительные данные адреса, порта или имени маскировки.');
   const sizes: number[] = [];
   for (let i = 1; i <= BLOCK_1620_STEPS; i += 1) sizes.push(i * BLOCK_1620_STEP_KB);
   return SH(
     [
       '# ns-blockcheck',
-      `addr=${address}`,
+      `addr=${q(address)}`,
       `port=${port}`,
-      `sni=${sni}`,
+      `sni=${q(sni)}`,
       // Шаг 1: обычный TCP-порт — если недоступен вообще, дальше проверять нечего.
       `if ! timeout ${BLOCK_CHECK_CONNECT_TIMEOUT_SEC} bash -c "exec 3<>/dev/tcp/\\$addr/\\$port" 2>/dev/null; then`,
       '  echo \'{"stage":"tcp","ok":false,"stalledAtKb":null}\'',

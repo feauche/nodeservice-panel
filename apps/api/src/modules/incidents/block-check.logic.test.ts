@@ -4,11 +4,15 @@ import { describe, expect, it } from 'vitest';
 import {
   buildBlockCheckCommand,
   combineVerdicts,
+  isSafeBlockCheckTarget,
   parseBlockCheckOutput,
   pickRuProbes,
 } from './block-check.logic.js';
 
 const country = (code: string | null) => ({ ...DEFAULT_SERVER_COUNTRY, code });
+
+/** Снять экранирование одинарных кавычек, которое добавляет SH() при обёртке в sh -c '...'. */
+const unescapeSh = (s: string) => s.replace(/'\\''/g, "'");
 
 describe('pickRuProbes', () => {
   const all = [
@@ -38,15 +42,42 @@ describe('pickRuProbes', () => {
 });
 
 describe('buildBlockCheckCommand', () => {
-  it('подставляет адрес, порт и SNI; печатает один JSON на этапах tcp/tls/data', () => {
-    const cmd = buildBlockCheckCommand('203.0.113.7', 8443, 'www.example.com');
-    expect(cmd).toContain('addr=203.0.113.7');
+  it('подставляет адрес, порт и SNI (в кавычках для оболочки); печатает один JSON на этапах tcp/tls/data', () => {
+    const cmd = unescapeSh(buildBlockCheckCommand('203.0.113.7', 8443, 'www.example.com'));
+    expect(cmd).toContain("addr='203.0.113.7'");
     expect(cmd).toContain('port=8443');
-    expect(cmd).toContain('sni=www.example.com');
+    expect(cmd).toContain("sni='www.example.com'");
     expect(cmd).toContain('"stage":"tcp"');
     expect(cmd).toContain('"stage":"tls"');
     expect(cmd).toContain('"stage":"data"');
     expect(cmd).toContain('BEGIN CERTIFICATE');
+  });
+
+  it('адрес или SNI с символами оболочки — отказ, а не подстановка в команду (защита от инъекции)', () => {
+    expect(() => buildBlockCheckCommand('1.2.3.4; rm -rf / #', 443, 'example.com')).toThrow();
+    expect(() => buildBlockCheckCommand('1.2.3.4', 443, '$(reboot)')).toThrow();
+    expect(() => buildBlockCheckCommand('1.2.3.4', 443, 'example.com`whoami`')).toThrow();
+    expect(() => buildBlockCheckCommand('1.2.3.4 && curl evil', 443, 'example.com')).toThrow();
+  });
+
+  it('порт вне диапазона или не целое число — тоже отказ', () => {
+    expect(() => buildBlockCheckCommand('1.2.3.4', 0, 'example.com')).toThrow();
+    expect(() => buildBlockCheckCommand('1.2.3.4', 65536, 'example.com')).toThrow();
+    expect(() => buildBlockCheckCommand('1.2.3.4', 443.5, 'example.com')).toThrow();
+  });
+});
+
+describe('isSafeBlockCheckTarget', () => {
+  it('обычные IPv4, IPv6 и доменное имя — безопасны', () => {
+    expect(isSafeBlockCheckTarget('203.0.113.7', 8443, 'www.example.com')).toBe(true);
+    expect(isSafeBlockCheckTarget('2001:db8::1', 443, 'example.com')).toBe(true);
+  });
+
+  it('пробел, кавычка, точка с запятой, обратные кавычки, подстановка команд — небезопасны', () => {
+    expect(isSafeBlockCheckTarget('1.2.3.4 rm', 443, 'example.com')).toBe(false);
+    expect(isSafeBlockCheckTarget('1.2.3.4', 443, "example.com'; rm -rf ~ #")).toBe(false);
+    expect(isSafeBlockCheckTarget('1.2.3.4', 443, 'example.com`id`')).toBe(false);
+    expect(isSafeBlockCheckTarget('1.2.3.4', 443, '$(id)')).toBe(false);
   });
 });
 
