@@ -112,6 +112,9 @@ describe('servers e2e', () => {
       .send({ host: '127.0.0.1', port: 1, sshUser: SSH_USER, auth: { method: 'password', password: 'x' } })
       .expect(502);
     expect(dead.body.type).toBe(SERVER_PROBLEM.sshUnreachable);
+    // Своя 502 с понятным текстом не подменяется на «Что-то пошло не так на сервере».
+    expect(dead.body.detail).toContain('Не удалось подключиться к 127.0.0.1 по SSH');
+    expect(dead.body.title).toBe('Внешний сервис не ответил');
   }, 30_000);
 
   it('создание по паролю: ключ панели ставится и проверяется, пароль не сохраняется', async () => {

@@ -15,7 +15,7 @@ export const serverProblems = {
     problem(HttpStatus.CONFLICT, {
       type: SERVER_PROBLEM.hostKeyMismatch,
       detail:
-        'Отпечаток сервера изменился. Так бывает после переустановки системы — или если кто-то подменяет сервер. Сравни отпечатки и довериь новый только если переустановка была твоей.',
+        'Отпечаток сервера изменился. Так бывает после переустановки системы — или если кто-то подменяет сервер. Сравните отпечатки и доверяйте новому, только если переустановку делали вы.',
       extensions: { expectedFingerprint: expected, offeredFingerprint: offered },
     }),
   sshCommand: (command: string, detail: string) =>
