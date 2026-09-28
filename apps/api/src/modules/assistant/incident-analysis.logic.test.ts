@@ -5,6 +5,7 @@ import {
   ANALYSIS_TOOLS,
   ASK_TOOLS,
   analysisSystem,
+  nodeNowText,
   parseSubmission,
   pickAutoAnalysis,
   stepLabel,
@@ -27,6 +28,18 @@ describe('parseSubmission', () => {
         ok: true,
         value: { nextAction: null },
       });
+  });
+  it('обрывки разметки вызова инструмента в тексте срезаются, обычные угловые скобки остаются', () => {
+    const r = parseSubmission(
+      {
+        ...good,
+        verdict: 'Порт закрыт для <адрес панели>.',
+        unknown: 'Связаться по вопросу оплаты аренды.</unknown> </invoke>',
+      },
+      'disk_high',
+    );
+    expect(r.ok && r.value.unknown).toBe('Связаться по вопросу оплаты аренды.');
+    expect(r.ok && r.value.verdict).toBe('Порт закрыт для <адрес панели>.');
   });
   it('неизвестный источник становится «other», пустое «unknown» — null', () => {
     const r = parseSubmission(
@@ -173,5 +186,37 @@ describe('правила парка в разборе', () => {
     expect(s).toContain('CPU до 60 %.');
     expect(s.indexOf('ПЛЕЙБУК')).toBeLessThan(s.indexOf('ПРАВИЛА ПАРКА'));
     expect(s).toContain('окно обслуживания');
+  });
+});
+
+describe('nodeNowText', () => {
+  const node = {
+    uuid: 'n1',
+    name: 'vk (Аренда)',
+    address: '203.0.113.9',
+    isConnected: true,
+    isDisabled: false,
+    isConnecting: false,
+    lastStatusMessage: null,
+    usersOnline: 470,
+    trafficUsedBytes: null,
+    trafficLimitBytes: null,
+  };
+  const status = { connected: true, checkedAt: '2026-09-28T15:10:00.000Z', nodes: [node] };
+  it('находит ноду по адресу сервера или по имени и пишет текущий онлайн', () => {
+    const byHost = nodeNowText({ serverId: 's1', serverName: 'другое имя' }, status as never, '203.0.113.9');
+    expect(byHost).toContain('онлайн 470');
+    const byName = nodeNowText({ serverId: null, serverName: 'vk (Аренда)' }, status as never, null);
+    expect(byName).toContain('на связи с Remnawave');
+  });
+  it('нода не нашлась или Remnawave не подключена — null', () => {
+    expect(nodeNowText({ serverId: null, serverName: 'нет такой' }, status as never, null)).toBeNull();
+    expect(
+      nodeNowText(
+        { serverId: null, serverName: 'vk (Аренда)' },
+        { ...status, connected: false } as never,
+        null,
+      ),
+    ).toBeNull();
   });
 });

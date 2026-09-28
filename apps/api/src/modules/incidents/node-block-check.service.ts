@@ -47,7 +47,7 @@ export class NodeBlockCheckService {
     prober: Pick<Server, 'id' | 'name'>,
     address: string,
     port: number,
-    sni: string,
+    sni: string | null,
   ): Promise<BlockProbeResult> {
     const command = buildBlockCheckCommand(address, port, sni);
     const attempts: BlockProbeResult[] = [];
@@ -75,7 +75,8 @@ export class NodeBlockCheckService {
   /**
    * Полная проверка ноды: выбрать до трёх серверов парка в России (не саму ноду), прогнать с каждого
    * по несколько раз, вернуть общий вердикт. `sni: null` — у ноды не Reality (или не удалось разобрать
-   * маскировку), проверка невозможна технически: возвращает пустой результат с этим объяснением.
+   * маскировку): проверяем только доступность порта (`sniUsed: null` в ответе). Без порта проверка
+   * невозможна технически — пустой результат.
    */
   async check(
     nodeName: string,
@@ -87,7 +88,7 @@ export class NodeBlockCheckService {
   ): Promise<BlockCheckResult> {
     // Второе условие — не только «нет данных», но и «данные не похожи на настоящий адрес/порт/имя»:
     // Remnawave — внешний источник, панель эти значения не проверяет на своей стороне.
-    if (!sni || !port || !isSafeBlockCheckTarget(address, port, sni))
+    if (!port || !isSafeBlockCheckTarget(address, port, sni || null))
       return {
         nodeName,
         address,
@@ -100,11 +101,11 @@ export class NodeBlockCheckService {
       return {
         nodeName,
         address,
-        sniUsed: sni,
+        sniUsed: sni || null,
         probes: [],
         verdict: 'unreachable',
       };
-    const probes = await Promise.all(probers.map((p) => this.probeFrom(p, address, port, sni)));
-    return { nodeName, address, sniUsed: sni, probes, verdict: combineVerdicts(probes) };
+    const probes = await Promise.all(probers.map((p) => this.probeFrom(p, address, port, sni || null)));
+    return { nodeName, address, sniUsed: sni || null, probes, verdict: combineVerdicts(probes) };
   }
 }

@@ -230,7 +230,7 @@ describe('J10: аномалия онлайна → проверка блокир
     expect(inc?.detail).toContain('упал с 100 до 10');
   });
 
-  it('падение онлайна, но проверить нечем (нет имени маскировки у ноды) → предупреждение «проверить не удалось», не крит', async () => {
+  it('падение онлайна, но проверить нечем (нет ни порта, ни имени маскировки) → предупреждение «проверить не удалось», не крит', async () => {
     fake.node = { uuid: 'node-3', name: 'третья-нода', address: '198.51.100.11', online: 100 };
     fake.inbound = { sni: null, port: null };
     await app.get(RemnawaveService).refresh();
@@ -250,7 +250,7 @@ describe('J10: аномалия онлайна → проверка блокир
     expect(inc?.severity).toBe('warn');
     expect(inc?.title).not.toContain('блокировк');
     expect(inc?.title).toContain('проверить не удалось');
-    expect(inc?.detail).toContain('не получилось определить имя маскировки');
+    expect(inc?.detail).toContain('не нашёлся порт подключения');
   });
 
   it('инцидент открылся, а потом онлайн и проверка снова в порядке → перепроверка закрывает его сама', async () => {

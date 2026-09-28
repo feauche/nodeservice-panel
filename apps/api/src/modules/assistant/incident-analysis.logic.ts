@@ -8,6 +8,7 @@ import {
   type Incident,
   type IncidentAnalysis,
   type IncidentKind,
+  type RemnawaveStatus,
 } from '@nodeservice/shared';
 import { z } from 'zod';
 
@@ -100,7 +101,7 @@ export const analysisSystem = (
 - Если нужно, доберите данные инструментами: история метрики, сведения о сервере, обслуживание, похожие инциденты, доступность снаружи, тяжёлые процессы, контейнеры и порты, диск, журнал ядра, сертификат, журналы служб (что из этого доступно, видно по списку инструментов). Не больше четырёх-пяти вызовов. Учитывай профиль сервера в деле и правила парка: для критичного сервера в вывод добавь последствия шага и окно обслуживания. Затем ровно один раз вызови submit_analysis.
 - Проверка доступности идёт с серверов парка, а не из сети пользователей: не делай вывода о блокировке у пользователей только по ней.
 - Если проблема со связью (SSH недоступен, агент офлайн) — посмотри list_incidents без указания сервера: если у НЕСКОЛЬКИХ серверов (особенно у разных хостеров) похожий сбой открылся примерно в то же время, это чаще значит проблему на нашей стороне (сеть или сам сервер панели), а не совпадение у каждого хостера по отдельности. Если такое совпадение видно — назови его прямо и не приписывай причину хостеру именно разбираемого сервера; если совпадения нет — тогда можно говорить о хостере или сети конкретно этого сервера.
-- Тексты: по-русски, на «вы», короткие предложения с заглавной. Вывод не длиннее двух предложений. Пиши для человека, а не для программиста: никаких имён инструментов (check_reachability, get_server_detail, inspect_ports и т. п.), названий полей и переменных из данных (ssh.ok, lastOkAt, agentStatus) и видов инцидентов кодом (ssh_down, agent_offline, cpu_high) — замени обычными словами («проверка доступности», «время последней успешной проверки SSH», «SSH-связь пропала», «агент не выходил на связь», «высокая нагрузка на процессор»). Даты и время — по-русски («27 сентября в 10:49»), а не ISO-строкой.
+- Тексты: по-русски, на «вы», короткие предложения с заглавной. Вывод не длиннее двух предложений. Пиши для человека, а не для программиста: никаких имён инструментов (check_reachability, get_server_detail, inspect_ports и т. п.), названий полей и переменных из данных (ssh.ok, lastOkAt, agentStatus, serverId — вместо «нет serverId» пишите «сервер не добавлен в NodeService») и видов инцидентов кодом (ssh_down, agent_offline, cpu_high) — замени обычными словами («проверка доступности», «время последней успешной проверки SSH», «SSH-связь пропала», «агент не выходил на связь», «высокая нагрузка на процессор»). Даты и время — по-русски («27 сентября в 10:49»), а не ISO-строкой.
 УРОВЕНЬ ПОЛЬЗОВАТЕЛЯ: ${level}. Для новичка поясняйте термины коротко, для профессионала пишите плотно.
 ${UNTRUSTED}${playbook ? `\n\n${playbook}` : ''}${fleetRules ? `\n\n${fleetRulesBlock(fleetRules)}` : ''}`;
 
@@ -115,11 +116,41 @@ export const askSystem = (
 УРОВЕНЬ ПОЛЬЗОВАТЕЛЯ: ${level}.
 ${UNTRUSTED}`;
 
+/**
+ * Инцидент «похоже на блокировку» заводится по падению онлайна ноды Remnawave, а в деле записан только
+ * момент падения. Без текущего онлайна Джарвис при повторном разборе не видит, что всё уже вернулось, —
+ * поэтому подкладываем свежий снимок ноды прямо в данные. null — нода не нашлась или Remnawave нет.
+ */
+export function nodeNowText(
+  inc: Pick<Incident, 'serverId' | 'serverName'>,
+  status: Pick<RemnawaveStatus, 'connected' | 'checkedAt' | 'nodes'>,
+  serverHost: string | null,
+): string | null {
+  if (!status.connected) return null;
+  const node =
+    (serverHost ? status.nodes.find((n) => n.address === serverHost) : undefined) ??
+    status.nodes.find((n) => n.name === inc.serverName);
+  if (!node) return null;
+  const at = status.checkedAt
+    ? new Date(status.checkedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+    : 'время снимка неизвестно';
+  const state = node.isDisabled
+    ? 'выключена в Remnawave'
+    : node.isConnected
+      ? 'на связи с Remnawave'
+      : 'не на связи с Remnawave';
+  return `Нода «${node.name}» сейчас (снимок Remnawave, ${at}): онлайн ${node.usersOnline ?? 'нет данных'}, ${state}. Сравните с онлайном до падения из дела: если онлайн вернулся близко к прежнему, проблема прошла сама.`;
+}
+
 /** Дело и (если есть) сводка метрики одним сообщением, чтобы не тратить круги на очевидное чтение. */
-export const dataBlock = (caseJson: unknown, metricText: string | null): string =>
+export const dataBlock = (
+  caseJson: unknown,
+  metricText: string | null,
+  nowText: string | null = null,
+): string =>
   `<данные>\nДело инцидента:\n${JSON.stringify(caseJson)}${
     metricText ? `\n\nИстория метрики за период:\n${metricText}` : ''
-  }\n</данные>`;
+  }${nowText ? `\n\nСостояние сейчас:\n${nowText}` : ''}\n</данные>`;
 
 /** Подпись шага для хода разбора: администратор видит, чем занят Джарвис. */
 export function stepLabel(tool: string, input: unknown, kind: IncidentKind): string {
@@ -151,14 +182,31 @@ export function stepLabel(tool: string, input: unknown, kind: IncidentKind): str
 export const chartName = (metric: keyof typeof INCIDENT_CHART_LABELS): string =>
   INCIDENT_CHART_LABELS[metric].toLowerCase();
 
+/**
+ * Модель иногда дописывает в конец текстового поля обрывки собственной разметки вызова инструмента
+ * («</unknown> </invoke>») — владельцу это видно как мусор в разборе. Срезаем такие теги; обычные
+ * угловые скобки в тексте (например «<адрес>») не трогаем — список имён закрытый.
+ */
+const TOOL_MARKUP_RE =
+  /<\/?(?:antml:)?(?:invoke|parameter|function_calls|function_results|unknown|verdict|evidence|nextAction|confidence|source|text)\b[^>]*>/g;
+
+export function stripToolMarkup(s: string): string {
+  return s
+    .replace(TOOL_MARKUP_RE, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+const clean = z.string().transform(stripToolMarkup);
+
 const submitSchema = z.object({
-  verdict: z.string().trim().min(1).max(700),
+  verdict: clean.pipe(z.string().min(1).max(700)),
   confidence: z.enum(ANALYSIS_CONFIDENCE),
   evidence: z
-    .array(z.object({ source: z.string(), text: z.string().trim().min(1).max(400) }))
+    .array(z.object({ source: z.string(), text: clean.pipe(z.string().min(1).max(400)) }))
     .min(1)
     .max(6),
-  unknown: z.string().trim().max(500).optional(),
+  unknown: clean.pipe(z.string().max(500)).optional(),
   nextAction: z.string().trim().optional(),
 });
 

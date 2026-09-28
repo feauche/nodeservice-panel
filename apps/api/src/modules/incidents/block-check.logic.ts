@@ -46,15 +46,19 @@ function isSafePort(port: number): boolean {
 }
 
 /** true — адрес, порт и имя маскировки безопасно подставлять в команду проверки. */
-export function isSafeBlockCheckTarget(address: string, port: number, sni: string): boolean {
-  return SAFE_HOST_RE.test(address) && SAFE_HOST_RE.test(sni) && isSafePort(port);
+export function isSafeBlockCheckTarget(address: string, port: number, sni: string | null): boolean {
+  return SAFE_HOST_RE.test(address) && (sni === null || SAFE_HOST_RE.test(sni)) && isSafePort(port);
 }
 
 /** Одинарные кавычки для подстановки в оболочку — тот же приём, что и в SH(). */
 const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
-/** Команда для одного прогона на пробующем сервере — печатает ровно одну строку JSON в stdout. */
-export function buildBlockCheckCommand(address: string, port: number, sni: string): string {
+/**
+ * Команда для одного прогона на пробующем сервере — печатает ровно одну строку JSON в stdout.
+ * `sni: null` — имя маскировки неизвестно: проверяем только, отвечает ли порт (stage "port"). Отличить
+ * ТСПУ от живой ноды так нельзя, но «сервер совсем недоступен» (выключен, не оплачен) — можно.
+ */
+export function buildBlockCheckCommand(address: string, port: number, sni: string | null): string {
   // Проверка формы — обязательный барьер перед сборкой команды, а не только на вызывающей стороне.
   if (!isSafeBlockCheckTarget(address, port, sni))
     throw new Error('Проверка блокировки: подозрительные данные адреса, порта или имени маскировки.');
@@ -65,10 +69,15 @@ export function buildBlockCheckCommand(address: string, port: number, sni: strin
       '# ns-blockcheck',
       `addr=${q(address)}`,
       `port=${port}`,
-      `sni=${q(sni)}`,
+      `sni=${q(sni ?? '')}`,
       // Шаг 1: обычный TCP-порт — если недоступен вообще, дальше проверять нечего.
       `if ! timeout ${BLOCK_CHECK_CONNECT_TIMEOUT_SEC} bash -c "exec 3<>/dev/tcp/\\$addr/\\$port" 2>/dev/null; then`,
       '  echo \'{"stage":"tcp","ok":false,"stalledAtKb":null}\'',
+      '  exit 0',
+      'fi',
+      // Без имени маскировки глубже идти нечем: порт отвечает — это всё, что можно сказать честно.
+      'if [ -z "$sni" ]; then',
+      '  echo \'{"stage":"port","ok":true,"stalledAtKb":null}\'',
       '  exit 0',
       'fi',
       // Шаг 2: настоящее TLS-рукопожатие с именем маскировки ноды. Тихий обрыв без сертификата в
@@ -101,7 +110,7 @@ export function buildBlockCheckCommand(address: string, port: number, sni: strin
 }
 
 interface RawBlockOutput {
-  stage: 'tcp' | 'tls' | 'data';
+  stage: 'tcp' | 'port' | 'tls' | 'data';
   ok: boolean;
   stalledAtKb: number | null;
 }
@@ -110,7 +119,7 @@ function isRawBlockOutput(v: unknown): v is RawBlockOutput {
   if (!v || typeof v !== 'object') return false;
   const r = v as Record<string, unknown>;
   return (
-    (r.stage === 'tcp' || r.stage === 'tls' || r.stage === 'data') &&
+    (r.stage === 'tcp' || r.stage === 'port' || r.stage === 'tls' || r.stage === 'data') &&
     typeof r.ok === 'boolean' &&
     (r.stalledAtKb === null || typeof r.stalledAtKb === 'number')
   );
@@ -141,6 +150,14 @@ export function parseBlockCheckOutput(from: string, stdout: string): BlockProbeR
       from,
       verdict: 'unreachable',
       detail: 'Порт не отвечает совсем.',
+      stalledAtKb: null,
+      error: null,
+    };
+  if (parsed.stage === 'port')
+    return {
+      from,
+      verdict: 'ok',
+      detail: 'Порт отвечает. Проверить блокировку ТСПУ и «16–20 КБ» нельзя: неизвестно имя маскировки ноды.',
       stalledAtKb: null,
       error: null,
     };

@@ -128,9 +128,19 @@ export class NodeAnomalyJob {
     let detail: string;
     if (result.probes.length === 0) {
       title = `Резко упал онлайн, проверить не удалось · ${node.name}`;
-      detail = inbound?.sni
+      detail = inbound?.port
         ? `${dropLine} Проверить не удалось: нет ни одного российского сервера парка с рабочим SSH для встречной проверки.`
-        : `${dropLine} Проверить не удалось: не получилось определить имя маскировки (SNI) этой ноды в Remnawave.`;
+        : `${dropLine} Проверить не удалось: в Remnawave не нашёлся порт подключения этой ноды.`;
+    } else if (result.sniUsed === null) {
+      // Имя маскировки неизвестно — проверили только порт. «Недоступен» — честный вывод, «отвечает» — нет
+      // вывода о блокировке (ТСПУ пропускает сам порт и режет уже рукопожатие или объём данных).
+      const fromList = result.probes.map((p) => p.from).join(', ');
+      title = confirmed
+        ? `${BLOCK_VERDICT_LABELS[result.verdict]} · ${node.name}`
+        : `Резко упал онлайн, порт отвечает · ${node.name}`;
+      detail = confirmed
+        ? `${dropLine} С серверов парка (${fromList}) порт ноды не отвечает совсем: сервер выключен, отключён хостером или арендодателем, либо закрыт firewall.`
+        : `${dropLine} С серверов парка (${fromList}) порт ноды отвечает. Проверить блокировку ТСПУ и «16–20 КБ» не удалось: в Remnawave не нашлось имени маскировки этой ноды.`;
     } else {
       const fromList = result.probes.map((p) => p.from).join(', ');
       const perProbe = result.probes.map((p) => `${p.from} — ${p.detail}`).join('; ');

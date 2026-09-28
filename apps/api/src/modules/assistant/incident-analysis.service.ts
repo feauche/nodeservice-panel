@@ -12,6 +12,7 @@ import { problem } from '../../common/filters/problem-details.filter.js';
 import { AuditService } from '../audit/audit.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
 import { KnowledgeService } from '../knowledge/knowledge.service.js';
+import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { playbookForKind, renderPlaybook } from './assistant.playbooks.js';
 import { incidentCase, type ReadDeps, runReadTool, toolsFor } from './assistant.read-tools.js';
 import { ReadDepsService } from './assistant-read-deps.service.js';
@@ -24,6 +25,7 @@ import {
   askSystem,
   chartName,
   dataBlock,
+  nodeNowText,
   parseSubmission,
   pickAutoAnalysis,
   type Submission,
@@ -72,6 +74,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     private readonly audit: AuditService,
     private readonly knowledge: KnowledgeService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
+    private readonly remnawave: RemnawaveService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -225,8 +228,22 @@ export class IncidentAnalysisService implements OnModuleInit {
         );
         metricText = out?.content ?? null;
       }
+      let nowText: string | null = null;
+      if (inc.kind === 'node_blocked') {
+        await step('Смотрю онлайн ноды сейчас');
+        const host = inc.serverId
+          ? ((await deps.servers.list()).find((s) => s.id === inc.serverId)?.host ?? null)
+          : null;
+        nowText = await this.remnawave
+          .status()
+          .then((st) => nodeNowText(inc, st, host))
+          .catch(() => null);
+      }
       const messages: LlmMsg[] = [
-        { role: 'user', content: text(`${dataBlock(incidentCase(inc), metricText)}\n\nСделайте разбор.`) },
+        {
+          role: 'user',
+          content: text(`${dataBlock(incidentCase(inc), metricText, nowText)}\n\nСделайте разбор.`),
+        },
       ];
       let submission: Submission | null = null;
       let reach: IncidentAnalysis['reachability'] = null;

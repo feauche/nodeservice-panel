@@ -325,7 +325,7 @@ describe('HttpRemnawaveClient.findNodeInbound (J10)', () => {
     expect(r).toEqual({ sni: 'cdn.example.net', port: 443 });
   });
 
-  it('нет активного инбаунда Reality (например, только Shadowsocks) — null', async () => {
+  it('нет активного инбаунда Reality (например, только Shadowsocks) — имени маскировки нет, но порт есть (для проверки «порт отвечает»)', async () => {
     vi.stubGlobal(
       'fetch',
       respond({
@@ -355,7 +355,7 @@ describe('HttpRemnawaveClient.findNodeInbound (J10)', () => {
       }),
     );
     const r = await new HttpRemnawaveClient().findNodeInbound('vpn-panel.example.com', 'k', 'n1');
-    expect(r).toBeNull();
+    expect(r).toEqual({ sni: null, port: 8388 });
   });
 
   it('нода не найдена по uuid — null', async () => {

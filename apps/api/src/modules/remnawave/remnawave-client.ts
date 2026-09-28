@@ -178,9 +178,15 @@ export class HttpRemnawaveClient implements RemnawaveClient {
     const realityInbound = inbounds.find((i) => (i as Record<string, unknown>).security === 'reality') as
       | Record<string, unknown>
       | undefined;
-    if (!realityInbound) return null;
-    const sni = realitySni(realityInbound.rawInbound);
-    const port = typeof realityInbound.port === 'number' ? realityInbound.port : num(raw.port) || null;
+    // Нет Reality — имени маскировки нет, но порт любого активного инбаунда всё равно пригодится:
+    // по нему встречная проверка хотя бы скажет, доступна ли нода вообще.
+    const inbound = (realityInbound ??
+      inbounds.find((i) => typeof (i as Record<string, unknown>).port === 'number')) as
+      | Record<string, unknown>
+      | undefined;
+    if (!inbound) return null;
+    const sni = realityInbound ? realitySni(realityInbound.rawInbound) : null;
+    const port = typeof inbound.port === 'number' ? inbound.port : num(raw.port) || null;
     return { sni, port };
   }
 

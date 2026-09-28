@@ -53,6 +53,12 @@ describe('buildBlockCheckCommand', () => {
     expect(cmd).toContain('BEGIN CERTIFICATE');
   });
 
+  it('без имени маскировки — только проверка порта (этап port), без TLS и данных', () => {
+    const cmd = unescapeSh(buildBlockCheckCommand('203.0.113.7', 8443, null));
+    expect(cmd).toContain("sni=''");
+    expect(cmd).toContain('"stage":"port"');
+  });
+
   it('адрес или SNI с символами оболочки — отказ, а не подстановка в команду (защита от инъекции)', () => {
     expect(() => buildBlockCheckCommand('1.2.3.4; rm -rf / #', 443, 'example.com')).toThrow();
     expect(() => buildBlockCheckCommand('1.2.3.4', 443, '$(reboot)')).toThrow();
@@ -85,6 +91,12 @@ describe('parseBlockCheckOutput', () => {
   it('tcp недоступен — unreachable', () => {
     const r = parseBlockCheckOutput('ru-a', '{"stage":"tcp","ok":false,"stalledAtKb":null}');
     expect(r).toMatchObject({ from: 'ru-a', verdict: 'unreachable' });
+  });
+
+  it('порт отвечает, имени маскировки нет — ok, с честной пометкой, что блокировку не проверить', () => {
+    const r = parseBlockCheckOutput('ru-a', '{"stage":"port","ok":true,"stalledAtKb":null}');
+    expect(r).toMatchObject({ from: 'ru-a', verdict: 'ok' });
+    expect(r.detail).toContain('Порт отвечает');
   });
 
   it('tls тихо обрывается — tspu', () => {
