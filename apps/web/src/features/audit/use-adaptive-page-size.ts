@@ -2,7 +2,10 @@ import { AUDIT_PAGE_SIZE_DEFAULT } from '@nodeservice/shared';
 import { type RefObject, useLayoutEffect, useState } from 'react';
 
 export const AUDIT_ROW_HEIGHT = 44;
-const MIN_ROWS = 10;
+/** Ниже этого не сжимаем даже на очень низком окне — но и не задираем искусственно выше того, что
+ * реально помещается: на низких окнах именно требование «показать не меньше N строк» и вызывало
+ * прокрутку страницы (10 строк не помещались, а показать всё равно требовалось). */
+const MIN_ROWS = 5;
 const MAX_ROWS = 100;
 
 /** Ближайший прокручиваемый предок (контент AppShell); null — прокручивается окно. */
@@ -61,10 +64,14 @@ export function useAdaptivePageSize(
     };
     measure();
     window.addEventListener('resize', schedule);
-    // Следим за размером контейнера (сворачивание меню, resize), а не самой таблицы —
-    // её высота меняется при каждом раскрытии строки.
+    // Следим за размером контейнера (сворачивание меню, resize) и за всем блоком страницы целиком —
+    // не только за таблицей. Если то, что стоит НАД таблицей, вырастет (например, панель фильтров
+    // перенесётся на вторую строку при более длинной подписи индикатора Live), сам контейнер прокрутки
+    // не изменится в размере, «верх таблицы» тихо сместится вниз, а число строк останется прежним —
+    // получится лишний скролл страницы. Наблюдение за родителем таблицы ловит и такие случаи тоже.
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : null;
     ro?.observe(scroller ?? document.documentElement);
+    if (el.parentElement) ro?.observe(el.parentElement);
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener('resize', schedule);
