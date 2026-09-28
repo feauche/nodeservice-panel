@@ -90,7 +90,8 @@ export function buildSystem(
     (k) => `${ASSISTANT_PERMISSION_LABELS[k]} — ${permissions[k] ? 'разрешено' : 'запрещено'}`,
   ).join('; ');
   const serverTools = [
-    permissions.reach && 'check_reachability (доступность адреса снаружи с 2–3 независимых серверов парка)',
+    permissions.reach &&
+      'check_reachability (доступность снаружи: сервера NodeService, его входа из профиля — entry, или любого домена/IP — address; с 2–3 независимых серверов парка или с указанного сервера — from, например с выхода до его входа; порт, пинг и DNS)',
     permissions.processes && 'inspect_processes (тяжёлые процессы)',
     permissions.inspect &&
       'inspect_containers (контейнеры, перезапуски, причины остановки), inspect_ports (слушающие порты), inspect_disk (что занимает диск), inspect_kernel (нехватка памяти и ошибки диска в журнале ядра), check_certificate (срок сертификата)',

@@ -11,6 +11,8 @@ export const reachabilityResultSchema = z.object({
       error: z.string().nullable(),
       ports: z.array(z.object({ port: z.number().int(), open: z.boolean(), ms: z.number().nullable() })),
       dns: z.string().nullable(),
+      /** Средний пинг, мс; null — ICMP не ответил (многие хосты его режут) или пинга нет. */
+      ping: z.number().nullable().default(null),
     }),
   ),
   ports: z.array(

@@ -126,6 +126,9 @@ describe('parseReach и summarizeReach', () => {
       { port: 443, open: false, ms: null },
     ]);
     expect(r.dns).toBe('203.0.113.7');
+    expect(r.ping).toBeNull();
+    expect(parseReach('tcp 22 open 5\nping 41.7\n', [22]).ping).toBe(42);
+    expect(parseReach('ping none\n', [22]).ping).toBeNull();
   });
   const probe = (from: string, open: boolean[], dns = '1.2.3.4') => ({
     from,

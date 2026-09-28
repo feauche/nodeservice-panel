@@ -14,6 +14,7 @@ export function sampleReach(
       { port: 443, open: open443, ms: open443 ? 14 : null },
     ],
     dns: '203.0.113.7',
+    ping: null,
   });
   const open443 =
     mode === 'open' ? [true, true, true] : mode === 'partial' ? [true, false, true] : [false, false, false];

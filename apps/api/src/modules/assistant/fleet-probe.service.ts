@@ -66,24 +66,56 @@ export class FleetProbeService {
   }
 
   async reachability(target: Server, all: Server[], portsRaw: unknown): Promise<ReachabilityResult> {
-    const address = `${target.host}`;
-    const ports = normalizePorts(portsRaw, target.port);
-    const key = `${target.id}:${ports.join(',')}`;
+    return this.reachabilityOf(
+      { key: target.id, name: target.name, host: target.host, defaultPort: target.port },
+      pickProbes(target, all),
+      portsRaw,
+    );
+  }
+
+  /**
+   * Любой адрес — домен или IP, не обязательно сервер NodeService (например, вход арендодателя). Проверяющие —
+   * указанные серверы (например, сам выход: «доходит ли выход до входа») или независимые серверы парка.
+   */
+  async reachabilityAddress(
+    target: { name: string; host: string; port: number },
+    all: Server[],
+    portsRaw: unknown,
+    from: Server[] | null,
+  ): Promise<ReachabilityResult> {
+    const probers = from ?? pickProbes({ id: '' }, all);
+    return this.reachabilityOf(
+      {
+        key: `addr:${target.host}:${probers.map((p) => p.id).join(',')}`,
+        name: target.name,
+        host: target.host,
+        defaultPort: target.port,
+      },
+      probers,
+      portsRaw,
+    );
+  }
+
+  private async reachabilityOf(
+    target: { key: string; name: string; host: string; defaultPort: number },
+    chosen: Server[],
+    portsRaw: unknown,
+  ): Promise<ReachabilityResult> {
+    const address = target.host;
+    const ports = normalizePorts(portsRaw, target.defaultPort);
+    const key = `${target.key}:${ports.join(',')}`;
     const hit = this.cache.get(key);
     if (hit && Date.now() - hit.at < CACHE_MS) return hit.result;
 
     const notes: string[] = [NOT_USER_VIEW];
-    if (!isProbeHost(target.host)) {
-      const result: ReachabilityResult = {
+    if (!isProbeHost(target.host))
+      return {
         target: { name: target.name, address },
         probes: [],
         ports: [],
         dns: { answers: [], consistent: true },
-        notes: ['Адрес сервера (IPv6 или нестандартный) для такой проверки не подходит.'],
+        notes: ['Адрес (IPv6 или нестандартный) для такой проверки не подходит.'],
       };
-      return result;
-    }
-    const chosen = pickProbes(target, all);
     if (chosen.length === 0)
       return {
         target: { name: target.name, address },
@@ -92,7 +124,12 @@ export class FleetProbeService {
         dns: { answers: [], consistent: true },
         notes: ['Нет других серверов парка с рабочим SSH: проверить снаружи не с чего.', NOT_USER_VIEW],
       };
-    if (chosen.length < 2) notes.unshift('Независимых проверяющих меньше двух: вывод слабый.');
+    if (chosen.length < 2)
+      notes.unshift(
+        target.key.startsWith('addr:') && chosen.length === 1
+          ? 'Проверяющий один: вывод касается только пути с этого сервера.'
+          : 'Независимых проверяющих меньше двух: вывод слабый.',
+      );
 
     const command = buildReachCommand(target.host, ports);
     const probes: ReachProbe[] = await Promise.all(
@@ -114,6 +151,7 @@ export class FleetProbeService {
             error: 'Не удалось подключиться к проверяющему серверу.',
             ports: [],
             dns: null,
+            ping: null,
           };
         }
       }),

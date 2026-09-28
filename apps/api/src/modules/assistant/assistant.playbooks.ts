@@ -56,7 +56,7 @@ export const PLAYBOOKS: Playbook[] = [
     kinds: ['ssh_down', 'agent_offline'],
     steps: [
       'get_incident и get_server_detail: что именно молчит, SSH или только агент, когда это началось.',
-      'check_reachability для порта SSH этого сервера.',
+      'check_reachability для порта SSH этого сервера. Если у сервера в профиле указан вход («Откуда приходит трафик»), проверьте и его: check_reachability с entry: true — снаружи и с from, равным самому выходу (доходит ли выход до входа).',
       'get_billing с этим сервером: не просрочена ли оплата у хостера или арендодателя (в разборе просроченная оплата уже есть в данных дела).',
     ],
     reading: [

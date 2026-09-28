@@ -885,3 +885,42 @@ describe('get_billing', () => {
     expect(json().items[0].due).toBe('просрочено на 1 день');
   });
 });
+
+describe('check_reachability: вход и любой адрес', () => {
+  it('entry: true берёт вход из профиля, from — стучаться с самого выхода; address — любой домен', async () => {
+    const seen: unknown[] = [];
+    const exit = server({
+      profile: {
+        ...server({}).profile,
+        roles: ['exit'],
+        upstream: { kind: 'rent', serverId: null, address: 'amwey.guardora.pro:1819', owner: 'guardora' },
+      },
+    });
+    const d = deps({
+      servers: { list: async () => [exit, server({ id: ID_B, name: 'de-2', host: '10.0.0.2' })] },
+      probe: {
+        reachability: async () => ({}),
+        reachabilityAddress: async (t: unknown, _all: unknown, ports: unknown, from: unknown) => {
+          seen.push(t, ports, from);
+          return {
+            target: { name: 'x', address: 'x' },
+            probes: [],
+            ports: [],
+            dns: { answers: [], consistent: true },
+            notes: [],
+          };
+        },
+        processes: async () => ({ cpu: [], mem: [], load: null, empty: true }),
+      },
+    });
+    await call('check_reachability', { serverId: 'de-1', entry: true, from: 'de-1' }, d);
+    expect(seen[0]).toMatchObject({ host: 'amwey.guardora.pro', port: 1819 });
+    expect((seen[2] as Array<{ name: string }>)[0]?.name).toBe('de-1');
+    seen.length = 0;
+    await call('check_reachability', { address: 'https://example.com:8443/path' }, d);
+    expect(seen[0]).toMatchObject({ host: 'example.com', port: 8443 });
+    expect(seen[2]).toBeNull();
+    const noEntry = await call('check_reachability', { serverId: 'de-2', entry: true }, d);
+    expect(noEntry.out.content).toContain('не указано, откуда приходит трафик');
+  });
+});

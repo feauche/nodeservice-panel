@@ -20,6 +20,7 @@ import {
   SERVER_UPSTREAM_LABELS,
   type Server,
   type ServerCheckKey,
+  splitUpstreamAddress,
   VM_METRIC_NAMES,
 } from '@nodeservice/shared';
 
@@ -96,14 +97,25 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
   {
     name: 'check_reachability',
     description:
-      'Проверка доступности адреса сервера снаружи: с 2–3 независимых серверов парка (разные хостеры и подсети) по SSH проверяется TCP-порт и то, во что резолвится имя. Только чтение. Возвращает по каждому порту вывод (открыт со всех / закрыт со всех / частично), ответы DNS и ограничения проверки. ports — до трёх портов (по умолчанию порт SSH сервера); порт ноды панель не знает, уточните у администратора или проверьте 443. serverId — id или имя.',
+      'Проверка доступности снаружи: с серверов парка по SSH стучимся в TCP-порт (сколько мс до ответа), смотрим, во что резолвится имя, и пингуем (многие хосты режут пинг — «нет пинга» ещё не «недоступен», решает порт). Только чтение. Цель — одно из трёх: serverId — сервер NodeService (по умолчанию его порт SSH); entry: true вместе с serverId — вход этого сервера-выхода из профиля («Откуда приходит трафик»: домен арендодателя с портом или свой мост) — добавлять вход в NodeService не нужно; address — любой домен или IPv4, можно с портом через двоеточие (например, вход арендодателя, сайт, сервер вне парка). from — id или имя сервера парка, с которого стучаться (например, сам выход, чтобы узнать, доходит ли выход до своего входа); без from — с 2–3 независимых серверов парка. ports — до трёх портов. Возвращает по каждому порту: открыт со всех / закрыт со всех / частично, пинг и DNS.',
     input_schema: {
       type: 'object',
       properties: {
-        serverId: { type: 'string', description: 'id или имя проверяемого сервера' },
+        serverId: { type: 'string', description: 'id или имя проверяемого сервера NodeService' },
+        entry: {
+          type: 'boolean',
+          description: 'true — проверить вход сервера-выхода из его профиля, а не сам сервер',
+        },
+        address: {
+          type: 'string',
+          description: 'любой домен или IPv4, можно с портом: entry.example.com:1819',
+        },
+        from: {
+          type: 'string',
+          description: 'id или имя сервера парка, с которого проверять (необязательно)',
+        },
         ports: { type: 'array', items: { type: 'number' }, description: 'до трёх TCP-портов' },
       },
-      required: ['serverId'],
     },
   },
   {
@@ -209,6 +221,7 @@ export interface ReadDeps {
   probe: Pick<
     FleetProbeService,
     | 'reachability'
+    | 'reachabilityAddress'
     | 'processes'
     | 'nodeLogs'
     | 'containers'
@@ -735,12 +748,56 @@ export async function runReadTool(
 
   if (name === 'check_reachability') {
     const servers = await deps.servers.list();
-    const s = findServer(servers, String(arg.serverId ?? ''));
-    if (!s) return notFound(servers);
-    const result = await deps.probe.reachability(s, servers, arg.ports);
+    let from: Server[] | null = null;
+    if (typeof arg.from === 'string' && arg.from.trim()) {
+      const f = findServer(servers, arg.from);
+      if (!f) return notFound(servers);
+      from = [f];
+    }
+    const ports = arg.ports;
+    // Произвольный адрес или вход сервера-выхода: цель не обязана быть сервером NodeService.
+    let target: { name: string; host: string; port: number } | null = null;
+    const cite: ToolOutcome['citations'] = [];
+    if (typeof arg.address === 'string' && arg.address.trim()) {
+      const raw = arg.address
+        .trim()
+        .replace(/^[a-z]+:\/\//i, '')
+        .replace(/\/.*$/, '');
+      const { host, port } = splitUpstreamAddress(raw);
+      target = { name: host, host, port };
+    } else {
+      const s = findServer(servers, String(arg.serverId ?? ''));
+      if (!s) return notFound(servers);
+      cite.push({ type: 'server', id: s.id, label: s.name });
+      if (arg.entry === true) {
+        const up = s.profile.upstream;
+        if (!up)
+          return none(
+            `У «${s.name}» в профиле не указано, откуда приходит трафик. Попросите администратора заполнить «Профиль» → «Откуда приходит трафик» или назовите адрес входа — проверю его через address.`,
+          );
+        if (up.kind === 'rent') {
+          const { host, port } = splitUpstreamAddress(up.address ?? '');
+          target = { name: `Вход «${s.name}»: ${up.address}`, host, port };
+        } else {
+          const bridge = servers.find((x) => x.id === up.serverId);
+          if (!bridge) return none(`Мост, указанный как вход «${s.name}», удалён из NodeService.`);
+          target = { name: `Мост «${bridge.name}» — вход «${s.name}»`, host: bridge.host, port: bridge.port };
+          cite.push({ type: 'server', id: bridge.id, label: bridge.name });
+        }
+      } else if (!from) {
+        const result = await deps.probe.reachability(s, servers, ports);
+        return {
+          content: JSON.stringify(result),
+          citations: cite,
+          proposals: [],
+          reachability: result.probes.length > 0 ? [result] : [],
+        };
+      } else target = { name: s.name, host: s.host, port: s.port };
+    }
+    const result = await deps.probe.reachabilityAddress(target, servers, ports, from);
     return {
       content: JSON.stringify(result),
-      citations: [{ type: 'server', id: s.id, label: s.name }],
+      citations: cite,
       proposals: [],
       reachability: result.probes.length > 0 ? [result] : [],
     };

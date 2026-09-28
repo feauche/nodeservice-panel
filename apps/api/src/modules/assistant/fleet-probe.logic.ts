@@ -74,6 +74,8 @@ export function buildReachCommand(host: string, ports: number[]): string {
       '  if timeout 4 bash -c "exec 3<>/dev/tcp/$h/$p" 2>/dev/null; then e=$(date +%s%N); echo "tcp $p open $(( (e-s)/1000000 ))"; else echo "tcp $p closed"; fi',
       'done',
       'getent hosts $h | { read -r a _; echo "dns $a"; }',
+      // Пинг — дополнительно к порту: многие хосты ICMP режут, поэтому «нет пинга» ещё не «недоступен».
+      'if command -v ping >/dev/null 2>&1; then r=$(ping -c 2 -W 2 $h 2>/dev/null | tail -1 | cut -d/ -f5); echo "ping ${r:-none}"; fi',
     ].join('\n'),
   );
 }
@@ -89,20 +91,27 @@ export interface ReachProbe {
   error: string | null;
   ports: ReachPort[];
   dns: string | null;
+  /** Средний пинг, мс; null — не ответил на пинг или пинга на проверяющем нет. */
+  ping: number | null;
 }
 
 /** Разбор вывода скрипта проверки; нераспознанные строки игнорируются. */
-export function parseReach(stdout: string, ports: number[]): { ports: ReachPort[]; dns: string | null } {
+export function parseReach(
+  stdout: string,
+  ports: number[],
+): { ports: ReachPort[]; dns: string | null; ping: number | null } {
   const seen = new Map<number, ReachPort>();
   let dns: string | null = null;
+  let ping: number | null = null;
   for (const line of stdout.split('\n')) {
     const t = line.trim().split(/\s+/);
     if (t[0] === 'tcp' && t[1] && (t[2] === 'open' || t[2] === 'closed')) {
       const port = Number(t[1]);
       seen.set(port, { port, open: t[2] === 'open', ms: t[2] === 'open' && t[3] ? Number(t[3]) : null });
     } else if (t[0] === 'dns' && t[1] && /^[0-9a-fA-F:.]+$/.test(t[1])) dns = t[1];
+    else if (t[0] === 'ping' && t[1] && /^\d+(\.\d+)?$/.test(t[1])) ping = Math.round(Number(t[1]));
   }
-  return { ports: ports.flatMap((p) => (seen.has(p) ? [seen.get(p) as ReachPort] : [])), dns };
+  return { ports: ports.flatMap((p) => (seen.has(p) ? [seen.get(p) as ReachPort] : [])), dns, ping };
 }
 
 export type PortVerdict = 'reachable' | 'closed_everywhere' | 'partial' | 'unknown';

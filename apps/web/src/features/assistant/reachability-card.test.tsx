@@ -32,6 +32,7 @@ describe('ReachabilityCard (B1)', () => {
       error: 'Не удалось подключиться к проверяющему серверу.',
       ports: [],
       dns: null,
+      ping: null,
     };
     render(<ReachabilityCard result={r} />);
     expect(
@@ -43,7 +44,7 @@ describe('ReachabilityCard (B1)', () => {
   it('расхождение DNS подсвечивается', () => {
     const r = sampleReach('de-1', 'open');
     r.dns = { answers: ['1.1.1.1', '2.2.2.2'], consistent: false };
-    r.probes[0] = { ...(r.probes[0] as (typeof r.probes)[number]), dns: '2.2.2.2' };
+    r.probes[0] = { ...(r.probes[0] as (typeof r.probes)[number]), dns: '2.2.2.2', ping: null };
     render(<ReachabilityCard result={r} />);
     expect(within(screen.getByRole('table')).getByText('2.2.2.2')).toHaveClass('text-warn');
   });
