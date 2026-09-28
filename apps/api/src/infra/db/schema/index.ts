@@ -5,6 +5,7 @@
  *  - этап 4: servers, enrollment_tokens …
  */
 export * from './auth.js';
+export * from './billing.js';
 export * from './incidents.js';
 export * from './knowledge.js';
 export * from './meta.js';

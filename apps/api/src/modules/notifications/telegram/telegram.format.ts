@@ -16,6 +16,8 @@ const ICON: Record<TelegramEvent, string> = {
   check_failed: '🧪',
   jarvis_card: '🧠',
   login: '🔐',
+  billing_soon: '💳',
+  billing_overdue: '🔴',
 };
 
 export interface TelegramMessageInput {

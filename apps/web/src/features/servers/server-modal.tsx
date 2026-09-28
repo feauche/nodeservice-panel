@@ -28,6 +28,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Field } from '@/features/auth/components/field';
 import { PasswordField } from '@/features/auth/components/password-field';
+import { ServerBillingFact, useServerBilling } from '@/features/billing/billing-pill';
 import { useOverviewMetrics } from '@/features/overview/overview-api';
 import { ProviderIcon } from '@/features/providers/provider-icon';
 import { ProviderSelect } from '@/features/providers/provider-select';
@@ -172,6 +173,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
     }
   };
 
+  const billing = useServerBilling(s.id);
   const provider = s.providerId ? (providers.data?.items.find((p) => p.id === s.providerId) ?? null) : null;
   const facts: Array<[string, ReactNode]> = [
     [
@@ -192,6 +194,9 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
             </span>,
           ],
         ] as Array<[string, ReactNode]>)
+      : []),
+    ...(billing
+      ? ([['Оплата', <ServerBillingFact key="b" serverId={s.id} />]] as Array<[string, ReactNode]>)
       : []),
     ['Ресурсы', resources || '—'],
     ['Аптайм', formatUptime(metrics?.uptimeSec)],

@@ -441,7 +441,7 @@ export function Segmented<K extends string>({
           tabIndex={it.key === value ? 0 : -1}
           onClick={() => onChange(it.key)}
           className={cn(
-            'flex-1 cursor-pointer rounded-[8px] px-2.5 py-1.5 text-center text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-brand',
+            'flex-1 cursor-pointer rounded-[8px] px-2.5 py-1.5 text-center text-[13px] whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-brand',
             it.key === value
               ? 'bg-surface font-semibold text-foreground shadow-[0_0_0_1px_var(--ns-border-2)]'
               : 'text-text-3 hover:text-foreground',

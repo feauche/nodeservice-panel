@@ -23,6 +23,7 @@ import { Route as IncidentsIdRouteImport } from './routes/incidents_.$id';
 import { Route as IncidentsAutofixRouteImport } from './routes/incidents_.autofix';
 import { Route as Login2faRouteImport } from './routes/login_.2fa';
 import { Route as LoginRecoveryRouteImport } from './routes/login_.recovery';
+import { Route as ServersBillingRouteImport } from './routes/servers_.billing';
 import { Route as ServersProvidersRouteImport } from './routes/servers_.providers';
 import { Route as ServersRemnawaveRouteImport } from './routes/servers_.remnawave';
 import { Route as SettingsIndexRouteImport } from './routes/settings.index';
@@ -103,6 +104,11 @@ const LoginRecoveryRoute = LoginRecoveryRouteImport.update({
   path: '/login/recovery',
   getParentRoute: () => rootRouteImport,
 } as any);
+const ServersBillingRoute = ServersBillingRouteImport.update({
+  id: '/servers_/billing',
+  path: '/servers/billing',
+  getParentRoute: () => rootRouteImport,
+} as any);
 const ServersProvidersRoute = ServersProvidersRouteImport.update({
   id: '/servers_/providers',
   path: '/servers/providers',
@@ -164,6 +170,7 @@ export interface FileRoutesByFullPath {
   '/incidents/autofix': typeof IncidentsAutofixRoute;
   '/login/2fa': typeof Login2faRoute;
   '/login/recovery': typeof LoginRecoveryRoute;
+  '/servers/billing': typeof ServersBillingRoute;
   '/servers/providers': typeof ServersProvidersRoute;
   '/servers/remnawave': typeof ServersRemnawaveRoute;
   '/settings/appearance': typeof SettingsAppearanceRoute;
@@ -188,6 +195,7 @@ export interface FileRoutesByTo {
   '/incidents/autofix': typeof IncidentsAutofixRoute;
   '/login/2fa': typeof Login2faRoute;
   '/login/recovery': typeof LoginRecoveryRoute;
+  '/servers/billing': typeof ServersBillingRoute;
   '/servers/providers': typeof ServersProvidersRoute;
   '/servers/remnawave': typeof ServersRemnawaveRoute;
   '/settings/appearance': typeof SettingsAppearanceRoute;
@@ -214,6 +222,7 @@ export interface FileRoutesById {
   '/incidents_/autofix': typeof IncidentsAutofixRoute;
   '/login_/2fa': typeof Login2faRoute;
   '/login_/recovery': typeof LoginRecoveryRoute;
+  '/servers_/billing': typeof ServersBillingRoute;
   '/servers_/providers': typeof ServersProvidersRoute;
   '/servers_/remnawave': typeof ServersRemnawaveRoute;
   '/settings/appearance': typeof SettingsAppearanceRoute;
@@ -241,6 +250,7 @@ export interface FileRouteTypes {
     | '/incidents/autofix'
     | '/login/2fa'
     | '/login/recovery'
+    | '/servers/billing'
     | '/servers/providers'
     | '/servers/remnawave'
     | '/settings/appearance'
@@ -265,6 +275,7 @@ export interface FileRouteTypes {
     | '/incidents/autofix'
     | '/login/2fa'
     | '/login/recovery'
+    | '/servers/billing'
     | '/servers/providers'
     | '/servers/remnawave'
     | '/settings/appearance'
@@ -290,6 +301,7 @@ export interface FileRouteTypes {
     | '/incidents_/autofix'
     | '/login_/2fa'
     | '/login_/recovery'
+    | '/servers_/billing'
     | '/servers_/providers'
     | '/servers_/remnawave'
     | '/settings/appearance'
@@ -316,6 +328,7 @@ export interface RootRouteChildren {
   IncidentsAutofixRoute: typeof IncidentsAutofixRoute;
   Login2faRoute: typeof Login2faRoute;
   LoginRecoveryRoute: typeof LoginRecoveryRoute;
+  ServersBillingRoute: typeof ServersBillingRoute;
   ServersProvidersRoute: typeof ServersProvidersRoute;
   ServersRemnawaveRoute: typeof ServersRemnawaveRoute;
 }
@@ -418,6 +431,13 @@ declare module '@tanstack/react-router' {
       path: '/login/recovery';
       fullPath: '/login/recovery';
       preLoaderRoute: typeof LoginRecoveryRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    '/servers_/billing': {
+      id: '/servers_/billing';
+      path: '/servers/billing';
+      fullPath: '/servers/billing';
+      preLoaderRoute: typeof ServersBillingRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     '/servers_/providers': {
@@ -525,6 +545,7 @@ const rootRouteChildren: RootRouteChildren = {
   IncidentsAutofixRoute: IncidentsAutofixRoute,
   Login2faRoute: Login2faRoute,
   LoginRecoveryRoute: LoginRecoveryRoute,
+  ServersBillingRoute: ServersBillingRoute,
   ServersProvidersRoute: ServersProvidersRoute,
   ServersRemnawaveRoute: ServersRemnawaveRoute,
 };

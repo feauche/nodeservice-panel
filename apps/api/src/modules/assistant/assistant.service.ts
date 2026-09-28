@@ -1,5 +1,6 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import {
+  type AssistantActivity,
   type AssistantChatResponse,
   type AssistantCitation,
   type AssistantMessage,
@@ -12,6 +13,8 @@ import { problem } from '../../common/filters/problem-details.filter.js';
 import type { AssistantMessageRow } from '../../infra/db/schema/index.js';
 import { AuditRepository } from '../audit/audit.repository.js';
 import { AuditService } from '../audit/audit.service.js';
+import { BillingService } from '../billing/billing.service.js';
+import { EventsService } from '../events/events.service.js';
 import { IncidentMetricsService } from '../incidents/incident-metrics.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
 import { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
@@ -78,6 +81,7 @@ export class AssistantService {
     private readonly providers: ProvidersService,
     private readonly maintenance: MaintenanceService,
     private readonly checks: ServerChecksService,
+    private readonly billing: BillingService,
     private readonly probe: FleetProbeService,
     private readonly kb: KnowledgeRepository,
     private readonly knowledge: KnowledgeService,
@@ -88,6 +92,7 @@ export class AssistantService {
     private readonly analysis: IncidentAnalysisService,
     private readonly changes: ChangesService,
     private readonly remnawave: RemnawaveService,
+    private readonly events: EventsService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
   ) {}
 
@@ -103,6 +108,7 @@ export class AssistantService {
       citations: (row.citations as AssistantCitation[]) ?? [],
       proposals: (row.proposals as AssistantProposal[]) ?? [],
       reachability: (row.reachability as ReachabilityResult[]) ?? [],
+      activity: (row.activity as AssistantActivity[]) ?? [],
       createdAt: row.createdAt.toISOString(),
     };
   }
@@ -218,6 +224,7 @@ export class AssistantService {
       maintenance: this.maintenance,
       checks: this.checks,
       probe: this.probe,
+      billing: this.billing,
       kb: this.kb,
       audit: this.auditRepo,
       conversations: this.repo,
@@ -227,6 +234,8 @@ export class AssistantService {
       assistant: { level },
       autoAnalysis: () => this.analysis.autoStatus(),
       permissions,
+      progress: (a) =>
+        this.events.emit({ type: 'assistant', data: { conversationId: conv.id, activity: a } }),
       remnawave: this.remnawave,
       changes: {
         propose: async (operation, args, reason) => {
@@ -250,6 +259,7 @@ export class AssistantService {
     const citations: AssistantCitation[] = [];
     const proposals: AssistantProposal[] = [];
     const reachability: ReachabilityResult[] = [];
+    const activity: AssistantActivity[] = [];
     /** Реплики по ходу работы («Смотрю данные…»): каждая идёт отдельным сообщением. */
     const interim: string[] = [];
     let answer = '';
@@ -290,6 +300,7 @@ export class AssistantService {
         try {
           const outcome = await runTool(use.name, use.input, deps);
           citations.push(...outcome.citations);
+          activity.push(...(outcome.activity ?? []));
           for (const r of outcome.reachability ?? []) {
             const at = reachability.findIndex((x) => x.target.name === r.target.name);
             if (at >= 0) reachability.splice(at, 1);
@@ -344,6 +355,7 @@ export class AssistantService {
           citations: last ? dedupe(citations) : [],
           proposals: last ? proposals : [],
           reachability: last ? reachability : [],
+          activity: last ? activity : [],
         }),
       );
     }

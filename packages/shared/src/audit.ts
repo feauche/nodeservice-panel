@@ -33,6 +33,7 @@ export const AUDIT_PREFIX_CATEGORY: Readonly<Record<string, AuditCategory>> = {
   incident: 'server',
   provider: 'server',
   remnawave: 'settings',
+  billing: 'server',
 };
 
 export function auditCategoryOfPrefix(action: string): AuditCategory | undefined {
@@ -154,6 +155,14 @@ export const AUDIT_ACTIONS = {
   'server.check.explain': { category: 'server', label: 'Джарвис объяснил проверку сервера' },
   'settings.telegram.updated': { category: 'settings', label: 'Уведомления в Telegram изменены' },
   'settings.telegram.test': { category: 'settings', label: 'Тестовое сообщение в Telegram' },
+  'billing.item.created': { category: 'server', label: 'Биллинг: оплата добавлена' },
+  'billing.item.updated': { category: 'server', label: 'Биллинг: оплата изменена' },
+  'billing.item.deleted': { category: 'server', label: 'Биллинг: оплата удалена' },
+  'billing.item.archived': { category: 'server', label: 'Биллинг: оплата в архиве' },
+  'billing.extended': { category: 'server', label: 'Биллинг: продлено' },
+  'billing.payment.updated': { category: 'server', label: 'Биллинг: запись оплаты изменена' },
+  'billing.payment.undone': { category: 'server', label: 'Биллинг: продление отменено' },
+  'billing.autocharge': { category: 'server', label: 'Биллинг: списано автоматически' },
   'settings.autochecks.updated': { category: 'settings', label: 'Автопроверки изменены' },
   'settings.incidents.updated': { category: 'settings', label: 'Настройки инцидентов изменены' },
   'settings.assistant.updated': { category: 'settings', label: 'Настройки Джарвиса изменены' },

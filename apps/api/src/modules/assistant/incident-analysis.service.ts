@@ -10,6 +10,7 @@ import {
 
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { AuditService } from '../audit/audit.service.js';
+import { BillingService } from '../billing/billing.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
 import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
@@ -32,6 +33,9 @@ import {
   stepLabel,
 } from './incident-analysis.logic.js';
 import { LLM_PROVIDER, type LlmBlock, type LlmMsg, type LlmProvider } from './llm.provider.js';
+
+/** Сбои «сервер недоступен»: к делу добавляем просроченную оплату — частая причина. */
+const BILLING_DOWN_KINDS = new Set(['agent_offline', 'ssh_down', 'node_down', 'node_blocked']);
 
 const MAX_ROUNDS = 6;
 const ASK_ROUNDS = 4;
@@ -76,6 +80,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     private readonly knowledge: KnowledgeService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
     private readonly remnawave: RemnawaveService,
+    private readonly billing: BillingService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -240,10 +245,17 @@ export class IncidentAnalysisService implements OnModuleInit {
           .then((st) => nodeNowText(inc, st, host))
           .catch(() => null);
       }
+      let billingLines: string[] = [];
+      if (inc.serverId && BILLING_DOWN_KINDS.has(inc.kind)) {
+        await step('Сверяюсь с биллингом');
+        billingLines = await this.billing.paymentRiskForServer(inc.serverId).catch(() => []);
+      }
       const messages: LlmMsg[] = [
         {
           role: 'user',
-          content: text(`${dataBlock(incidentCase(inc), metricText, nowText)}\n\nСделайте разбор.`),
+          content: text(
+            `${dataBlock(incidentCase(inc), metricText, nowText, billingLines)}\n\nСделайте разбор.`,
+          ),
         },
       ];
       let submission: Submission | null = null;

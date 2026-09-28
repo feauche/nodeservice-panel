@@ -55,6 +55,7 @@ export class TelegramController {
           .map(([k]) => k)
           .join(', '),
         quiet: settings.quiet.enabled ? `${settings.quiet.from}–${settings.quiet.to}` : 'выкл',
+        proxy: settings.proxy ?? 'напрямую',
       },
     });
     return settings;

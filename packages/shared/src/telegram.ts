@@ -21,6 +21,8 @@ export const TELEGRAM_EVENTS = [
   'check_failed',
   'jarvis_card',
   'login',
+  'billing_soon',
+  'billing_overdue',
 ] as const;
 export const telegramEventSchema = z.enum(TELEGRAM_EVENTS);
 export type TelegramEvent = z.infer<typeof telegramEventSchema>;
@@ -37,6 +39,8 @@ export const TELEGRAM_EVENT_LABELS: Record<TelegramEvent, string> = {
   check_failed: 'Проверка сервера нашла ошибку',
   jarvis_card: 'Карточка Джарвиса ждёт решения',
   login: 'Вход в панель с нового устройства',
+  billing_soon: 'Скоро оплата',
+  billing_overdue: 'Оплата просрочена',
 };
 export const TELEGRAM_EVENT_HINTS: Record<TelegramEvent, string> = {
   incident_crit: 'Сервер или агент недоступен, нода упала, похоже на блокировку.',
@@ -50,6 +54,10 @@ export const TELEGRAM_EVENT_HINTS: Record<TelegramEvent, string> = {
   jarvis_card: 'Джарвис предложил изменение или тяжёлую проверку.',
   check_failed: 'Лёгкая проверка (геоблок, DPI и другие) упала или не уложилась во время.',
   login: 'И серия неудачных попыток входа.',
+  billing_soon:
+    'Без звука, за столько дней до срока, сколько указано в карточке (по умолчанию за 3 дня). Один раз на срок.',
+  billing_overdue:
+    'Со звуком, в день срока и раз в сутки, пока не продлите. Если сервер из этой оплаты недоступен — скажем об этом.',
 };
 /** Метка важности рядом с названием (как в витрине K1); null — без метки. */
 export const TELEGRAM_EVENT_TONE: Record<TelegramEvent, 'crit' | 'warn' | 'ok' | null> = {
@@ -64,6 +72,8 @@ export const TELEGRAM_EVENT_TONE: Record<TelegramEvent, 'crit' | 'warn' | 'ok' |
   check_failed: null,
   jarvis_card: null,
   login: null,
+  billing_soon: 'warn',
+  billing_overdue: 'crit',
 };
 export const TELEGRAM_EVENT_GROUPS: ReadonlyArray<{ title: string; keys: readonly TelegramEvent[] }> = [
   {
@@ -71,6 +81,7 @@ export const TELEGRAM_EVENT_GROUPS: ReadonlyArray<{ title: string; keys: readonl
     keys: ['incident_crit', 'incident_warn', 'needs_confirm', 'resolved', 'autofix_started', 'fix_failed'],
   },
   { title: 'Серверы и Джарвис', keys: ['maintenance', 'check_failed', 'jarvis_card'] },
+  { title: 'Биллинг', keys: ['billing_soon', 'billing_overdue'] },
   { title: 'Безопасность', keys: ['login'] },
 ];
 
@@ -87,6 +98,8 @@ export const TELEGRAM_EVENTS_DEFAULT: TelegramEvents = {
   check_failed: false,
   jarvis_card: false,
   login: true,
+  billing_soon: true,
+  billing_overdue: true,
 };
 
 /** Виды инцидентов по группам для тумблеров «Какие инциденты» (витрина `telegram-messages-variants.html`, 2A). */
@@ -140,6 +153,20 @@ export const TELEGRAM_DELIVERY_DEFAULT: TelegramDelivery = {
   silentWarnings: true,
   remindHours: 2,
 };
+
+/**
+ * Прокси для Telegram (необязательно): `socks5://логин:пароль@1.2.3.4:1080` или `http://1.2.3.4:3128`.
+ * Нужен, если сервер панели в России и Telegram с него недоступен.
+ */
+export const TELEGRAM_PROXY_RE =
+  /^(socks5h?|http|https):\/\/(?:[^\s:@/]+(?::[^\s@/]*)?@)?[A-Za-z0-9.-]+:\d{1,5}\/?$/;
+/** Верный прокси — и не маска `***` (пароль из маски отправить нельзя: его нужно ввести заново). */
+export function isValidTelegramProxy(v: string): boolean {
+  return TELEGRAM_PROXY_RE.test(v) && !v.includes('***');
+}
+export function maskTelegramProxy(url: string): string {
+  return url.replace(/\/\/([^:@/]+):[^@/]*@/, '//$1:***@');
+}
 
 /** Сколько назначений можно завести — чтобы случайная вставка не превратилась в рассылку. */
 export const TELEGRAM_DESTINATIONS_MAX = 10;
@@ -213,6 +240,8 @@ export const telegramSettingsSchema = z.object({
     Object.fromEntries(INCIDENT_KINDS.map((k) => [k, z.boolean()])) as Record<IncidentKind, z.ZodBoolean>,
   ),
   delivery: telegramDeliverySchema,
+  /** Прокси маской (пароль скрыт); null — отправка напрямую. */
+  proxy: z.string().nullable(),
 });
 export type TelegramSettings = z.infer<typeof telegramSettingsSchema>;
 
@@ -255,6 +284,16 @@ export const telegramSettingsUpdateSchema = z.object({
     )
     .optional(),
   delivery: telegramDeliverySchema.optional(),
+  /** Не передан — оставить как есть; null или пусто — убрать; строка — новый прокси. */
+  proxy: z
+    .string()
+    .trim()
+
+    .refine((v) => v === '' || isValidTelegramProxy(v), {
+      message: 'Формат: socks5://логин:пароль@адрес:порт или http://адрес:порт',
+    })
+    .nullable()
+    .optional(),
 });
 export type TelegramSettingsUpdate = z.infer<typeof telegramSettingsUpdateSchema>;
 
@@ -266,6 +305,15 @@ export const telegramTestRequestSchema = z
       .string()
       .trim()
       .refine((v) => parseTelegramUrl(v) !== null, { message: 'Формат: tgram://токен_бота/id_чата:тема' })
+      .optional(),
+  })
+  .extend({
+    /** Проверить с ещё не сохранённым прокси (как в поле сейчас); пусто — без прокси. */
+    proxy: z
+      .string()
+      .trim()
+
+      .refine((v) => v === '' || isValidTelegramProxy(v), { message: 'Неверный формат прокси' })
       .optional(),
   })
   .refine((v) => Boolean(v.id) !== Boolean(v.url), { message: 'Укажите либо сохранённый чат, либо ссылку.' });

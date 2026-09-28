@@ -1,3 +1,5 @@
+import { type Dispatcher, ProxyAgent, Socks5ProxyAgent, fetch as undiciFetch } from 'undici';
+
 /**
  * Тонкий клиент Bot API: один вызов метода, ответ в понятной форме. В тестах подменяется
  * (TELEGRAM_CLIENT), поэтому наружу ходит только настоящий.
@@ -5,25 +7,55 @@
 export type TelegramCall<T> = { ok: true; result: T } | { ok: false; status: number; description: string };
 
 export interface TelegramClient {
-  call<T>(token: string, method: string, body: Record<string, unknown>): Promise<TelegramCall<T>>;
+  /** `proxy` — `socks5://…` или `http://…`; null — напрямую. */
+  call<T>(
+    token: string,
+    method: string,
+    body: Record<string, unknown>,
+    proxy?: string | null,
+  ): Promise<TelegramCall<T>>;
 }
 export const TELEGRAM_CLIENT = Symbol('TELEGRAM_CLIENT');
 
 const TIMEOUT_MS = 15_000;
 
 export class HttpTelegramClient implements TelegramClient {
-  async call<T>(token: string, method: string, body: Record<string, unknown>): Promise<TelegramCall<T>> {
-    let res: Response;
+  /** Агент на каждый прокси — переиспользуем соединения, а не открываем новое на каждое сообщение. */
+  private readonly agents = new Map<string, Dispatcher>();
+
+  private agent(proxy: string): Dispatcher {
+    let a = this.agents.get(proxy);
+    if (!a) {
+      a = proxy.startsWith('socks')
+        ? new Socks5ProxyAgent(proxy.replace(/^socks5h:/, 'socks5:'))
+        : new ProxyAgent(proxy);
+      this.agents.set(proxy, a);
+    }
+    return a;
+  }
+
+  async call<T>(
+    token: string,
+    method: string,
+    body: Record<string, unknown>,
+    proxy?: string | null,
+  ): Promise<TelegramCall<T>> {
+    let res: Awaited<ReturnType<typeof undiciFetch>>;
     try {
-      res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      res = await undiciFetch(`https://api.telegram.org/bot${token}/${method}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(TIMEOUT_MS),
+        ...(proxy ? { dispatcher: this.agent(proxy) } : {}),
       });
     } catch (err) {
       // Токен в тексте ошибки fetch не бывает, но на всякий случай его не пересказываем.
-      const m = err instanceof Error ? `${err.name} ${err.message}` : String(err);
+      const m =
+        err instanceof Error
+          ? `${err.name} ${err.message} ${(err as { cause?: Error }).cause?.message ?? ''}`
+          : String(err);
+      if (proxy && !/Timeout|Abort/i.test(m)) return { ok: false, status: 0, description: 'proxy' };
       return { ok: false, status: 0, description: /Timeout|Abort/i.test(m) ? 'timeout' : 'network' };
     }
     const json = (await res.json().catch(() => null)) as {
@@ -44,8 +76,10 @@ export class HttpTelegramClient implements TelegramClient {
 /** Отказ Telegram — человеческой фразой, с тем, что сделать. */
 export function describeTelegramError(status: number, description: string): string {
   const d = description.toLowerCase();
+  if (status === 0 && d === 'proxy')
+    return 'Не удалось подключиться через прокси: проверьте адрес, порт, логин и пароль прокси.';
   if (status === 0 && d === 'timeout')
-    return 'Telegram не ответил за 15 секунд. Если сервер панели в России, Telegram может быть с него недоступен.';
+    return 'Telegram не ответил за 15 секунд. Если сервер панели в России, Telegram может быть с него недоступен — укажите прокси ниже.';
   if (status === 0) return 'Не удалось связаться с Telegram: нет сети до api.telegram.org с сервера панели.';
   if (status === 401 || d.includes('unauthorized'))
     return 'Токен бота неверный или отозван — возьмите новый у @BotFather.';

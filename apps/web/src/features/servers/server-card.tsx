@@ -28,6 +28,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { ServerBillingPill } from '@/features/billing/billing-pill';
 import { formatMbps, formatPct } from '@/features/overview/overview-format';
 import { Sparkline } from '@/features/overview/primitives';
 import { ProviderIcon } from '@/features/providers/provider-icon';
@@ -166,6 +167,7 @@ function StatusPills({ server }: { server: Server }) {
         <SshPill server={server} />
         <NodePill server={server} />
         <RemnawavePill server={server} />
+        <ServerBillingPill serverId={server.id} />
       </div>
       {server.agentStatus === 'installing' && (
         <div aria-hidden="true" className="h-[3px] overflow-hidden rounded-full bg-surface-3">

@@ -22,6 +22,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAuditList } from '@/features/audit/audit-api';
 import { formatWhen } from '@/features/audit/audit-format';
 import { ResultPill } from '@/features/audit/audit-row';
+import { BillingTile } from '@/features/billing/billing-tile';
 import { useIncidents } from '@/features/incidents/incidents-api';
 import { useRemnawaveStatus } from '@/features/remnawave/remnawave-api';
 import { formatByteTotal } from '@/features/remnawave/remnawave-page';
@@ -401,7 +402,10 @@ export function OverviewPage() {
         />
       </div>
 
-      <RemnawaveTile />
+      <div className="grid gap-4 empty:hidden md:grid-cols-[repeat(auto-fit,minmax(320px,1fr))]">
+        <RemnawaveTile />
+        <BillingTile />
+      </div>
 
       {/* Требует внимания + Трафик парка */}
       <div className="grid gap-4 lg:grid-cols-[1fr_1.15fr]">

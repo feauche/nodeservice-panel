@@ -36,6 +36,8 @@ export interface PushInput {
     serverKey?: string | null;
     /** Показать в Telegram другой сервер, чем в колокольчике (например, ноду, которой нет в NodeService). */
     server?: { name: string; host?: string | null } | null;
+    /** Готовый HTML для Telegram (биллинг) вместо обычного блочного формата. */
+    html?: string | null;
   } | null;
 }
 
@@ -97,6 +99,7 @@ export class NotificationsService {
           input.telegram.server ??
           (input.server ? { name: input.server.name, host: input.server.host ?? null } : null),
         link: input.link ?? null,
+        html: input.telegram.html ?? null,
       });
     }
     // В колокольчик — только то, что требует внимания. Остальное есть в Журнале.

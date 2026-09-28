@@ -1,4 +1,5 @@
 import {
+  type AssistantActivity,
   type AssistantPermission,
   type AssistantPermissions,
   ATTEMPT_STATUS_LABELS,
@@ -21,6 +22,7 @@ import {
   VM_METRIC_NAMES,
 } from '@nodeservice/shared';
 
+import type { BillingService } from '../billing/billing.service.js';
 import type { IncidentMetricsService } from '../incidents/incident-metrics.service.js';
 import type { IncidentsService } from '../incidents/incidents.service.js';
 import type { MaintenanceService } from '../maintenance/maintenance.service.js';
@@ -169,6 +171,18 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
     },
   },
   {
+    name: 'get_billing',
+    description:
+      'Биллинг: что и когда оплачивать — серверы, аренда у провайдеров, домены, сертификаты, прочее. По каждой активной оплате: тип, название, провайдер, серверы (у сертификата — где он развёрнут), сумма и примерно в рублях по курсу ЦБ, период, до какого момента оплачено, срок словами («через 2 дня», «просрочено на 1 день»), автоплатёж, заметка. Плюс итоги: оплачено за месяц и год в рублях по курсу на день оплаты, сколько ещё ожидается до конца месяца. Зови, когда спрашивают про оплату, деньги, сроки, где развёрнут сертификат, и когда сервер недоступен: просроченная оплата — частая причина. serverId — только оплаты этого сервера (id или имя); archived — добавить архив.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        serverId: { type: 'string', description: 'id или имя сервера (необязательно)' },
+        archived: { type: 'boolean', description: 'true — добавить архив (до 30 записей)' },
+      },
+    },
+  },
+  {
     name: 'run_server_check',
     description:
       'Запустить ЛЁГКУЮ проверку сервера сейчас и дождаться итога (до 4 минут): cpu | ip_region | geoblock | dpi | ip_quality. Зови, когда свежий результат действительно нужен для ответа (жалоба «сервис не открывается» — geoblock; «не та страна» — ip_region; «медленно» — cpu), а прошлый результат старше суток или его нет; сначала посмотри get_server_checks. Тяжёлые (iperf3_ru, yabs) так не запускаются — предлагай их через propose_change server.check. На сервере одновременно идёт одна проверка. serverId — id или имя.',
@@ -205,6 +219,10 @@ export interface ReadDeps {
   >;
   /** Что разрешено Джарвису сейчас: чтения по SSH и предложения проверяются на этом. */
   permissions: AssistantPermissions;
+  /** Биллинг: оплаты, сроки, итоги. Нет — инструмент скажет, что раздел недоступен. */
+  billing?: Pick<BillingService, 'forAssistant'>;
+  /** Живая строка в чате о долгом действии (есть только в чате, не в разборе инцидентов). */
+  progress?: (a: AssistantActivity) => void;
 }
 
 /** Инструменты, которые включаются отдельным разрешением. Остальные доступны всегда. */
@@ -811,13 +829,37 @@ export async function runReadTool(
           : `Проверку запустить не удалось: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+    const label = `Проверка «${SERVER_CHECK_META[key].label}» на «${s.name}»`;
+    const act: AssistantActivity = {
+      id: started.id,
+      label,
+      state: 'running',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      detail: null,
+    };
+    deps.progress?.(act);
     const done = await deps.checks.waitDone(started.id, RUN_CHECK_WAIT_MS);
     const cite = [{ type: 'server' as const, id: s.id, label: s.name }];
+    const finished: AssistantActivity =
+      !done || done.status === 'running'
+        ? { ...act, detail: 'Ещё идёт — результат появится во вкладке «Проверки» сервера.' }
+        : {
+            ...act,
+            state: done.status === 'ok' ? 'done' : 'failed',
+            finishedAt: new Date().toISOString(),
+            detail:
+              done.status === 'ok'
+                ? 'Вывод — во вкладке «Проверки» сервера.'
+                : (done.error ?? 'Проверка не удалась.'),
+          };
+    deps.progress?.(finished);
     if (!done || done.status === 'running')
       return {
         content: `Проверка «${SERVER_CHECK_META[key].label}» на «${s.name}» запущена, но ещё идёт (дольше ${RUN_CHECK_WAIT_MS / 60_000} минут). Результат появится во вкладке «Проверки» сервера — скажи администратору, что можно спросить позже.`,
         citations: cite,
         proposals: [],
+        activity: [finished],
       };
     const out =
       done.output.length > 12_000 ? `… начало опущено …\n${done.output.slice(-12_000)}` : done.output;
@@ -831,6 +873,30 @@ export async function runReadTool(
         output: out,
       }),
       citations: cite,
+      proposals: [],
+      activity: [finished],
+    };
+  }
+
+  if (name === 'get_billing') {
+    if (!deps.billing) return { content: 'Биллинг сейчас недоступен.', citations: [], proposals: [] };
+    let serverId: string | null = null;
+    if (typeof arg.serverId === 'string' && arg.serverId) {
+      const servers = await deps.servers.list();
+      const s = findServer(servers, arg.serverId);
+      if (!s) return notFound(servers);
+      serverId = s.id;
+    }
+    const data = await deps.billing.forAssistant({ archived: arg.archived === true, serverId });
+    return {
+      content: JSON.stringify({
+        ...data,
+        hint:
+          data.items.length === 0
+            ? 'Оплат нет. Их заводят в разделе «Биллинг» (меню «Серверы» → «Биллинг»).'
+            : 'state: overdue — просрочено, today — меньше суток, soon — скоро, ok — не скоро. Даты пересказывай по-русски.',
+      }),
+      citations: [],
       proposals: [],
     };
   }

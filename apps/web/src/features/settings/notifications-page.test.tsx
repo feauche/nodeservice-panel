@@ -77,4 +77,17 @@ describe('NotificationsPage', () => {
     expect(mockTelegram.settings.kinds.agent_offline).toBe(true);
     expect(mockTelegram.settings.delivery).toMatchObject({ groupPerServer: false, remindHours: 4 });
   });
+
+  it('прокси: необязательный, сохраняется и показывается маской; маску отправить нельзя', async () => {
+    renderPage(NotificationsPage, '/settings/notifications');
+    const user = userEvent.setup();
+    const field = await screen.findByLabelText(/Прокси/);
+    await user.type(field, 'socks5://u:s3cret@10.0.0.5:1080');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(mockTelegram.settings.proxy).toBe('socks5://u:***@10.0.0.5:1080'));
+    expect(await screen.findByDisplayValue('socks5://u:***@10.0.0.5:1080')).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/Прокси/), '0');
+    expect(screen.getByText(/введите целиком/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
+  });
 });

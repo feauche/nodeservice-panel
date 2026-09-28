@@ -36,10 +36,18 @@ export interface TelegramDispatch {
   incidentId?: string | null;
   /** Кнопка-ссылка в панель: путь внутри панели и подпись. */
   link?: { to: string; label: string } | null;
+  /** Готовое HTML-сообщение (биллинг): форматирование по блокам не применяется. */
+  html?: string | null;
 }
 
 /** Со звуком при «Предупреждения без звука»: только то, что требует внимания сейчас. */
-const LOUD = new Set<TelegramEvent>(['incident_crit', 'needs_confirm', 'login', 'reminder']);
+const LOUD = new Set<TelegramEvent>([
+  'incident_crit',
+  'needs_confirm',
+  'login',
+  'reminder',
+  'billing_overdue',
+]);
 /** Открытие сбоя — то, что склеивается по серверу. */
 const OPENING = new Set<TelegramEvent>(['incident_crit', 'incident_warn', 'needs_confirm']);
 const GROUP_WINDOW_MS = 10 * 60_000;
@@ -91,7 +99,8 @@ export class TelegramService {
           if (seen.has(sig)) continue;
           seen.add(sig);
           const d = this.store.newDestination(t.token, t.chatId, t.topic);
-          const names = await this.lookupNames({ ...d, token: t.token });
+          const proxy = patch.proxy === undefined ? this.store.proxy(cur) : patch.proxy ? patch.proxy : null;
+          const names = await this.lookupNames({ ...d, token: t.token, proxy });
           next.push({ ...d, ...names });
           added += 1;
         }
@@ -107,6 +116,8 @@ export class TelegramService {
       for (const [k, v] of Object.entries(patch.kinds))
         if (typeof v === 'boolean') cur.kinds[k as IncidentKind] = v;
     if (patch.delivery) cur.delivery = patch.delivery;
+    // Прокси: не передан — как было; пусто или null — убрать; иначе — новый (с паролем шифруется).
+    if (patch.proxy !== undefined) cur.proxyEnc = patch.proxy ? this.store.encryptProxy(patch.proxy) : null;
     await this.store.save(cur);
     return { settings: this.store.toPublic(cur), added, removed };
   }
@@ -115,9 +126,16 @@ export class TelegramService {
   private async lookupNames(
     d: LiveDestination,
   ): Promise<{ botName: string | null; chatTitle: string | null }> {
-    const me = await this.client.call<{ username?: string }>(d.token, 'getMe', {}).catch(() => null);
+    const me = await this.client
+      .call<{ username?: string }>(d.token, 'getMe', {}, d.proxy ?? null)
+      .catch(() => null);
     const chat = await this.client
-      .call<{ title?: string; first_name?: string; type?: string }>(d.token, 'getChat', { chat_id: d.chatId })
+      .call<{ title?: string; first_name?: string; type?: string }>(
+        d.token,
+        'getChat',
+        { chat_id: d.chatId },
+        d.proxy ?? null,
+      )
       .catch(() => null);
     const title = chat?.ok
       ? (chat.result.title ??
@@ -148,6 +166,8 @@ export class TelegramService {
         : null;
     }
     if (!dest) return { ok: false, detail: 'Такого чата нет в настройках.', botName: null, chatTitle: null };
+    // Прокси для теста: как в поле сейчас (даже несохранённый); не передан — сохранённый.
+    dest = { ...dest, proxy: req.proxy === undefined ? this.store.proxy(cur) : req.proxy || null };
     const names = await this.lookupNames(dest);
     const res = await this.send(
       dest,
@@ -189,7 +209,7 @@ export class TelegramService {
     // Штатная возможность Bot API: сообщение приходит, но телефон не звенит.
     if (silent) body.disable_notification = true;
     const res = await this.client
-      .call<{ message_id: number }>(d.token, 'sendMessage', body)
+      .call<{ message_id: number }>(d.token, 'sendMessage', body, d.proxy ?? null)
       .catch(() => null);
     if (!res) return { ok: false, error: describeTelegramError(0, 'network') };
     return res.ok
@@ -252,13 +272,15 @@ export class TelegramService {
           groupWith = prev.incidentId;
       }
       const silent = groupWith !== null || (s.delivery.silentWarnings && !LOUD.has(m.event));
-      const text = formatTelegramMessage({
-        event: m.event,
-        title: m.title,
-        body: m.body ?? null,
-        server: m.server ?? null,
-        footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, s.quiet.timeZone)}`,
-      });
+      const text =
+        m.html ??
+        formatTelegramMessage({
+          event: m.event,
+          title: m.title,
+          body: m.body ?? null,
+          server: m.server ?? null,
+          footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, s.quiet.timeZone)}`,
+        });
       const buttons = this.buttons(m.link, m.incidentId ?? null);
       let anyFirst = false;
       for (const d of this.store.live(s)) {

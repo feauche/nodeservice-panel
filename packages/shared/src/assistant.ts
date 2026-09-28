@@ -312,6 +312,21 @@ export const assistantProposalSchema = z.discriminatedUnion('kind', [
 ]);
 export type AssistantProposal = z.infer<typeof assistantProposalSchema>;
 
+/**
+ * Что Джарвис делал, пока готовил ответ, и что заметно по времени (сейчас — запуск проверки сервера).
+ * Пока идёт — строка со счётчиком в чате (живое событие), по готовности та же строка — «✓ готова за 1:12».
+ */
+export const assistantActivitySchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  state: z.enum(['running', 'done', 'failed']),
+  startedAt: z.iso.datetime(),
+  finishedAt: z.iso.datetime().nullable(),
+  /** Одна строка итога: «вывод во вкладке «Проверки» сервера», причина ошибки. */
+  detail: z.string().nullable(),
+});
+export type AssistantActivity = z.infer<typeof assistantActivitySchema>;
+
 export const assistantMessageSchema = z.object({
   id: z.uuid(),
   role: z.enum(['user', 'assistant']),
@@ -320,6 +335,8 @@ export const assistantMessageSchema = z.object({
   proposals: z.array(assistantProposalSchema).default([]),
   /** Проверки доступности, сделанные при ответе (показываются матрицей под ответом). */
   reachability: z.array(reachabilityResultSchema).default([]),
+  /** Долгие действия при ответе (проверки сервера) — строками над текстом ответа. */
+  activity: z.array(assistantActivitySchema).default([]),
   createdAt: z.iso.datetime(),
 });
 export type AssistantMessage = z.infer<typeof assistantMessageSchema>;

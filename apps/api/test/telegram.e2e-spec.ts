@@ -31,12 +31,17 @@ const TOKEN = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw';
 
 /** Поддельный Bot API: записывает вызовы; чат -100999 «не найден». */
 class FakeTelegram {
-  calls: Array<{ token: string; method: string; body: Record<string, unknown> }> = [];
+  calls: Array<{ token: string; method: string; body: Record<string, unknown>; proxy?: string | null }> = [];
   private next = 100;
   /** message_id каждого успешного sendMessage — по порядку. */
   ids: number[] = [];
-  async call<T>(token: string, method: string, body: Record<string, unknown>): Promise<TelegramCall<T>> {
-    this.calls.push({ token, method, body });
+  async call<T>(
+    token: string,
+    method: string,
+    body: Record<string, unknown>,
+    proxy?: string | null,
+  ): Promise<TelegramCall<T>> {
+    this.calls.push({ token, method, body, proxy: proxy ?? null });
     if (body.chat_id === '-100999')
       return { ok: false, status: 400, description: 'Bad Request: chat not found' };
     if (method === 'getMe') return { ok: true, result: { username: 'ns_test_bot' } as T };
@@ -300,5 +305,32 @@ describe('telegram e2e', () => {
         .slice(0, n)
         .filter((m) => String(m.body.text).includes('agent_offline')).length,
     );
+  });
+
+  it('прокси: маска без пароля, отправка через него, неверный формат — отказ, пусто — напрямую', async () => {
+    const bad = await put({ proxy: 'socks://нет' }, 400);
+    expect(JSON.stringify(bad.body)).toContain('socks5://');
+    const res = telegramSettingsSchema.parse(
+      (await put({ proxy: 'socks5://user:s3cret@10.0.0.5:1080' })).body,
+    );
+    expect(res.proxy).toBe('socks5://user:***@10.0.0.5:1080');
+    const raw = await agent.get('/api/settings/telegram').expect(200);
+    expect(JSON.stringify(raw.body)).not.toContain('s3cret');
+    const audit = await agent.get('/api/audit?action=settings.telegram.updated').expect(200);
+    expect(JSON.stringify(audit.body)).not.toContain('s3cret');
+    const id = res.destinations[0]?.id;
+    await agent.post('/api/settings/telegram/test').set(CSRF_HEADER, csrf).send({ id }).expect(200);
+    expect(tg.sent().at(-1)?.proxy).toBe('socks5://user:s3cret@10.0.0.5:1080');
+    // Тест с ещё не сохранённым прокси из поля.
+    await agent
+      .post('/api/settings/telegram/test')
+      .set(CSRF_HEADER, csrf)
+      .send({ id, proxy: 'http://10.0.0.6:3128' })
+      .expect(200);
+    expect(tg.sent().at(-1)?.proxy).toBe('http://10.0.0.6:3128');
+    const cleared = telegramSettingsSchema.parse((await put({ proxy: '' })).body);
+    expect(cleared.proxy).toBeNull();
+    await agent.post('/api/settings/telegram/test').set(CSRF_HEADER, csrf).send({ id }).expect(200);
+    expect(tg.sent().at(-1)?.proxy).toBeNull();
   });
 });

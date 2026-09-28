@@ -15,6 +15,8 @@ export const OPEN_SECTIONS: ReadonlySet<string> = new Set<string>([
   '/servers',
   '/servers/providers',
   '/servers/remnawave',
+  // Биллинг: оплаты серверов, аренды, доменов и сертификатов.
+  '/servers/billing',
   '/audit',
   '/incidents',
   '/incidents/autofix',

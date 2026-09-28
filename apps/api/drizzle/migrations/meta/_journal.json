@@ -295,6 +295,20 @@
       "when": 1790600200000,
       "tag": "0041_telegram_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1790600300000,
+      "tag": "0042_assistant_activity",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1790700000000,
+      "tag": "0043_billing",
+      "breakpoints": true
     }
   ]
 }

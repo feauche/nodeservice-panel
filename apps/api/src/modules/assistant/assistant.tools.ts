@@ -1,4 +1,5 @@
 import {
+  type AssistantActivity,
   type AssistantCitation,
   type AssistantProposal,
   AUDIT_CATEGORIES,
@@ -191,6 +192,8 @@ export interface ToolOutcome {
   proposals: AssistantProposal[];
   /** Проверки доступности, которые нужно показать матрицей под ответом. */
   reachability?: ReachabilityResult[];
+  /** Долгие действия (проверка сервера) — строками над ответом. */
+  activity?: AssistantActivity[];
 }
 
 /** Выполнить инструмент из аллоулиста. Неизвестный инструмент — явная ошибка (не молчим). */

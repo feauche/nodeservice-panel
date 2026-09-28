@@ -1,5 +1,8 @@
+import type { AssistantActivity } from '@nodeservice/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
+
+import { useActivityStore } from '@/features/assistant/activity';
 
 import { incidentsKeys } from '@/features/incidents/incidents-api';
 import { notificationsKeys } from '@/features/notifications/notifications-api';
@@ -48,6 +51,18 @@ export function useEventsStream(enabled = true): void {
         void qc.invalidateQueries({ queryKey: ['metrics', 'overview'] });
       }),
     );
+    // Джарвис делает что-то долгое (проверка сервера): живая строка в чате, без перечитывания.
+    es.addEventListener('assistant', (ev) => {
+      try {
+        const d = JSON.parse((ev as MessageEvent).data) as {
+          conversationId: string;
+          activity: AssistantActivity;
+        };
+        useActivityStore.getState().upsert(d.conversationId, d.activity);
+      } catch {
+        /* битое событие — просто пропускаем */
+      }
+    });
     es.addEventListener('incident', () =>
       later('incident', () => void qc.invalidateQueries({ queryKey: incidentsKeys.all })),
     );

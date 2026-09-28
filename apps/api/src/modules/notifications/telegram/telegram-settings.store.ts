@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import {
   INCIDENT_KINDS,
+  maskTelegramProxy,
   maskTelegramUrl,
   TELEGRAM_DELIVERY_DEFAULT,
   TELEGRAM_EVENTS,
@@ -42,6 +43,8 @@ interface Stored {
   quiet: TelegramQuiet;
   kinds: TelegramKinds;
   delivery: TelegramDelivery;
+  /** Прокси целиком (с паролем) — зашифрован. */
+  proxyEnc?: string | null;
 }
 export interface DigestItem {
   event: string;
@@ -52,6 +55,8 @@ export interface DigestItem {
 /** Назначение с расшифрованным токеном — только внутри сервера, наружу не отдаётся. */
 export interface LiveDestination extends Omit<StoredDestination, 'tokenEnc'> {
   token: string;
+  /** Через какой прокси слать (общий для всех чатов); null — напрямую. */
+  proxy?: string | null;
 }
 
 /** Настройки Telegram в app_meta; токены ботов шифруются (как ключ Джарвиса) и наружу не отдаются. */
@@ -96,6 +101,7 @@ export class TelegramSettingsStore {
       quiet: quiet.success ? quiet.data : { ...TELEGRAM_QUIET_DEFAULT },
       kinds,
       delivery: delivery.success ? delivery.data : { ...TELEGRAM_DELIVERY_DEFAULT },
+      proxyEnc: typeof p.proxyEnc === 'string' ? p.proxyEnc : null,
     };
   }
 
@@ -120,7 +126,25 @@ export class TelegramSettingsStore {
       quiet: s.quiet,
       kinds: s.kinds,
       delivery: s.delivery,
+      proxy: (() => {
+        const p = this.proxy(s);
+        return p ? maskTelegramProxy(p) : null;
+      })(),
     };
+  }
+
+  /** Прокси целиком для отправки; null — напрямую (или не расшифровался). */
+  proxy(s: Stored): string | null {
+    if (!s.proxyEnc) return null;
+    try {
+      return this.crypto.decrypt(s.proxyEnc);
+    } catch {
+      return null;
+    }
+  }
+
+  encryptProxy(url: string): string {
+    return this.crypto.encrypt(url);
   }
 
   newDestination(token: string, chatId: string, topic: number | null): StoredDestination {
@@ -138,9 +162,10 @@ export class TelegramSettingsStore {
   /** Назначения с токенами; битые (не расшифровались) пропускаются. */
   live(s: Stored): LiveDestination[] {
     const out: LiveDestination[] = [];
+    const proxy = this.proxy(s);
     for (const { tokenEnc, ...d } of s.destinations) {
       try {
-        out.push({ ...d, token: this.crypto.decrypt(tokenEnc) });
+        out.push({ ...d, token: this.crypto.decrypt(tokenEnc), proxy });
       } catch {
         /* ключ шифрования сменился — назначение надо добавить заново */
       }

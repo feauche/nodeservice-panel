@@ -1,5 +1,6 @@
 import {
   INCIDENT_KIND_META,
+  isValidTelegramProxy,
   parseTelegramUrl,
   TELEGRAM_DESTINATIONS_MAX,
   TELEGRAM_EVENT_GROUPS,
@@ -36,6 +37,8 @@ interface Draft {
   quiet: TelegramQuiet;
   kinds: TelegramKinds;
   delivery: TelegramDelivery;
+  /** Поле прокси как есть: сохранённый показывается маской; не трогали — не отправляем. */
+  proxy: string;
 }
 
 /** Время тихих часов списком, всегда 24 часа: поле «время» в браузере может показать «11:00 PM». */
@@ -53,6 +56,7 @@ function fromSettings(s: TelegramSettings): Draft {
     events: { ...s.events },
     quiet: { ...s.quiet },
     kinds: { ...s.kinds },
+    proxy: s.proxy ?? '',
     delivery: { ...s.delivery },
   };
 }
@@ -64,6 +68,7 @@ const sameDraft = (a: Draft, b: Draft): boolean =>
     quiet: { ...a.quiet, timeZone: '' },
     kinds: a.kinds,
     delivery: a.delivery,
+    proxy: a.proxy.trim(),
   }) ===
   JSON.stringify({
     rows: b.rows.map((r) => ('saved' in r ? r.saved.id : r.url.trim())),
@@ -71,6 +76,7 @@ const sameDraft = (a: Draft, b: Draft): boolean =>
     quiet: { ...b.quiet, timeZone: '' },
     kinds: b.kinds,
     delivery: b.delivery,
+    proxy: b.proxy.trim(),
   });
 
 const TONE_BADGE = {
@@ -135,13 +141,19 @@ export function NotificationsPage() {
     );
 
   const badUrl = (r: Row) => !('saved' in r) && r.url.trim() !== '' && parseTelegramUrl(r.url) === null;
-  const invalid = draft.rows.some(badUrl);
+  const proxyChanged = draft.proxy.trim() !== (q.data?.proxy ?? '');
+  // Маску с *** отправить нельзя: прокси с паролем нужно ввести целиком заново.
+  const badProxy = proxyChanged && draft.proxy.trim() !== '' && !isValidTelegramProxy(draft.proxy.trim());
+  const invalid = draft.rows.some(badUrl) || badProxy;
   const setRows = (rows: Row[]) => setDraft({ ...draft, rows });
 
   const runTest = async (r: Row) => {
     setTesting(r.key);
     try {
-      const res = await test.mutateAsync('saved' in r ? { id: r.saved.id } : { url: r.url.trim() });
+      const res = await test.mutateAsync({
+        ...('saved' in r ? { id: r.saved.id } : { url: r.url.trim() }),
+        ...(proxyChanged && !badProxy ? { proxy: draft.proxy.trim() } : {}),
+      });
       setResults((m) => ({
         ...m,
         [r.key]: {
@@ -165,6 +177,7 @@ export function NotificationsPage() {
           .map((r) => ('saved' in r ? { id: r.saved.id } : { url: r.url.trim() })),
         events: draft.events,
         kinds: draft.kinds,
+        ...(proxyChanged ? { proxy: draft.proxy.trim() } : {}),
         delivery: draft.delivery,
         quiet: {
           ...draft.quiet,
@@ -323,6 +336,41 @@ export function NotificationsPage() {
             </span>
           </div>
         </div>
+        <SettingsRow
+          stack
+          label={
+            <>
+              Прокси
+              <span className="ml-1.5 rounded-full bg-surface-3 px-1.5 py-px align-[1px] text-[10.5px] font-medium text-text-3">
+                необязательно
+              </span>
+            </>
+          }
+          htmlFor="tg-proxy"
+          hint={
+            badProxy ? (
+              <span className="text-crit">
+                Нужен вид socks5://логин:пароль@адрес:порт или http://адрес:порт. Прокси с паролем введите
+                целиком заново.
+              </span>
+            ) : (
+              'Нужен, только если сервер панели в России и Telegram с него недоступен. Пусто — напрямую. Проверяется той же кнопкой «Отправить тест» у чата; пароль после сохранения скрыт.'
+            )
+          }
+        >
+          <input
+            id="tg-proxy"
+            value={draft.proxy}
+            onChange={(e) => setDraft({ ...draft, proxy: e.target.value })}
+            placeholder="socks5://логин:пароль@1.2.3.4:1080 или http://1.2.3.4:3128"
+            spellCheck={false}
+            autoComplete="off"
+            className={cn(
+              'h-9 w-full rounded-[9px] border bg-surface-2 px-3 font-mono text-[12.5px] outline-none placeholder:text-text-3 focus:border-brand',
+              badProxy ? 'border-crit' : 'border-border',
+            )}
+          />
+        </SettingsRow>
       </SettingsCard>
 
       <SettingsCard title="Что присылать" hint="Одинаково для всех чатов.">
@@ -521,7 +569,7 @@ export function NotificationsPage() {
         pending={update.isPending}
         onSave={() => void save()}
         onReset={() => base && setDraft(base)}
-        error={invalid ? 'Исправьте ссылку, отмеченную красным.' : undefined}
+        error={invalid ? 'Исправьте поле, отмеченное красным.' : undefined}
         note="Изменения попадают в Журнал. Токены после сохранения скрыты."
       />
     </div>

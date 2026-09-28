@@ -31,6 +31,7 @@ import { useServers } from '@/features/servers/servers-api';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { ActivityRow, useActivityStore, useLiveActivity } from './activity';
 import {
   LAST_CONV_KEY,
   useAssistantStatus,
@@ -114,6 +115,16 @@ function AssistantChat() {
   // запрос всё ещё идёт, и индикатор должен остаться, а когда ответ готов, исчезнуть.
   const pendingHere = usePendingChats().filter((v) => (v.conversationId ?? null) === conversationId);
   const busy = pendingHere.length > 0;
+  // Живые строки «Идёт проверка…»: с момента отправки; ответ пришёл — они уже сохранены в самом ответе.
+  // Без состояния (лишняя перерисовка ломает показ вопроса, пока идёт ответ): отметка во время рендера.
+  const busySinceRef = useRef(0);
+  if (busy && busySinceRef.current === 0) busySinceRef.current = Date.now() - 1000;
+  if (!busy) busySinceRef.current = 0;
+  const busySince = busySinceRef.current;
+  useEffect(() => {
+    if (!busy) useActivityStore.getState().clear();
+  }, [busy]);
+  const live = useLiveActivity(conversationId, busySince);
   const isNewChat = conversationId === null;
 
   // Считаем по обрезанной длине, ровно как проверит сервер, и не даём отправить переполненное поле
@@ -290,9 +301,20 @@ function AssistantChat() {
                   citations: [],
                   proposals: [],
                   reachability: [],
+                  activity: [],
                   createdAt: '',
                 }}
               />
+            )}
+            {busy && live.length > 0 && (
+              <div className="flex max-w-[92%] gap-3">
+                <span className="size-8 flex-none" aria-hidden="true" />
+                <div className="flex min-w-0 flex-1 flex-col gap-2">
+                  {live.map((a) => (
+                    <ActivityRow key={a.id} activity={a} />
+                  ))}
+                </div>
+              </div>
             )}
             {busy && <TypingRow />}
           </ServerHealthContext.Provider>
@@ -447,6 +469,13 @@ function MessageRow({
     >
       {grouped ? <span className="size-8 flex-none" aria-hidden="true" /> : <Avatar />}
       <div className={cn('min-w-0 flex-1', grouped && !interim && 'border-t border-border pt-2.5')}>
+        {message.activity.length > 0 && (
+          <div className="mb-2.5 flex flex-col gap-2">
+            {message.activity.map((a) => (
+              <ActivityRow key={a.id} activity={a} />
+            ))}
+          </div>
+        )}
         <Markdown
           content={linkifyServers(message.content, servers.data?.items ?? [])}
           className={cn('-my-1 text-[13.5px]', interim && '[&_p]:text-text-3')}

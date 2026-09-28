@@ -74,6 +74,7 @@ describe('инструменты и промпты разбора', () => {
       [
         'check_certificate',
         'check_reachability',
+        'get_billing',
         'get_incident',
         'get_maintenance',
         'get_metrics_history',

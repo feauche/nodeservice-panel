@@ -330,6 +330,17 @@ describe('run_server_check', () => {
     expect(json()).toMatchObject({ check: 'Геоблок', ranJustNow: true, status: 'ok' });
     expect(json().output).toContain('0 blocked');
   });
+  it('живая строка: «идёт» в начале, «готова» в конце; та же строка — в ответе', async () => {
+    const seen: Array<{ state: string; label: string }> = [];
+    const d = deps({ progress: (a: { state: string; label: string }) => seen.push(a) });
+    const { out } = await call('run_server_check', { serverId: 'de-1', check: 'geoblock' }, d);
+    expect(seen.map((x) => x.state)).toEqual(['running', 'done']);
+    expect(seen[0]?.label).toBe('Проверка «Геоблок» на «de-1»');
+    expect(out.activity?.[0]).toMatchObject({
+      state: 'done',
+      detail: 'Вывод — во вкладке «Проверки» сервера.',
+    });
+  });
   it('тяжёлую не запускает — отсылает к карточке', async () => {
     const { out } = await call('run_server_check', { serverId: 'de-1', check: 'yabs' });
     expect(out.content).toContain('propose_change server.check');
@@ -850,5 +861,27 @@ describe('страна сервера в инструментах', () => {
     expect((await call('get_server_detail', { serverId: 'de-1' }, d([failed]))).json().country).toMatchObject(
       { status: 'не удалось определить', note: expect.stringContaining('Ответили только 2') },
     );
+  });
+});
+
+describe('get_billing', () => {
+  it('без биллинга — понятный ответ; с сервером — только его оплаты', async () => {
+    const { out } = await call('get_billing', {});
+    expect(out.content).toBe('Биллинг сейчас недоступен.');
+    let seen: unknown = null;
+    const billing = {
+      forAssistant: async (o: unknown) => {
+        seen = o;
+        return {
+          items: [{ title: 'DE-1', state: 'overdue', due: 'просрочено на 1 день' }],
+          month: { spent: '0 ₽', expected: '468 ₽', payments: 0 },
+          year: { spent: '0 ₽' },
+          rates: null,
+        };
+      },
+    };
+    const { json } = await call('get_billing', { serverId: 'de-1' }, deps({ billing }));
+    expect(seen).toEqual({ archived: false, serverId: ID_A });
+    expect(json().items[0].due).toBe('просрочено на 1 день');
   });
 });

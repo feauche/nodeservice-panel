@@ -351,6 +351,7 @@ describe('AssistantPage', () => {
           citations: [],
           proposals: [],
           reachability: [],
+          activity: [],
           createdAt: iso,
         },
         {
@@ -360,6 +361,7 @@ describe('AssistantPage', () => {
           citations: [],
           proposals: [],
           reachability: [],
+          activity: [],
           createdAt: iso,
         },
       ],
@@ -380,6 +382,7 @@ describe('AssistantPage', () => {
           citations: [],
           proposals: [],
           reachability: [],
+          activity: [],
           createdAt: iso,
         };
         mockAssistant.messages[convId] = [
@@ -391,6 +394,7 @@ describe('AssistantPage', () => {
             citations: [],
             proposals: [],
             reachability: [],
+            activity: [],
             createdAt: iso,
           },
           reply,

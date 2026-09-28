@@ -1,4 +1,5 @@
 import {
+  maskTelegramProxy,
   maskTelegramUrl,
   parseTelegramUrl,
   TELEGRAM_DELIVERY_DEFAULT,
@@ -27,6 +28,7 @@ export function resetTelegram(): void {
     quiet: { ...TELEGRAM_QUIET_DEFAULT },
     kinds: { ...TELEGRAM_KINDS_DEFAULT },
     delivery: { ...TELEGRAM_DELIVERY_DEFAULT },
+    proxy: null,
   };
 }
 resetTelegram();
@@ -79,6 +81,7 @@ export const telegramHandlers = [
     if (body.quiet) s.quiet = body.quiet;
     if (body.kinds) s.kinds = { ...s.kinds, ...(body.kinds as TelegramSettings['kinds']) };
     if (body.delivery) s.delivery = body.delivery;
+    if (body.proxy !== undefined) s.proxy = body.proxy ? maskTelegramProxy(body.proxy) : null;
     return HttpResponse.json(s);
   }),
   http.post('/api/settings/telegram/test', async ({ request }) => {

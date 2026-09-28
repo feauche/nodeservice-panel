@@ -320,6 +320,7 @@ function buildReply(text = ''): AssistantMessage {
       citations: [],
       proposals: kinds.map(makeChange),
       reachability: [],
+      activity: [],
       createdAt: new Date().toISOString(),
     };
   if (/доступ|снаружи/i.test(text))
@@ -331,6 +332,7 @@ function buildReply(text = ''): AssistantMessage {
       citations: [],
       proposals: [],
       reachability: [sampleReach('de-fra-01', 'closed443')],
+      activity: [],
       createdAt: new Date().toISOString(),
     };
   const cpu = mockIncidents.items.find((i) => i.kind === 'cpu_high' && i.status !== 'resolved');
@@ -357,6 +359,7 @@ function buildReply(text = ''): AssistantMessage {
     citations,
     proposals,
     reachability: [],
+    activity: [],
     createdAt: new Date().toISOString(),
   };
 }
@@ -373,6 +376,7 @@ function buildFleetReplies(): AssistantMessage[] {
       citations: [],
       proposals: [],
       reachability: [],
+      activity: [],
       createdAt: now,
     },
     {
@@ -383,6 +387,7 @@ function buildFleetReplies(): AssistantMessage[] {
       citations: fra ? [{ type: 'server', id: fra.id, label: fra.name }] : [],
       proposals: [],
       reachability: [],
+      activity: [],
       createdAt: now,
     },
   ];
@@ -585,6 +590,7 @@ export const assistantHandlers = [
       citations: [],
       proposals: [],
       reachability: [],
+      activity: [],
       createdAt: new Date().toISOString(),
     };
     // Как на сервере: сообщение администратора сохраняется сразу, ответ приходит после раздумий.

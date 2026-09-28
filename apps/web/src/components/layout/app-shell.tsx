@@ -55,7 +55,7 @@ const NAV = [
   { to: '/incidents', label: 'Инциденты', icon: AlertTriangleIcon },
   { to: '/settings', label: 'Настройки', icon: SettingsIcon },
 ] as const;
-/** «Серверы» раскрываются в подпункты: список серверов и справочник провайдеров. */
+/** «Серверы» раскрываются в подпункты: список серверов, провайдеры, Remnawave и биллинг. */
 const SERVERS_GROUP = {
   to: '/servers',
   label: 'Серверы',
@@ -64,6 +64,7 @@ const SERVERS_GROUP = {
     { to: '/servers', label: 'Все серверы' },
     { to: '/servers/providers', label: 'Провайдеры' },
     { to: '/servers/remnawave', label: 'Remnawave' },
+    { to: '/servers/billing', label: 'Биллинг' },
   ],
 } as const;
 /** Раздел «Автоматизация» — Джарвис и база знаний. */
