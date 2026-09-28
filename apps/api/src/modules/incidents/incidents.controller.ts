@@ -42,7 +42,11 @@ export class IncidentsController {
   @ApiOperation({ summary: 'Список инцидентов (all/open/resolved) со счётчиками' })
   @ApiOkResponse({ type: IncidentsListResponseDto })
   list(@Query() query: IncidentsListQueryDto): Promise<IncidentsListResponseDto> {
-    return this.incidents.list(query.status);
+    return this.incidents.list(query.status, {
+      openedFrom: query.openedFrom,
+      page: query.page,
+      pageSize: query.pageSize,
+    });
   }
 
   // Статический маршрут раньше `:id`, иначе ParseUUIDPipe отвергнет «policy».

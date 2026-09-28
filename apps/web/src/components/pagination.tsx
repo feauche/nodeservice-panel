@@ -6,6 +6,8 @@ interface Props {
   page: number;
   totalPages: number;
   onChange: (page: number) => void;
+  /** Подпись для скринридера — какой именно список листаем («Страницы журнала», «Страницы инцидентов»). */
+  label: string;
 }
 
 /** Номера страниц с многоточиями: ‹ 1 … 4 5 6 … 20 › — всегда видны первая, последняя и соседи. */
@@ -25,12 +27,12 @@ export function pageItems(page: number, totalPages: number): Array<number | '…
   return out;
 }
 
-export function Pagination({ page, totalPages, onChange }: Props) {
+export function Pagination({ page, totalPages, onChange, label }: Props) {
   if (totalPages <= 1) return null;
   const btn =
     'inline-flex h-8 min-w-8 cursor-pointer items-center justify-center rounded-[8px] px-2 text-[12.5px] font-medium tabular-nums text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent';
   return (
-    <nav aria-label="Страницы журнала" className="flex items-center gap-1">
+    <nav aria-label={label} className="flex items-center gap-1">
       <button
         type="button"
         className={btn}

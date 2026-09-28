@@ -3,13 +3,13 @@ import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { pageItems } from '@/components/pagination';
 import { mockAudit, pushAuditEntry, seedAudit } from '@/test/msw/audit-mock';
 import { resetMockState } from '@/test/msw/handlers';
 import { mockServers, seedServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
 import { AuditPage } from './audit-page';
 import { type AuditSearch, matchesSearch, periodFrom } from './audit-search';
-import { pageItems } from './pagination';
 
 /** Обёртка вместо роутера: параметры страницы живут в состоянии. */
 function Harness({ initial = {} }: { initial?: AuditSearch }) {

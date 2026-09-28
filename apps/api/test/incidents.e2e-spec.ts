@@ -717,9 +717,10 @@ describe('incidents e2e', () => {
     const before = incidentsListResponseSchema.parse(
       (await agent.get('/api/incidents?status=resolved').expect(200)).body,
     );
-    expect(before.items.length).toBeGreaterThan(0);
+    // .total, не .items.length: «решённые» теперь режутся постранично, а удаляются всегда все разом.
+    expect(before.total).toBeGreaterThan(0);
     const res = await agent.delete('/api/incidents/resolved').set(CSRF_HEADER, csrf).expect(200);
-    expect(res.body.deleted).toBe(before.items.length);
+    expect(res.body.deleted).toBe(before.total);
     const after = incidentsListResponseSchema.parse(
       (await agent.get('/api/incidents?status=resolved').expect(200)).body,
     );

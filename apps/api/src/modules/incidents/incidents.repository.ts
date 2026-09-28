@@ -1,10 +1,19 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { IncidentEvent, IncidentKind, IncidentSeverity, IncidentSnapshot } from '@nodeservice/shared';
-import { and, desc, eq, ne } from 'drizzle-orm';
+import { and, desc, eq, gte, ne, type SQL, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { type IncidentRow, incidents } from '../../infra/db/schema/index.js';
 import { EventsService } from '../events/events.service.js';
+
+type IncidentStatusFilter = 'all' | 'open' | 'resolved';
+export interface IncidentsPage {
+  items: IncidentRow[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
 
 /** Хранилище инцидентов. Один открытый инцидент на (server_id, kind) держит частичный уникальный индекс. */
 @Injectable()
@@ -14,11 +23,73 @@ export class IncidentsRepository {
     private readonly events: EventsService,
   ) {}
 
-  async list(status: 'all' | 'open' | 'resolved'): Promise<IncidentRow[]> {
-    const rows = await this.db.select().from(incidents).orderBy(desc(incidents.openedAt)).limit(200);
-    if (status === 'open') return rows.filter((r) => r.status !== 'resolved');
-    if (status === 'resolved') return rows.filter((r) => r.status === 'resolved');
-    return rows;
+  private where(status: IncidentStatusFilter, openedFrom?: string): SQL | undefined {
+    const conds: SQL[] = [];
+    if (status === 'open') conds.push(ne(incidents.status, 'resolved'));
+    if (status === 'resolved') conds.push(eq(incidents.status, 'resolved'));
+    if (openedFrom) conds.push(gte(incidents.openedAt, new Date(openedFrom)));
+    return conds.length ? and(...conds) : undefined;
+  }
+
+  /** Список целиком, без разбивки на страницы — для внутренних служб (джобы, ассистент). */
+  async list(status: IncidentStatusFilter): Promise<IncidentRow[]> {
+    return this.db
+      .select()
+      .from(incidents)
+      .where(this.where(status))
+      .orderBy(desc(incidents.openedAt), desc(incidents.id));
+  }
+
+  /**
+   * Тот же список, но постранично — для HTTP-ручки. «Открытые» всё равно приходят целиком (их немного,
+   * резать их пополам между страницами не нужно), режутся только «Все»/«Решённые».
+   */
+  async listPage(query: {
+    status: IncidentStatusFilter;
+    openedFrom?: string | undefined;
+    page: number;
+    pageSize: number;
+  }): Promise<IncidentsPage> {
+    const where = this.where(query.status, query.openedFrom);
+    if (query.status === 'open') {
+      const rows = await this.db.select().from(incidents).where(where).orderBy(desc(incidents.openedAt));
+      return {
+        items: rows,
+        page: 1,
+        pageSize: Math.max(rows.length, 1),
+        total: rows.length,
+        totalPages: rows.length > 0 ? 1 : 0,
+      };
+    }
+    const [countRow] = await this.db.select({ n: sql<number>`count(*)::int` }).from(incidents).where(where);
+    const total = countRow?.n ?? 0;
+    const totalPages = Math.max(0, Math.ceil(total / query.pageSize));
+    const page = totalPages === 0 ? 1 : Math.min(query.page, totalPages);
+    const rows = await this.db
+      .select()
+      .from(incidents)
+      .where(where)
+      .orderBy(desc(incidents.openedAt), desc(incidents.id))
+      .limit(query.pageSize)
+      .offset((page - 1) * query.pageSize);
+    return { items: rows, page, pageSize: query.pageSize, total, totalPages };
+  }
+
+  /** Счётчики для шапки — всегда по всей таблице, независимо от текущей страницы/фильтра. */
+  async counts(): Promise<{ open: number; crit: number; warn: number }> {
+    const [open] = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(incidents)
+      .where(ne(incidents.status, 'resolved'));
+    const [crit] = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(incidents)
+      .where(and(ne(incidents.status, 'resolved'), eq(incidents.severity, 'crit')));
+    const [warn] = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(incidents)
+      .where(and(ne(incidents.status, 'resolved'), eq(incidents.severity, 'warn')));
+    return { open: open?.n ?? 0, crit: crit?.n ?? 0, warn: warn?.n ?? 0 };
   }
 
   async findById(id: string): Promise<IncidentRow | undefined> {

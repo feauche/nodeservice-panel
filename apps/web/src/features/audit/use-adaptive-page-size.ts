@@ -17,12 +17,23 @@ function findScrollParent(el: HTMLElement): HTMLElement | null {
 }
 
 /**
+ * Место под строку пагинации под таблицей: отступ `gap-3` (12px) + сама строка (32px, кнопки `h-8`).
+ * Остаток от деления доступной высоты на высоту строки и становится нижним полем — оно того же
+ * порядка, что и боковые отступы страницы, а не отдельным зазором поверх них (было 64px: этого хватало
+ * на саму пагинацию, но раздутый запас добавлял лишние 20–40px пустоты снизу, заметно больше боковых).
+ */
+const PAGINATION_ROW_HEIGHT = 12 + 32;
+
+/**
  * Сколько строк помещается на экране: от верха таблицы до низа прокручиваемой области минус место
  * под пагинацию. Считается относительно контейнера (а не окна), поэтому прокрутка внутри страницы —
  * например, при раскрытии деталей — размер не меняет. Пересчёт при resize (требование 13.3).
  * В тестах (jsdom, нулевые размеры) — значение по умолчанию.
  */
-export function useAdaptivePageSize(ref: RefObject<HTMLElement | null>, reservedBelow = 64): number {
+export function useAdaptivePageSize(
+  ref: RefObject<HTMLElement | null>,
+  reservedBelow = PAGINATION_ROW_HEIGHT,
+): number {
   const [size, setSize] = useState(AUDIT_PAGE_SIZE_DEFAULT);
 
   useLayoutEffect(() => {

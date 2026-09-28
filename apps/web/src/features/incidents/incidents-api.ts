@@ -15,10 +15,26 @@ import { z } from 'zod';
 import { api, request } from '@/lib/api';
 
 export type IncidentsFilter = 'all' | 'open' | 'resolved';
+export interface IncidentsListParams {
+  /** Открыт не раньше этого момента (ISO) — например, «за последние 7 дней» для полосы итога. */
+  openedFrom?: string;
+  /** Только «Все»/«Решённые» режутся постранично — «Открытые» сервер всё равно вернёт целиком. */
+  page?: number;
+  pageSize?: number;
+}
 
 export const incidentsApi = {
-  list: (status: IncidentsFilter, signal?: AbortSignal): Promise<IncidentsListResponse> =>
-    api.get(`/incidents?status=${status}`, incidentsListResponseSchema, signal),
+  list: (
+    status: IncidentsFilter,
+    params?: IncidentsListParams,
+    signal?: AbortSignal,
+  ): Promise<IncidentsListResponse> => {
+    const q = new URLSearchParams({ status });
+    if (params?.openedFrom) q.set('openedFrom', params.openedFrom);
+    if (params?.page) q.set('page', String(params.page));
+    if (params?.pageSize) q.set('pageSize', String(params.pageSize));
+    return api.get(`/incidents?${q}`, incidentsListResponseSchema, signal);
+  },
   get: (id: string, signal?: AbortSignal): Promise<Incident> =>
     api.get(`/incidents/${id}`, incidentSchema, signal),
   acknowledge: (id: string): Promise<Incident> =>
@@ -40,7 +56,9 @@ export const incidentsApi = {
 export const incidentsKeys = {
   all: ['incidents'] as const,
   lists: ['incidents', 'list'] as const,
-  list: (status: IncidentsFilter) => ['incidents', 'list', status] as const,
+  // Без params — тот же ключ, что и раньше (важно: useOpenIncidentsCount опирается на него для кэша).
+  list: (status: IncidentsFilter, params?: IncidentsListParams) =>
+    params ? (['incidents', 'list', status, params] as const) : (['incidents', 'list', status] as const),
   item: (id: string) => ['incidents', 'item', id] as const,
   policy: ['incidents', 'policy'] as const,
 };
@@ -51,10 +69,13 @@ export const hasRunningAttempt = (items: Incident[] | undefined): boolean =>
     items?.some((i) => i.analysis?.status === 'running' || i.attempts.some((a) => a.status === 'running')),
   );
 
-export function useIncidents(status: IncidentsFilter) {
+export function useIncidents(status: IncidentsFilter, params?: IncidentsListParams & { enabled?: boolean }) {
+  const { enabled = true, ...listParams } = params ?? {};
+  const hasParams = Object.values(listParams).some((v) => v !== undefined);
   return useQuery({
-    queryKey: incidentsKeys.list(status),
-    queryFn: ({ signal }) => incidentsApi.list(status, signal),
+    queryKey: incidentsKeys.list(status, hasParams ? listParams : undefined),
+    queryFn: ({ signal }) => incidentsApi.list(status, hasParams ? listParams : undefined, signal),
+    enabled,
     // Живой поток приносит изменения сразу; опрос — страховка. Пока идёт попытка — чаще.
     refetchInterval: (q) => (hasRunningAttempt(q.state.data?.items) ? 2_000 : 60_000),
   });

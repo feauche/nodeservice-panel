@@ -490,11 +490,31 @@ function policyResponse(): IncidentPolicyResponse {
 
 export const incidentsHandlers = [
   http.get('/api/incidents', ({ request }) => {
-    const status = (new URL(request.url).searchParams.get('status') ?? 'all') as 'all' | 'open' | 'resolved';
-    const items = mockIncidents.items.filter((i) =>
-      status === 'open' ? i.status !== 'resolved' : status === 'resolved' ? i.status === 'resolved' : true,
-    );
-    return HttpResponse.json({ items, counts: counts() });
+    const url = new URL(request.url);
+    const status = (url.searchParams.get('status') ?? 'all') as 'all' | 'open' | 'resolved';
+    const openedFrom = url.searchParams.get('openedFrom');
+    const filtered = mockIncidents.items
+      .filter((i) =>
+        status === 'open' ? i.status !== 'resolved' : status === 'resolved' ? i.status === 'resolved' : true,
+      )
+      .filter((i) => !openedFrom || new Date(i.openedAt).getTime() >= new Date(openedFrom).getTime())
+      .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime());
+    // «Открытые» всегда целиком, как в настоящем API — резать их постранично не нужно, их и так мало.
+    if (status === 'open')
+      return HttpResponse.json({
+        items: filtered,
+        counts: counts(),
+        page: 1,
+        pageSize: Math.max(filtered.length, 1),
+        total: filtered.length,
+        totalPages: filtered.length > 0 ? 1 : 0,
+      });
+    const pageSize = Number(url.searchParams.get('pageSize') ?? 30);
+    const total = filtered.length;
+    const totalPages = Math.max(0, Math.ceil(total / pageSize));
+    const page = totalPages === 0 ? 1 : Math.min(Number(url.searchParams.get('page') ?? 1), totalPages);
+    const items = filtered.slice((page - 1) * pageSize, page * pageSize);
+    return HttpResponse.json({ items, counts: counts(), page, pageSize, total, totalPages });
   }),
   http.get('/api/incidents/policy', () => HttpResponse.json(policyResponse())),
   http.patch('/api/incidents/policy', async ({ request }) => {

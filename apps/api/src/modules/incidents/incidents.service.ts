@@ -7,6 +7,7 @@ import {
   INCIDENT_CHAINS,
   INCIDENT_KIND_META,
   INCIDENT_KINDS,
+  INCIDENTS_PAGE_SIZE_DEFAULT,
   type Incident,
   type IncidentAnalysis,
   type IncidentEvent,
@@ -93,20 +94,50 @@ export class IncidentsService {
     };
   }
 
-  async list(status: 'all' | 'open' | 'resolved'): Promise<IncidentsListResponse> {
+  /**
+   * `opts` не задан — вернуть список целиком (так его читают внутренние службы: джобы, ассистент).
+   * `opts` задан (всегда так с HTTP-ручки, там page/pageSize приходят со значениями по умолчанию) —
+   * настоящая постраничная выдача; «открытые» всё равно приходят целиком независимо от opts.
+   */
+  async list(
+    status: 'all' | 'open' | 'resolved',
+    opts?: { openedFrom?: string | undefined; page?: number; pageSize?: number },
+  ): Promise<IncidentsListResponse> {
     // Вид, которого в контракте уже нет (после переименований), не должен ломать страницу целиком.
     const known = new Set<string>(INCIDENT_KINDS);
-    const rows = (await this.repo.list(status)).filter((r) => known.has(r.kind));
-    const open = (await this.repo.list('open')).length;
-    const openRows = await this.repo.list('open');
+    const counts = await this.repo.counts();
+    const page = opts
+      ? await this.repo.listPage({
+          status,
+          openedFrom: opts.openedFrom,
+          page: opts.page ?? 1,
+          pageSize: opts.pageSize ?? INCIDENTS_PAGE_SIZE_DEFAULT,
+        })
+      : await (async () => {
+          const rows = await this.repo.list(status);
+          return {
+            items: rows,
+            page: 1,
+            pageSize: Math.max(rows.length, 1),
+            total: rows.length,
+            totalPages: rows.length > 0 ? 1 : 0,
+          };
+        })();
     return {
-      items: rows.map((r) => this.toDto(r)),
-      counts: {
-        open,
-        crit: openRows.filter((r) => r.severity === 'crit').length,
-        warn: openRows.filter((r) => r.severity === 'warn').length,
-      },
+      items: page.items.filter((r) => known.has(r.kind)).map((r) => this.toDto(r)),
+      counts,
+      page: page.page,
+      pageSize: page.pageSize,
+      total: page.total,
+      totalPages: page.totalPages,
     };
+  }
+
+  /** Закрыть инцидент как «поднялось само» по id — для внешних служб (например, перепроверка блокировки). */
+  async autoResolveById(id: string, reason: string): Promise<void> {
+    const row = await this.repo.findById(id);
+    if (!row || row.status === 'resolved') return;
+    await this.autoResolve(row, reason);
   }
 
   /** Записать разбор Джарвиса; false — инцидента уже нет (удалили во время разбора). */

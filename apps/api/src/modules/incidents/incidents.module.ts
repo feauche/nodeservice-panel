@@ -15,6 +15,7 @@ import { IncidentsRepository } from './incidents.repository.js';
 import { IncidentsService } from './incidents.service.js';
 import { NodeAnomalyJob } from './node-anomaly.job.js';
 import { NodeBlockCheckService } from './node-block-check.service.js';
+import { NodeBlockRecheckJob } from './node-block-recheck.job.js';
 import { NodeProbeJob } from './node-probe.job.js';
 
 /** R3: инциденты, детекция с гистерезисом, реестр действий T0–T3 с пред-/пост-проверкой и откатом. */
@@ -31,6 +32,7 @@ import { NodeProbeJob } from './node-probe.job.js';
     IncidentRunnerService,
     NodeBlockCheckService,
     NodeAnomalyJob,
+    NodeBlockRecheckJob,
   ],
   exports: [IncidentsService, IncidentRunnerService, IncidentMetricsService],
 })

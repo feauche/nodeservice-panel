@@ -106,6 +106,53 @@ describe('IncidentsPage', () => {
     expect(await screen.findByText(/Ждём ещё \d+ с — возможно, поднимется само/)).toBeInTheDocument();
   });
 
+  it('решённые режутся постранично; «Сейчас» с открытым видно на любой странице', async () => {
+    const [base] = mockIncidents.items;
+    if (!base) throw new Error('нет мок-инцидента');
+    const resolved = Array.from({ length: 45 }, (_, i) => ({
+      ...base,
+      id: `7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3c${String(i).padStart(2, '0')}`,
+      kind: 'cpu_high' as const,
+      status: 'resolved' as const,
+      openedAt: new Date(Date.now() - (i + 2) * 3_600_000).toISOString(),
+      resolvedAt: new Date(Date.now() - (i + 1) * 3_600_000).toISOString(),
+      resolvedBy: 'auto' as const,
+      attempts: [],
+      proposal: null,
+    }));
+    const open = {
+      ...base,
+      id: '7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3cff',
+      kind: 'ssh_down' as const,
+      status: 'open' as const,
+      resolvedAt: null,
+      resolvedBy: null,
+      attempts: [],
+      proposal: null,
+    };
+    mockIncidents.items = [open, ...resolved];
+    renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
+    const user = userEvent.setup();
+
+    // Вкладка «Все»: открытый под «Сейчас» виден сразу, решённых на первой странице 30 из 45.
+    await screen.findByRole('region', { name: 'Сейчас' });
+    await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(31));
+    expect(screen.getByText(/1–30 из 45/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Следующая' }));
+    await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(16));
+    expect(screen.getByText(/31–45 из 45/)).toBeInTheDocument();
+    // «Сейчас» с открытым остаётся на месте — вторая страница решённых её не подвинула.
+    expect(screen.getByRole('region', { name: 'Сейчас' })).toBeInTheDocument();
+
+    // Смена вкладки сбрасывает номер страницы решённых.
+    await user.click(screen.getByRole('button', { name: /^Открытые/ }));
+    expect(screen.getAllByTestId('incident-row')).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: /^Решённые/ }));
+    await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(30));
+    expect(screen.getByText(/1–30 из 45/)).toBeInTheDocument();
+  });
+
   it('пустое состояние, когда инцидентов нет', async () => {
     mockIncidents.items = [];
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);

@@ -425,14 +425,32 @@ export const incidentSchema = z.object({
 });
 export type Incident = z.infer<typeof incidentSchema>;
 
+export const INCIDENTS_PAGE_SIZE_MIN = 10;
+export const INCIDENTS_PAGE_SIZE_MAX = 100;
+export const INCIDENTS_PAGE_SIZE_DEFAULT = 30;
+
 export const incidentsListQuerySchema = z.object({
   status: z.enum(['all', 'open', 'resolved']).default('all'),
+  /** Открыт не раньше этого момента (ISO) — для «за последние N дней» без отдельной ручки. */
+  openedFrom: z.iso.datetime({ offset: true }).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce
+    .number()
+    .int()
+    .min(INCIDENTS_PAGE_SIZE_MIN)
+    .max(INCIDENTS_PAGE_SIZE_MAX)
+    .default(INCIDENTS_PAGE_SIZE_DEFAULT),
 });
 export type IncidentsListQuery = z.infer<typeof incidentsListQuerySchema>;
 
 export const incidentsListResponseSchema = z.object({
   items: z.array(incidentSchema),
   counts: z.object({ open: z.number().int(), crit: z.number().int(), warn: z.number().int() }),
+  /** «Открытые» приходят всегда целиком (их немного) — постранично режутся только «Все»/«Решённые». */
+  page: z.number().int().min(1),
+  pageSize: z.number().int().min(1),
+  total: z.number().int().min(0),
+  totalPages: z.number().int().min(0),
 });
 export type IncidentsListResponse = z.infer<typeof incidentsListResponseSchema>;
 

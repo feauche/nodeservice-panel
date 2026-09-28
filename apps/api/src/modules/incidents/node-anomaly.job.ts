@@ -22,19 +22,29 @@ interface Sample {
   checkedAt: string;
 }
 
+/** Просадка увидена, но ещё не открыта — ждёт подтверждения следующим снимком (см. коммент к checkNode). */
+interface Candidate {
+  baselineOnline: number;
+}
+
 /**
- * J10: аномалия онлайна ноды Remnawave (решения владельца 27.09.2026, уточнение 28.09.2026). Раз в
- * минуту сравнивает свежий снимок Remnawave с предыдущим по каждой ноде; сами данные обновляются реже
- * (см. REMNAWAVE_SYNC_INTERVAL_MIN), поэтому по факту сравнение идёт между двумя последними РАЗНЫМИ
- * снимками — этого достаточно для порога «за 5 минут». Само резкое падение онлайна уже достойно
- * внимания (нода могла упасть и по другой причине), поэтому инцидент заводится всегда, но важность и
- * заголовок честно отражают результат встречной проверки: подтвердилась блокировка — крит, проверка
- * прошла чисто или не смогла отработать — предупреждение без слова «блокировка» в заголовке.
+ * J10: аномалия онлайна ноды Remnawave (решения владельца 27.09.2026, уточнение 28.09.2026, поправка
+ * 28.09.2026 про короткие просадки). Раз в минуту сравнивает свежий снимок Remnawave с предыдущим по
+ * каждой ноде; сами данные обновляются реже (см. REMNAWAVE_SYNC_INTERVAL_MIN), поэтому по факту
+ * сравнение идёт между двумя последними РАЗНЫМИ снимками — этого достаточно для порога «за 5 минут».
+ * Резкое падение онлайна не открывает инцидент сразу: обычная перезагрузка сервера тоже на секунды
+ * роняет онлайн до нуля и сама поднимается. Первое обнаружение — только кандидат; открываем инцидент,
+ * лишь если следующий снимок этой же ноды снова подтверждает просадку (на практике — не раньше
+ * следующего тика, то есть где-то через минуту, а не сразу). Если к тому моменту онлайн уже вернулся —
+ * инцидент не заводим вовсе, тихо. Важность и заголовок открытого честно отражают результат встречной
+ * проверки: подтвердилась блокировка — крит, проверка прошла чисто или не смогла отработать —
+ * предупреждение без слова «блокировка» в заголовке.
  */
 @Injectable()
 export class NodeAnomalyJob {
   private readonly log = new Logger(NodeAnomalyJob.name);
   private readonly lastSample = new Map<string, Sample>();
+  private readonly pending = new Map<string, Candidate>();
   private readonly cooldownUntil = new Map<string, number>();
   private busy = false;
 
@@ -71,15 +81,31 @@ export class NodeAnomalyJob {
     // Тот же снимок Remnawave (данные ещё не обновились) — сравнивать пока не с чем, ждём следующего.
     if (prev && prev.checkedAt === checkedAt) return;
     this.lastSample.set(node.uuid, { online, checkedAt });
+
+    const candidate = this.pending.get(node.uuid);
+    if (candidate) {
+      this.pending.delete(node.uuid);
+      const stillDown = online < candidate.baselineOnline * (1 - NODE_ONLINE_DROP_PCT / 100);
+      if (stillDown) {
+        const until = this.cooldownUntil.get(node.uuid) ?? 0;
+        if (Date.now() >= until) {
+          this.cooldownUntil.set(node.uuid, Date.now() + COOLDOWN_MIN * 60_000);
+          await this.investigate(node, candidate.baselineOnline, online).catch((err) =>
+            this.log.warn(
+              `Проверка блокировки ноды «${node.name}»: ${err instanceof Error ? err.message : err}`,
+            ),
+          );
+        }
+        return;
+      }
+      // Поднялось само на следующей же проверке — инцидент не заводим, идём дальше как обычно.
+    }
+
     if (!prev || prev.online < NODE_ONLINE_DROP_MIN_BASELINE) return;
     const dropPct = ((prev.online - online) / prev.online) * 100;
     if (dropPct < NODE_ONLINE_DROP_PCT) return;
-    const until = this.cooldownUntil.get(node.uuid) ?? 0;
-    if (Date.now() < until) return;
-    this.cooldownUntil.set(node.uuid, Date.now() + COOLDOWN_MIN * 60_000);
-    await this.investigate(node, prev.online, online).catch((err) =>
-      this.log.warn(`Проверка блокировки ноды «${node.name}»: ${err instanceof Error ? err.message : err}`),
-    );
+    // Не открываем сразу — ждём подтверждения следующим снимком (см. коммент к классу).
+    this.pending.set(node.uuid, { baselineOnline: prev.online });
   }
 
   private async investigate(node: RemnawaveNode, before: number, after: number): Promise<void> {

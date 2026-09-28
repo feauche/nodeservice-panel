@@ -1,9 +1,10 @@
 import { INCIDENT_KIND_META, type Incident, type IncidentStatus } from '@nodeservice/shared';
 import { Link } from '@tanstack/react-router';
 import { ChevronRightIcon, Trash2Icon, WrenchIcon } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
+import { Pagination } from '@/components/pagination';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
@@ -32,6 +33,31 @@ const STATUS_PILL: Record<IncidentStatus, { tone: 'ok' | 'warn' | 'crit' | 'mute
   acknowledged: { tone: 'warn', label: 'В работе' },
   resolved: { tone: 'ok', label: 'Решён' },
 };
+/** Сколько решённых показывать на одной странице (открытые — не режем, их и так немного). */
+const RESOLVED_PAGE_SIZE = 30;
+const dayGroups = (
+  items: Incident[],
+  now: number,
+): Array<{ key: string; label: string; note?: string; items: Incident[] }> => {
+  // Недавно закрытый — сверху; день группы — день закрытия, а не открытия.
+  const sorted = [...items].sort((a, b) => closedAtMs(b) - closedAtMs(a));
+  const byDay = new Map<string, Incident[]>();
+  for (const inc of sorted) {
+    const label = dayLabel(inc.resolvedAt ?? inc.openedAt, now);
+    byDay.set(label, [...(byDay.get(label) ?? []), inc]);
+  }
+  return [...byDay].map(([label, list]) => {
+    const auto = list.filter((i) => i.attempts.some((a) => a.status === 'helped' && a.by === 'auto')).length;
+    const n = list.length;
+    const word = n === 1 ? 'сбой' : n < 5 ? 'сбоя' : 'сбоев';
+    return {
+      key: label,
+      label,
+      note: auto === n ? `${n} ${word} · все починила панель` : `${n} ${word}`,
+      items: list,
+    };
+  });
+};
 
 /** Цвет полоски слева: итог инцидента одним взглядом. */
 function barTone(inc: Incident): string {
@@ -47,69 +73,60 @@ function barTone(inc: Incident): string {
  */
 export function IncidentsPage() {
   const [filter, setFilter] = useState<IncidentsFilter>('all');
-  const incidents = useIncidents('all');
-  const all = incidents.data?.items ?? [];
-  const anyOpen = all.some((i) => i.status !== 'resolved');
-  const now = useNow(anyOpen, 1000);
+  const [page, setPage] = useState(1);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: страница сбрасывается только при смене вкладки
+  useEffect(() => setPage(1), [filter]);
+
+  // Открытых обычно мало — держим целиком, без пагинации: «Сейчас» видно сразу на любой вкладке, кроме
+  // «Решённые». Решённые (основная масса истории) режем постранично, как «Журнал».
+  const needsOpen = filter !== 'resolved';
+  const needsResolved = filter !== 'open';
+  const open = useIncidents('open');
+  const resolvedPaged = useIncidents('resolved', {
+    page,
+    pageSize: RESOLVED_PAGE_SIZE,
+    enabled: needsResolved,
+  });
+  // Полоса «за 7 дней» — отдельный запрос с датой, не зависит от вкладки и страницы.
+  const sevenDaysAgo = useMemo(() => new Date(Date.now() - 7 * 86_400_000).toISOString(), []);
+  const weekly = useIncidents('all', { openedFrom: sevenDaysAgo, pageSize: 500 });
+
+  const openItems = open.data?.items ?? [];
+  const now = useNow(openItems.length > 0, 1000);
   const deleteResolved = useDeleteResolvedIncidents();
   const [confirmClear, setConfirmClear] = useState(false);
 
-  const items = useMemo(
-    () =>
-      filter === 'open'
-        ? all.filter((i) => i.status !== 'resolved')
-        : filter === 'resolved'
-          ? all.filter((i) => i.status === 'resolved')
-          : all,
-    [all, filter],
-  );
-  const openCount = all.filter((i) => i.status !== 'resolved').length;
-  const stats = useMemo(() => weekStats(all, now), [all, now]);
+  const openCount = openItems.length;
+  const stats = useMemo(() => weekStats(weekly.data?.items ?? [], now), [weekly.data, now]);
 
-  // Группы: открытые под «Сейчас», решённые — по дню открытия.
+  const resolvedItems = resolvedPaged.data?.items ?? [];
+  const showOpen = needsOpen && openItems.length > 0;
+  const showResolved = needsResolved && resolvedItems.length > 0;
   const groups = useMemo(() => {
     const out: Array<{ key: string; label: string; note?: string; items: Incident[] }> = [];
-    const open = items.filter((i) => i.status !== 'resolved');
-    if (open.length > 0) out.push({ key: 'now', label: 'Сейчас', items: open });
-    // Решённые: недавно закрытый — сверху; день группы — день закрытия, а не открытия.
-    const resolved = items
-      .filter((i) => i.status === 'resolved')
-      .sort((a, b) => closedAtMs(b) - closedAtMs(a));
-    const byDay = new Map<string, Incident[]>();
-    for (const inc of resolved) {
-      const label = dayLabel(inc.resolvedAt ?? inc.openedAt, now);
-      byDay.set(label, [...(byDay.get(label) ?? []), inc]);
-    }
-    for (const [label, list] of byDay) {
-      const auto = list.filter((i) =>
-        i.attempts.some((a) => a.status === 'helped' && a.by === 'auto'),
-      ).length;
-      const n = list.length;
-      const word = n === 1 ? 'сбой' : n < 5 ? 'сбоя' : 'сбоев';
-      out.push({
-        key: label,
-        label,
-        note: auto === n ? `${n} ${word} · все починила панель` : `${n} ${word}`,
-        items: list,
-      });
-    }
+    if (showOpen) out.push({ key: 'now', label: 'Сейчас', items: openItems });
+    if (showResolved) out.push(...dayGroups(resolvedItems, now));
     return out;
-  }, [items, now]);
+  }, [showOpen, openItems, showResolved, resolvedItems, now]);
 
-  if (incidents.isPending)
+  const pending =
+    (needsOpen && open.isPending) || (needsResolved && resolvedPaged.isPending) || weekly.isPending;
+  const failed = open.isError ? open.error : resolvedPaged.isError ? resolvedPaged.error : null;
+
+  if (pending)
     return (
       <div className="flex flex-col gap-4">
         <Skeleton className="h-[60px] rounded-2xl" />
         <Skeleton className="h-[320px] rounded-2xl" />
       </div>
     );
-  if (incidents.isError)
+  if (failed)
     return (
       <p
         role="alert"
         className="rounded-[12px] border border-crit/30 bg-crit-soft px-4 py-3 text-[13px] text-crit"
       >
-        {apiErrorMessage(incidents.error)}
+        {apiErrorMessage(failed)}
       </p>
     );
 
@@ -139,7 +156,7 @@ export function IncidentsPage() {
           ))}
         </fieldset>
         <span className="flex-1" />
-        {filter === 'resolved' && items.length > 0 && (
+        {filter === 'resolved' && (resolvedPaged.data?.total ?? 0) > 0 && (
           <button
             type="button"
             disabled={deleteResolved.isPending}
@@ -161,7 +178,7 @@ export function IncidentsPage() {
 
       <StatsStrip stats={stats} />
 
-      {items.length === 0 ? (
+      {!showOpen && !showResolved ? (
         <div className="grid place-items-center rounded-2xl border border-dashed border-border-2 px-6 py-16 text-center">
           <div className="text-[14px] font-semibold">Пока спокойно</div>
           <div className="mt-1 text-[12.5px] text-text-3">
@@ -183,6 +200,24 @@ export function IncidentsPage() {
               ))}
             </section>
           ))}
+        </div>
+      )}
+
+      {needsResolved && resolvedPaged.data && resolvedPaged.data.total > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+          <p className="text-[12px] text-text-3 tabular-nums">
+            {filter === 'all' ? 'Решённых: ' : ''}
+            {`${(resolvedPaged.data.page - 1) * resolvedPaged.data.pageSize + 1}–${Math.min(
+              resolvedPaged.data.page * resolvedPaged.data.pageSize,
+              resolvedPaged.data.total,
+            )} из ${resolvedPaged.data.total.toLocaleString('ru-RU')}`}
+          </p>
+          <Pagination
+            page={resolvedPaged.data.page}
+            totalPages={resolvedPaged.data.totalPages}
+            onChange={setPage}
+            label="Страницы решённых инцидентов"
+          />
         </div>
       )}
 

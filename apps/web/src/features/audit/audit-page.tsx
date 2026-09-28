@@ -23,7 +23,7 @@ import {
   XIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-
+import { Pagination } from '@/components/pagination';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -53,7 +53,6 @@ import {
   toFilter,
   toListQuery,
 } from './audit-search';
-import { Pagination } from './pagination';
 import { useAdaptivePageSize } from './use-adaptive-page-size';
 
 export interface AuditPageProps {
@@ -247,6 +246,7 @@ export function AuditPage({ search, onSearch }: AuditPageProps) {
             page={data.page}
             totalPages={data.totalPages}
             onChange={(p) => onSearch({ page: p === 1 ? undefined : p })}
+            label="Страницы журнала"
           />
         </div>
       )}
