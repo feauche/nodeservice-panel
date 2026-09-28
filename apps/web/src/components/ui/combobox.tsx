@@ -156,7 +156,10 @@ export function Combobox({
     'flex w-[calc(100%-8px)] cursor-pointer items-center gap-2 rounded-[8px] mx-1 px-2.5 py-2 text-left text-[13px] text-text-2';
 
   return (
-    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+    // modal: поле часто открыто внутри модального окна (например «Добавить сервер»), а оно блокирует
+    // прокрутку колесом у всего, что не является его собственным содержимым, — список без этого не
+    // прокручивался бы (в окне «Подключение» бага не было только потому, что то окно не модальное).
+    <PopoverPrimitive.Root open={open} onOpenChange={setOpen} modal>
       <PopoverPrimitive.Trigger asChild>
         <button
           type="button"
