@@ -150,6 +150,7 @@ export const AUDIT_ACTIONS = {
     category: 'server',
     label: 'Включены автообновления безопасности',
   },
+  'server.check.run': { category: 'server', label: 'Проверка сервера (реестр проверок)' },
   'settings.autochecks.updated': { category: 'settings', label: 'Автопроверки изменены' },
   'settings.incidents.updated': { category: 'settings', label: 'Настройки инцидентов изменены' },
   'settings.assistant.updated': { category: 'settings', label: 'Настройки Джарвиса изменены' },

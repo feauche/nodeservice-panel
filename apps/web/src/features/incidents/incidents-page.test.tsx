@@ -134,14 +134,14 @@ describe('IncidentsPage', () => {
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     const user = userEvent.setup();
 
-    // Вкладка «Все»: открытый под «Сейчас» виден сразу, решённых на первой странице 30 из 45.
+    // Вкладка «Все»: открытый под «Сейчас» виден сразу, решённых на первой странице 10 из 45.
     await screen.findByRole('region', { name: 'Сейчас' });
-    await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(31));
-    expect(screen.getByText(/1–30 из 45/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(11));
+    expect(screen.getByText(/1–10 из 45/)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Следующая' }));
-    await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(16));
-    expect(screen.getByText(/31–45 из 45/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(11));
+    expect(screen.getByText(/11–20 из 45/)).toBeInTheDocument();
     // «Сейчас» с открытым остаётся на месте — вторая страница решённых её не подвинула.
     expect(screen.getByRole('region', { name: 'Сейчас' })).toBeInTheDocument();
 
@@ -149,8 +149,8 @@ describe('IncidentsPage', () => {
     await user.click(screen.getByRole('button', { name: /^Открытые/ }));
     expect(screen.getAllByTestId('incident-row')).toHaveLength(1);
     await user.click(screen.getByRole('button', { name: /^Решённые/ }));
-    await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(30));
-    expect(screen.getByText(/1–30 из 45/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(10));
+    expect(screen.getByText(/1–10 из 45/)).toBeInTheDocument();
   });
 
   it('пустое состояние, когда инцидентов нет', async () => {

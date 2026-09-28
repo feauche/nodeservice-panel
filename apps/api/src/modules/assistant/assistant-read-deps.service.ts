@@ -6,6 +6,7 @@ import { IncidentsService } from '../incidents/incidents.service.js';
 import { MaintenanceService } from '../maintenance/maintenance.service.js';
 import { VmReaderService } from '../metrics/vm-reader.service.js';
 import { ProvidersService } from '../providers/providers.service.js';
+import { ServerChecksService } from '../server-checks/server-checks.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import type { ReadDeps } from './assistant.read-tools.js';
 import { FleetProbeService } from './fleet-probe.service.js';
@@ -20,6 +21,7 @@ export class ReadDepsService {
     private readonly incidentMetrics: IncidentMetricsService,
     private readonly providers: ProvidersService,
     private readonly maintenance: MaintenanceService,
+    private readonly checks: ServerChecksService,
     private readonly probe: FleetProbeService,
   ) {}
 
@@ -31,6 +33,7 @@ export class ReadDepsService {
       incidentMetrics: this.incidentMetrics,
       providers: this.providers,
       maintenance: this.maintenance,
+      checks: this.checks,
       probe: this.probe,
       permissions,
     };

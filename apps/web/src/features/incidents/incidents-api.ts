@@ -4,9 +4,11 @@ import {
   type IncidentPolicyResponse,
   type IncidentPolicyUpdate,
   type IncidentsListResponse,
+  type IncidentWeekStats,
   incidentPolicyResponseSchema,
   incidentSchema,
   incidentsListResponseSchema,
+  incidentWeekStatsSchema,
   type ResolveIncidentRequest,
 } from '@nodeservice/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -35,6 +37,8 @@ export const incidentsApi = {
     if (params?.pageSize) q.set('pageSize', String(params.pageSize));
     return api.get(`/incidents?${q}`, incidentsListResponseSchema, signal);
   },
+  weekStats: (signal?: AbortSignal): Promise<IncidentWeekStats> =>
+    api.get('/incidents/week-stats', incidentWeekStatsSchema, signal),
   get: (id: string, signal?: AbortSignal): Promise<Incident> =>
     api.get(`/incidents/${id}`, incidentSchema, signal),
   acknowledge: (id: string): Promise<Incident> =>
@@ -61,6 +65,7 @@ export const incidentsKeys = {
     params ? (['incidents', 'list', status, params] as const) : (['incidents', 'list', status] as const),
   item: (id: string) => ['incidents', 'item', id] as const,
   policy: ['incidents', 'policy'] as const,
+  weekStats: ['incidents', 'week-stats'] as const,
 };
 
 /** Идёт ли по какому-то инциденту попытка или разбор Джарвиса — тогда данные перечитываются часто. */
@@ -78,6 +83,15 @@ export function useIncidents(status: IncidentsFilter, params?: IncidentsListPara
     enabled,
     // Живой поток приносит изменения сразу; опрос — страховка. Пока идёт попытка — чаще.
     refetchInterval: (q) => (hasRunningAttempt(q.state.data?.items) ? 2_000 : 60_000),
+  });
+}
+
+/** Полоса «за 7 дней»: сервер отдаёт готовые цифры — без выгрузки самих инцидентов, поэтому быстро. */
+export function useIncidentWeekStats() {
+  return useQuery({
+    queryKey: incidentsKeys.weekStats,
+    queryFn: ({ signal }) => incidentsApi.weekStats(signal),
+    refetchInterval: 60_000,
   });
 }
 

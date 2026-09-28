@@ -15,7 +15,9 @@ import {
   type IncidentPolicyResponse,
   type IncidentPolicyUpdate,
   type IncidentsListResponse,
+  type IncidentWeekStats,
   incidentTitleToken,
+  incidentWeekStats,
   type NodeState,
   type ResolveIncidentRequest,
 } from '@nodeservice/shared';
@@ -99,6 +101,22 @@ export class IncidentsService {
    * `opts` задан (всегда так с HTTP-ручки, там page/pageSize приходят со значениями по умолчанию) —
    * настоящая постраничная выдача; «открытые» всё равно приходят целиком независимо от opts.
    */
+  /** Итог за 7 дней для полосы над реестром — считается здесь, страница не тянет сами инциденты. */
+  async weekStats(): Promise<IncidentWeekStats> {
+    const now = Date.now();
+    const rows = await this.repo.weekRows(new Date(now - 7 * 86_400_000));
+    return incidentWeekStats(
+      rows.map((r) => ({
+        status: r.status as Incident['status'],
+        openedAt: r.openedAt.toISOString(),
+        resolvedAt: r.resolvedAt?.toISOString() ?? null,
+        resolvedBy: r.resolvedBy as Incident['resolvedBy'],
+        attempts: r.attempts,
+      })),
+      now,
+    );
+  }
+
   async list(
     status: 'all' | 'open' | 'resolved',
     opts?: { openedFrom?: string | undefined; page?: number; pageSize?: number },

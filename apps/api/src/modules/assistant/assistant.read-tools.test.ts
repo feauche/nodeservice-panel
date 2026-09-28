@@ -97,6 +97,25 @@ function deps(over: Partial<Record<keyof ReadDeps, unknown>> = {}): ReadDeps {
         lastRun: null,
       }),
     },
+    checks: {
+      list: async () => ({
+        nextAutoAt: '2026-09-29T10:00:00.000Z',
+        items: [
+          {
+            id: '0199a0b0-0000-7000-8000-000000000001',
+            serverId: ID_A,
+            check: 'geoblock',
+            status: 'ok',
+            trigger: 'auto',
+            actorDisplay: null,
+            startedAt: '2026-09-28T10:00:00.000Z',
+            finishedAt: '2026-09-28T10:02:00.000Z',
+            output: `${'шапка\n'.repeat(4000)}ChatGPT: заблокирован по региону`,
+            error: null,
+          },
+        ],
+      }),
+    },
     permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT, nodeLogs: true },
     ...over,
   } as unknown as ReadDeps;
@@ -281,6 +300,18 @@ describe('list_incidents / get_incident', () => {
       },
     });
     expect((await call('get_incident', { incidentId: 'zzz' }, d)).out.content).toContain('не найден');
+  });
+});
+
+describe('get_server_checks', () => {
+  it('отдаёт последний вывод проверок с понятным названием, конец длинного вывода сохраняется', async () => {
+    const { json } = await call('get_server_checks', { serverId: 'de-1' });
+    const r = json();
+    expect(r.checks[0].check).toBe('Геоблок');
+    expect(r.checks[0].output).toContain('ChatGPT: заблокирован по региону');
+    expect(r.checks[0].output.length).toBeLessThan(13_000);
+    expect(r.notRunYet).toContain('Процессор');
+    expect(r.notRunYet).not.toContain('Геоблок');
   });
 });
 

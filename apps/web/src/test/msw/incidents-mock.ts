@@ -17,6 +17,7 @@ import {
   type IncidentsSettings,
   incidentPolicyUpdateSchema,
   incidentsSettingsUpdateSchema,
+  incidentWeekStats,
   resolveIncidentRequestSchema,
 } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
@@ -516,6 +517,9 @@ export const incidentsHandlers = [
     const items = filtered.slice((page - 1) * pageSize, page * pageSize);
     return HttpResponse.json({ items, counts: counts(), page, pageSize, total, totalPages });
   }),
+  http.get('/api/incidents/week-stats', () =>
+    HttpResponse.json(incidentWeekStats(mockIncidents.items, Date.now())),
+  ),
   http.get('/api/incidents/policy', () => HttpResponse.json(policyResponse())),
   http.patch('/api/incidents/policy', async ({ request }) => {
     const parsed = incidentPolicyUpdateSchema.safeParse(await request.json());

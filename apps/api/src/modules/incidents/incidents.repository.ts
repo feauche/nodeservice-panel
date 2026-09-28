@@ -76,6 +76,20 @@ export class IncidentsRepository {
   }
 
   /** Счётчики для шапки — всегда по всей таблице, независимо от текущей страницы/фильтра. */
+  /** Лёгкая выборка для полосы «за 7 дней»: только поля подсчёта, без разборов и хронологии. */
+  async weekRows(openedFrom: Date) {
+    return this.db
+      .select({
+        status: incidents.status,
+        openedAt: incidents.openedAt,
+        resolvedAt: incidents.resolvedAt,
+        resolvedBy: incidents.resolvedBy,
+        attempts: incidents.attempts,
+      })
+      .from(incidents)
+      .where(gte(incidents.openedAt, openedFrom));
+  }
+
   async counts(): Promise<{ open: number; crit: number; warn: number }> {
     const [open] = await this.db
       .select({ n: sql<number>`count(*)::int` })

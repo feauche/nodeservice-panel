@@ -30,6 +30,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { ProvidersModule } from './modules/providers/providers.module.js';
 import { RemnawaveModule } from './modules/remnawave/remnawave.module.js';
 import { SecurityModule } from './modules/security/security.module.js';
+import { ServerChecksModule } from './modules/server-checks/server-checks.module.js';
 import { ServersModule } from './modules/servers/servers.module.js';
 import { SettingsModule } from './modules/settings/settings.module.js';
 import { TerminalModule } from './modules/terminal/terminal.module.js';
@@ -95,6 +96,7 @@ import { TerminalModule } from './modules/terminal/terminal.module.js';
     MetricsModule,
     TerminalModule,
     MaintenanceModule,
+    ServerChecksModule,
     IncidentsModule,
     HousekeepingModule,
     EventsModule,

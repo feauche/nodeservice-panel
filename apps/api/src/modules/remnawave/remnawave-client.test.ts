@@ -358,6 +358,53 @@ describe('HttpRemnawaveClient.findNodeInbound (J10)', () => {
     expect(r).toEqual({ sni: null, port: 8388 });
   });
 
+  it('в списке нод нет сырого конфига инбаунда — имя маскировки берётся из профиля конфигурации по тегу (selfsteal)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      respond({
+        '/api/nodes': {
+          response: [
+            {
+              uuid: 'n1',
+              port: 443,
+              configProfile: {
+                activeConfigProfileUuid: 'p1',
+                activeInbounds: [
+                  {
+                    uuid: 'i1',
+                    profileUuid: 'p1',
+                    tag: 'reality-in',
+                    type: 'vless',
+                    security: 'reality',
+                    port: 443,
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        '/api/config-profiles/p1': {
+          response: {
+            uuid: 'p1',
+            config: {
+              inbounds: [
+                {
+                  tag: 'reality-in',
+                  streamSettings: {
+                    security: 'reality',
+                    realitySettings: { serverNames: ['node1.my-selfsteal.ru'], dest: '127.0.0.1:9443' },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      }),
+    );
+    const r = await new HttpRemnawaveClient().findNodeInbound('vpn-panel.example.com', 'k', 'n1');
+    expect(r).toEqual({ sni: 'node1.my-selfsteal.ru', port: 443 });
+  });
+
   it('нода не найдена по uuid — null', async () => {
     vi.stubGlobal('fetch', respond({ '/api/nodes': { response: [] } }));
     const r = await new HttpRemnawaveClient().findNodeInbound('vpn-panel.example.com', 'k', 'missing');

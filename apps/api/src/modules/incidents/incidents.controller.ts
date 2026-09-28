@@ -19,6 +19,7 @@ import {
   incidentSchema,
   incidentsListQuerySchema,
   incidentsListResponseSchema,
+  incidentWeekStatsSchema,
   resolveIncidentRequestSchema,
 } from '@nodeservice/shared';
 import { createZodDto } from 'nestjs-zod';
@@ -29,6 +30,7 @@ import { IncidentsService } from './incidents.service.js';
 export class IncidentsListQueryDto extends createZodDto(incidentsListQuerySchema) {}
 export class IncidentsListResponseDto extends createZodDto(incidentsListResponseSchema) {}
 export class IncidentDto extends createZodDto(incidentSchema) {}
+export class IncidentWeekStatsDto extends createZodDto(incidentWeekStatsSchema) {}
 export class IncidentPolicyResponseDto extends createZodDto(incidentPolicyResponseSchema) {}
 export class IncidentPolicyUpdateDto extends createZodDto(incidentPolicyUpdateSchema) {}
 
@@ -47,6 +49,13 @@ export class IncidentsController {
       page: query.page,
       pageSize: query.pageSize,
     });
+  }
+
+  @Get('week-stats')
+  @ApiOperation({ summary: 'Итог за 7 дней для полосы над реестром' })
+  @ApiOkResponse({ type: IncidentWeekStatsDto })
+  weekStats(): Promise<IncidentWeekStatsDto> {
+    return this.incidents.weekStats();
   }
 
   // Статический маршрут раньше `:id`, иначе ParseUUIDPipe отвергнет «policy».

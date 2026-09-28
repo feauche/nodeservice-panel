@@ -7,6 +7,7 @@ import { MaintenanceModule } from '../maintenance/maintenance.module.js';
 import { MetricsModule } from '../metrics/metrics.module.js';
 import { ProvidersModule } from '../providers/providers.module.js';
 import { RemnawaveModule } from '../remnawave/remnawave.module.js';
+import { ServerChecksModule } from '../server-checks/server-checks.module.js';
 import { ServersModule } from '../servers/servers.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { AssistantController } from './assistant.controller.js';
@@ -36,6 +37,7 @@ import { ZvenoProvider } from './zveno.provider.js';
     KnowledgeModule,
     MetricsModule,
     MaintenanceModule,
+    ServerChecksModule,
     ProvidersModule,
     RemnawaveModule,
     AuditModule,

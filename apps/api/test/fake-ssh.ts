@@ -45,6 +45,8 @@ export class FakeSsh {
   maintenance = { updates: 3, security: 1, reboot: false, failStep: '' as string };
   /** J10: что «печатает» проверка блокировки (ns-blockcheck) — одна строка JSON вида parseBlockCheckOutput. */
   blockCheckOutput = '{"stage":"data","ok":true,"stalledAtKb":null}';
+  /** Реестр проверок (ns-check): вывод по ключу и код выхода (по умолчанию 0). */
+  checks: { output: Record<string, string>; code: Record<string, number> } = { output: {}, code: {} };
 
   async start(port = 0): Promise<void> {
     this.hostKey ??= toOpenSshPrivate(generateKeyPairSync('ed25519').privateKey, 'fake-host');
@@ -124,6 +126,12 @@ export class FakeSsh {
                   }
                   stream.exit(0);
                 }
+              } else if (info.command.startsWith('# ns-check:')) {
+                const key = info.command.split('\n')[0]?.replace('# ns-check:', '') ?? '';
+                stream.write(
+                  this.checks.output[key] ?? `\u001b[32mпроверка ${key}\u001b[0m\n10%\r100%\nготово\n`,
+                );
+                stream.exit(this.checks.code[key] ?? 0);
               } else if (info.command.includes('# ns-blockcheck')) {
                 stream.write(`${this.blockCheckOutput}\n`);
                 stream.exit(0);

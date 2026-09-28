@@ -1,4 +1,11 @@
-import { AUTOFIX_GRACE_SECONDS, actionMeta, INCIDENT_CHAINS, type Incident } from '@nodeservice/shared';
+import {
+  AUTOFIX_GRACE_SECONDS,
+  actionMeta,
+  INCIDENT_CHAINS,
+  type Incident,
+  type IncidentWeekStats,
+  incidentWeekStats,
+} from '@nodeservice/shared';
 
 /** Порядковые для «помогло с … попытки». */
 const ORDINAL = ['первой', 'второй', 'третьей', 'четвёртой', 'пятой'];
@@ -94,55 +101,10 @@ export function dayLabel(iso: string, now: number): string {
 export const hhmm = (iso: string): string =>
   new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 
-export interface WeekStats {
-  total: number;
-  /** Починила панель сама: помог автоматический шаг. */
-  auto: number;
-  /** Помог шаг, который вы подтвердили. */
-  waited: number;
-  /** Ушло без помощи: шаги не помогли или не понадобились. */
-  self: number;
-  /** Закрыто вручную. */
-  manual: number;
-  open: number;
-  /** Медианное время от сбоя до починки шагом панели, секунды. */
-  medianFixS: number | null;
-}
+export type WeekStats = IncidentWeekStats;
 
-/** Медиана, а не среднее: один инцидент на сутки не должен превращать «время починки» в часы. */
-const median = (xs: number[]): number | null => {
-  if (xs.length === 0) return null;
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? (s[mid] as number) : Math.round(((s[mid - 1] as number) + (s[mid] as number)) / 2);
-};
-
-/** Итог за 7 дней для полосы над реестром. */
-export function weekStats(items: Incident[], now: number): WeekStats {
-  const since = now - 7 * 86_400_000;
-  const week = items.filter((i) => new Date(i.openedAt).getTime() >= since);
-  let auto = 0;
-  let waited = 0;
-  let self = 0;
-  let manual = 0;
-  let open = 0;
-  const fixDurations: number[] = [];
-  for (const i of week) {
-    if (i.status !== 'resolved') {
-      open += 1;
-      continue;
-    }
-    const helped = [...i.attempts].reverse().find((a) => a.status === 'helped');
-    if (helped) {
-      if (helped.by === 'manual') waited += 1;
-      else auto += 1;
-      if (i.resolvedAt)
-        fixDurations.push((new Date(i.resolvedAt).getTime() - new Date(i.openedAt).getTime()) / 1000);
-    } else if (i.resolvedBy === 'manual') manual += 1;
-    else self += 1;
-  }
-  return { total: week.length, auto, waited, self, manual, open, medianFixS: median(fixDurations) };
-}
+/** Итог за 7 дней для полосы над реестром — общая функция, её же считает сервер. */
+export const weekStats = (items: Incident[], now: number): WeekStats => incidentWeekStats(items, now);
 
 /** Время закрытия для сортировки реестра; у открытого — момент открытия. */
 export const closedAtMs = (inc: Incident): number => new Date(inc.resolvedAt ?? inc.openedAt).getTime();

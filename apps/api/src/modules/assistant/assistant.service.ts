@@ -20,6 +20,7 @@ import { MaintenanceService } from '../maintenance/maintenance.service.js';
 import { VmReaderService } from '../metrics/vm-reader.service.js';
 import { ProvidersService } from '../providers/providers.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
+import { ServerChecksService } from '../server-checks/server-checks.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import { AutochecksStore } from '../settings/autochecks.store.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
@@ -76,6 +77,7 @@ export class AssistantService {
     private readonly incidentMetrics: IncidentMetricsService,
     private readonly providers: ProvidersService,
     private readonly maintenance: MaintenanceService,
+    private readonly checks: ServerChecksService,
     private readonly probe: FleetProbeService,
     private readonly kb: KnowledgeRepository,
     private readonly knowledge: KnowledgeService,
@@ -214,6 +216,7 @@ export class AssistantService {
       incidentMetrics: this.incidentMetrics,
       providers: this.providers,
       maintenance: this.maintenance,
+      checks: this.checks,
       probe: this.probe,
       kb: this.kb,
       audit: this.auditRepo,

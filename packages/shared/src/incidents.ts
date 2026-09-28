@@ -540,3 +540,57 @@ export type IncidentsSettingsUpdate = z.infer<typeof incidentsSettingsUpdateSche
 /** Ручное закрытие: для «Контейнер ноды не запущен» можно заодно выключить слежение за нодой на сервере. */
 export const resolveIncidentRequestSchema = z.object({ stopNodeWatch: z.boolean().optional() });
 export type ResolveIncidentRequest = z.infer<typeof resolveIncidentRequestSchema>;
+
+/** Итог за 7 дней для полосы над реестром «Инцидентов» — считается на сервере, чтобы не тянуть сами инциденты. */
+export const incidentWeekStatsSchema = z.object({
+  total: z.number().int(),
+  /** Починила панель сама: помог автоматический шаг. */
+  auto: z.number().int(),
+  /** Помог шаг, который вы подтвердили. */
+  waited: z.number().int(),
+  /** Ушло без помощи: шаги не помогли или не понадобились. */
+  self: z.number().int(),
+  /** Закрыто вручную. */
+  manual: z.number().int(),
+  open: z.number().int(),
+  /** Медианное время от сбоя до починки шагом панели, секунды. */
+  medianFixS: z.number().nullable(),
+});
+export type IncidentWeekStats = z.infer<typeof incidentWeekStatsSchema>;
+
+/** Медиана, а не среднее: один инцидент на сутки не должен превращать «время починки» в часы. */
+const median = (xs: number[]): number | null => {
+  if (xs.length === 0) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? (s[mid] as number) : Math.round(((s[mid - 1] as number) + (s[mid] as number)) / 2);
+};
+
+export function incidentWeekStats(
+  items: ReadonlyArray<Pick<Incident, 'status' | 'openedAt' | 'resolvedAt' | 'resolvedBy' | 'attempts'>>,
+  now: number,
+): IncidentWeekStats {
+  const since = now - 7 * 86_400_000;
+  const week = items.filter((i) => new Date(i.openedAt).getTime() >= since);
+  let auto = 0;
+  let waited = 0;
+  let self = 0;
+  let manual = 0;
+  let open = 0;
+  const fixDurations: number[] = [];
+  for (const i of week) {
+    if (i.status !== 'resolved') {
+      open += 1;
+      continue;
+    }
+    const helped = [...i.attempts].reverse().find((a) => a.status === 'helped');
+    if (helped) {
+      if (helped.by === 'manual') waited += 1;
+      else auto += 1;
+      if (i.resolvedAt)
+        fixDurations.push((new Date(i.resolvedAt).getTime() - new Date(i.openedAt).getTime()) / 1000);
+    } else if (i.resolvedBy === 'manual') manual += 1;
+    else self += 1;
+  }
+  return { total: week.length, auto, waited, self, manual, open, medianFixS: median(fixDurations) };
+}

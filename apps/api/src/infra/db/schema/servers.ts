@@ -2,6 +2,7 @@ import type {
   MaintenanceCheck,
   MaintenanceKind,
   MaintenanceStep,
+  ServerCheckKey,
   ServerInventory,
 } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
@@ -195,3 +196,30 @@ export const maintenanceRuns = pgTable(
   ],
 );
 export type MaintenanceRunRow = typeof maintenanceRuns.$inferSelect;
+
+/**
+ * Реестр проверок сервера (R5/J9): каждый запуск — строка с сырым выводом скрипта. Миграция 0039.
+ * Один идущий запуск на сервер держит частичный уникальный индекс — проверки не мешают друг другу.
+ */
+export const serverChecks = pgTable(
+  'server_checks',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    serverId: uuid('server_id')
+      .notNull()
+      .references(() => servers.id, { onDelete: 'cascade' }),
+    check: text('check').$type<ServerCheckKey>().notNull(),
+    status: text('status').$type<'running' | 'ok' | 'failed'>().notNull().default('running'),
+    trigger: text('trigger').$type<'auto' | 'manual'>().notNull(),
+    actorDisplay: text('actor_display'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    output: text('output').notNull().default(''),
+    error: text('error'),
+  },
+  (t) => [
+    index('server_checks_server_idx').on(t.serverId, t.check, t.startedAt),
+    uniqueIndex('server_checks_one_running').on(t.serverId).where(sql`${t.status} = 'running'`),
+  ],
+);
+export type ServerCheckRow = typeof serverChecks.$inferSelect;

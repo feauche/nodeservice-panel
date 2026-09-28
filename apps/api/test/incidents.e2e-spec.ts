@@ -7,6 +7,7 @@ import {
   incidentPolicyResponseSchema,
   incidentSchema,
   incidentsListResponseSchema,
+  incidentWeekStatsSchema,
   notificationsResponseSchema,
   serverSchema,
 } from '@nodeservice/shared';
@@ -124,6 +125,13 @@ describe('incidents e2e', () => {
       (await agent.get('/api/incidents?status=resolved').expect(200)).body,
     );
     expect(resolved.items.some((i) => i.kind === 'agent_offline' && i.resolvedBy === 'auto')).toBe(true);
+
+    // Полоса «за 7 дней»: готовые цифры с сервера, закрытый сам собой инцидент — в «ушло само».
+    const week = incidentWeekStatsSchema.parse(
+      (await agent.get('/api/incidents/week-stats').expect(200)).body,
+    );
+    expect(week.total).toBeGreaterThanOrEqual(1);
+    expect(week.self).toBeGreaterThanOrEqual(1);
   });
 
   it('агент офлайн и SSH тоже недоступен → «Переустановить агента» не предлагаем (шаг всё равно провалится)', async () => {

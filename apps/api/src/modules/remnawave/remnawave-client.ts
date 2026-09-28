@@ -185,9 +185,46 @@ export class HttpRemnawaveClient implements RemnawaveClient {
       | Record<string, unknown>
       | undefined;
     if (!inbound) return null;
-    const sni = realityInbound ? realitySni(realityInbound.rawInbound) : null;
+    let sni = realityInbound ? realitySni(realityInbound.rawInbound) : null;
+    // Список нод может отдавать инбаунды без сырого конфига — тогда берём имя из самого профиля
+    // конфигурации (тот же конфиг Xray, где у selfsteal прописан свой домен в serverNames).
+    if (realityInbound && !sni) {
+      const profileUuid =
+        str(realityInbound.profileUuid) || str(configProfile?.activeConfigProfileUuid) || null;
+      if (profileUuid) sni = await this.profileSni(domain, apiKey, profileUuid, str(realityInbound.tag));
+    }
     const port = typeof inbound.port === 'number' ? inbound.port : num(raw.port) || null;
     return { sni, port };
+  }
+
+  /** Имя маскировки из профиля конфигурации по тегу инбаунда; любой сбой — null (проверка деградирует до порта). */
+  private async profileSni(
+    domain: string,
+    apiKey: string,
+    profileUuid: string,
+    tag: string,
+  ): Promise<string | null> {
+    try {
+      const body = await getJson(
+        `https://${domain}/api/config-profiles/${encodeURIComponent(profileUuid)}`,
+        apiKey,
+      );
+      const profile = (body.response ?? {}) as Record<string, unknown>;
+      const byTag = (list: unknown) =>
+        (Array.isArray(list) ? list : []).find((i) => str((i as Record<string, unknown>).tag) === tag) as
+          | Record<string, unknown>
+          | undefined;
+      const config = profile.config as Record<string, unknown> | undefined;
+      const fromConfig = byTag(config?.inbounds);
+      if (fromConfig) {
+        const sni = realitySni(fromConfig);
+        if (sni) return sni;
+      }
+      const fromList = byTag(profile.inbounds);
+      return fromList ? realitySni(fromList.rawInbound) : null;
+    } catch {
+      return null;
+    }
   }
 
   async checkCertificate(domain: string): Promise<RemnawaveCert> {

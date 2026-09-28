@@ -18,9 +18,14 @@ import {
   hhmm,
   humanSeconds,
   outcomeSentence,
-  weekStats,
+  type WeekStats,
 } from './incident-format';
-import { type IncidentsFilter, useDeleteResolvedIncidents, useIncidents } from './incidents-api';
+import {
+  type IncidentsFilter,
+  useDeleteResolvedIncidents,
+  useIncidents,
+  useIncidentWeekStats,
+} from './incidents-api';
 import { LevelChip } from './level-chip';
 
 const FILTERS: ReadonlyArray<{ key: IncidentsFilter; label: string }> = [
@@ -34,7 +39,7 @@ const STATUS_PILL: Record<IncidentStatus, { tone: 'ok' | 'warn' | 'crit' | 'mute
   resolved: { tone: 'ok', label: 'Решён' },
 };
 /** Сколько решённых показывать на одной странице (открытые — не режем, их и так немного). */
-const RESOLVED_PAGE_SIZE = 30;
+const RESOLVED_PAGE_SIZE = 10;
 const dayGroups = (
   items: Incident[],
   now: number,
@@ -87,9 +92,8 @@ export function IncidentsPage() {
     pageSize: RESOLVED_PAGE_SIZE,
     enabled: needsResolved,
   });
-  // Полоса «за 7 дней» — отдельный запрос с датой, не зависит от вкладки и страницы.
-  const sevenDaysAgo = useMemo(() => new Date(Date.now() - 7 * 86_400_000).toISOString(), []);
-  const weekly = useIncidents('all', { openedFrom: sevenDaysAgo, pageSize: 500 });
+  // Полоса «за 7 дней» — готовые цифры с сервера, не зависит от вкладки и страницы и не держит реестр.
+  const weekly = useIncidentWeekStats();
 
   const openItems = open.data?.items ?? [];
   const now = useNow(openItems.length > 0, 1000);
@@ -97,7 +101,6 @@ export function IncidentsPage() {
   const [confirmClear, setConfirmClear] = useState(false);
 
   const openCount = openItems.length;
-  const stats = useMemo(() => weekStats(weekly.data?.items ?? [], now), [weekly.data, now]);
 
   const resolvedItems = resolvedPaged.data?.items ?? [];
   const showOpen = needsOpen && openItems.length > 0;
@@ -109,8 +112,7 @@ export function IncidentsPage() {
     return out;
   }, [showOpen, openItems, showResolved, resolvedItems, now]);
 
-  const pending =
-    (needsOpen && open.isPending) || (needsResolved && resolvedPaged.isPending) || weekly.isPending;
+  const pending = (needsOpen && open.isPending) || (needsResolved && resolvedPaged.isPending);
   const failed = open.isError ? open.error : resolvedPaged.isError ? resolvedPaged.error : null;
 
   if (pending)
@@ -176,7 +178,7 @@ export function IncidentsPage() {
         </Link>
       </div>
 
-      <StatsStrip stats={stats} />
+      {weekly.data ? <StatsStrip stats={weekly.data} /> : <Skeleton className="h-[60px] rounded-2xl" />}
 
       {!showOpen && !showResolved ? (
         <div className="grid place-items-center rounded-2xl border border-dashed border-border-2 px-6 py-16 text-center">
@@ -245,7 +247,7 @@ export function IncidentsPage() {
 }
 
 /** Полоса итога за 7 дней: числа словами, без KPI-плиток. */
-function StatsStrip({ stats }: { stats: ReturnType<typeof weekStats> }) {
+function StatsStrip({ stats }: { stats: WeekStats }) {
   const resolved = stats.auto + stats.waited + stats.self + stats.manual;
   const pct = (n: number) => (resolved > 0 ? `${(n / resolved) * 100}%` : '0%');
   return (

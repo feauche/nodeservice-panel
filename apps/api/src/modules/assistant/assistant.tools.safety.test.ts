@@ -53,6 +53,7 @@ describe('набор инструментов Джарвиса', () => {
         'get_fleet_status',
         'get_incident',
         'get_maintenance',
+        'get_server_checks',
         'get_metrics_history',
         'get_panel_status',
         'get_playbook',

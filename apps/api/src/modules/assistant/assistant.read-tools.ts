@@ -11,6 +11,8 @@ import {
   metricRangeSchema,
   NODE_STATE_LABELS,
   NODE_WATCH_LABELS,
+  SERVER_CHECK_KEYS,
+  SERVER_CHECK_META,
   SERVER_IMPORTANCE_LABELS,
   SERVER_METRIC_KEYS,
   SERVER_ROLE_LABELS,
@@ -23,6 +25,7 @@ import type { IncidentsService } from '../incidents/incidents.service.js';
 import type { MaintenanceService } from '../maintenance/maintenance.service.js';
 import type { VmReaderService } from '../metrics/vm-reader.service.js';
 import type { ProvidersService } from '../providers/providers.service.js';
+import type { ServerChecksService } from '../server-checks/server-checks.service.js';
 import type { ServersService } from '../servers/servers.service.js';
 import { INSPECT_TOOL_DEFS, INSPECT_TOOL_NAMES, runInspectTool } from './assistant.inspect-tools.js';
 import { PLAYBOOKS, playbookById, renderPlaybook } from './assistant.playbooks.js';
@@ -146,6 +149,19 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
       required: ['serverId'],
     },
   },
+  {
+    name: 'get_server_checks',
+    description:
+      'Реестр проверок сервера: последний результат каждой проверки — процессор (sysbench), регион IP в базах и сервисах, геоблок зарубежных сервисов, DPI до российских сайтов, качество и репутация IP, а если запускались вручную — скорость до России (iPerf3) и полный замер (YABS). Вывод — сырой текст скриптов: прочитайте его и перескажите владельцу выводы простыми словами, а не таблицами. Лёгкие проверки идут сами раз в сутки. serverId — id или имя; check — ключ одной проверки, если нужна только она (cpu | ip_region | geoblock | dpi | ip_quality | iperf3_ru | yabs).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        serverId: { type: 'string', description: 'id или имя сервера' },
+        check: { type: 'string', description: 'ключ одной проверки (необязательно)' },
+      },
+      required: ['serverId'],
+    },
+  },
 ];
 
 export interface ReadDeps {
@@ -155,6 +171,7 @@ export interface ReadDeps {
   incidentMetrics: Pick<IncidentMetricsService, 'latest'>;
   providers: Pick<ProvidersService, 'list'>;
   maintenance: Pick<MaintenanceService, 'state'>;
+  checks: Pick<ServerChecksService, 'list'>;
   probe: Pick<
     FleetProbeService,
     | 'reachability'
@@ -740,6 +757,39 @@ export async function runReadTool(
     if (!id) return none(JSON.stringify(REFERENCE.map((t) => ({ id: t.id, title: t.title, when: t.when }))));
     const t = referenceById(id);
     return none(t ? t.render() : `Темы «${id}» нет. Доступные: ${REFERENCE.map((x) => x.id).join(', ')}.`);
+  }
+
+  if (name === 'get_server_checks') {
+    const servers = await deps.servers.list();
+    const s = findServer(servers, String(arg.serverId ?? ''));
+    if (!s) return notFound(servers);
+    const only = typeof arg.check === 'string' && arg.check ? arg.check : null;
+    const res = await deps.checks.list(s.id);
+    const items = res.items.filter((r) => !only || r.check === only);
+    // Вывод целиком тяжёл для контекста: на одну проверку — до 12 КБ, конец важнее (там итоговая таблица).
+    const perCheck = only ? 24_000 : 12_000;
+    const cut = (t: string) => (t.length > perCheck ? `… начало вывода опущено …\n${t.slice(-perCheck)}` : t);
+    const missing = SERVER_CHECK_KEYS.filter(
+      (k) => !res.items.some((r) => r.check === k) && (!only || only === k),
+    ).map((k) => SERVER_CHECK_META[k].label);
+    return {
+      content: JSON.stringify({
+        server: s.name,
+        nextAutoAt: res.nextAutoAt,
+        notRunYet: missing,
+        checks: items.map((r) => ({
+          check: SERVER_CHECK_META[r.check].label,
+          heavy: SERVER_CHECK_META[r.check].heavy,
+          status: r.status,
+          startedAt: r.startedAt,
+          finishedAt: r.finishedAt,
+          error: r.error,
+          output: cut(r.output),
+        })),
+      }),
+      citations: [{ type: 'server', id: s.id, label: s.name }],
+      proposals: [],
+    };
   }
 
   if (name === 'get_maintenance') {
