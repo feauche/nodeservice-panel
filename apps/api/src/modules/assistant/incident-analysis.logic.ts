@@ -77,6 +77,7 @@ const ANALYSIS_READ = new Set([
   'get_playbook',
   'get_reference',
   'get_server_checks',
+  'run_server_check',
 ]);
 export const ANALYSIS_TOOLS: LlmToolDef[] = [
   ...READ_TOOL_DEFS.filter((t) => ANALYSIS_READ.has(t.name)),
@@ -177,6 +178,7 @@ export function stepLabel(tool: string, input: unknown, kind: IncidentKind): str
   if (tool === 'get_playbook') return 'Сверяюсь с плейбуком';
   if (tool === 'get_reference') return 'Открываю справочник';
   if (tool === 'get_server_checks') return 'Смотрю результаты проверок сервера';
+  if (tool === 'run_server_check') return 'Запускаю проверку сервера и жду итог';
   if (tool === 'submit_analysis') return 'Формулирую вывод';
   return `Проверяю: ${kind}`;
 }

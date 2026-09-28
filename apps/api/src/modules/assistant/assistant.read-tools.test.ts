@@ -115,6 +115,15 @@ function deps(over: Partial<Record<keyof ReadDeps, unknown>> = {}): ReadDeps {
           },
         ],
       }),
+      history: async () => [],
+      startForJarvis: async (serverId: string, check: string) => ({ id: 'run-1', serverId, check }),
+      waitDone: async () => ({
+        id: 'run-1',
+        status: 'ok',
+        error: null,
+        output: 'Total: 0 blocked of 38',
+        startedAt: '2026-09-28T12:00:00.000Z',
+      }),
     },
     permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT, nodeLogs: true },
     ...over,
@@ -312,6 +321,23 @@ describe('get_server_checks', () => {
     expect(r.checks[0].output.length).toBeLessThan(13_000);
     expect(r.notRunYet).toContain('Процессор');
     expect(r.notRunYet).not.toContain('Геоблок');
+  });
+});
+
+describe('run_server_check', () => {
+  it('лёгкую запускает и отдаёт свежий вывод', async () => {
+    const { json } = await call('run_server_check', { serverId: 'de-1', check: 'geoblock' });
+    expect(json()).toMatchObject({ check: 'Геоблок', ranJustNow: true, status: 'ok' });
+    expect(json().output).toContain('0 blocked');
+  });
+  it('тяжёлую не запускает — отсылает к карточке', async () => {
+    const { out } = await call('run_server_check', { serverId: 'de-1', check: 'yabs' });
+    expect(out.content).toContain('propose_change server.check');
+  });
+  it('без разрешения — отказ с подсказкой, где включить', async () => {
+    const d = deps({ permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT, checksRun: false } });
+    const { out } = await call('run_server_check', { serverId: 'de-1', check: 'cpu' }, d);
+    expect(out.content).toContain('Настройки → Джарвис → Разрешения');
   });
 });
 

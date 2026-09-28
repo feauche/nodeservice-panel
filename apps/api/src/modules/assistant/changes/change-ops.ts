@@ -22,6 +22,7 @@ import {
   NODE_WATCH_LABELS,
   NODE_WATCH_MODES,
   normalizeProfilePatch,
+  SERVER_CHECK_META,
   SERVER_IMPORTANCE_LABELS,
   SERVER_NOTES_MAX,
   SERVER_ROLE_SHORT,
@@ -39,6 +40,7 @@ import type { IncidentsService } from '../../incidents/incidents.service.js';
 import type { KnowledgeService } from '../../knowledge/knowledge.service.js';
 import type { MaintenanceService } from '../../maintenance/maintenance.service.js';
 import type { ProvidersService } from '../../providers/providers.service.js';
+import type { ServerChecksService } from '../../server-checks/server-checks.service.js';
 import type { ServersService } from '../../servers/servers.service.js';
 
 export type Json = string | number | boolean | null | Json[] | { [k: string]: Json };
@@ -49,6 +51,7 @@ export interface ChangeCtx {
   providers: Pick<ProvidersService, 'list'>;
   incidents: Pick<IncidentsService, 'get' | 'resolveManual' | 'policy' | 'updatePolicy'>;
   maintenance: Pick<MaintenanceService, 'start' | 'state' | 'runs'>;
+  checks: Pick<ServerChecksService, 'start' | 'list' | 'history'>;
   knowledge: Pick<KnowledgeService, 'create' | 'get'>;
 }
 
@@ -923,6 +926,92 @@ const maintenanceRun: ChangeOp = {
   },
 };
 
+const HEAVY_CHECKS = ['iperf3_ru', 'yabs'] as const;
+
+/** Тяжёлая проверка сервера (T2): только карточкой, запускает человек. Лёгкие Джарвис запускает сам. */
+const serverCheck: ChangeOp = {
+  level: 'T2',
+  schema: z.object({ server: serverRef, check: z.enum(HEAVY_CHECKS) }),
+  async build(raw, ctx) {
+    const s = await findServer(ctx, String(raw.server));
+    if ('problem' in s) return s;
+    const check = raw.check as (typeof HEAVY_CHECKS)[number];
+    const meta = SERVER_CHECK_META[check];
+    if (s.server.sshOk === false)
+      return {
+        problem: 'К серверу сейчас нет доступа по SSH: сначала «Проверить связь». Карточка не создана.',
+      };
+    const list = await ctx.checks.list(s.server.id);
+    if (list.items.some((r) => r.status === 'running'))
+      return { problem: 'На этом сервере уже идёт проверка: дождитесь конца. Карточка не создана.' };
+    const last = list.items.find((r) => r.check === check);
+    const p = s.server.profile;
+    let consequence = `Тяжёлая проверка: ${meta.duration}. Пока идёт, у пользователей этого сервера может просесть скорость. Остановить из панели нельзя — закончится сама.`;
+    if (p.importance === 'critical')
+      consequence += ` Сервер критичный${p.maintenanceWindow ? `, окно обслуживания: ${p.maintenanceWindow}` : ''}: запускайте в удобное время.`;
+    return {
+      args: { serverId: s.server.id, check },
+      plan: {
+        title: `Запустить «${meta.label}» на «${s.server.name}»?`,
+        level: 'T2',
+        target: serverTarget(s.server),
+        rows: [
+          {
+            label: meta.label,
+            before: last ? `Последний раз: ${ago(last.startedAt)}` : 'Ещё не запускалась',
+            after: 'Запустится сейчас',
+          },
+        ],
+        consequence,
+        reversible: false,
+        before: { active: false },
+        after: { started: true },
+      },
+    };
+  },
+  async read(args, ctx) {
+    const list = await ctx.checks.list(String(args.serverId));
+    return { active: list.items.some((r) => r.status === 'running') };
+  },
+  async apply(args, _plan, ctx) {
+    const run = await ctx.checks.start(
+      String(args.serverId),
+      args.check as (typeof HEAVY_CHECKS)[number],
+      true,
+    );
+    return { runId: run.id };
+  },
+  async verify(args, plan, ctx) {
+    const runId = (plan.outcome as { runId?: string } | undefined)?.runId;
+    if (!runId) return false;
+    const hist = await ctx.checks.history(
+      String(args.serverId),
+      args.check as (typeof HEAVY_CHECKS)[number],
+      3,
+    );
+    return hist.some((r) => r.id === runId);
+  },
+  async progress(args, plan, ctx) {
+    const runId = (plan.outcome as { runId?: string } | undefined)?.runId;
+    if (!runId) return null;
+    const check = args.check as (typeof HEAVY_CHECKS)[number];
+    const run = (await ctx.checks.history(String(args.serverId), check, 3)).find((r) => r.id === runId);
+    if (!run) return null;
+    const title = SERVER_CHECK_META[check].label;
+    if (run.status === 'running')
+      return { note: `Запущено: ${title}. Идёт — вывод во вкладке «Проверки» сервера.`, live: true };
+    return run.status === 'ok'
+      ? {
+          note: `${title}: готово. Результат — во вкладке «Проверки» сервера, спросите меня, что он значит.`,
+          live: false,
+        }
+      : {
+          note: `${title}: ошибка${run.error ? `: ${run.error}` : ''}. Подробности — во вкладке «Проверки» сервера.`,
+          live: false,
+        };
+  },
+};
+
 export const CHANGE_OPS: Readonly<Record<ChangeOperation, ChangeOp>> = {
   'server.provider': provider,
   'server.tags': tags,
@@ -935,5 +1024,6 @@ export const CHANGE_OPS: Readonly<Record<ChangeOperation, ChangeOp>> = {
   'autofix.pause': autofixPause,
   'autofix.policy': autofixPolicy,
   'maintenance.run': maintenanceRun,
+  'server.check': serverCheck,
   'kb.runbook': kbRunbook,
 };

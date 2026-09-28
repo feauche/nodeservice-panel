@@ -36,7 +36,8 @@ import { LLM_PROVIDER, type LlmBlock, type LlmMsg, type LlmProvider } from './ll
 const MAX_ROUNDS = 6;
 const ASK_ROUNDS = 4;
 /** Весь разбор не дольше этого: зависший провайдер не должен держать «идёт разбор» бесконечно. */
-const TOTAL_MS = 150_000;
+// Плюс до 4 минут на лёгкую проверку сервера, если Джарвис решит её дозапустить (run_server_check).
+const TOTAL_MS = 150_000 + 240_000;
 const ANSWER_MAX = 1_800;
 
 const now = () => new Date().toISOString();

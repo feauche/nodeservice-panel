@@ -25,10 +25,11 @@ import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { type ChangeAction, useChange, useChangeAction } from './assistant-api';
 
+/** Кнопки карточки одного размера: одна высота (у основной — прозрачная рамка) и одна ширина. */
 const BTN =
-  'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border bg-surface px-3.5 text-[12.5px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-default disabled:opacity-50';
+  'inline-flex h-8 min-w-[128px] cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border border-border bg-surface px-3.5 text-[12.5px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-default disabled:opacity-50';
 const BTN_PRIMARY =
-  'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] bg-cta px-3.5 text-[12.5px] font-semibold whitespace-nowrap text-cta-foreground hover:bg-(--ns-cta-hover) disabled:cursor-default disabled:opacity-50';
+  'inline-flex h-8 min-w-[128px] cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border border-transparent bg-cta px-3.5 text-[12.5px] font-semibold whitespace-nowrap text-cta-foreground hover:bg-(--ns-cta-hover) disabled:cursor-default disabled:opacity-50';
 
 const NIL = '—';
 const isList = (r: ChangeRow): boolean => r.added !== undefined || r.removed !== undefined;

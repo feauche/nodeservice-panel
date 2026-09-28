@@ -57,6 +57,16 @@ export class ServerChecksRepository {
     await this.db.update(serverChecks).set({ explanation }).where(eq(serverChecks.id, id));
   }
 
+  /** Запуски одной проверки сервера, новые первыми. */
+  async history(serverId: string, check: ServerCheckKey, limit = 10): Promise<ServerCheckRow[]> {
+    return this.db
+      .select()
+      .from(serverChecks)
+      .where(and(eq(serverChecks.serverId, serverId), eq(serverChecks.check, check)))
+      .orderBy(desc(serverChecks.startedAt))
+      .limit(limit);
+  }
+
   async findRunning(serverId: string): Promise<ServerCheckRow | undefined> {
     const [row] = await this.db
       .select()

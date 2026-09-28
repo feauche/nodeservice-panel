@@ -94,7 +94,11 @@ describe('AssistantSettingsPage', () => {
     expect(screen.getByText('Серверы, только чтение')).toBeInTheDocument();
     expect(screen.getAllByText('Ходит на серверы').length).toBeGreaterThanOrEqual(3);
     expect(screen.getAllByText('Данные уходят провайдеру').length).toBeGreaterThanOrEqual(3);
-    expect(screen.getAllByText('Только с вашего подтверждения')).toHaveLength(2);
+    expect(screen.getAllByText('Только с вашего подтверждения')).toHaveLength(3);
+    // Проверки сервера — своя группа: лёгкие сам, тяжёлые только карточкой.
+    expect(screen.getByText('Проверки сервера')).toBeInTheDocument();
+    expect(screen.getByText('Запуск лёгких проверок')).toBeInTheDocument();
+    expect(screen.getByText('Предложение тяжёлых проверок')).toBeInTheDocument();
   });
 
   it('«Изменения по подтверждению»: отдельная группа «Изменения» под «Инциденты», подсказка, метка риска, наборы и сохранение', async () => {

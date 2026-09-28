@@ -1,5 +1,6 @@
 import { setupWorker } from 'msw/browser';
 import { mockAnalysis } from '@/test/msw/analysis-mock';
+import { mockAssistant } from '@/test/msw/assistant-mock';
 import { handlers, resetMockState } from '@/test/msw/handlers';
 import { mockIncidents } from '@/test/msw/incidents-mock';
 import { mockMaintenance } from '@/test/msw/maintenance-mock';
@@ -25,6 +26,7 @@ export async function startMockWorker(): Promise<void> {
   mockServerChecks.speedMs = 900;
   for (const s of mockServers.items.slice(0, 1)) seedServerChecks(s.id);
   (window as unknown as { __nsMockAnalysis: typeof mockAnalysis }).__nsMockAnalysis = mockAnalysis;
+  (window as unknown as { __nsMockAssistant: typeof mockAssistant }).__nsMockAssistant = mockAssistant;
   (window as unknown as { __nsMockIncidents: typeof mockIncidents }).__nsMockIncidents = mockIncidents;
   (window as unknown as { __nsMockMaintenance: typeof mockMaintenance }).__nsMockMaintenance =
     mockMaintenance;

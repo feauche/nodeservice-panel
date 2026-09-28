@@ -92,6 +92,32 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
     return (await this.launch(serverId, check, 'manual', actor)).run;
   }
 
+  /**
+   * Запуск от Джарвиса: актор «Джарвис» в Журнале. Тяжёлые сюда не попадают — их Джарвис только
+   * предлагает карточкой, а подтверждение приходит от человека через start().
+   */
+  async startForJarvis(serverId: string, check: ServerCheckKey): Promise<ServerCheckRun> {
+    if (SERVER_CHECK_META[check].heavy) throw new Error('Тяжёлые проверки Джарвис сам не запускает.');
+    const actor: AuditActor = { ...SYSTEM_ACTOR, display: 'Джарвис' };
+    return (await this.launch(serverId, check, 'manual', actor)).run;
+  }
+
+  /** Дождаться конца запуска (опрос БД); по истечению — текущее состояние, возможно ещё «идёт». */
+  async waitDone(runId: string, timeoutMs: number): Promise<ServerCheckRun | null> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const row = await this.repo.findById(runId);
+      if (!row) return null;
+      if (row.status !== 'running' || Date.now() >= deadline) return toCheckRun(row);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+
+  async history(serverId: string, check: ServerCheckKey, limit = 10): Promise<ServerCheckRun[]> {
+    await this.servers.get(serverId);
+    return (await this.repo.history(serverId, check, limit)).map(toCheckRun);
+  }
+
   /** Суточный запуск (джоба): занято — просто пропуск; ждём конца, чтобы идти по серверам по одному. */
   async scheduled(serverId: string, check: ServerCheckKey): Promise<void> {
     if (this.active.has(serverId)) return;

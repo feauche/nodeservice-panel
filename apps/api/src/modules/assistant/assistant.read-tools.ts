@@ -17,6 +17,7 @@ import {
   SERVER_METRIC_KEYS,
   SERVER_ROLE_LABELS,
   type Server,
+  type ServerCheckKey,
   VM_METRIC_NAMES,
 } from '@nodeservice/shared';
 
@@ -158,8 +159,26 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
       properties: {
         serverId: { type: 'string', description: 'id или имя сервера' },
         check: { type: 'string', description: 'ключ одной проверки (необязательно)' },
+        history: {
+          type: 'boolean',
+          description:
+            'true вместе с check — добавить прошлые запуски этой проверки (до 9, короче): сравнить «было и стало»',
+        },
       },
       required: ['serverId'],
+    },
+  },
+  {
+    name: 'run_server_check',
+    description:
+      'Запустить ЛЁГКУЮ проверку сервера сейчас и дождаться итога (до 4 минут): cpu | ip_region | geoblock | dpi | ip_quality. Зови, когда свежий результат действительно нужен для ответа (жалоба «сервис не открывается» — geoblock; «не та страна» — ip_region; «медленно» — cpu), а прошлый результат старше суток или его нет; сначала посмотри get_server_checks. Тяжёлые (iperf3_ru, yabs) так не запускаются — предлагай их через propose_change server.check. На сервере одновременно идёт одна проверка. serverId — id или имя.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        serverId: { type: 'string', description: 'id или имя сервера' },
+        check: { type: 'string', enum: ['cpu', 'ip_region', 'geoblock', 'dpi', 'ip_quality'] },
+      },
+      required: ['serverId', 'check'],
     },
   },
 ];
@@ -171,7 +190,7 @@ export interface ReadDeps {
   incidentMetrics: Pick<IncidentMetricsService, 'latest'>;
   providers: Pick<ProvidersService, 'list'>;
   maintenance: Pick<MaintenanceService, 'state'>;
-  checks: Pick<ServerChecksService, 'list'>;
+  checks: Pick<ServerChecksService, 'list' | 'history' | 'startForJarvis' | 'waitDone'>;
   probe: Pick<
     FleetProbeService,
     | 'reachability'
@@ -199,6 +218,7 @@ export const TOOL_PERMISSION: Readonly<Record<string, AssistantPermission>> = {
   inspect_kernel: 'inspect',
   check_certificate: 'inspect',
   inspect_logs: 'serviceLogs',
+  run_server_check: 'checksRun',
   propose_action: 'proposals',
   propose_change: 'changes',
 };
@@ -215,6 +235,9 @@ const denied = (what: string, perm: AssistantPermission): ToolOutcome => ({
   citations: [],
   proposals: [],
 });
+
+/** Сколько Джарвис ждёт запущенную им проверку: дольше — отвечает «идёт, результат во вкладке». */
+const RUN_CHECK_WAIT_MS = 4 * 60_000;
 
 const HISTORY_METRICS = new Set<string>([...SERVER_METRIC_KEYS, 'memPct', 'diskPct']);
 const UNITS: Record<string, string> = {
@@ -663,6 +686,7 @@ export async function runReadTool(
       nodeLogs: 'чтение логов ноды',
       inspect: 'осмотр служб и системы (контейнеры, порты, диск, ядро, сертификат)',
       serviceLogs: 'чтение журналов служб',
+      checksRun: 'запуск лёгких проверок сервера',
     };
     return denied(what[need] ?? 'это действие', need);
   }
@@ -759,6 +783,58 @@ export async function runReadTool(
     return none(t ? t.render() : `Темы «${id}» нет. Доступные: ${REFERENCE.map((x) => x.id).join(', ')}.`);
   }
 
+  if (name === 'run_server_check') {
+    const servers = await deps.servers.list();
+    const s = findServer(servers, String(arg.serverId ?? ''));
+    if (!s) return notFound(servers);
+    const key = String(arg.check ?? '') as ServerCheckKey;
+    if (!SERVER_CHECK_KEYS.includes(key))
+      return none(`Нет такой проверки «${key}». Лёгкие: cpu, ip_region, geoblock, dpi, ip_quality.`);
+    if (SERVER_CHECK_META[key].heavy)
+      return none(
+        `«${SERVER_CHECK_META[key].label}» — тяжёлая проверка: сам ты её не запускаешь. Предложи карточкой propose_change server.check {server, check}.`,
+      );
+    if (s.sshOk === false)
+      return none(`К серверу «${s.name}» сейчас нет доступа по SSH — проверку запустить нельзя.`);
+    let started: Awaited<ReturnType<typeof deps.checks.startForJarvis>>;
+    try {
+      started = await deps.checks.startForJarvis(s.id, key);
+    } catch (err) {
+      const busy =
+        err &&
+        typeof err === 'object' &&
+        'getStatus' in err &&
+        (err as { getStatus(): number }).getStatus() === 409;
+      return none(
+        busy
+          ? `На «${s.name}» уже идёт другая проверка. Скажи администратору подождать и спросить ещё раз через пару минут или прочитай прошлый результат (get_server_checks).`
+          : `Проверку запустить не удалось: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    const done = await deps.checks.waitDone(started.id, RUN_CHECK_WAIT_MS);
+    const cite = [{ type: 'server' as const, id: s.id, label: s.name }];
+    if (!done || done.status === 'running')
+      return {
+        content: `Проверка «${SERVER_CHECK_META[key].label}» на «${s.name}» запущена, но ещё идёт (дольше ${RUN_CHECK_WAIT_MS / 60_000} минут). Результат появится во вкладке «Проверки» сервера — скажи администратору, что можно спросить позже.`,
+        citations: cite,
+        proposals: [],
+      };
+    const out =
+      done.output.length > 12_000 ? `… начало опущено …\n${done.output.slice(-12_000)}` : done.output;
+    return {
+      content: JSON.stringify({
+        server: s.name,
+        check: SERVER_CHECK_META[key].label,
+        ranJustNow: true,
+        status: done.status,
+        error: done.error,
+        output: out,
+      }),
+      citations: cite,
+      proposals: [],
+    };
+  }
+
   if (name === 'get_server_checks') {
     const servers = await deps.servers.list();
     const s = findServer(servers, String(arg.serverId ?? ''));
@@ -772,10 +848,20 @@ export async function runReadTool(
     const missing = SERVER_CHECK_KEYS.filter(
       (k) => !res.items.some((r) => r.check === k) && (!only || only === k),
     ).map((k) => SERVER_CHECK_META[k].label);
+    const past =
+      only && arg.history === true && SERVER_CHECK_KEYS.includes(only as ServerCheckKey)
+        ? (await deps.checks.history(s.id, only as ServerCheckKey, 10)).slice(1).map((r) => ({
+            startedAt: r.startedAt,
+            status: r.status,
+            error: r.error,
+            output: r.output.length > 3000 ? `… начало опущено …\n${r.output.slice(-3000)}` : r.output,
+          }))
+        : undefined;
     return {
       content: JSON.stringify({
         server: s.name,
         nextAutoAt: res.nextAutoAt,
+        ...(past ? { previousRuns: past } : {}),
         notRunYet: missing,
         checks: items.map((r) => ({
           check: SERVER_CHECK_META[r.check].label,

@@ -96,6 +96,8 @@ export function buildSystem(
     permissions.nodeLogs && 'inspect_node_logs (журнал ноды, можно за период и с фильтром, секреты скрыты)',
     permissions.serviceLogs &&
       'inspect_logs (журналы агента, SSH, Docker, системы и контейнеров за период, секреты скрыты)',
+    permissions.checksRun &&
+      'run_server_check (запустить лёгкую проверку сервера — процессор, регион IP, геоблок, DPI, качество IP — и дождаться итога, до 4 минут; прошлые результаты — get_server_checks)',
   ].filter(Boolean);
   const now = new Date().toISOString();
   return `ТЕКУЩЕЕ ВРЕМЯ СЕРВЕРА (UTC): ${now}. Отвечая про периоды («за час», «за сутки», «сегодня»), опирайся на него и зови search_audit с sinceMinutes (час = 60).

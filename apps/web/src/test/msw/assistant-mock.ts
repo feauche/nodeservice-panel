@@ -82,6 +82,7 @@ type ChangeKind =
   | 'pause'
   | 'cleanup'
   | 'policy'
+  | 'heavy'
   | 'expired';
 
 /** Готовые изменения для демонстрации: те же тексты, что строит сервер (превью «было → станет»). */
@@ -216,6 +217,17 @@ function makeChange(kind: ChangeKind): AssistantChangeProposal {
         'Данные и настройки не трогаем. Старые ядра удаляются, поэтому очистку кнопкой не отменить.',
       reversible: false,
     },
+    heavy: {
+      operation: 'server.check',
+      title: `Запустить «Скорость до России» на «${server}»?`,
+      level: 'T2',
+      target: serverTarget,
+      reason: 'Вы спросили, нормальная ли скорость до России, — свежего замера нет.',
+      rows: [{ label: 'Скорость до России', before: 'Ещё не запускалась', after: 'Запустится сейчас' }],
+      consequence:
+        'Тяжёлая проверка: 5–10 минут, гоняет сотни мегабайт трафика. Пока идёт, у пользователей этого сервера может просесть скорость. Остановить из панели нельзя — закончится сама.',
+      reversible: false,
+    },
     policy: {
       operation: 'autofix.policy',
       title: 'Изменить режим автопочинки',
@@ -290,6 +302,7 @@ const CHANGE_TRIGGERS: Array<[RegExp, ChangeKind[]]> = [
   [/пауз/i, ['pause']],
   [/очист/i, ['cleanup']],
   [/режим автопочинки/i, ['policy']],
+  [/скорост/i, ['heavy']],
   [/просроч/i, ['expired']],
 ];
 

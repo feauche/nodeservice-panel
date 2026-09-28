@@ -186,6 +186,24 @@ function make() {
       return run;
     },
   };
+  const checksRuns: Array<Record<string, unknown>> = [];
+  const checks = {
+    list: async () => ({ items: checksRuns, nextAutoAt: null }),
+    history: async (_s: string, check: string) => checksRuns.filter((r) => r.check === check),
+    start: async (serverId: string, check: string, confirmHeavy: boolean) => {
+      const run = {
+        id: `0192c000-0000-7000-8000-00000000c${checksRuns.length + 1}`.padEnd(36, '0').slice(0, 36),
+        serverId,
+        check,
+        confirmHeavy,
+        status: 'running',
+        startedAt: new Date().toISOString(),
+        error: null,
+      };
+      checksRuns.unshift(run);
+      return run;
+    },
+  };
   const knowledge = {
     create: async (input: { title: string; content: string; tags: string[]; source: string }) => {
       const id = `0192c000-0000-7000-8000-00000000d${world.kb.docs.size + 1}`.padEnd(36, '0').slice(0, 36);
@@ -207,11 +225,12 @@ function make() {
     providers as never,
     incidents as never,
     maintenance as never,
+    checks as never,
     knowledge as never,
     audit as never,
     cls as never,
   );
-  return { svc, repo, world };
+  return { svc, repo, world, checksRuns };
 }
 
 const propose = async (
@@ -799,6 +818,34 @@ describe('ChangesService: страна сервера', () => {
     );
     expect(await refusal(ctx.svc, 'server.country', { server: 'ru-entry-1', country: 'Польша' })).toContain(
       'Аргументы не подходят',
+    );
+  });
+});
+
+describe('ChangesService: тяжёлые проверки сервера', () => {
+  let ctx: ReturnType<typeof make>;
+  beforeEach(() => {
+    ctx = make();
+  });
+
+  it('карточка T2 с предупреждением; применение запускает проверку с согласием на тяжёлую', async () => {
+    const c = await propose(ctx.svc, 'server.check', { server: 'ru-entry-1', check: 'iperf3_ru' });
+    expect(c.level).toBe('T2');
+    expect(c.title).toContain('Скорость до России');
+    expect(c.rows[0]).toMatchObject({ before: 'Ещё не запускалась', after: 'Запустится сейчас' });
+    expect(c.consequence).toContain('трафик');
+    const done = await ctx.svc.apply(c.id);
+    expect(done.status).toBe('applied');
+    expect(ctx.checksRuns[0]).toMatchObject({ check: 'iperf3_ru', confirmHeavy: true });
+  });
+
+  it('лёгкую проверку карточкой не предлагает, и пока идёт другая — отказ', async () => {
+    await expect(
+      refusal(ctx.svc, 'server.check', { server: 'ru-entry-1', check: 'geoblock' }),
+    ).resolves.toBeTruthy();
+    ctx.checksRuns.push({ check: 'cpu', status: 'running', startedAt: new Date().toISOString() });
+    expect(await refusal(ctx.svc, 'server.check', { server: 'ru-entry-1', check: 'yabs' })).toContain(
+      'уже идёт',
     );
   });
 });

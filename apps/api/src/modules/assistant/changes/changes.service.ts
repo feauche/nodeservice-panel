@@ -18,6 +18,7 @@ import { IncidentsService } from '../../incidents/incidents.service.js';
 import { KnowledgeService } from '../../knowledge/knowledge.service.js';
 import { MaintenanceService } from '../../maintenance/maintenance.service.js';
 import { ProvidersService } from '../../providers/providers.service.js';
+import { ServerChecksService } from '../../server-checks/server-checks.service.js';
 import { ServersService } from '../../servers/servers.service.js';
 import { CHANGE_OPS, type ChangeCtx, type ChangePlan, type Json, same } from './change-ops.js';
 import { ChangesRepository } from './changes.repository.js';
@@ -52,6 +53,7 @@ export class ChangesService {
     private readonly providers: ProvidersService,
     private readonly incidents: IncidentsService,
     private readonly maintenance: MaintenanceService,
+    private readonly checks: ServerChecksService,
     private readonly knowledge: KnowledgeService,
     private readonly audit: AuditService,
     private readonly cls: ClsService,
@@ -63,6 +65,7 @@ export class ChangesService {
       providers: this.providers,
       incidents: this.incidents,
       maintenance: this.maintenance,
+      checks: this.checks,
       knowledge: this.knowledge,
     };
   }

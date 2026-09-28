@@ -89,6 +89,7 @@ describe('инструменты и промпты разбора', () => {
         'inspect_ports',
         'inspect_processes',
         'list_incidents',
+        'run_server_check',
         'submit_analysis',
       ].sort(),
     );

@@ -21,6 +21,7 @@ export const CHANGE_OPERATIONS = [
   'autofix.pause',
   'autofix.policy',
   'maintenance.run',
+  'server.check',
   'kb.runbook',
 ] as const;
 export const changeOperationSchema = z.enum(CHANGE_OPERATIONS);
@@ -38,6 +39,7 @@ export const CHANGE_OPERATION_TITLES: Record<ChangeOperation, string> = {
   'autofix.pause': 'Автопочинка: пауза',
   'autofix.policy': 'Изменить режим автопочинки',
   'maintenance.run': 'Запустить обслуживание',
+  'server.check': 'Запустить тяжёлую проверку',
   'kb.runbook': 'Записать в базу знаний',
 };
 
