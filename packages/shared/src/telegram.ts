@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { INCIDENT_KINDS, type IncidentKind } from './incidents.js';
+
 /**
  * Уведомления в Telegram (R6). Назначение задаётся одной строкой-ссылкой `tgram://токен/чат[:тема]` —
  * формат как у Apprise: токен бота от @BotFather, id чата (личный — положительный, группа — `-100…`),
@@ -12,7 +14,11 @@ export const TELEGRAM_EVENTS = [
   'incident_warn',
   'needs_confirm',
   'resolved',
+  'autofix_started',
+  'fix_failed',
+  'reminder',
   'maintenance',
+  'check_failed',
   'jarvis_card',
   'login',
 ] as const;
@@ -24,7 +30,11 @@ export const TELEGRAM_EVENT_LABELS: Record<TelegramEvent, string> = {
   incident_warn: 'Предупреждение',
   needs_confirm: 'Нужно ваше «Да»',
   resolved: 'Починилось',
+  autofix_started: 'Автопочинка начала чинить',
+  fix_failed: 'Шаг починки не помог',
+  reminder: 'Напоминание о нерешённом',
   maintenance: 'Обслуживание',
+  check_failed: 'Проверка сервера нашла ошибку',
   jarvis_card: 'Карточка Джарвиса ждёт решения',
   login: 'Вход в панель с нового устройства',
 };
@@ -33,8 +43,12 @@ export const TELEGRAM_EVENT_HINTS: Record<TelegramEvent, string> = {
   incident_warn: 'Высокая нагрузка, диск заполняется, онлайн упал без подтверждённой блокировки.',
   needs_confirm: 'Автопочинка предлагает шаг и ждёт подтверждения — или нужно вмешаться вручную.',
   resolved: 'Инцидент закрыт — сам или после шага. Приходит ответом на исходное сообщение.',
+  autofix_started: '«Чиню автоматически»: какой шаг панель запустила сама.',
+  fix_failed: 'Что пробовали и что предлагаем дальше.',
+  reminder: 'Критичный инцидент всё ещё открыт — напоминание ответом на исходное сообщение.',
   maintenance: 'Есть обновления безопасности, нужна перезагрузка, агент устарел. Раз в сутки, не чаще.',
   jarvis_card: 'Джарвис предложил изменение или тяжёлую проверку.',
+  check_failed: 'Лёгкая проверка (геоблок, DPI и другие) упала или не уложилась во время.',
   login: 'И серия неудачных попыток входа.',
 };
 /** Метка важности рядом с названием (как в витрине K1); null — без метки. */
@@ -43,13 +57,20 @@ export const TELEGRAM_EVENT_TONE: Record<TelegramEvent, 'crit' | 'warn' | 'ok' |
   incident_warn: 'warn',
   needs_confirm: null,
   resolved: 'ok',
+  autofix_started: null,
+  fix_failed: null,
+  reminder: null,
   maintenance: null,
+  check_failed: null,
   jarvis_card: null,
   login: null,
 };
 export const TELEGRAM_EVENT_GROUPS: ReadonlyArray<{ title: string; keys: readonly TelegramEvent[] }> = [
-  { title: 'Инциденты', keys: ['incident_crit', 'incident_warn', 'needs_confirm', 'resolved'] },
-  { title: 'Серверы и Джарвис', keys: ['maintenance', 'jarvis_card'] },
+  {
+    title: 'Инциденты',
+    keys: ['incident_crit', 'incident_warn', 'needs_confirm', 'resolved', 'autofix_started', 'fix_failed'],
+  },
+  { title: 'Серверы и Джарвис', keys: ['maintenance', 'check_failed', 'jarvis_card'] },
   { title: 'Безопасность', keys: ['login'] },
 ];
 
@@ -59,9 +80,65 @@ export const TELEGRAM_EVENTS_DEFAULT: TelegramEvents = {
   incident_warn: true,
   needs_confirm: true,
   resolved: true,
+  autofix_started: false,
+  fix_failed: true,
+  reminder: true,
   maintenance: false,
+  check_failed: false,
   jarvis_card: false,
   login: true,
+};
+
+/** Виды инцидентов по группам для тумблеров «Какие инциденты» (витрина `telegram-messages-variants.html`, 2A). */
+export const TELEGRAM_KIND_GROUPS: ReadonlyArray<{ title: string; keys: readonly IncidentKind[] }> = [
+  { title: 'Связь', keys: ['agent_offline', 'ssh_down'] },
+  { title: 'Нода', keys: ['node_down', 'node_blocked'] },
+  { title: 'Ресурсы', keys: ['cpu_high', 'mem_high', 'disk_high'] },
+];
+export const TELEGRAM_KIND_LABELS: Record<IncidentKind, string> = {
+  agent_offline: 'Агент не в сети',
+  ssh_down: 'SSH недоступен',
+  node_down: 'Контейнер ноды не запущен',
+  node_blocked: 'Резкое падение онлайна и блокировки',
+  cpu_high: 'Нагрузка на процессор',
+  mem_high: 'Память на пределе',
+  disk_high: 'Диск заполняется',
+};
+export const TELEGRAM_KIND_HINTS: Record<IncidentKind, string> = {
+  agent_offline: 'Агент перестал присылать сигнал. Часто вместе с «SSH недоступен», если сервер лёг целиком.',
+  ssh_down: 'Панель не может зайти на сервер по SSH.',
+  node_down: 'Сервер жив, но нода остановлена.',
+  node_blocked:
+    'Онлайн ноды упал на 80 % и больше: блокировка ТСПУ, «16–20 КБ», IP из России или сервер недоступен.',
+  cpu_high: 'Загрузка держится выше порога дольше времени реакции.',
+  mem_high: 'Занятость памяти держится выше порога.',
+  disk_high: 'Заполнение диска держится выше порога.',
+};
+export type TelegramKinds = Record<IncidentKind, boolean>;
+export const TELEGRAM_KINDS_DEFAULT: TelegramKinds = Object.fromEntries(
+  INCIDENT_KINDS.map((k) => [k, true]),
+) as TelegramKinds;
+
+/** Через сколько часов напоминать о нерешённом критичном. */
+export const TELEGRAM_REMIND_HOURS = [1, 2, 4, 8, 12, 24] as const;
+export const telegramDeliverySchema = z.object({
+  /** Второй сбой того же сервера за 10 минут — ответом на первое сообщение и без звука. */
+  groupPerServer: z.boolean(),
+  /** Звук только у критичных, «ждёт "Да"», входа и напоминаний; остальное приходит тихо. */
+  silentWarnings: z.boolean(),
+  /** Напоминать о нерешённом критичном каждые N часов (событие `reminder`). */
+  remindHours: z
+    .number()
+    .int()
+    .refine((v) => (TELEGRAM_REMIND_HOURS as readonly number[]).includes(v), {
+      message: 'Часы из списка',
+    }),
+});
+export type TelegramDelivery = z.infer<typeof telegramDeliverySchema>;
+export const TELEGRAM_DELIVERY_DEFAULT: TelegramDelivery = {
+  groupPerServer: true,
+  silentWarnings: true,
+  remindHours: 2,
 };
 
 /** Сколько назначений можно завести — чтобы случайная вставка не превратилась в рассылку. */
@@ -132,6 +209,10 @@ export const telegramSettingsSchema = z.object({
     Object.fromEntries(TELEGRAM_EVENTS.map((k) => [k, z.boolean()])) as Record<TelegramEvent, z.ZodBoolean>,
   ),
   quiet: telegramQuietSchema,
+  kinds: z.object(
+    Object.fromEntries(INCIDENT_KINDS.map((k) => [k, z.boolean()])) as Record<IncidentKind, z.ZodBoolean>,
+  ),
+  delivery: telegramDeliverySchema,
 });
 export type TelegramSettings = z.infer<typeof telegramSettingsSchema>;
 
@@ -165,6 +246,15 @@ export const telegramSettingsUpdateSchema = z.object({
     )
     .optional(),
   quiet: telegramQuietSchema.optional(),
+  kinds: z
+    .object(
+      Object.fromEntries(INCIDENT_KINDS.map((k) => [k, z.boolean().optional()])) as Record<
+        IncidentKind,
+        z.ZodOptional<z.ZodBoolean>
+      >,
+    )
+    .optional(),
+  delivery: telegramDeliverySchema.optional(),
 });
 export type TelegramSettingsUpdate = z.infer<typeof telegramSettingsUpdateSchema>;
 

@@ -1,14 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import {
-  BLOCK_VERDICT_LABELS,
   NODE_ONLINE_DROP_MIN_BASELINE,
   NODE_ONLINE_DROP_PCT,
+  NODE_ONLINE_DROP_WINDOW_MIN,
   type RemnawaveNode,
 } from '@nodeservice/shared';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersService } from '../servers/servers.service.js';
+import { describeAnomaly } from './block-check.logic.js';
 import { IncidentsRepository } from './incidents.repository.js';
 import { NodeBlockCheckService } from './node-block-check.service.js';
 
@@ -121,44 +122,14 @@ export class NodeAnomalyJob {
       matched?.id ?? null,
       allServers,
     );
-    const dropLine = `Онлайн ноды «${node.name}» упал с ${before} до ${after} (это ${Math.round(((before - after) / before) * 100)} %) за короткое время.`;
-    // «Подтвердилось» — хоть один пробующий сервер реально дозвонился и нашёл что-то, кроме «всё в
-    // порядке» (сюда же честный «порт не отвечает» с настоящей пробы, не только ТСПУ/16–20 КБ).
-    const confirmed = result.probes.length > 0 && result.verdict !== 'ok';
-    let title: string;
-    let detail: string;
-    if (result.probes.length === 0) {
-      title = `Резко упал онлайн, проверить не удалось · ${node.name}`;
-      detail = inbound?.port
-        ? `${dropLine} Проверить не удалось: нет ни одного российского сервера парка с рабочим SSH для встречной проверки.`
-        : `${dropLine} Проверить не удалось: в Remnawave не нашёлся порт подключения этой ноды.`;
-    } else if (result.sniUsed === null) {
-      // Имя маскировки неизвестно — проверили только порт. «Недоступен» — честный вывод, «отвечает» — нет
-      // вывода о блокировке (ТСПУ пропускает сам порт и режет уже рукопожатие или объём данных).
-      const fromList = result.probes.map((p) => p.from).join(', ');
-      title = confirmed
-        ? `${BLOCK_VERDICT_LABELS[result.verdict]} · ${node.name}`
-        : `Резко упал онлайн, порт отвечает · ${node.name}`;
-      detail = confirmed
-        ? `${dropLine} С российских серверов парка (${fromList}) порт ноды не отвечает совсем.`
-        : `${dropLine} С серверов парка (${fromList}) порт ноды отвечает. Проверить блокировку ТСПУ и «16–20 КБ» не удалось: в Remnawave не нашлось имени маскировки этой ноды.`;
-    } else {
-      const fromList = result.probes.map((p) => p.from).join(', ');
-      const perProbe = result.probes.map((p) => `${p.from} — ${p.detail}`).join('; ');
-      title = confirmed
-        ? `${BLOCK_VERDICT_LABELS[result.verdict]} · ${node.name}`
-        : `Резко упал онлайн, блокировка не подтвердилась · ${node.name}`;
-      detail = `${dropLine} Проверено с серверов парка: ${fromList}. Вывод: ${BLOCK_VERDICT_LABELS[result.verdict]}. Подробности по каждому серверу: ${perProbe}.`;
-    }
-    // Встречная проверка из-за рубежа: называем прямо, что показала — это главный довод за или против.
-    if (result.foreign.length > 0) {
-      const alive = result.foreign.filter((p) => p.verdict === 'ok').map((p) => p.from);
-      const dead = result.foreign.filter((p) => p.verdict !== 'ok').map((p) => p.from);
-      detail +=
-        result.verdict === 'ip_block'
-          ? ` Из-за рубежа порт отвечает (${alive.join(', ')}): сервер жив, закрыт именно путь из России — похоже на блокировку IP. Обычно помогает только смена IP.`
-          : ` Из-за рубежа порт тоже не отвечает (${dead.join(', ')}): сервер, скорее всего, выключен, отключён хостером или арендодателем, либо закрыт firewall.`;
-    }
+    const { title, detail, confirmed } = describeAnomaly({
+      nodeName: node.name,
+      before,
+      after,
+      windowMin: NODE_ONLINE_DROP_WINDOW_MIN,
+      result,
+      portKnown: Boolean(inbound?.port),
+    });
     const row = await this.incidents.open({
       serverId: matched?.id ?? null,
       serverName: matched?.name ?? node.name,
@@ -177,7 +148,13 @@ export class NodeAnomalyJob {
         // Сервер привязываем, только если нода есть в NodeService: у уведомления ссылка на запись сервера.
         server: matched ? { id: matched.id, name: matched.name, host: node.address } : null,
         link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
-        telegram: { event: confirmed ? 'incident_crit' : 'incident_warn', incidentId: row.id },
+        telegram: {
+          event: confirmed ? 'incident_crit' : 'incident_warn',
+          incidentId: row.id,
+          kind: 'node_blocked',
+          serverKey: matched?.id ?? `node:${node.uuid}`,
+          server: { name: matched?.name ?? node.name, host: node.address },
+        },
       });
   }
 }

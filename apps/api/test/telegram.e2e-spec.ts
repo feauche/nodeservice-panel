@@ -15,8 +15,11 @@ import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
+import { IncidentReminderJob } from '../src/modules/incidents/incident-reminder.job.js';
+import { IncidentsRepository } from '../src/modules/incidents/incidents.repository.js';
 import { IncidentsService } from '../src/modules/incidents/incidents.service.js';
 import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications/telegram/telegram.client.js';
+import { TelegramService } from '../src/modules/notifications/telegram/telegram.service.js';
 import { FakeSsh, SSH_PASSWORD, SSH_USER } from './fake-ssh.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -208,5 +211,94 @@ describe('telegram e2e', () => {
     expect(tg.sent().length).toBe(before);
     const cleared = telegramSettingsSchema.parse((await put({ destinations: [] })).body);
     expect(cleared.destinations).toEqual([]);
+  });
+
+  it('склейка по серверу, без звука, выключенный вид и напоминание', async () => {
+    const all = Object.fromEntries(
+      ['incident_crit', 'incident_warn', 'needs_confirm', 'resolved', 'reminder'].map((k) => [k, true]),
+    );
+    await put({
+      destinations: [{ url: `tgram://${TOKEN}/-1002946167407` }],
+      events: all,
+      kinds: { ssh_down: true, agent_offline: true, disk_high: true },
+      delivery: { groupPerServer: true, silentWarnings: true, remindHours: 1 },
+    });
+    await app.get<Db>(DB).execute(sql`update incidents set status = 'resolved' where status <> 'resolved'`);
+    const repo = app.get(IncidentsRepository);
+    const tgs = app.get(TelegramService);
+    const open = async (kind: 'agent_offline' | 'ssh_down' | 'disk_high', severity: 'crit' | 'warn') => {
+      const row = await repo.open({
+        serverId,
+        serverName: 'tg-host',
+        kind,
+        severity,
+        title: `${kind} · tg-host`,
+        detail: 'Проверка.',
+        timeline: [],
+      });
+      if (!row) throw new Error('инцидент не открылся');
+      return row;
+    };
+    const a = await open('agent_offline', 'crit');
+    await tgs.dispatch({
+      event: 'incident_crit',
+      kind: 'agent_offline',
+      incidentId: a.id,
+      serverKey: serverId,
+      title: 'Агент не в сети',
+    });
+    const first = tg.sent().at(-1);
+    const firstId = tg.ids.at(-1);
+    expect(first?.body.disable_notification).toBeUndefined();
+
+    // Второй сбой того же сервера за 10 минут — ответом на первый и без звука.
+    const b = await open('ssh_down', 'crit');
+    await tgs.dispatch({
+      event: 'incident_crit',
+      kind: 'ssh_down',
+      incidentId: b.id,
+      serverKey: serverId,
+      title: 'SSH недоступен',
+    });
+    const second = tg.sent().at(-1);
+    expect(second?.body.reply_parameters).toMatchObject({ message_id: firstId });
+    expect(second?.body.disable_notification).toBe(true);
+
+    // Предупреждение — тихо.
+    const c = await open('disk_high', 'warn');
+    await tgs.dispatch({
+      event: 'incident_warn',
+      kind: 'disk_high',
+      incidentId: c.id,
+      title: 'Диск заполняется',
+    });
+    expect(tg.sent().at(-1)?.body.disable_notification).toBe(true);
+
+    // Выключенный вид не приходит совсем.
+    await put({ kinds: { disk_high: false } });
+    const before = tg.sent().length;
+    await tgs.dispatch({ event: 'resolved', kind: 'disk_high', incidentId: c.id, title: 'Починилось' });
+    expect(tg.sent().length).toBe(before);
+
+    // Напоминание: последнее сообщение по критичному старше часа — ответом на исходное и со звуком.
+    const db = app.get<Db>(DB);
+    await db.execute(
+      sql`update telegram_messages set created_at = now() - interval '2 hours' where incident_id = ${a.id}`,
+    );
+    await app.get(IncidentReminderJob).run();
+    const reminders = tg.sent().filter((m) => String(m.body.text).includes('Всё ещё не решено'));
+    expect(reminders.length).toBeGreaterThanOrEqual(1);
+    const rem = reminders.find((m) => String(m.body.text).includes('agent_offline'));
+    expect(rem?.body.reply_parameters).toMatchObject({ message_id: firstId });
+    expect(rem?.body.disable_notification).toBeUndefined();
+    // Повторный прогон сразу — второго напоминания нет.
+    const n = tg.sent().length;
+    await app.get(IncidentReminderJob).run();
+    expect(tg.sent().filter((m) => String(m.body.text).includes('agent_offline')).length).toBe(
+      tg
+        .sent()
+        .slice(0, n)
+        .filter((m) => String(m.body.text).includes('agent_offline')).length,
+    );
   });
 });

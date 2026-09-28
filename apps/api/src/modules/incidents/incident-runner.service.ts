@@ -364,8 +364,9 @@ export class IncidentRunnerService implements OnModuleInit {
       severity: 'info',
       title: `${this.titleTok(row)}: чиню автоматически`,
       ...this.serverOf(row),
-      body: `${row.detail} Запускаю «${action.title}» (T1).`,
+      body: `Запускаю «${action.title}» (T1).`,
       link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
+      telegram: { event: 'autofix_started', incidentId: row.id, kind: row.kind as IncidentKind },
     });
     await this.start(row.id, first, 'auto').catch((err) =>
       this.log.warn(`автопочинка ${row.id}: ${(err as Error).message}`),
@@ -802,7 +803,7 @@ export class IncidentRunnerService implements OnModuleInit {
           ? `${action.title} — только вручную. ${reason}.`
           : `${first ? `${row.detail} ` : ''}Предложено: ${action.title} (${level}), ${reason}. Подтвердите запуск в инциденте.`,
       link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
-      telegram: { event: 'needs_confirm', incidentId: row.id },
+      telegram: { event: 'needs_confirm', incidentId: row.id, kind: row.kind as IncidentKind },
     });
     await this.audit.record({
       action: 'incident.action.proposed',
@@ -919,7 +920,11 @@ export class IncidentRunnerService implements OnModuleInit {
         ...this.serverOf(row),
         body: `${by === 'auto' ? 'Автоматически' : 'По вашей команде'} · ${note}`,
         link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
-        ...(result === 'helped' ? { telegram: { event: 'resolved' as const, incidentId: row.id } } : {}),
+        telegram: {
+          event: result === 'helped' ? ('resolved' as const) : ('fix_failed' as const),
+          incidentId: row.id,
+          kind: row.kind as IncidentKind,
+        },
       });
     await this.audit.record({
       action: 'incident.autofix',

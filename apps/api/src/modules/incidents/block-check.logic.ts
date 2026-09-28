@@ -5,6 +5,8 @@ import {
   BLOCK_1620_STEPS,
   BLOCK_CHECK_CONNECT_TIMEOUT_SEC,
   BLOCK_CHECK_READ_TIMEOUT_SEC,
+  BLOCK_VERDICT_LABELS,
+  type BlockCheckResult,
   type BlockProbeResult,
   type BlockVerdict,
   type Server,
@@ -224,4 +226,76 @@ export function combineVerdicts(probes: BlockProbeResult[]): BlockVerdict {
   const priority: BlockVerdict[] = ['block_16_20', 'tspu', 'ip_block', 'unreachable', 'ok'];
   for (const v of priority) if (probes.some((p) => p.verdict === v)) return v;
   return 'ok';
+}
+
+/** «Порт не отвечает совсем.» → «порт не отвечает совсем» — для строки списка. */
+const probeLine = (p: BlockProbeResult): string => {
+  const d = p.detail.trim().replace(/\.+$/, '');
+  // Строчная первая буква — только у обычного слова: «TLS-подключение» так и остаётся.
+  const lower = /^[А-ЯЁA-Z][а-яёa-z]/.test(d) ? `${d.charAt(0).toLowerCase()}${d.slice(1)}` : d;
+  return `• ${p.from} — ${lower}`;
+};
+
+/**
+ * Заголовок и текст инцидента «резко упал онлайн» блоками (витрина `telegram-messages-variants.html`, 1A):
+ * цифры онлайна, откуда проверяли и что увидели, вывод. Тот же текст — в карточке инцидента и в Telegram.
+ */
+export function describeAnomaly(input: {
+  nodeName: string;
+  before: number;
+  after: number;
+  windowMin: number;
+  result: BlockCheckResult;
+  portKnown: boolean;
+}): { title: string; detail: string; confirmed: boolean } {
+  const { nodeName, before, after, windowMin, result } = input;
+  const pct = before > 0 ? Math.round(((before - after) / before) * 100) : 0;
+  const lines = [`Онлайн: ${before} → ${after} (−${pct} %) за ${windowMin} минут`];
+  const confirmed = result.probes.length > 0 && result.verdict !== 'ok';
+  const rental = /аренд|rent/i.test(nodeName);
+  let title: string;
+  if (result.probes.length === 0) {
+    title = `Резко упал онлайн, проверить не удалось · ${nodeName}`;
+    lines.push(
+      '',
+      input.portKnown
+        ? 'Проверить не удалось: нет ни одного российского сервера парка с рабочим SSH для встречной проверки.'
+        : 'Проверить не удалось: в Remnawave не нашёлся порт подключения этой ноды.',
+    );
+    return { title, detail: lines.join('\n'), confirmed };
+  }
+  lines.push('', 'Из России:', ...result.probes.map(probeLine));
+  if (result.foreign.length > 0) lines.push('Из-за рубежа:', ...result.foreign.map(probeLine));
+  const portOnly = result.sniUsed === null;
+  let verdict: string;
+  switch (result.verdict) {
+    case 'ip_block':
+      verdict = 'Похоже: блокировка IP на стороне России — сервер жив. Обычно помогает только смена IP.';
+      break;
+    case 'unreachable':
+      verdict =
+        result.foreign.length > 0
+          ? 'Похоже: сервер выключен, отключён хостером или арендодателем, либо закрыт firewall.'
+          : 'Похоже: из России порт не отвечает; проверить из-за рубежа нечем — нет зарубежных серверов парка с рабочим SSH.';
+      break;
+    case 'tspu':
+      verdict = 'Похоже: блокировка ТСПУ — подключение с именем маскировки обрывается без ответа.';
+      break;
+    case 'block_16_20':
+      verdict = 'Похоже: блок «16–20 КБ» — соединение рвётся после первых килобайт.';
+      break;
+    default:
+      verdict = portOnly
+        ? 'Вывод: порт отвечает. Блокировку ТСПУ и «16–20 КБ» проверить нельзя: в Remnawave нет имени маскировки этой ноды.'
+        : 'Вывод: блокировка не подтвердилась — возможно, сбой у провайдеров пользователей.';
+  }
+  lines.push('', verdict);
+  if (rental && result.verdict === 'unreachable')
+    lines.push('Сервер арендован: если он недоступен целиком, возможно, не оплачена аренда.');
+  title = confirmed
+    ? `${BLOCK_VERDICT_LABELS[result.verdict]} · ${nodeName}`
+    : portOnly
+      ? `Резко упал онлайн, порт отвечает · ${nodeName}`
+      : `Резко упал онлайн, блокировка не подтвердилась · ${nodeName}`;
+  return { title, detail: lines.join('\n'), confirmed };
 }

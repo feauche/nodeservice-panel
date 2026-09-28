@@ -195,7 +195,9 @@ function NotificationRow({
       </span>
       <div className="min-w-0">
         <div className="text-[13px] leading-snug font-semibold">{n.title}</div>
-        {n.body && <div className="mt-0.5 text-[12px] leading-normal text-text-2">{n.body}</div>}
+        {n.body && (
+          <div className="mt-0.5 text-[12px] leading-normal whitespace-pre-line text-text-2">{n.body}</div>
+        )}
         <div className="mt-1 flex flex-wrap items-center gap-x-2.5 text-[11.5px] text-text-3">
           <time dateTime={n.createdAt}>{formatWhen(n.createdAt)}</time>
           {n.link &&

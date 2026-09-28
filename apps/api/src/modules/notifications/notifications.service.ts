@@ -2,6 +2,7 @@ import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import {
   type CreateNotificationRequest,
   createNotificationRequestSchema,
+  type IncidentKind,
   type Notification,
   type NotificationLink,
   type NotificationSeverity,
@@ -26,7 +27,16 @@ export interface PushInput {
    * То же событие в Telegram (R6): тип для тумблера и инцидент, чтобы «Починилось» ушло ответом на
    * исходное сообщение. Уходит независимо от того, попадает ли уведомление в колокольчик.
    */
-  telegram?: { event: TelegramEvent; incidentId?: string | null } | null;
+  telegram?: {
+    event: TelegramEvent;
+    incidentId?: string | null;
+    /** Вид инцидента — для тумблеров «Какие инциденты». */
+    kind?: IncidentKind | null;
+    /** Сервер, по которому склеиваются сбои (id или имя ноды). */
+    serverKey?: string | null;
+    /** Показать в Telegram другой сервер, чем в колокольчике (например, ноду, которой нет в NodeService). */
+    server?: { name: string; host?: string | null } | null;
+  } | null;
 }
 
 /** Токен имени сервера в тексте уведомления. */
@@ -79,9 +89,13 @@ export class NotificationsService {
       void this.telegram.dispatch({
         event: input.telegram.event,
         incidentId: input.telegram.incidentId ?? null,
+        kind: input.telegram.kind ?? null,
+        serverKey: input.telegram.serverKey ?? input.server?.id ?? null,
         title: fill(input.title),
         body: input.body ? fill(input.body) : null,
-        server: input.server ? { name: input.server.name, host: input.server.host ?? null } : null,
+        server:
+          input.telegram.server ??
+          (input.server ? { name: input.server.name, host: input.server.host ?? null } : null),
         link: input.link ?? null,
       });
     }

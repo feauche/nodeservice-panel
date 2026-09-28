@@ -1,15 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import {
+  INCIDENT_KINDS,
   maskTelegramUrl,
+  TELEGRAM_DELIVERY_DEFAULT,
   TELEGRAM_EVENTS,
   TELEGRAM_EVENTS_DEFAULT,
+  TELEGRAM_KINDS_DEFAULT,
   TELEGRAM_QUIET_DEFAULT,
+  type TelegramDelivery,
   type TelegramDestination,
   type TelegramEvents,
+  type TelegramKinds,
   type TelegramQuiet,
   type TelegramSettings,
   type TelegramTestResult,
+  telegramDeliverySchema,
   telegramQuietSchema,
 } from '@nodeservice/shared';
 import { eq } from 'drizzle-orm';
@@ -34,6 +40,8 @@ interface Stored {
   destinations: StoredDestination[];
   events: TelegramEvents;
   quiet: TelegramQuiet;
+  kinds: TelegramKinds;
+  delivery: TelegramDelivery;
 }
 export interface DigestItem {
   event: string;
@@ -78,10 +86,16 @@ export class TelegramSettingsStore {
     if (p.events && typeof p.events === 'object')
       for (const k of TELEGRAM_EVENTS) if (typeof p.events[k] === 'boolean') events[k] = p.events[k];
     const quiet = telegramQuietSchema.safeParse(p.quiet);
+    const kinds = { ...TELEGRAM_KINDS_DEFAULT };
+    if (p.kinds && typeof p.kinds === 'object')
+      for (const k of INCIDENT_KINDS) if (typeof p.kinds[k] === 'boolean') kinds[k] = p.kinds[k];
+    const delivery = telegramDeliverySchema.safeParse(p.delivery);
     return {
       destinations: Array.isArray(p.destinations) ? p.destinations : [],
       events,
       quiet: quiet.success ? quiet.data : { ...TELEGRAM_QUIET_DEFAULT },
+      kinds,
+      delivery: delivery.success ? delivery.data : { ...TELEGRAM_DELIVERY_DEFAULT },
     };
   }
 
@@ -104,6 +118,8 @@ export class TelegramSettingsStore {
       ),
       events: s.events,
       quiet: s.quiet,
+      kinds: s.kinds,
+      delivery: s.delivery,
     };
   }
 

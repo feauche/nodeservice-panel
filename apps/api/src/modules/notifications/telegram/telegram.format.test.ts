@@ -1,6 +1,6 @@
-import { maskTelegramUrl, parseTelegramUrl } from '@nodeservice/shared';
+import { type BlockProbeResult, maskTelegramUrl, parseTelegramUrl } from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
-
+import { describeAnomaly } from '../../incidents/block-check.logic.js';
 import { describeTelegramError } from './telegram.client.js';
 import { esc, formatTelegramMessage, inQuietHours } from './telegram.format.js';
 
@@ -33,20 +33,67 @@ describe('ссылка tgram://', () => {
   });
 });
 
-describe('сообщение (M2)', () => {
-  it('заголовок жирным, текст, сервер с адресом, хвост курсивом; HTML экранируется', () => {
+describe('сообщение блоками (1A)', () => {
+  it('заголовок без повтора имени, строка сервера с адресом, подписи жирным, пустые строки, хвост', () => {
     const t = formatTelegramMessage({
       event: 'incident_crit',
-      title: 'Похоже на блокировку IP <из России>',
-      body: 'Онлайн 477 → 6 & порт молчит.',
-      server: { name: 'vk (Аренда)', host: '81.177.1.2' },
-      footer: 'Критичный инцидент · 17:12',
+      title: 'Сервер недоступен · Финляндия #01',
+      body: 'Онлайн: 605 → 0 (−100 %) за 5 минут\n\nИз России:\n• Мост — порт <не> отвечает\n\nПохоже: сервер выключен & не оплачен.',
+      server: { name: 'Финляндия #01', host: '95.216.10.4' },
+      footer: 'Критичный инцидент · 23:11',
     });
-    expect(t.startsWith('🔴 <b>Похоже на блокировку IP &lt;из России&gt;</b>')).toBe(true);
-    expect(t).toContain('Онлайн 477 → 6 &amp; порт молчит.');
-    expect(t).toContain('Сервер: <b>vk (Аренда)</b> <code>81.177.1.2</code>');
-    expect(t).toContain('<i>Критичный инцидент · 17:12</i>');
+    const lines = t.split('\n');
+    expect(lines[0]).toBe('🔴 <b>Сервер недоступен</b>');
+    expect(lines[1]).toBe('<b>Финляндия #01</b> · <code>95.216.10.4</code>');
+    expect(lines[2]).toBe('');
+    expect(t).toContain('<b>Онлайн:</b> 605 → 0 (−100 %) за 5 минут');
+    expect(t).toContain('<b>Из России:</b>\n• Мост — порт &lt;не&gt; отвечает');
+    expect(t).toContain('<b>Похоже:</b> сервер выключен &amp; не оплачен.');
+    expect(t.endsWith('\n\n<i>Критичный инцидент · 23:11</i>')).toBe(true);
     expect(esc('<a>')).toBe('&lt;a&gt;');
+  });
+});
+
+describe('текст падения онлайна', () => {
+  const probe = (from: string, verdict: BlockProbeResult['verdict'], detail: string): BlockProbeResult => ({
+    from,
+    verdict,
+    detail,
+    stalledAtKb: null,
+    error: null,
+  });
+  it('сервер недоступен отовсюду: блоки, без двойных точек, арендованный — подсказка про оплату', () => {
+    const r = describeAnomaly({
+      nodeName: 'vk (Аренда)',
+      before: 605,
+      after: 0,
+      windowMin: 5,
+      portKnown: true,
+      result: {
+        nodeName: 'vk (Аренда)',
+        address: '1.2.3.4',
+        sniUsed: 'site.ru',
+        verdict: 'unreachable',
+        probes: [probe('Мост', 'unreachable', 'Порт не отвечает совсем.')],
+        foreign: [probe('Нидерланды - 2', 'unreachable', 'Порт не отвечает совсем.')],
+      },
+    });
+    expect(r.title).toBe('Сервер недоступен · vk (Аренда)');
+    expect(r.confirmed).toBe(true);
+    expect(r.detail).toBe(
+      [
+        'Онлайн: 605 → 0 (−100 %) за 5 минут',
+        '',
+        'Из России:',
+        '• Мост — порт не отвечает совсем',
+        'Из-за рубежа:',
+        '• Нидерланды - 2 — порт не отвечает совсем',
+        '',
+        'Похоже: сервер выключен, отключён хостером или арендодателем, либо закрыт firewall.',
+        'Сервер арендован: если он недоступен целиком, возможно, не оплачена аренда.',
+      ].join('\n'),
+    );
+    expect(r.detail).not.toContain('..');
   });
 });
 

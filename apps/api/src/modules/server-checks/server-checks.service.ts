@@ -16,6 +16,7 @@ import type { ServerCheckRow } from '../../infra/db/schema/index.js';
 import { type AuditActor, SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CLS_USER } from '../auth/cls-keys.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import { SshService, type SshSession } from '../servers/ssh.service.js';
 import { ServerChecksRepository, toCheckRun } from './server-checks.repository.js';
@@ -58,6 +59,7 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
     private readonly ssh: SshService,
     private readonly audit: AuditService,
     private readonly cls: ClsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -204,6 +206,16 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
     }
     await this.repo.finish(row.id, error ? 'failed' : 'ok', text(), error);
     await this.repo.prune(row.serverId, row.check).catch(() => undefined);
+    // Только суточные запуски: по ручному вы и так смотрите на экран.
+    if (error && row.trigger === 'auto')
+      await this.notifications.push({
+        severity: 'info',
+        title: `Проверка «${SERVER_CHECK_META[row.check].label}» не удалась · {server}`,
+        body: `Причина: ${error}`,
+        server: { id: row.serverId, name: serverName },
+        link: { to: `/servers?open=${row.serverId}`, label: 'Открыть сервер' },
+        telegram: { event: 'check_failed' },
+      });
     await this.audit
       .record({
         action: 'server.check.run',

@@ -7,6 +7,7 @@ import { SecurityModule } from '../security/security.module.js';
 import { ServersModule } from '../servers/servers.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { IncidentMetricsService } from './incident-metrics.service.js';
+import { IncidentReminderJob } from './incident-reminder.job.js';
 import { IncidentRunnerService } from './incident-runner.service.js';
 import { IncidentSshRecheckJob } from './incident-ssh-recheck.job.js';
 import { IncidentsController } from './incidents.controller.js';
@@ -33,6 +34,7 @@ import { NodeProbeJob } from './node-probe.job.js';
     NodeBlockCheckService,
     NodeAnomalyJob,
     NodeBlockRecheckJob,
+    IncidentReminderJob,
   ],
   exports: [IncidentsService, IncidentRunnerService, IncidentMetricsService],
 })

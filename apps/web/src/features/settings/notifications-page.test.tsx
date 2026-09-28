@@ -64,4 +64,17 @@ describe('NotificationsPage', () => {
     await waitFor(() => expect(mockTelegram.settings.events.maintenance).toBe(true));
     expect(mockTelegram.settings.quiet.enabled).toBe(true);
   });
+
+  it('какие инциденты и как присылать: выключить SSH, без склейки, напоминать раз в 4 ч', async () => {
+    renderPage(NotificationsPage, '/settings/notifications');
+    const user = userEvent.setup();
+    await screen.findByText('Какие инциденты');
+    await user.click(document.getElementById('tg-kind-ssh_down') as HTMLElement);
+    await user.click(document.getElementById('tg-group') as HTMLElement);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Как часто напоминать' }), '4');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(mockTelegram.settings.kinds.ssh_down).toBe(false));
+    expect(mockTelegram.settings.kinds.agent_offline).toBe(true);
+    expect(mockTelegram.settings.delivery).toMatchObject({ groupPerServer: false, remindHours: 4 });
+  });
 });

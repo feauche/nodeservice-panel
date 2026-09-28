@@ -9,7 +9,11 @@ const ICON: Record<TelegramEvent, string> = {
   incident_warn: '🟡',
   needs_confirm: '🟠',
   resolved: '✅',
+  autofix_started: '🔧',
+  fix_failed: '⚠️',
+  reminder: '⏰',
   maintenance: '🛠',
+  check_failed: '🧪',
   jarvis_card: '🧠',
   login: '🔐',
 };
@@ -24,18 +28,29 @@ export interface TelegramMessageInput {
 }
 
 /**
- * Подробное сообщение (витрина, вариант M2): иконка и заголовок жирным, пустая строка, текст по
- * предложениям, сервер с адресом, курсивный хвост. Длина — в пределах 4096 символов Telegram.
+ * Строка вида «Подпись: значение» или «Подпись:» — подпись жирным (витрина `telegram-messages-variants.html`,
+ * 1A). Маркеры списка «• …» и обычные предложения не трогаем.
+ */
+function formatLine(line: string): string {
+  const m = /^([^:•\n]{2,40}):(\s.*)?$/.exec(line);
+  if (!m || /https?$/i.test(m[1] ?? '')) return esc(line);
+  return `<b>${esc(m[1] ?? '')}:</b>${esc(m[2] ?? '')}`;
+}
+
+/**
+ * Сообщение блоками (вариант 1A): заголовок — что случилось; вторая строка — сервер и адрес; дальше текст
+ * как есть по строкам, с жирными подписями; пустые строки разделяют блоки; хвост курсивом. Имя сервера,
+ * если оно уже во второй строке, из заголовка убираем. Длина — в пределах 4096 символов Telegram.
  */
 export function formatTelegramMessage(m: TelegramMessageInput): string {
-  const parts = [`${ICON[m.event]} <b>${esc(m.title)}</b>`];
-  if (m.body?.trim()) parts.push('', esc(m.body.trim()));
+  const name = m.server?.name;
+  const title = name && m.title.endsWith(` · ${name}`) ? m.title.slice(0, -` · ${name}`.length) : m.title;
+  const parts = [`${ICON[m.event]} <b>${esc(title)}</b>`];
   if (m.server)
-    parts.push(
-      '',
-      `Сервер: <b>${esc(m.server.name)}</b>${m.server.host ? ` <code>${esc(m.server.host)}</code>` : ''}`,
-    );
-  if (m.footer) parts.push(`<i>${esc(m.footer)}</i>`);
+    parts.push(`<b>${esc(m.server.name)}</b>${m.server.host ? ` · <code>${esc(m.server.host)}</code>` : ''}`);
+  const body = m.body?.trim();
+  if (body) parts.push('', body.split('\n').map(formatLine).join('\n'));
+  if (m.footer) parts.push('', `<i>${esc(m.footer)}</i>`);
   const text = parts.join('\n');
   return text.length > 4000 ? `${text.slice(0, 3990)}…` : text;
 }

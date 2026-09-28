@@ -200,7 +200,7 @@ describe('J10: аномалия онлайна → проверка блокир
     // Адрес ноды (198.51.100.9) ни с одним сервером панели не совпал — саму ноду добавлять не нужно.
     expect(inc?.serverName).toBe('проверяемая-нода');
     expect(inc?.detail).toContain('ru-probe');
-    expect(inc?.detail).toContain('упал с 100 до 10');
+    expect(inc?.detail).toContain('Онлайн: 100 → 10 (−90 %)');
     expect(inc?.detail).toContain('90');
     expect(inc?.timeline[0]?.result).toBe('detect');
   });
@@ -227,7 +227,7 @@ describe('J10: аномалия онлайна → проверка блокир
     expect(inc?.title).not.toContain('Похоже');
     expect(inc?.title).toContain('не подтвердилась');
     expect(inc?.detail).toContain('ru-probe');
-    expect(inc?.detail).toContain('упал с 100 до 10');
+    expect(inc?.detail).toContain('Онлайн: 100 → 10 (−90 %)');
   });
 
   it('падение онлайна, но проверить нечем (нет ни порта, ни имени маскировки) → предупреждение «проверить не удалось», не крит', async () => {
@@ -347,7 +347,8 @@ describe('J10: аномалия онлайна → проверка блокир
     const inc = list.items.find((i) => i.serverName === 'шестая-нода');
     expect(inc?.severity).toBe('crit');
     expect(inc?.title).toContain('блокировку IP из России');
-    expect(inc?.detail).toContain('Из-за рубежа порт отвечает (de-probe)');
+    expect(inc?.detail).toContain('Из-за рубежа:\n• de-probe — порт отвечает');
+    expect(inc?.detail).toContain('Похоже: блокировка IP на стороне России');
     ssh.blockCheckPortOnlyOutput = null;
   });
 });

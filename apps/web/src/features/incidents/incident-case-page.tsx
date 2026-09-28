@@ -208,8 +208,11 @@ export function IncidentCasePage({ id }: { id: string }) {
               runBusy={run.isPending}
               onRun={(action) => void doRun(action)}
             />
-            <p className="text-[13.5px] leading-normal">
-              {inc.detail} <span className="text-text-2">{outcomeSentence(inc, now)}.</span>
+            {/* Текст бывает блоками по строкам (падение онлайна: откуда проверяли, вывод) — строки сохраняем. */}
+            <p className="text-[13.5px] leading-normal whitespace-pre-line">
+              {inc.detail}
+              {inc.detail.includes('\n') ? '\n\n' : ' '}
+              <span className="text-text-2">{outcomeSentence(inc, now)}.</span>
             </p>
             <section>
               <h3 className="mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">

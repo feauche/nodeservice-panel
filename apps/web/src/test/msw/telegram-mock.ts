@@ -1,7 +1,9 @@
 import {
   maskTelegramUrl,
   parseTelegramUrl,
+  TELEGRAM_DELIVERY_DEFAULT,
   TELEGRAM_EVENTS_DEFAULT,
+  TELEGRAM_KINDS_DEFAULT,
   TELEGRAM_QUIET_DEFAULT,
   type TelegramSettings,
   type TelegramSettingsUpdate,
@@ -23,6 +25,8 @@ export function resetTelegram(): void {
     destinations: [],
     events: { ...TELEGRAM_EVENTS_DEFAULT },
     quiet: { ...TELEGRAM_QUIET_DEFAULT },
+    kinds: { ...TELEGRAM_KINDS_DEFAULT },
+    delivery: { ...TELEGRAM_DELIVERY_DEFAULT },
   };
 }
 resetTelegram();
@@ -73,6 +77,8 @@ export const telegramHandlers = [
     }
     if (body.events) s.events = { ...s.events, ...(body.events as TelegramSettings['events']) };
     if (body.quiet) s.quiet = body.quiet;
+    if (body.kinds) s.kinds = { ...s.kinds, ...(body.kinds as TelegramSettings['kinds']) };
+    if (body.delivery) s.delivery = body.delivery;
     return HttpResponse.json(s);
   }),
   http.post('/api/settings/telegram/test', async ({ request }) => {

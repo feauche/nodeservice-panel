@@ -1,12 +1,19 @@
 import {
+  INCIDENT_KIND_META,
   parseTelegramUrl,
   TELEGRAM_DESTINATIONS_MAX,
   TELEGRAM_EVENT_GROUPS,
   TELEGRAM_EVENT_HINTS,
   TELEGRAM_EVENT_LABELS,
   TELEGRAM_EVENT_TONE,
+  TELEGRAM_KIND_GROUPS,
+  TELEGRAM_KIND_HINTS,
+  TELEGRAM_KIND_LABELS,
+  TELEGRAM_REMIND_HOURS,
+  type TelegramDelivery,
   type TelegramDestination,
   type TelegramEvents,
+  type TelegramKinds,
   type TelegramQuiet,
   type TelegramSettings,
 } from '@nodeservice/shared';
@@ -27,6 +34,8 @@ interface Draft {
   rows: Row[];
   events: TelegramEvents;
   quiet: TelegramQuiet;
+  kinds: TelegramKinds;
+  delivery: TelegramDelivery;
 }
 
 /** Время тихих часов списком, всегда 24 часа: поле «время» в браузере может показать «11:00 PM». */
@@ -43,6 +52,8 @@ function fromSettings(s: TelegramSettings): Draft {
     rows: s.destinations.map((d) => ({ key: d.id, saved: d })),
     events: { ...s.events },
     quiet: { ...s.quiet },
+    kinds: { ...s.kinds },
+    delivery: { ...s.delivery },
   };
 }
 
@@ -51,11 +62,15 @@ const sameDraft = (a: Draft, b: Draft): boolean =>
     rows: a.rows.map((r) => ('saved' in r ? r.saved.id : r.url.trim())),
     events: a.events,
     quiet: { ...a.quiet, timeZone: '' },
+    kinds: a.kinds,
+    delivery: a.delivery,
   }) ===
   JSON.stringify({
     rows: b.rows.map((r) => ('saved' in r ? r.saved.id : r.url.trim())),
     events: b.events,
     quiet: { ...b.quiet, timeZone: '' },
+    kinds: b.kinds,
+    delivery: b.delivery,
   });
 
 const TONE_BADGE = {
@@ -149,6 +164,8 @@ export function NotificationsPage() {
           .filter((r) => 'saved' in r || r.url.trim() !== '')
           .map((r) => ('saved' in r ? { id: r.saved.id } : { url: r.url.trim() })),
         events: draft.events,
+        kinds: draft.kinds,
+        delivery: draft.delivery,
         quiet: {
           ...draft.quiet,
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || draft.quiet.timeZone,
@@ -349,6 +366,108 @@ export function NotificationsPage() {
             </div>
           </div>
         ))}
+      </SettingsCard>
+
+      <SettingsCard
+        title="Какие инциденты"
+        hint={
+          'Выключенный вид не присылается совсем — ни открытие, ни «ждёт "Да"», ни «починилось». В колокольчике панели всё остаётся.'
+        }
+      >
+        {TELEGRAM_KIND_GROUPS.map((g) => (
+          <div key={g.title} className="pt-2">
+            <h4 className="m-0 pt-1 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
+              {g.title}
+            </h4>
+            <div>
+              {g.keys.map((k) => {
+                const crit = INCIDENT_KIND_META[k].severity === 'crit';
+                return (
+                  <SettingsRow
+                    key={k}
+                    htmlFor={`tg-kind-${k}`}
+                    label={
+                      <>
+                        {TELEGRAM_KIND_LABELS[k]}
+                        <span
+                          className={cn(
+                            'ml-1.5 inline-flex h-[18px] items-center rounded-[5px] px-1.5 align-[1px] text-[10.5px] font-semibold',
+                            crit ? TONE_BADGE.crit[0] : TONE_BADGE.warn[0],
+                          )}
+                        >
+                          {crit ? TONE_BADGE.crit[1] : TONE_BADGE.warn[1]}
+                        </span>
+                      </>
+                    }
+                    hint={TELEGRAM_KIND_HINTS[k]}
+                  >
+                    <Toggle
+                      id={`tg-kind-${k}`}
+                      checked={draft.kinds[k]}
+                      onChange={(v) => setDraft({ ...draft, kinds: { ...draft.kinds, [k]: v } })}
+                    />
+                  </SettingsRow>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </SettingsCard>
+
+      <SettingsCard title="Как присылать" hint="Звук, склейка сбоев и напоминания.">
+        <SettingsRow
+          label="Один сбой сервера — одно уведомление со звуком"
+          htmlFor="tg-group"
+          hint="Второй сбой того же сервера за 10 минут («агент» + «SSH») приходит ответом на первый и без звука."
+        >
+          <Toggle
+            id="tg-group"
+            checked={draft.delivery.groupPerServer}
+            onChange={(v) => setDraft({ ...draft, delivery: { ...draft.delivery, groupPerServer: v } })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label="Предупреждения без звука"
+          htmlFor="tg-silent"
+          hint={
+            'Звук только у критичных, «ждёт "Да"», входа в панель и напоминаний; остальное приходит тихо.'
+          }
+        >
+          <Toggle
+            id="tg-silent"
+            checked={draft.delivery.silentWarnings}
+            onChange={(v) => setDraft({ ...draft, delivery: { ...draft.delivery, silentWarnings: v } })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label="Напоминать о нерешённом критичном"
+          htmlFor="tg-remind"
+          hint="Если критичный инцидент всё ещё открыт — напоминание ответом на исходное сообщение."
+        >
+          <select
+            aria-label="Как часто напоминать"
+            disabled={!draft.events.reminder}
+            value={draft.delivery.remindHours}
+            onChange={(e) =>
+              setDraft({ ...draft, delivery: { ...draft.delivery, remindHours: Number(e.target.value) } })
+            }
+            className={cn(
+              'h-[34px] cursor-pointer rounded-[9px] border border-border bg-surface-2 px-2.5 text-[13px] disabled:cursor-default',
+              !draft.events.reminder && 'opacity-50',
+            )}
+          >
+            {TELEGRAM_REMIND_HOURS.map((h) => (
+              <option key={h} value={h}>
+                каждые {h} ч
+              </option>
+            ))}
+          </select>
+          <Toggle
+            id="tg-remind"
+            checked={draft.events.reminder}
+            onChange={(v) => setDraft({ ...draft, events: { ...draft.events, reminder: v } })}
+          />
+        </SettingsRow>
       </SettingsCard>
 
       <SettingsCard
