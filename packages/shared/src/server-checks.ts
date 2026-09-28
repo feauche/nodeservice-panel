@@ -87,6 +87,8 @@ export const SERVER_CHECK_META: Record<ServerCheckKey, ServerCheckMeta> = {
 
 /** Лёгкие проверки повторяются не чаще раза в столько часов. */
 export const SERVER_CHECK_INTERVAL_HOURS = 24;
+/** Упавшая лёгкая проверка повторяется сама через столько часов. */
+export const SERVER_CHECK_RETRY_FAILED_HOURS = 1;
 /** Больше этого вывода не храним: начало и конец остаются, середина вырезается. */
 export const SERVER_CHECK_OUTPUT_MAX = 48 * 1024;
 

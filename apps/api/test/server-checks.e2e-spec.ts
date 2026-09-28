@@ -186,4 +186,17 @@ describe('server checks e2e', () => {
       'Геоблока нет, всё открывается.',
     );
   });
+
+  it('упавшую лёгкую проверку джоба повторяет через час, а не через сутки', async () => {
+    const db = app.get<Db>(DB);
+    await db.execute(
+      sql`update server_checks set started_at = now() - interval '2 hours' where server_id = ${serverId} and "check" = 'dpi'`,
+    );
+    ssh.checks.code.dpi = 0;
+    ssh.checks.output.dpi = 'Total: 31 OK, 0 failed\n';
+    const { ServerChecksJob } = await import('../src/modules/server-checks/server-checks.job.js');
+    await app.get(ServerChecksJob).run();
+    const res = await waitIdle();
+    expect(res.items.find((r) => r.check === 'dpi')).toMatchObject({ status: 'ok', trigger: 'auto' });
+  });
 });

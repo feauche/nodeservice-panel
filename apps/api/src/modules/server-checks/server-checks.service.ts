@@ -4,6 +4,7 @@ import {
   SERVER_CHECK_KEYS,
   SERVER_CHECK_META,
   SERVER_CHECK_PROBLEM,
+  SERVER_CHECK_RETRY_FAILED_HOURS,
   type ServerCheckKey,
   type ServerCheckRun,
   type ServerChecksResponse,
@@ -23,7 +24,9 @@ import {
   checkCommand,
   cleanOutput,
   exitReason,
+  reportComplete,
   SERVER_CHECK_TIMEOUT_MS,
+  stripNoise,
 } from './server-checks.scripts.js';
 
 /** Живой вывод пишем в БД не чаще этого: страница опрашивает раз в пару секунд. */
@@ -173,7 +176,7 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
     let session: SshSession | null = null;
     let timer: NodeJS.Timeout | null = null;
     let chain: Promise<void> = Promise.resolve();
-    const text = () => capOutput(cleanOutput(raw));
+    const text = () => capOutput(stripNoise(row.check, cleanOutput(raw)));
     const flush = () => {
       timer = null;
       const snapshot = text();
@@ -191,7 +194,7 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
           timer ??= setTimeout(flush, OUTPUT_FLUSH_MS);
         },
       });
-      if (res.code !== 0) error = exitReason(res.code);
+      if (res.code !== 0 && !reportComplete(row.check, cleanOutput(raw))) error = exitReason(res.code);
     } catch (err) {
       error = errorText(err).slice(0, 500);
     } finally {
@@ -217,16 +220,19 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
 
   /** Лёгкие проверки, которые пора повторить (или ещё не запускались), по серверам. */
   async dueLightChecks(serverIds: string[]): Promise<Array<{ serverId: string; check: ServerCheckKey }>> {
-    const last = new Map(
-      (await this.repo.lastStarts()).map((r) => [`${r.serverId}:${r.check}`, r.at.getTime()]),
-    );
+    const last = new Map((await this.repo.lastStarts()).map((r) => [`${r.serverId}:${r.check}`, r]));
     const deadline = Date.now() - SERVER_CHECK_INTERVAL_HOURS * 3_600_000;
+    // Упавшую проверку повторяем через час, а не через сутки: причина часто разовая (сторонний сервис
+    // не ответил) или уже исправлена обновлением панели.
+    const failedDeadline = Date.now() - SERVER_CHECK_RETRY_FAILED_HOURS * 3_600_000;
     const out: Array<{ serverId: string; check: ServerCheckKey }> = [];
     for (const serverId of serverIds)
       for (const check of SERVER_CHECK_KEYS) {
         if (SERVER_CHECK_META[check].heavy) continue;
-        const at = last.get(`${serverId}:${check}`);
-        if (at === undefined || at < deadline) out.push({ serverId, check });
+        const r = last.get(`${serverId}:${check}`);
+        const at = r?.at.getTime();
+        if (!r || at === undefined || at < deadline || (r.status === 'failed' && at < failedDeadline))
+          out.push({ serverId, check });
       }
     return out;
   }

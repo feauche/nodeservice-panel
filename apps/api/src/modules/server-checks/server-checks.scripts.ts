@@ -27,19 +27,27 @@ export const SERVER_CHECK_TIMEOUT_MS: Record<ServerCheckKey, number> = Object.fr
 const ENV = 'export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8 LANG=C.UTF-8 TERM=dumb NO_COLOR=1';
 
 /**
- * need <команда> <пакет>: ставит недостающий пакет через apt (Debian/Ubuntu), ждёт чужую блокировку apt.
- * Не получилось — понятная строка и выход с кодом 3, а не непонятная ошибка скрипта дальше.
+ * need <команда> <пакет> [запасной пакет…]: ставит недостающее через apt (Debian/Ubuntu), ждёт чужую
+ * блокировку apt. Пакеты-кандидаты — потому что имя меняется между версиями (column: bsdextrautils на
+ * новых, util-linux на старых). Не получилось — понятная строка и выход с кодом 3.
  */
 const NEED = [
   'need() {',
-  '  command -v "$1" >/dev/null 2>&1 && return 0',
+  '  cmd="$1"; shift',
+  '  command -v "$cmd" >/dev/null 2>&1 && return 0',
   '  if command -v apt-get >/dev/null 2>&1; then',
-  '    echo "Устанавливаю недостающий пакет: $2"',
-  '    timeout 240 apt-get -o DPkg::Lock::Timeout=180 install -y -qq "$2" >/dev/null 2>&1 ||',
-  '      { timeout 240 apt-get -o DPkg::Lock::Timeout=180 update -qq >/dev/null 2>&1;',
-  '        timeout 240 apt-get -o DPkg::Lock::Timeout=180 install -y -qq "$2" >/dev/null 2>&1; }',
+  '    echo "Устанавливаю недостающую программу: $cmd"',
+  '    updated=""',
+  '    for pkg in "$@"; do',
+  '      timeout 240 apt-get -o DPkg::Lock::Timeout=180 install -y -qq "$pkg" >/dev/null 2>&1 && break',
+  '      if [ -z "$updated" ]; then',
+  '        updated=1',
+  '        timeout 240 apt-get -o DPkg::Lock::Timeout=180 update -qq >/dev/null 2>&1',
+  '        timeout 240 apt-get -o DPkg::Lock::Timeout=180 install -y -qq "$pkg" >/dev/null 2>&1 && break',
+  '      fi',
+  '    done',
   '  fi',
-  '  command -v "$1" >/dev/null 2>&1 || { echo "Не удалось установить $2 — проверка невозможна."; exit 3; }',
+  '  command -v "$cmd" >/dev/null 2>&1 || { echo "Не удалось установить $cmd — проверка невозможна."; exit 3; }',
   '}',
 ].join('\n');
 
@@ -57,9 +65,14 @@ const BODY: Record<ServerCheckKey, string[]> = {
   ],
   ip_region: [
     'need jq jq',
+    'need column bsdextrautils util-linux',
     remote('ip_region', 'https://raw.githubusercontent.com/Davoyan/ipregion/main/ipregion.sh'),
   ],
+  // censorcheck сам проверяет curl, dig, jq и column и без них выходит с «Missing dependencies».
   geoblock: [
+    'need dig dnsutils bind9-dnsutils',
+    'need jq jq',
+    'need column bsdextrautils util-linux',
     remote(
       'geoblock',
       'https://raw.githubusercontent.com/vernette/censorcheck/master/censorcheck.sh',
@@ -67,6 +80,9 @@ const BODY: Record<ServerCheckKey, string[]> = {
     ),
   ],
   dpi: [
+    'need dig dnsutils bind9-dnsutils',
+    'need jq jq',
+    'need column bsdextrautils util-linux',
     remote(
       'dpi',
       'https://raw.githubusercontent.com/vernette/censorcheck/master/censorcheck.sh',
@@ -78,6 +94,7 @@ const BODY: Record<ServerCheckKey, string[]> = {
   iperf3_ru: [
     'need iperf3 iperf3',
     'need jq jq',
+    'need ping iputils-ping',
     remote(
       'iperf3_ru',
       'https://raw.githubusercontent.com/itdoginfo/russian-iperf3-servers/main/speedtest.sh',
@@ -127,6 +144,30 @@ export function capOutput(text: string, max = SERVER_CHECK_OUTPUT_MAX): string {
   const head = Math.floor(max / 3);
   const tail = max - head;
   return `${text.slice(0, head)}\n\n… вывод сокращён, пропущено ${text.length - max} символов …\n\n${text.slice(-tail)}`;
+}
+
+/**
+ * Признак полного отчёта: некоторые скрипты выходят с ненулевым кодом и при успехе. IPQuality последней
+ * строкой проверяет IPv6 через `[[ … ]] && …` — без IPv6 на сервере весь скрипт завершается кодом 1,
+ * хотя отчёт напечатан целиком.
+ */
+const COMPLETE_RE: Partial<Record<ServerCheckKey, RegExp>> = {
+  ip_quality: /IP QUALITY CHECK REPORT[\s\S]*\n={20,}/,
+};
+
+/** Скрипт напечатал полный отчёт — считаем проверку успешной независимо от кода выхода. */
+export function reportComplete(key: ServerCheckKey, text: string): boolean {
+  return COMPLETE_RE[key]?.test(text) ?? false;
+}
+
+/**
+ * Убрать из вывода то, что к проверке не относится. IPQuality перед отчётом печатает рекламные баннеры
+ * спонсоров (прокси, хостинги) — отчёт начинается с первой строки из «#».
+ */
+export function stripNoise(key: ServerCheckKey, text: string): string {
+  if (key !== 'ip_quality') return text;
+  const at = text.search(/^#{20,}\s*$/m);
+  return at > 0 ? text.slice(at) : text;
 }
 
 /** Понятная причина по коду выхода. */
