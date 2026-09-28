@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import {
+  NODE_ONLINE_DROP_CONFIRM_CHECKS,
   NODE_ONLINE_DROP_MIN_BASELINE,
   NODE_ONLINE_DROP_PCT,
   NODE_ONLINE_DROP_WINDOW_MIN,
@@ -12,6 +13,7 @@ import { ServersService } from '../servers/servers.service.js';
 import { describeAnomaly } from './block-check.logic.js';
 import { IncidentsRepository } from './incidents.repository.js';
 import { NodeBlockCheckService } from './node-block-check.service.js';
+import { resolveUpstreamTarget } from './upstream-target.js';
 
 const TICK_MS = 60_000;
 /** Не открывать новый инцидент по той же ноде чаще, чем раз во столько минут (в основном страховка для
@@ -26,6 +28,8 @@ interface Sample {
 /** Просадка увидена, но ещё не открыта — ждёт подтверждения следующим снимком (см. коммент к checkNode). */
 interface Candidate {
   baselineOnline: number;
+  /** Сколько снимков подряд уже показали просадку (первый — сама находка). */
+  seen: number;
 }
 
 /**
@@ -35,8 +39,8 @@ interface Candidate {
  * сравнение идёт между двумя последними РАЗНЫМИ снимками — этого достаточно для порога «за 5 минут».
  * Резкое падение онлайна не открывает инцидент сразу: обычная перезагрузка сервера тоже на секунды
  * роняет онлайн до нуля и сама поднимается. Первое обнаружение — только кандидат; открываем инцидент,
- * лишь если следующий снимок этой же ноды снова подтверждает просадку (на практике — не раньше
- * следующего тика, то есть где-то через минуту, а не сразу). Если к тому моменту онлайн уже вернулся —
+ * лишь если просадку показали три снимка подряд (NODE_ONLINE_DROP_CONFIRM_CHECKS, решение владельца
+ * 29.09.2026; снимки Remnawave — раз в минуту, то есть пара минут). Если онлайн за это время вернулся —
  * инцидент не заводим вовсе, тихо. Важность и заголовок открытого честно отражают результат встречной
  * проверки: подтвердилась блокировка — крит, проверка прошла чисто или не смогла отработать —
  * предупреждение без слова «блокировка» в заголовке.
@@ -86,8 +90,13 @@ export class NodeAnomalyJob {
 
     const candidate = this.pending.get(node.uuid);
     if (candidate) {
-      this.pending.delete(node.uuid);
       const stillDown = online < candidate.baselineOnline * (1 - NODE_ONLINE_DROP_PCT / 100);
+      if (stillDown && candidate.seen + 1 < NODE_ONLINE_DROP_CONFIRM_CHECKS) {
+        // Просадка держится, но проверок подряд ещё мало — ждём следующий снимок.
+        candidate.seen += 1;
+        return;
+      }
+      this.pending.delete(node.uuid);
       if (stillDown) {
         const until = this.cooldownUntil.get(node.uuid) ?? 0;
         if (Date.now() >= until) {
@@ -107,7 +116,7 @@ export class NodeAnomalyJob {
     const dropPct = ((prev.online - online) / prev.online) * 100;
     if (dropPct < NODE_ONLINE_DROP_PCT) return;
     // Не открываем сразу — ждём подтверждения следующим снимком (см. коммент к классу).
-    this.pending.set(node.uuid, { baselineOnline: prev.online });
+    this.pending.set(node.uuid, { baselineOnline: prev.online, seen: 1 });
   }
 
   private async investigate(node: RemnawaveNode, before: number, after: number): Promise<void> {
@@ -122,6 +131,12 @@ export class NodeAnomalyJob {
       matched?.id ?? null,
       allServers,
     );
+    // У выхода с указанным в профиле входом стучимся и во вход — видно, чья сторона сломалась.
+    const target = await resolveUpstreamTarget(matched, allServers, this.remnawave).catch(() => null);
+    if (target)
+      result.entry = await this.blockCheck
+        .checkEntry(target, matched?.id ?? null, allServers)
+        .catch(() => null);
     const { title, detail, confirmed } = describeAnomaly({
       nodeName: node.name,
       before,

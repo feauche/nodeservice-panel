@@ -13,6 +13,15 @@ export const NODE_ONLINE_DROP_PCT = 80;
 export const NODE_ONLINE_DROP_WINDOW_MIN = 5;
 /** Не поднимать тревогу по совсем маленьким нодам: 300 → 10 показательно, 3 → 0 — нет. */
 export const NODE_ONLINE_DROP_MIN_BASELINE = 10;
+/**
+ * Сколько снимков онлайна подряд должны показать просадку, чтобы открыть инцидент (решение владельца
+ * 29.09.2026: на третью проверку, не на вторую — перезагрузки и короткие сбои не должны шуметь).
+ */
+export const NODE_ONLINE_DROP_CONFIRM_CHECKS = 3;
+/** Сколько снимков подряд онлайн должен быть в норме, чтобы открытый инцидент закрылся сам. */
+export const NODE_ONLINE_RECOVER_CHECKS = 3;
+/** «В норме» — не меньше такой доли онлайна до падения, %. */
+export const NODE_ONLINE_RECOVER_PCT = 50;
 
 /** Обрыв потока данных без явного отказа в этом диапазоне (КБ, кумулятивно) — сигнатура блока «16–20 КБ». */
 export const BLOCK_1620_MIN_KB = 12;
@@ -64,5 +73,20 @@ export const blockCheckResultSchema = z.object({
   foreign: z.array(blockProbeResultSchema).default([]),
   /** Итоговый вердикт по всем пробам вместе (см. combineVerdicts). */
   verdict: z.enum(BLOCK_VERDICTS),
+  /**
+   * Проверка входа, если у сервера-выхода в профиле указано, откуда приходит трафик (свой мост или вход
+   * арендодателя): стучимся в порт входа из России. Видно, чья сторона сломалась. null — входа нет.
+   */
+  entry: z
+    .object({
+      /** «Вход арендодателя» или «Мост «Имя»». */
+      label: z.string(),
+      address: z.string(),
+      owner: z.string().nullable(),
+      probes: z.array(blockProbeResultSchema),
+      verdict: z.enum(BLOCK_VERDICTS),
+    })
+    .nullable()
+    .default(null),
 });
 export type BlockCheckResult = z.infer<typeof blockCheckResultSchema>;

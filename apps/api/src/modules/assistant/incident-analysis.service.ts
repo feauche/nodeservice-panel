@@ -12,6 +12,8 @@ import { problem } from '../../common/filters/problem-details.filter.js';
 import { AuditService } from '../audit/audit.service.js';
 import { BillingService } from '../billing/billing.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
+import { NodeBlockCheckService } from '../incidents/node-block-check.service.js';
+import { resolveUpstreamTarget } from '../incidents/upstream-target.js';
 import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { playbookForKind, renderPlaybook } from './assistant.playbooks.js';
@@ -26,6 +28,7 @@ import {
   askSystem,
   chartName,
   dataBlock,
+  freshCheckText,
   nodeNowText,
   parseSubmission,
   pickAutoAnalysis,
@@ -81,6 +84,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
     private readonly remnawave: RemnawaveService,
     private readonly billing: BillingService,
+    private readonly blockCheck: NodeBlockCheckService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -240,10 +244,39 @@ export class IncidentAnalysisService implements OnModuleInit {
         const host = inc.serverId
           ? ((await deps.servers.list()).find((s) => s.id === inc.serverId)?.host ?? null)
           : null;
-        nowText = await this.remnawave
-          .status()
-          .then((st) => nodeNowText(inc, st, host))
-          .catch(() => null);
+        const st = await this.remnawave.status().catch(() => null);
+        nowText = st ? nodeNowText(inc, st, host) : null;
+        // Свежая проверка порта: при «Разобрать заново» Джарвис должен видеть, что сейчас, а не только
+        // то, что было при открытии. Нода может и не быть сервером NodeService — адрес берём из Remnawave.
+        const node = st?.connected
+          ? ((host ? st.nodes.find((n) => n.address === host) : undefined) ??
+            st.nodes.find((n) => n.name === inc.serverName))
+          : undefined;
+        if (node) {
+          await step('Проверяю порт ноды сейчас');
+          const inbound = await this.remnawave.nodeInbound(node.uuid);
+          const result = await this.blockCheck
+            .check(
+              node.name,
+              node.address,
+              inbound?.port ?? null,
+              inbound?.sni ?? null,
+              inc.serverId,
+              await deps.servers.list(),
+            )
+            .catch(() => null);
+          if (result) {
+            const all = await deps.servers.list();
+            const me = inc.serverId ? (all.find((x) => x.id === inc.serverId) ?? null) : null;
+            const target = await resolveUpstreamTarget(me, all, this.remnawave).catch(() => null);
+            if (target) {
+              await step('Проверяю вход этого выхода');
+              result.entry = await this.blockCheck.checkEntry(target, me?.id ?? null, all).catch(() => null);
+            }
+          }
+          const fresh = result ? freshCheckText(result) : null;
+          if (fresh) nowText = nowText ? `${nowText}\n${fresh}` : fresh;
+        }
       }
       let billingLines: string[] = [];
       if (inc.serverId && BILLING_DOWN_KINDS.has(inc.kind)) {

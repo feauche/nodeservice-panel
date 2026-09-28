@@ -5,6 +5,7 @@ import {
   createServerRequestSchema,
   DEFAULT_SERVER_COUNTRY,
   DEFAULT_SERVER_PROFILE,
+  isExitOnly,
   normalizeProfilePatch,
   SERVER_PROBLEM,
   type Server,
@@ -352,6 +353,8 @@ export const serversHandlers = [
       ...current.profile,
       ...(profilePatch ? normalizeProfilePatch(profilePatch) : {}),
     } as Server['profile'];
+    // Как на сервере: вход имеет смысл только у чистого выхода.
+    if (!isExitOnly(profile.roles)) profile.upstream = null;
     const next: Server = {
       ...current,
       ...rest,

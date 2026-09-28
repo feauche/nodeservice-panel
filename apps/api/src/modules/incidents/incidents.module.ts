@@ -36,6 +36,6 @@ import { NodeProbeJob } from './node-probe.job.js';
     NodeBlockRecheckJob,
     IncidentReminderJob,
   ],
-  exports: [IncidentsService, IncidentRunnerService, IncidentMetricsService],
+  exports: [IncidentsService, IncidentRunnerService, IncidentMetricsService, NodeBlockCheckService],
 })
 export class IncidentsModule {}

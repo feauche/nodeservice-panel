@@ -17,6 +17,7 @@ import {
   pickRuProbes,
   withForeign,
 } from './block-check.logic.js';
+import type { UpstreamTarget } from './upstream-target.js';
 
 /**
  * J10: запускает проверку блокировки ноды (ТСПУ / «блок 16–20 КБ») с других серверов парка в
@@ -98,6 +99,7 @@ export class NodeBlockCheckService {
         probes: [],
         foreign: [],
         verdict: 'unreachable',
+        entry: null,
       };
     const probers = pickRuProbes(excludeServerId, allServers);
     if (probers.length === 0)
@@ -108,6 +110,7 @@ export class NodeBlockCheckService {
         probes: [],
         foreign: [],
         verdict: 'unreachable',
+        entry: null,
       };
     const probes = await Promise.all(probers.map((p) => this.probeFrom(p, address, port, sni || null)));
     const ruVerdict = combineVerdicts(probes);
@@ -126,6 +129,30 @@ export class NodeBlockCheckService {
       probes,
       foreign,
       verdict: withForeign(ruVerdict, foreign),
+      entry: null,
+    };
+  }
+
+  /**
+   * Вход сервера-выхода (свой мост или вход арендодателя): стучимся в его порт из России, без TLS — имени
+   * маскировки чужого входа мы не знаем. Нечем проверить или адрес подозрительный — null.
+   */
+  async checkEntry(
+    target: UpstreamTarget,
+    excludeServerId: string | null,
+    allServers: Server[],
+  ): Promise<NonNullable<BlockCheckResult['entry']>> {
+    const address = `${target.host}:${target.port}`;
+    const probers = isSafeBlockCheckTarget(target.host, target.port, null)
+      ? pickRuProbes(excludeServerId, allServers).filter((p) => p.id !== target.serverId)
+      : [];
+    const probes = await Promise.all(probers.map((p) => this.probeFrom(p, target.host, target.port, null)));
+    return {
+      label: target.label,
+      address,
+      owner: target.owner,
+      probes,
+      verdict: probes.length > 0 ? combineVerdicts(probes) : 'unreachable',
     };
   }
 }

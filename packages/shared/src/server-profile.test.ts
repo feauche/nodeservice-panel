@@ -59,6 +59,7 @@ describe('профиль: проверка и приведение', () => {
       maintenanceWindow: null,
       expectedContainers: [],
       expectedPorts: [],
+      upstream: null,
     });
   });
   it('схема принимает верное и отвергает неверное', () => {

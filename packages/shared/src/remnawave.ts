@@ -67,8 +67,13 @@ export type RemnawaveCert = z.infer<typeof remnawaveCertSchema>;
 
 /** За сколько дней до истечения сертификата панели предупреждать. */
 export const REMNAWAVE_CERT_WARN_DAYS = 21;
-/** Как часто панель сама перепроверяет Remnawave (сводку, ноды, сертификат), минуты. */
-export const REMNAWAVE_SYNC_INTERVAL_MIN = 5;
+/**
+ * Как часто панель сама перечитывает Remnawave (сводку и онлайн нод), минуты. Раз в минуту — чтобы
+ * «три проверки подряд» для падения онлайна занимали пару минут, а не четверть часа.
+ */
+export const REMNAWAVE_SYNC_INTERVAL_MIN = 1;
+/** Сертификат панели Remnawave проверяем реже — он меняется раз в месяцы, минуты. */
+export const REMNAWAVE_CERT_CHECK_INTERVAL_MIN = 30;
 
 export const remnawaveStatusSchema = z.object({
   connected: z.boolean(),

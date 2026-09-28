@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   type CountryChoice,
@@ -7,6 +7,7 @@ import {
   countryCodeSchema,
   ENROLLMENT_TOKEN_TTL_HOURS,
   type EnrollmentTokenResponse,
+  isExitOnly,
   normalizeProfilePatch,
   SERVER_NAME_MAX,
   type Server,
@@ -14,6 +15,8 @@ import {
   type ServerFacts,
   type ServerInventory,
   type ServerProfile,
+  type ServerRole,
+  type ServerUpstream,
   type SshAuth,
   type TestConnectionRequest,
   type TestConnectionResponse,
@@ -21,6 +24,7 @@ import {
 } from '@nodeservice/shared';
 
 import { CryptoService } from '../../common/crypto/crypto.service.js';
+import { problem } from '../../common/filters/problem-details.filter.js';
 import type { Env } from '../../config/env.schema.js';
 import type { ServerRow, servers } from '../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
@@ -69,6 +73,7 @@ export class ServersService {
       maintenanceWindow: row.maintenanceWindow,
       expectedContainers: row.expectedContainers ?? [],
       expectedPorts: row.expectedPorts ?? [],
+      upstream: row.upstream ?? null,
     };
     const inventory =
       row.inventory && row.inventoryAt ? { at: row.inventoryAt.toISOString(), ...row.inventory } : null;
@@ -398,6 +403,21 @@ export class ServersService {
       };
     }
     const profilePatch = patch.profile ? normalizeProfilePatch(patch.profile) : undefined;
+    // Вход имеет смысл только у чистого выхода: сняли «выпускает трафик» или поставили «принимает
+    // подключения» — сохранённый вход убираем, чтобы он не путал проверку и Джарвиса.
+    const rolesAfter = (profilePatch?.roles ?? row.roles ?? []) as ServerRole[];
+    let upstream: ServerUpstream | null | undefined = profilePatch?.upstream as
+      | ServerUpstream
+      | null
+      | undefined;
+    if (!isExitOnly(rolesAfter) && (row.upstream || upstream)) upstream = null;
+    if (upstream?.kind === 'bridge') {
+      const bridge = upstream.serverId ? await this.repo.findById(upstream.serverId) : undefined;
+      if (!bridge || bridge.id === id)
+        throw problem(HttpStatus.BAD_REQUEST, {
+          detail: 'Мост не найден среди серверов NodeService — выберите другой.',
+        });
+    }
     const audited = (r: ServerRow) => ({
       name: r.name,
       host: r.host,
@@ -414,6 +434,7 @@ export class ServersService {
       maintenanceWindow: r.maintenanceWindow,
       expectedContainers: r.expectedContainers,
       expectedPorts: r.expectedPorts,
+      upstream: r.upstream,
     });
     const before = audited(row);
     const updated = await this.repo.update(id, {
@@ -457,6 +478,7 @@ export class ServersService {
         ? { expectedContainers: profilePatch.expectedContainers }
         : {}),
       ...(profilePatch?.expectedPorts !== undefined ? { expectedPorts: profilePatch.expectedPorts } : {}),
+      ...(upstream !== undefined ? { upstream } : {}),
       ...(endpointChanged && !patch.auth
         ? { hostKeyFp: null, sshOk: null, lastSshCheckAt: null, lastSshOkAt: null }
         : {}),

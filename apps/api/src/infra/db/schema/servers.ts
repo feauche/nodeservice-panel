@@ -4,6 +4,7 @@ import type {
   MaintenanceStep,
   ServerCheckKey,
   ServerInventory,
+  ServerUpstream,
 } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import {
@@ -89,6 +90,8 @@ export const servers = pgTable('servers', {
   maintenanceWindow: text('maintenance_window'),
   expectedContainers: jsonb('expected_containers').$type<string[]>().notNull().default([]),
   expectedPorts: jsonb('expected_ports').$type<number[]>().notNull().default([]),
+  /** Откуда приходит трафик на выход (миграция 0044). */
+  upstream: jsonb('upstream').$type<ServerUpstream | null>(),
   /* страна (миграция 0037): код ISO, режим и ход определения по IP */
   country: text('country'),
   countrySource: text('country_source').notNull().default('auto'),

@@ -181,11 +181,28 @@ describe('J10: аномалия онлайна → проверка блокир
     expect(list.items.some((i) => i.kind === 'node_blocked')).toBe(false);
   });
 
+  it('просадка держится две проверки, а на третьей онлайн вернулся → инцидент не заводится', async () => {
+    fake.node.online = 5;
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run();
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run();
+    fake.node.online = 100;
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run();
+    const list = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=open').expect(200)).body,
+    );
+    expect(list.items.some((i) => i.kind === 'node_blocked')).toBe(false);
+  });
+
   it('падение онлайна на 90% + тихий обрыв на этапе TLS с российского сервера парка → крит, «похоже на ТСПУ»', async () => {
     fake.node.online = 10;
     ssh.blockCheckOutput = '{"stage":"tls","ok":false,"stalledAtKb":null}';
     await app.get(RemnawaveService).refresh();
     await app.get(NodeAnomalyJob).run(); // кандидат: просадка увидена, ждём подтверждения
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run(); // вторая проверка подряд — просадка держится
     await app.get(RemnawaveService).refresh(); // следующий снимок — online тот же (10), просадка держится
     await app.get(NodeAnomalyJob).run(); // подтверждение — только теперь открывается инцидент
 
@@ -215,6 +232,8 @@ describe('J10: аномалия онлайна → проверка блокир
     fake.node.online = 10;
     await app.get(RemnawaveService).refresh();
     await app.get(NodeAnomalyJob).run(); // кандидат
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run(); // вторая проверка подряд — просадка держится
     await app.get(RemnawaveService).refresh(); // просадка держится — подтверждение
     await app.get(NodeAnomalyJob).run();
 
@@ -239,6 +258,8 @@ describe('J10: аномалия онлайна → проверка блокир
     fake.node.online = 10;
     await app.get(RemnawaveService).refresh();
     await app.get(NodeAnomalyJob).run(); // кандидат
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run(); // вторая проверка подряд — просадка держится
     await app.get(RemnawaveService).refresh(); // просадка держится — подтверждение
     await app.get(NodeAnomalyJob).run();
 
@@ -263,6 +284,8 @@ describe('J10: аномалия онлайна → проверка блокир
     fake.node.online = 10;
     await app.get(RemnawaveService).refresh();
     await app.get(NodeAnomalyJob).run(); // кандидат
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run(); // вторая проверка подряд — просадка держится
     await app.get(RemnawaveService).refresh(); // просадка держится — подтверждение, инцидент открылся
     await app.get(NodeAnomalyJob).run();
 
@@ -276,6 +299,19 @@ describe('J10: аномалия онлайна → проверка блокир
     // Онлайн вернулся в норму, и повторная проверка блокировки теперь тоже чистая.
     fake.node.online = 100;
     ssh.blockCheckOutput = '{"stage":"data","ok":true,"stalledAtKb":null}';
+    // Три снимка подряд с нормальным онлайном — только тогда закрываем.
+    for (let i = 0; i < 2; i += 1) {
+      await app.get(RemnawaveService).refresh();
+      await app.get(NodeBlockRecheckJob).run();
+    }
+    const watching = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=open').expect(200)).body,
+    );
+    const still = watching.items.find((i) => i.serverName === 'четвёртая-нода');
+    expect(still).toBeTruthy();
+    expect(still?.timeline.some((e) => e.action.startsWith('Онлайн вернулся: 100 (до падения 100)'))).toBe(
+      true,
+    );
     await app.get(RemnawaveService).refresh();
     await app.get(NodeBlockRecheckJob).run();
 
@@ -302,17 +338,23 @@ describe('J10: аномалия онлайна → проверка блокир
     await app.get(RemnawaveService).refresh();
     await app.get(NodeAnomalyJob).run(); // кандидат
     await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run(); // вторая проверка подряд — просадка держится
+    await app.get(RemnawaveService).refresh();
     await app.get(NodeAnomalyJob).run(); // подтверждение — инцидент открылся, крит
 
     // Онлайн вернулся, но встречная проверка всё ещё видит проблему — закрывать не должны.
     fake.node.online = 100;
-    await app.get(RemnawaveService).refresh();
-    await app.get(NodeBlockRecheckJob).run();
+    for (let i = 0; i < 3; i += 1) {
+      await app.get(RemnawaveService).refresh();
+      await app.get(NodeBlockRecheckJob).run();
+    }
 
     const after = incidentsListResponseSchema.parse(
       (await agent.get('/api/incidents?status=open').expect(200)).body,
     );
-    expect(after.items.some((i) => i.serverName === 'пятая-нода')).toBe(true);
+    const kept = after.items.find((i) => i.serverName === 'пятая-нода');
+    expect(kept).toBeTruthy();
+    expect(kept?.timeline.at(-1)?.action).toContain('Оставляю открытым');
   });
 
   it('из России порт молчит, а с зарубежного сервера парка отвечает → крит «Похоже на блокировку IP из России»', async () => {
@@ -339,6 +381,8 @@ describe('J10: аномалия онлайна → проверка блокир
     await app.get(RemnawaveService).refresh();
     await app.get(NodeAnomalyJob).run();
     await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run(); // вторая проверка подряд — просадка держится
+    await app.get(RemnawaveService).refresh();
     await app.get(NodeAnomalyJob).run();
 
     const list = incidentsListResponseSchema.parse(
@@ -350,5 +394,51 @@ describe('J10: аномалия онлайна → проверка блокир
     expect(inc?.detail).toContain('Из-за рубежа:\n• de-probe — порт отвечает');
     expect(inc?.detail).toContain('Похоже: блокировка IP на стороне России');
     ssh.blockCheckPortOnlyOutput = null;
+  });
+
+  it('вход сервера-выхода: сохраняется только у чистого выхода, при падении онлайна проверяется и он', async () => {
+    const db = app.get<Db>(DB);
+    const ins = await db.execute<{ id: string }>(
+      sql`insert into servers (name, host, ssh_user) values ('exit-srv', '198.51.100.30', 'root') returning id`,
+    );
+    const id = ins.rows[0]?.id ?? '';
+    const patch = (profile: unknown, code = 200) =>
+      agent.patch(`/api/servers/${id}`).set(CSRF_HEADER, csrf).send({ profile }).expect(code);
+    await patch({ roles: ['exit'], upstream: { kind: 'rent', address: 'нет адреса' } }, 400);
+    const saved = serverSchema.parse(
+      (
+        await patch({
+          roles: ['exit'],
+          upstream: { kind: 'rent', address: 'Entry.Example.com:9443', owner: ' Иван ' },
+        })
+      ).body,
+    );
+    expect(saved.profile.upstream).toEqual({
+      kind: 'rent',
+      serverId: null,
+      address: 'entry.example.com:9443',
+      owner: 'Иван',
+    });
+
+    fake.node = { uuid: 'node-7', name: 'седьмая-нода', address: '198.51.100.30', online: 100 };
+    fake.inbound = { sni: 'www.example.com', port: 8443 };
+    ssh.blockCheckOutput = '{"stage":"tcp","ok":false,"stalledAtKb":null}';
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run();
+    fake.node.online = 5;
+    for (let i = 0; i < 3; i += 1) {
+      await app.get(RemnawaveService).refresh();
+      await app.get(NodeAnomalyJob).run();
+    }
+    const list = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=open').expect(200)).body,
+    );
+    const inc = list.items.find((i) => i.serverName === 'exit-srv');
+    expect(inc?.detail).toContain('Вход арендодателя (entry.example.com:9443), из России:');
+    expect(inc?.detail).toContain('Не отвечают ни вход, ни выход — напишите: Иван.');
+
+    // И принимает, и выпускает — вход у сервера он сам: сохранённый вход убирается.
+    const both = serverSchema.parse((await patch({ roles: ['entry', 'exit'] })).body);
+    expect(both.profile.upstream).toBeNull();
   });
 });

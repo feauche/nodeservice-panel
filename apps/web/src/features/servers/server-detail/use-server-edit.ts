@@ -1,9 +1,12 @@
 import {
+  isExitOnly,
   type NodeWatch,
   normalizeProfilePatch,
   type Server,
   type ServerProfile,
+  type ServerUpstream,
   type SshAuth,
+  UPSTREAM_ADDRESS_RE,
   type UpdateServerRequest,
   updateServerRequestSchema,
 } from '@nodeservice/shared';
@@ -30,13 +33,38 @@ export function canon(p: ServerProfile): ServerProfile {
     expectedPorts: p.expectedPorts,
     maintenanceWindow: p.maintenanceWindow,
   });
+  const roles = n.roles ?? [];
   return {
-    roles: n.roles ?? [],
+    roles,
     importance: p.importance,
     maintenanceWindow: n.maintenanceWindow ?? null,
     expectedContainers: n.expectedContainers ?? [],
     expectedPorts: n.expectedPorts ?? [],
+    // Вход — только у чистого выхода; иначе он не нужен и не сохраняется.
+    upstream: isExitOnly(roles) ? canonUpstream(p.upstream) : null,
   };
+}
+
+/** Вход в том виде, в каком его хранит сервер: адрес строчными, пустой «чей» — null. */
+export function canonUpstream(u: ServerUpstream | null): ServerUpstream | null {
+  if (!u) return null;
+  if (u.kind === 'bridge') return { kind: 'bridge', serverId: u.serverId, address: null, owner: null };
+  return {
+    kind: 'rent',
+    serverId: null,
+    address: u.address?.trim().toLowerCase() || null,
+    owner: u.owner?.trim() || null,
+  };
+}
+
+/** Почему вход нельзя сохранить; null — можно. */
+export function upstreamError(u: ServerUpstream | null): string | null {
+  if (!u) return null;
+  if (u.kind === 'bridge') return u.serverId ? null : 'Выберите мост.';
+  if (!u.address) return 'Укажите адрес входа или выберите «Не указывать».';
+  return UPSTREAM_ADDRESS_RE.test(u.address)
+    ? null
+    : 'Домен или IP, при необходимости с портом: entry.example.com:443';
 }
 
 export interface ConnFields {
@@ -187,6 +215,11 @@ export function useServerEdit(server: Server, onConnectionInvalid: () => void) {
       Object.assign(patch, parsed.data);
     }
     const c = canon(prof.value.profile);
+    const upErr = profileDirty ? upstreamError(c.upstream) : null;
+    if (upErr) {
+      setErrors((e) => ({ ...e, upstream: upErr }));
+      return;
+    }
     if (profileDirty) {
       patch.profile = {
         roles: c.roles,
@@ -194,6 +227,11 @@ export function useServerEdit(server: Server, onConnectionInvalid: () => void) {
         maintenanceWindow: c.maintenanceWindow,
         expectedContainers: c.expectedContainers,
         expectedPorts: c.expectedPorts,
+        upstream: c.upstream
+          ? c.upstream.kind === 'bridge'
+            ? { kind: 'bridge', serverId: c.upstream.serverId }
+            : { kind: 'rent', address: c.upstream.address, owner: c.upstream.owner }
+          : null,
       };
       patch.nodeWatch = prof.value.nodeWatch;
     }
@@ -249,8 +287,11 @@ export function useServerEdit(server: Server, onConnectionInvalid: () => void) {
     profile: {
       dirty: profileDirty,
       draft: prof.value.profile,
-      patch: (over: Partial<ServerProfile>) =>
-        prof.update((p) => ({ ...p, profile: { ...p.profile, ...over } })),
+      patch: (over: Partial<ServerProfile>) => {
+        if ('upstream' in over) setErrors(({ upstream: _u, ...rest }) => rest);
+        prof.update((p) => ({ ...p, profile: { ...p.profile, ...over } }));
+      },
+      upstreamError: errors.upstream ?? null,
       nodeWatch: prof.value.nodeWatch,
       setNodeWatch: (nodeWatch: NodeWatch) => prof.update((p) => ({ ...p, nodeWatch })),
     },

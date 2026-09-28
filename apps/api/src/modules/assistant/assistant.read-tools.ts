@@ -17,6 +17,7 @@ import {
   SERVER_IMPORTANCE_LABELS,
   SERVER_METRIC_KEYS,
   SERVER_ROLE_LABELS,
+  SERVER_UPSTREAM_LABELS,
   type Server,
   type ServerCheckKey,
   VM_METRIC_NAMES,
@@ -306,18 +307,30 @@ export function countryBrief(c: Server['country']) {
 }
 
 /** Профиль сервера в парке для Джарвиса: роль, важность, что ожидается и расхождения со снимком. */
-export function profileBrief(s: Server, nowMs: number = Date.now()) {
+export function profileBrief(s: Server, nowMs: number = Date.now(), fleet: readonly Server[] = []) {
   const p = s.profile;
+  const up = p.upstream;
+  // Откуда приходит трафик на этот выход: свой мост или чужой вход арендодателя (домен/IP за HAProxy).
+  const upstream = up
+    ? up.kind === 'bridge'
+      ? {
+          kind: SERVER_UPSTREAM_LABELS.bridge,
+          bridge: fleet.find((x) => x.id === up.serverId)?.name ?? 'сервер удалён из NodeService',
+        }
+      : { kind: SERVER_UPSTREAM_LABELS.rent, address: up.address, owner: up.owner }
+    : null;
   const filled =
     p.roles.length > 0 ||
     p.importance !== 'normal' ||
     Boolean(p.maintenanceWindow) ||
+    Boolean(p.upstream) ||
     p.expectedContainers.length > 0 ||
     p.expectedPorts.length > 0;
   return {
     roles: p.roles.map((r) => SERVER_ROLE_LABELS[r]),
     importance: SERVER_IMPORTANCE_LABELS[p.importance],
     maintenanceWindow: p.maintenanceWindow,
+    upstream,
     expected: { containers: p.expectedContainers, ports: p.expectedPorts },
     profileFilled: filled,
     snapshotAgeHours: s.inventory
@@ -496,7 +509,7 @@ export async function runReadTool(
         memPct: pct(latest.mem),
         diskPct: pct(latest.disk),
         lastCheck: s.lastSshCheckAt,
-        profile: profileBrief(s),
+        profile: profileBrief(s, Date.now(), servers),
         openIncidents: inc.map((i) => ({ id: i.id, title: i.title, severity: i.severity })),
       };
     });
@@ -567,7 +580,7 @@ export async function runReadTool(
         ssh: { ok: s.sshOk, lastCheckAt: s.lastSshCheckAt, lastOkAt: s.lastSshOkAt },
         node: { watch: NODE_WATCH_LABELS[s.nodeWatch], state: s.node ? NODE_STATE_LABELS[s.node] : null },
         country: countryBrief(s.country),
-        profile: profileBrief(s),
+        profile: profileBrief(s, Date.now(), servers),
         snapshot: s.inventory
           ? {
               at: s.inventory.at,

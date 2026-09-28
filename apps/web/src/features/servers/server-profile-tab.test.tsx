@@ -367,4 +367,36 @@ describe('вкладка «Профиль» (J3, A5 + R2 + C3)', () => {
     const copied = await navigator.clipboard.readText();
     expect(copied).toContain('raw.githubusercontent.com/feauche/remnanode-installer');
   });
+
+  it('«Откуда приходит трафик»: только у чистого выхода, вход арендодателя сохраняется, при «принимает клиентов» убирается', async () => {
+    const { dialog } = await openProfile();
+    const user = userEvent.setup();
+    expect(within(dialog).queryByRole('heading', { name: 'Откуда приходит трафик' })).toBeNull();
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Выпускает трафик в интернет' }));
+    expect(
+      await within(dialog).findByRole('heading', { name: 'Откуда приходит трафик' }),
+    ).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /Вход арендодателя/ }));
+    // Без адреса не сохранить — понятная подсказка.
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
+    expect(await within(dialog).findByText(/Укажите адрес входа/)).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText('Адрес входа'), 'Entry.Example.com:9443');
+    await user.type(within(dialog).getByLabelText(/Чей вход/), 'Иван');
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() =>
+      expect(server().profile.upstream).toEqual({
+        kind: 'rent',
+        serverId: null,
+        address: 'entry.example.com:9443',
+        owner: 'Иван',
+      }),
+    );
+    expect(await within(dialog).findByText('вход арендодателя · Иван')).toBeInTheDocument();
+
+    // И принимает клиентов — вход не нужен: поле уходит, при сохранении вход убирается.
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Принимает подключения клиентов' }));
+    expect(await within(dialog).findByText(/указанный вход уберётся при сохранении/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(server().profile.upstream).toBeNull());
+  });
 });

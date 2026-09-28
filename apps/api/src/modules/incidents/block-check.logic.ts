@@ -236,6 +236,19 @@ const probeLine = (p: BlockProbeResult): string => {
   return `• ${p.from} — ${lower}`;
 };
 
+/** Чья сторона сломалась, если проверяли и вход: вход жив, а выход нет — и наоборот. */
+export function entrySide(result: BlockCheckResult): string | null {
+  const entry = result.entry;
+  if (!entry || entry.probes.length === 0) return null;
+  const entryOk = entry.verdict === 'ok';
+  const exitOk = result.verdict === 'ok';
+  const who = entry.owner ? ` — напишите: ${entry.owner}` : '';
+  if (entryOk && !exitOk) return 'Вход отвечает, не отвечает выход — дело в этом сервере или его хостере.';
+  if (!entryOk && exitOk) return `Выход отвечает, а вход — нет: похоже, лёг вход${who}.`;
+  if (!entryOk && !exitOk) return `Не отвечают ни вход, ни выход${who}.`;
+  return null;
+}
+
 /**
  * Заголовок и текст инцидента «резко упал онлайн» блоками (витрина `telegram-messages-variants.html`, 1A):
  * цифры онлайна, откуда проверяли и что увидели, вывод. Тот же текст — в карточке инцидента и в Telegram.
@@ -264,8 +277,11 @@ export function describeAnomaly(input: {
     );
     return { title, detail: lines.join('\n'), confirmed };
   }
-  lines.push('', 'Из России:', ...result.probes.map(probeLine));
+  const entry = result.entry;
+  lines.push('', entry ? 'Выход — этот сервер, из России:' : 'Из России:', ...result.probes.map(probeLine));
   if (result.foreign.length > 0) lines.push('Из-за рубежа:', ...result.foreign.map(probeLine));
+  if (entry && entry.probes.length > 0)
+    lines.push('', `${entry.label} (${entry.address}), из России:`, ...entry.probes.map(probeLine));
   const portOnly = result.sniUsed === null;
   let verdict: string;
   switch (result.verdict) {
@@ -290,6 +306,8 @@ export function describeAnomaly(input: {
         : 'Вывод: блокировка не подтвердилась — возможно, сбой у провайдеров пользователей.';
   }
   lines.push('', verdict);
+  const side = entrySide(result);
+  if (side) lines.push(side);
   if (rental && result.verdict === 'unreachable')
     lines.push('Сервер арендован: если он недоступен целиком, возможно, не оплачена аренда.');
   title = confirmed

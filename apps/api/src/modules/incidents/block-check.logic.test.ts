@@ -1,9 +1,15 @@
-import { type BlockProbeResult, DEFAULT_SERVER_COUNTRY } from '@nodeservice/shared';
+import {
+  type BlockProbeResult,
+  DEFAULT_SERVER_COUNTRY,
+  isExitOnly,
+  splitUpstreamAddress,
+} from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
   buildBlockCheckCommand,
   combineVerdicts,
+  entrySide,
   isSafeBlockCheckTarget,
   parseBlockCheckOutput,
   pickForeignProbes,
@@ -190,5 +196,45 @@ describe('встречная проверка из-за рубежа', () => {
         s('de', 'DE'),
       ]).map((x) => x.id),
     ).toEqual(['de']);
+  });
+});
+
+describe('вход сервера-выхода', () => {
+  const probe = (verdict: 'ok' | 'unreachable') => ({
+    from: 'Мост',
+    verdict,
+    detail: verdict === 'ok' ? 'Порт отвечает.' : 'Порт не отвечает совсем.',
+    stalledAtKb: null,
+    error: null,
+  });
+  const base = {
+    nodeName: 'guardora',
+    address: '1.2.3.4',
+    sniUsed: null,
+    probes: [probe('unreachable')],
+    foreign: [],
+    verdict: 'unreachable' as const,
+  };
+  const entry = (v: 'ok' | 'unreachable') => ({
+    label: 'Вход арендодателя',
+    address: 'entry.example.com:443',
+    owner: 'Иван',
+    probes: [probe(v)],
+    verdict: v,
+  });
+
+  it('чья сторона сломалась', () => {
+    expect(entrySide({ ...base, entry: entry('ok') })).toContain('не отвечает выход');
+    expect(entrySide({ ...base, probes: [probe('ok')], verdict: 'ok', entry: entry('unreachable') })).toBe(
+      'Выход отвечает, а вход — нет: похоже, лёг вход — напишите: Иван.',
+    );
+    expect(entrySide({ ...base, entry: null })).toBeNull();
+  });
+
+  it('адрес входа: порт по умолчанию 443', () => {
+    expect(splitUpstreamAddress('entry.example.com')).toEqual({ host: 'entry.example.com', port: 443 });
+    expect(splitUpstreamAddress('1.2.3.4:8443')).toEqual({ host: '1.2.3.4', port: 8443 });
+    expect(isExitOnly(['exit'])).toBe(true);
+    expect(isExitOnly(['entry', 'exit'])).toBe(false);
   });
 });

@@ -49,6 +49,57 @@ export const SERVER_IMPORTANCE_HINTS: Record<ServerImportance, string> = {
   low: 'Запасной или тестовый сервер. Джарвис не считает его сбой срочным, разбирает после остальных и без лишних оговорок предлагает перезапуск и обновление.',
 };
 
+/**
+ * Откуда приходит трафик на сервер-выход (решение владельца 29.09.2026, витрина `entry-field-variants.html`, A):
+ * свой мост из NodeService или чужой вход арендодателя (домен или IP, на нём HAProxy пересылает трафик на выход).
+ * Имеет смысл, только если сервер выпускает трафик и сам клиентов не принимает — иначе вход у него он сам.
+ */
+export const SERVER_UPSTREAM_KINDS = ['bridge', 'rent'] as const;
+export type ServerUpstreamKind = (typeof SERVER_UPSTREAM_KINDS)[number];
+export const SERVER_UPSTREAM_LABELS: Record<ServerUpstreamKind, string> = {
+  bridge: 'Свой мост',
+  rent: 'Вход арендодателя',
+};
+/** Домен или IPv4, через двоеточие порт: `entry.example.com:443`, `1.2.3.4`. */
+export const UPSTREAM_ADDRESS_RE =
+  /^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}|(?:\d{1,3}\.){3}\d{1,3})(?::\d{1,5})?$/i;
+export const UPSTREAM_OWNER_MAX = 80;
+export const serverUpstreamSchema = z.object({
+  kind: z.enum(SERVER_UPSTREAM_KINDS),
+  /** Свой мост: сервер NodeService. */
+  serverId: z.string().uuid().nullable(),
+  /** Вход арендодателя: домен или IP с портом. */
+  address: z.string().nullable(),
+  /** Чей вход — кому писать, если он лёг. */
+  owner: z.string().nullable(),
+});
+export type ServerUpstream = z.infer<typeof serverUpstreamSchema>;
+export const serverUpstreamPatchSchema = z
+  .object({
+    kind: z.enum(SERVER_UPSTREAM_KINDS),
+    serverId: z.string().uuid().nullable().optional(),
+    address: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(UPSTREAM_ADDRESS_RE, 'Домен или IP, при необходимости с портом: entry.example.com:443')
+      .nullable()
+      .optional(),
+    owner: z.string().trim().max(UPSTREAM_OWNER_MAX).nullable().optional(),
+  })
+  .refine((v) => (v.kind === 'bridge' ? Boolean(v.serverId) : Boolean(v.address)), {
+    message: 'Укажите мост или адрес входа',
+    path: ['address'],
+  });
+/** Сервер — чистый выход: выпускает трафик и сам клиентов не принимает. Только тогда вход имеет смысл. */
+export const isExitOnly = (roles: readonly ServerRole[]): boolean =>
+  roles.includes('exit') && !roles.includes('entry');
+/** Адрес входа на хост и порт (по умолчанию 443). */
+export function splitUpstreamAddress(address: string): { host: string; port: number } {
+  const m = /^(.*?)(?::(\d{1,5}))?$/.exec(address.trim());
+  return { host: m?.[1] ?? address, port: m?.[2] ? Number(m[2]) : 443 };
+}
+
 export const EXPECTED_CONTAINERS_MAX = 20;
 export const EXPECTED_PORTS_MAX = 30;
 export const MAINTENANCE_WINDOW_MAX = 120;
@@ -70,6 +121,8 @@ export const serverProfileSchema = z.object({
   expectedContainers: z.array(z.string()),
   /** Порты, которые должны слушаться на сервере. */
   expectedPorts: z.array(z.number().int()),
+  /** Откуда приходит трафик на выход; null — не указано (или сервер не чистый выход). */
+  upstream: serverUpstreamSchema.nullable(),
 });
 export type ServerProfile = z.infer<typeof serverProfileSchema>;
 
@@ -79,6 +132,7 @@ export const DEFAULT_SERVER_PROFILE: ServerProfile = {
   maintenanceWindow: null,
   expectedContainers: [],
   expectedPorts: [],
+  upstream: null,
 };
 
 /** Что можно менять в профиле: каждое поле отдельно; списки заменяются целиком. */
@@ -94,6 +148,8 @@ export const serverProfilePatchSchema = z.object({
     .array(portNumberSchema)
     .max(EXPECTED_PORTS_MAX, `До ${EXPECTED_PORTS_MAX} портов`)
     .optional(),
+  /** null — убрать. */
+  upstream: serverUpstreamPatchSchema.nullable().optional(),
 });
 export type ServerProfilePatch = z.infer<typeof serverProfilePatchSchema>;
 
@@ -173,6 +229,19 @@ export function normalizeProfilePatch(patch: ServerProfilePatch): ServerProfileP
       : {}),
     ...(patch.maintenanceWindow !== undefined
       ? { maintenanceWindow: patch.maintenanceWindow?.trim() ? patch.maintenanceWindow.trim() : null }
+      : {}),
+    ...(patch.upstream
+      ? {
+          upstream:
+            patch.upstream.kind === 'bridge'
+              ? { kind: 'bridge', serverId: patch.upstream.serverId ?? null, address: null, owner: null }
+              : {
+                  kind: 'rent',
+                  serverId: null,
+                  address: patch.upstream.address ?? null,
+                  owner: patch.upstream.owner?.trim() ? patch.upstream.owner.trim() : null,
+                },
+        }
       : {}),
   };
 }

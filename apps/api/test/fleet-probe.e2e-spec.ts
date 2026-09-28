@@ -661,6 +661,8 @@ describe('проверка доступности, процессы и пред�
         maintenanceWindow: 'ночью по Москве',
         expectedContainers: ['nginx', 'remnanode'],
         expectedPorts: [22, 443],
+        // И вход, и выход — «откуда приходит трафик» у такого сервера не бывает.
+        upstream: null,
       });
       expect(srv.drift).toEqual([]);
       expect(srv.inventory).toBeNull();

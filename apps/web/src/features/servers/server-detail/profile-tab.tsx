@@ -33,6 +33,7 @@ import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useRefreshInventory } from '../servers-api';
+import { UpstreamField } from './upstream-field';
 import type { ServerEdit } from './use-server-edit';
 
 type RowState = 'ok' | 'bad' | 'unknown';
@@ -435,6 +436,14 @@ export function ProfileTab({ server, edit }: { server: Server; edit: ServerEdit[
           Отметьте всё, что подходит. В простой схеме один сервер и принимает клиентов, и выпускает трафик.
         </p>
       </section>
+
+      <UpstreamField
+        server={server}
+        roles={draft.roles}
+        value={draft.upstream}
+        onChange={(upstream) => patch({ upstream })}
+        error={edit.upstreamError}
+      />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-2">

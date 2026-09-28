@@ -1,4 +1,4 @@
-import { AGENT_STATUS_LABELS, type MetricRange, type Server } from '@nodeservice/shared';
+import { AGENT_STATUS_LABELS, isExitOnly, type MetricRange, type Server } from '@nodeservice/shared';
 import {
   ChevronDownIcon,
   CopyPlusIcon,
@@ -52,7 +52,7 @@ import { ProfileTab } from './server-detail/profile-tab';
 import { TerminalHistoryTab } from './server-detail/terminal-history-tab';
 import { AUTH_TABS, type ServerEdit, useServerEdit } from './server-detail/use-server-edit';
 import { serverHealth } from './server-health';
-import { useCheckServer, useDeleteServer, useDuplicateServer } from './servers-api';
+import { useCheckServer, useDeleteServer, useDuplicateServer, useServers } from './servers-api';
 
 export type ServerModalTab =
   | 'metrics'
@@ -122,6 +122,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
   // действия в нижней панели. В jsdom matchMedia нет — считаем, что не телефон.
   const phone = useMediaQuery('(max-width: 767px)', false);
   const providers = useProviders();
+  const fleet = useServers();
   // Правки «Профиля» и «Подключения» живут здесь: переход между вкладками их не сбрасывает.
   const edit = useServerEdit(s, () => setTab('connection'));
   const tabDirty: Partial<Record<ServerModalTab, boolean>> = {
@@ -174,6 +175,19 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
   };
 
   const billing = useServerBilling(s.id);
+  const up = isExitOnly(s.profile.roles) ? s.profile.upstream : null;
+  const upstreamFact: ReactNode = up ? (
+    <span key="u" className="block whitespace-normal">
+      <span className={up.kind === 'rent' ? 'font-mono text-[12.5px]' : undefined}>
+        {up.kind === 'rent'
+          ? up.address
+          : (fleet.data?.items.find((x) => x.id === up.serverId)?.name ?? 'мост удалён')}
+      </span>
+      <span className="block text-[12px] font-normal text-text-3">
+        {up.kind === 'rent' ? `вход арендодателя${up.owner ? ` · ${up.owner}` : ''}` : 'свой мост'}
+      </span>
+    </span>
+  ) : null;
   const provider = s.providerId ? (providers.data?.items.find((p) => p.id === s.providerId) ?? null) : null;
   const facts: Array<[string, ReactNode]> = [
     [
@@ -195,6 +209,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
           ],
         ] as Array<[string, ReactNode]>)
       : []),
+    ...(upstreamFact ? ([['Вход', upstreamFact]] as Array<[string, ReactNode]>) : []),
     ...(billing
       ? ([['Оплата', <ServerBillingFact key="b" serverId={s.id} />]] as Array<[string, ReactNode]>)
       : []),

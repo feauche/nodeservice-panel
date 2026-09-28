@@ -1,5 +1,10 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
-import { REMNAWAVE_PROBLEM, type RemnawaveConnectRequest, type RemnawaveStatus } from '@nodeservice/shared';
+import {
+  REMNAWAVE_CERT_CHECK_INTERVAL_MIN,
+  REMNAWAVE_PROBLEM,
+  type RemnawaveConnectRequest,
+  type RemnawaveStatus,
+} from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -14,6 +19,8 @@ import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
 @Injectable()
 export class RemnawaveService {
   private readonly log = new Logger(RemnawaveService.name);
+  /** Когда последний раз проверяли сертификат панели (0 — ещё не проверяли после запуска). */
+  private certCheckedAt = 0;
 
   constructor(
     private readonly store: RemnawaveSettingsStore,
@@ -129,7 +136,11 @@ export class RemnawaveService {
 
   private async sync(domain: string, apiKey: string): Promise<void> {
     const { stats, nodes } = await this.fetchOrThrow(domain, apiKey);
-    const cert = await this.client.checkCertificate(domain);
+    // Онлайн нод читаем раз в минуту, а сертификат — раз в полчаса: он меняется раз в месяцы.
+    const before = await this.store.snapshot();
+    const fresh = Date.now() - this.certCheckedAt < REMNAWAVE_CERT_CHECK_INTERVAL_MIN * 60_000;
+    const cert = fresh && before?.cert ? before.cert : await this.client.checkCertificate(domain);
+    if (!fresh || !before?.cert) this.certCheckedAt = Date.now();
     await this.store.updateSnapshot({ checkedAt: new Date().toISOString(), error: null, stats, nodes, cert });
   }
 
