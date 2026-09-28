@@ -94,7 +94,7 @@ export function useIncident(id: string) {
 export function useOpenIncidentsCount(): number {
   const q = useQuery({
     queryKey: incidentsKeys.list('open'),
-    queryFn: ({ signal }) => incidentsApi.list('open', signal),
+    queryFn: ({ signal }) => incidentsApi.list('open', undefined, signal),
     refetchInterval: 60_000,
   });
   return q.data?.counts.open ?? 0;
