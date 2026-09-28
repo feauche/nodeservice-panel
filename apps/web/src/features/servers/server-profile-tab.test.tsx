@@ -284,6 +284,58 @@ describe('вкладка «Профиль» (J3, A5 + R2 + C3)', () => {
     expect(server().profile.importance).toBe('critical');
   });
 
+  it('крестик с несохранённой правкой спрашивает подтверждение; «Нет» оставляет правку на месте', async () => {
+    const { dialog } = await openProfile();
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Выпускает трафик в интернет' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Закрыть' }));
+    const confirm = await screen.findByRole('alertdialog', { name: 'Закрыть без сохранения?' });
+    expect(
+      within(confirm).getByText(/Несохранённые правки на вкладке «Профиль» пропадут\./),
+    ).toBeInTheDocument();
+    await user.click(within(confirm).getByRole('button', { name: 'Нет' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    // Окно осталось открытым, правка на месте
+    expect(within(dialog).getByRole('checkbox', { name: 'Выпускает трафик в интернет' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(server().profile.roles).toEqual([]);
+  });
+
+  it('крестик с несохранённой правкой: «Да, закрыть» закрывает окно, правка не сохраняется', async () => {
+    const { dialog, id } = await openProfile();
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Выпускает трафик в интернет' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Закрыть' }));
+    const confirm = await screen.findByRole('alertdialog', { name: 'Закрыть без сохранения?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Да, закрыть' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(mockServers.items.find((s) => s.id === id)?.profile.roles).toEqual([]);
+  });
+
+  it('правки на обеих вкладках: подтверждение называет обе', async () => {
+    const { dialog } = await openProfile();
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Выпускает трафик в интернет' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Подключение' }));
+    await user.type(within(dialog).getByLabelText('Название'), 'x');
+    await user.click(within(dialog).getByRole('button', { name: 'Закрыть' }));
+    const confirm = await screen.findByRole('alertdialog', { name: 'Закрыть без сохранения?' });
+    expect(
+      within(confirm).getByText(/Несохранённые правки на вкладках «Профиль» и «Подключение» пропадут\./),
+    ).toBeInTheDocument();
+    await user.click(within(confirm).getByRole('button', { name: 'Нет' }));
+  });
+
+  it('без несохранённых правок крестик закрывает окно сразу, без вопроса', async () => {
+    const { dialog } = await openProfile();
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole('button', { name: 'Закрыть' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
   it('пилюля «Расхождения: N» в шапке открывает вкладку «Профиль»', async () => {
     const s = server();
     mockServers.items[0] = {

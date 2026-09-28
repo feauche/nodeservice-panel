@@ -104,6 +104,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
   const [range, setRange] = useState<MetricRange>('1h');
   const [installOpen, setInstallOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   // Телефон — своя раскладка (вариант 1 витрины): шапка + вкладки сверху, факты свёрнуты,
   // действия в нижней панели. В jsdom matchMedia нет — считаем, что не телефон.
   const phone = useMediaQuery('(max-width: 767px)', false);
@@ -114,6 +115,10 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
     profile: edit.profile.dirty,
     connection: edit.connection.dirty,
   };
+  // Крестик, клик мимо и Escape спрашивают подтверждение, если есть несохранённое: иначе правки на
+  // обеих вкладках («Профиль» и «Подключение») молча терялись бы при случайном закрытии.
+  const dirtyTabLabels = TABS.filter((t) => tabDirty[t.key]).map((t) => `«${t.label}»`);
+  const requestClose = () => (edit.dirty ? setCloseConfirmOpen(true) : onClose());
 
   useEffect(() => {
     setTab(initialTab);
@@ -210,6 +215,18 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
         loading={remove.isPending}
         onConfirm={doDelete}
       />
+      <ConfirmDialog
+        open={closeConfirmOpen}
+        onOpenChange={setCloseConfirmOpen}
+        kind="warn"
+        title="Закрыть без сохранения?"
+        description={`Несохранённые правки на ${dirtyTabLabels.length > 1 ? 'вкладках' : 'вкладке'} ${dirtyTabLabels.join(' и ')} пропадут.`}
+        yesLabel="Да, закрыть"
+        onConfirm={() => {
+          setCloseConfirmOpen(false);
+          onClose();
+        }}
+      />
     </>
   );
   const tabsBar = (
@@ -250,7 +267,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
       type="button"
       variant="outline"
       aria-label="Закрыть"
-      onClick={onClose}
+      onClick={requestClose}
       className="size-9 flex-none rounded-[10px] border-border bg-surface-2 p-0 text-text-2 hover:bg-surface-3 hover:text-foreground"
     >
       <XIcon className="size-4" aria-hidden="true" />
@@ -301,7 +318,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
   );
 
   return (
-    <Dialog open modal={false} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open modal={false} onOpenChange={(o) => !o && requestClose()}>
       {/* Свой блюр-фон: в неблокирующем режиме Radix не рисует overlay, а плавающий терминал (z-90)
           должен оставаться кликабельным. Сам фон (z-40 — под контентом модалки z-50 и терминалом)
           закрывает модалку по клику, как привычный overlay; клики по терминалу/меню/селектам лежат
@@ -311,7 +328,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
           type="button"
           aria-label="Закрыть"
           tabIndex={-1}
-          onClick={onClose}
+          onClick={requestClose}
           className="fixed inset-0 z-40 cursor-default bg-black/10 supports-backdrop-filter:backdrop-blur-xs"
         />,
         document.body,
