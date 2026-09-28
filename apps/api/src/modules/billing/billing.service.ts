@@ -157,8 +157,6 @@ export class BillingService {
       throw problem(HttpStatus.BAD_REQUEST, {
         detail: 'Один из выбранных серверов не найден — обновите страницу.',
       });
-    if (body.kind === 'server' && body.serverIds.length === 0)
-      throw problem(HttpStatus.BAD_REQUEST, { detail: 'Для типа «Сервер» выберите сервер.' });
     if (body.providerId) {
       const [p] = await this.db
         .select({ id: providers.id })

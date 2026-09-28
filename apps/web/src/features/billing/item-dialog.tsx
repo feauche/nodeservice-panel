@@ -11,10 +11,11 @@ import {
   type BillingSummary,
   billingItemUpsertSchema,
 } from '@nodeservice/shared';
-import { Loader2Icon } from 'lucide-react';
+import { Loader2Icon, ServerIcon, XIcon } from 'lucide-react';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 
 import { DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
+import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { ProviderSelect } from '@/features/providers/provider-select';
@@ -73,7 +74,7 @@ const SERVERS_LABEL: Record<BillingKind, string> = {
   other: 'Серверы',
 };
 const SERVERS_HINT: Record<BillingKind, string> = {
-  server: 'Оплата появится в карточке сервера, а Джарвис учтёт её, если сервер упадёт.',
+  server: 'С сервером оплата появится в его карточке, а Джарвис учтёт её, если сервер упадёт.',
   rent: 'Если аренда даёт конкретный сервер — укажите его: при падении Джарвис проверит оплату.',
   domain: 'Серверы, на которые смотрит домен. Для справки.',
   cert: 'Серверы, где лежит сертификат (например, через certwarden). Джарвис подскажет, где продлевать.',
@@ -138,18 +139,31 @@ export function ItemDialog({
   }, [open, item?.id]);
 
   const list = servers.data?.items ?? [];
-  const toggleServer = (id: string) => {
-    setErrors((e) => ({ ...e, serverIds: '' }));
-    if (kind === 'server') {
-      setServerIds((cur) => (cur[0] === id ? [] : [id]));
-      // Название по серверу, если его ещё не задали.
+  // У «Сервера» и «Аренды» — один сервер, у сертификата, домена и прочего — несколько.
+  const single = kind === 'server' || kind === 'rent';
+  const pickServer = (id: string | null) => {
+    if (single) {
+      setServerIds(id ? [id] : []);
+      // Название и провайдер по серверу, если их ещё не задали.
       const s = list.find((x) => x.id === id);
       if (s && !title.trim()) setTitle(s.name);
       if (s?.providerId && !providerId) setProviderId(s.providerId);
       return;
     }
-    setServerIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+    if (id) setServerIds((cur) => (cur.includes(id) ? cur : [...cur, id]));
   };
+  const serverOption = (s: (typeof list)[number]) => ({
+    value: s.id,
+    label: s.name,
+    keywords: s.host,
+    node: (
+      <span className="flex min-w-0 items-center gap-2">
+        <ServerIcon className="size-3.5 flex-none text-text-3" aria-hidden="true" />
+        <span className="truncate">{s.name}</span>
+        <span className="truncate font-mono text-[11.5px] text-text-3">{s.host}</span>
+      </span>
+    ),
+  });
   const amountNum = Number(amount.replace(',', '.'));
   const rate = currency === 'RUB' ? null : (rates?.[currency] ?? null);
   const busy = save.isPending;
@@ -161,7 +175,7 @@ export function ItemDialog({
       kind,
       title,
       providerId,
-      serverIds: kind === 'server' ? serverIds.slice(0, 1) : serverIds,
+      serverIds: single ? serverIds.slice(0, 1) : serverIds,
       domain: kind === 'domain' || kind === 'cert' ? domain.trim() || null : null,
       amount: amount.trim() === '' ? Number.NaN : amountNum,
       currency,
@@ -186,7 +200,6 @@ export function ItemDialog({
                 ? 'Укажите название'
                 : i.message;
       }
-    if (kind === 'server' && serverIds.length === 0) errs.serverIds = 'Выберите сервер';
     if (Object.keys(errs).length > 0 || !parsed.success) {
       setErrors(errs);
       return;
@@ -256,7 +269,7 @@ export function ItemDialog({
                     aria-checked={kind === k}
                     onClick={() => {
                       setKind(k);
-                      if (k === 'server') setServerIds((c) => c.slice(0, 1));
+                      if (k === 'server' || k === 'rent') setServerIds((c) => c.slice(0, 1));
                     }}
                     className={cn(
                       'flex h-[62px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[11px] border text-[12.5px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-brand',
@@ -311,26 +324,67 @@ export function ItemDialog({
           </div>
 
           <div>
-            <Label>
-              {SERVERS_LABEL[kind]} {kind === 'server' ? <Req /> : <Opt />}
+            <Label htmlFor="bill-server">
+              {SERVERS_LABEL[kind]} <Opt />
             </Label>
             {list.length === 0 ? (
               <p className="rounded-[10px] border border-dashed border-border-2 px-3 py-2.5 text-[12.5px] text-text-3">
                 Серверов в NodeService пока нет.
               </p>
+            ) : single ? (
+              <Combobox
+                id="bill-server"
+                ariaLabel={SERVERS_LABEL[kind]}
+                value={serverIds[0] ?? null}
+                onChange={pickServer}
+                options={list.map(serverOption)}
+                placeholder={<span className="text-text-3">Без сервера</span>}
+                emptyLabel="Без сервера"
+                searchPlaceholder="Найти сервер…"
+                disabled={busy}
+                className="h-10 w-full"
+              />
             ) : (
-              <div className="flex flex-wrap gap-2" data-testid="billing-servers">
-                {list.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    aria-pressed={serverIds.includes(s.id)}
-                    onClick={() => toggleServer(s.id)}
-                    className={chip(serverIds.includes(s.id))}
-                  >
-                    {s.name}
-                  </button>
-                ))}
+              <div className="flex flex-col gap-2" data-testid="billing-servers">
+                {serverIds.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {serverIds.map((id) => {
+                      const srv = list.find((x) => x.id === id);
+                      return (
+                        <span
+                          key={id}
+                          className="inline-flex h-7 items-center gap-1.5 rounded-[8px] border border-border bg-surface-2 pr-1 pl-2.5 text-[12.5px]"
+                        >
+                          <ServerIcon className="size-3.5 text-text-3" aria-hidden="true" />
+                          {srv?.name ?? 'сервер удалён'}
+                          <button
+                            type="button"
+                            aria-label={`Убрать ${srv?.name ?? 'сервер'}`}
+                            onClick={() => setServerIds((cur) => cur.filter((x) => x !== id))}
+                            className="grid size-5 cursor-pointer place-items-center rounded-[6px] text-text-3 hover:bg-surface-3 hover:text-foreground"
+                          >
+                            <XIcon className="size-3.5" aria-hidden="true" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                <Combobox
+                  id="bill-server"
+                  ariaLabel={`${SERVERS_LABEL[kind]}: добавить сервер`}
+                  value={null}
+                  onChange={pickServer}
+                  options={list.filter((x) => !serverIds.includes(x.id)).map(serverOption)}
+                  placeholder={
+                    <span className="text-text-3">
+                      {serverIds.length > 0 ? 'Добавить ещё сервер…' : 'Выберите сервер'}
+                    </span>
+                  }
+                  searchPlaceholder="Найти сервер…"
+                  disabled={busy || serverIds.length >= list.length}
+                  className="h-10 w-full"
+                />
               </div>
             )}
             {errors.serverIds ? (

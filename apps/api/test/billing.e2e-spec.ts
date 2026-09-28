@@ -129,18 +129,24 @@ describe('billing e2e', () => {
   });
   let itemId = '';
 
-  it('создание: сумма в центах, сегодняшние рубли, «Сервер» без сервера — отказ', async () => {
+  it('создание: сумма в центах, сегодняшние рубли, сервер необязателен', async () => {
     const res = await agent.post('/api/billing/items').set(CSRF_HEADER, csrf).send(body()).expect(201);
     const item = billingItemSchema.parse(res.body);
     itemId = item.id;
     expect(item.amountMinor).toBe(451);
     expect(item.dueState).toBe('ok');
-    const bad = await agent
-      .post('/api/billing/items')
-      .set(CSRF_HEADER, csrf)
-      .send(body({ serverIds: [] }))
-      .expect(400);
-    expect(bad.body.detail).toContain('выберите сервер');
+    // Сервер необязателен даже у типа «Сервер».
+    const noServer = billingItemSchema.parse(
+      (
+        await agent
+          .post('/api/billing/items')
+          .set(CSRF_HEADER, csrf)
+          .send(body({ serverIds: [], title: 'Без сервера' }))
+          .expect(201)
+      ).body,
+    );
+    expect(noServer.serverIds).toEqual([]);
+    await agent.delete(`/api/billing/items/${noServer.id}`).set(CSRF_HEADER, csrf).expect(204);
     const list = billingItemsResponseSchema.parse((await agent.get('/api/billing/items').expect(200)).body);
     expect(list.items).toHaveLength(1);
     expect(list.items[0]?.amountRubTodayMinor).toBe(45_100);

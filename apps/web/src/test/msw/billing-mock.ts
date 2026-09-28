@@ -369,7 +369,6 @@ export const billingHandlers = [
   }),
   http.post('/api/billing/items', async ({ request }) => {
     const b = (await request.json()) as BillingItemUpsert;
-    if (b.kind === 'server' && b.serverIds.length === 0) return bad('Для типа «Сервер» выберите сервер.');
     const item = fromUpsert(b);
     mockBilling.items.push(item);
     return HttpResponse.json(item, { status: 201 });
@@ -379,7 +378,6 @@ export const billingHandlers = [
     const cur = mockBilling.items[i];
     if (!cur) return notFound();
     const b = (await request.json()) as BillingItemUpsert;
-    if (b.kind === 'server' && b.serverIds.length === 0) return bad('Для типа «Сервер» выберите сервер.');
     const item = fromUpsert(b, cur);
     mockBilling.items[i] = item;
     return HttpResponse.json(item);

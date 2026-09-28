@@ -68,22 +68,32 @@ describe('BillingPage', () => {
     expect(mockBilling.payments[0]?.id).toBe(counted?.id);
   });
 
-  it('новая оплата: «Сервер» без сервера — подсказка; сертификат на двух серверах сохраняется', async () => {
+  it('новая оплата: сервер — список с поиском и необязателен; сертификат на двух серверах сохраняется', async () => {
     renderPage(Page, '/servers/billing', ['/servers']);
     await waitFor(() => expect(cards().length).toBe(6));
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Добавить оплату' }));
-    const dialog = await screen.findByRole('dialog');
+    let dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/Название/), 'Без сервера');
+    await user.type(within(dialog).getByLabelText(/Сумма/), '5');
+    // «Сервер» — выпадающий список, по умолчанию «Без сервера», сохранить можно и так.
+    expect(within(dialog).getByRole('combobox', { name: 'Сервер' })).toHaveTextContent('Без сервера');
+    await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(mockBilling.items.find((i) => i.title === 'Без сервера')?.serverIds).toEqual([]);
+
+    await user.click(screen.getByRole('button', { name: 'Добавить оплату' }));
+    dialog = await screen.findByRole('dialog');
     await user.type(within(dialog).getByLabelText(/Название/), 'Новый VPS');
     await user.type(within(dialog).getByLabelText(/Сумма/), '5');
-    await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
-    expect(await within(dialog).findByText('Выберите сервер')).toBeInTheDocument();
-
     await user.click(within(dialog).getByRole('radio', { name: 'Сертификат' }));
     expect(within(dialog).getByText('Где развёрнут')).toBeInTheDocument();
+    for (const name of ['de-fra-01', 'nl-ams-02']) {
+      await user.click(within(dialog).getByRole('combobox', { name: 'Где развёрнут: добавить сервер' }));
+      await user.click(await screen.findByRole('option', { name }));
+    }
     const picker = within(dialog).getByTestId('billing-servers');
-    await user.click(within(picker).getByRole('button', { name: 'de-fra-01' }));
-    await user.click(within(picker).getByRole('button', { name: 'nl-ams-02' }));
+    expect(within(picker).getByRole('button', { name: 'Убрать de-fra-01' })).toBeInTheDocument();
     await user.click(within(dialog).getByRole('radio', { name: '$' }));
     await user.click(within(dialog).getByRole('button', { name: 'год' }));
     await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
