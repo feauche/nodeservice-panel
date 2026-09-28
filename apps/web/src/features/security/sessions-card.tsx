@@ -88,7 +88,7 @@ export function SessionsCard() {
   return (
     <SettingsCard
       title="Активные сессии"
-      hint="Где ты сейчас вошёл. Незнакомое устройство — заверши и смени пароль."
+      hint="Где вы сейчас вошли. Незнакомое устройство — завершите сессию и смените пароль."
     >
       <ul className="mt-2" aria-label="Активные сессии">
         {sessions.isPending && <li className="py-3 text-[12.5px] text-text-3">Загружаю…</li>}

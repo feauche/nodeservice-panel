@@ -68,7 +68,7 @@ const FIELDS: ReadonlyArray<{
   },
   {
     key: 'autofixCooldownMinutes',
-    label: 'Кулдаун автопочинки',
+    label: 'Пауза между автопочинками',
     hint: 'Один инцидент не чинится автоматически чаще, чем раз в это время.',
     unit: 'мин',
     min: 1,

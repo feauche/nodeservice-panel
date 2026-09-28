@@ -105,7 +105,7 @@ function TotpReissueDialog({ open, onOpenChange }: { open: boolean; onOpenChange
         <DialogHeader>
           <DialogTitle className="font-heading text-[17px]">Перевыпуск 2FA</DialogTitle>
           <DialogDescription className="text-[12.5px] text-text-2">
-            Отсканируй QR в приложении-аутентификаторе и введи код. Старый секрет работает, пока новый не
+            Отсканируйте QR в приложении-аутентификаторе и введите код. Старый секрет работает, пока новый не
             подтверждён.
           </DialogDescription>
         </DialogHeader>
@@ -121,7 +121,7 @@ function TotpReissueDialog({ open, onOpenChange }: { open: boolean; onOpenChange
                 className="size-[148px] flex-none rounded-[12px] bg-white p-2"
               />
               <div className="min-w-0 flex-1">
-                <div className="text-[11.5px] font-medium text-text-2">Или введи ключ вручную</div>
+                <div className="text-[11.5px] font-medium text-text-2">Или введите ключ вручную</div>
                 <code className="mt-1 block break-all font-mono text-[12.5px] leading-relaxed">
                   {data.totpSecret}
                 </code>

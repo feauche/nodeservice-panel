@@ -229,6 +229,7 @@ function make() {
     knowledge as never,
     audit as never,
     cls as never,
+    { push: async () => undefined } as never,
   );
   return { svc, repo, world, checksRuns };
 }

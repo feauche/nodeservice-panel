@@ -306,7 +306,7 @@ describe('ServersPage', () => {
     await user.click(screen.getByRole('button', { name: 'Действия с de-fra-01' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
     await user.click(await screen.findByRole('button', { name: 'Да, удалить' }));
-    const stepUp = await screen.findByRole('dialog', { name: 'Подтверди пароль' });
+    const stepUp = await screen.findByRole('dialog', { name: 'Подтвердите пароль' });
     await user.type(within(stepUp).getByLabelText('Пароль'), MOCK_SECURITY.password);
     await user.click(within(stepUp).getByRole('button', { name: 'Подтвердить' }));
     await waitFor(() => expect(screen.queryByText('de-fra-01')).not.toBeInTheDocument());

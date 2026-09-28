@@ -490,7 +490,8 @@ export class IncidentsService {
       await this.notifications.push({
         severity: meta.severity === 'crit' ? 'crit' : 'warn',
         title: incidentTitleToken(meta.label),
-        server: { id: server.id, name: server.name },
+        server: { id: server.id, name: server.name, host: server.host },
+        telegram: { event: meta.severity === 'crit' ? 'incident_crit' : 'incident_warn', incidentId: row.id },
         body:
           decision === 'waiting'
             ? `${detail} Ждём ${AUTOFIX_GRACE_SECONDS} с — возможно, поднимется само, иначе починим автоматически.`
@@ -528,6 +529,7 @@ export class IncidentsService {
       ...(row.serverId ? { server: { id: row.serverId, name: row.serverName } } : {}),
       body: reason ?? 'Инцидент закрыт автоматически.',
       link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
+      telegram: { event: 'resolved', incidentId: row.id },
     });
     await this.repo.update(row.id, {
       status: 'resolved',

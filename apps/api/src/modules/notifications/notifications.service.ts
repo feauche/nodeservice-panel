@@ -6,12 +6,14 @@ import {
   type NotificationLink,
   type NotificationSeverity,
   type NotificationsResponse,
+  type TelegramEvent,
 } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
 import type { NotificationRow } from '../../infra/db/schema/index.js';
 import { EventsService } from '../events/events.service.js';
 import { NotificationsRepository } from './notifications.repository.js';
+import { TelegramService } from './telegram/telegram.service.js';
 
 export interface PushInput {
   severity: NotificationSeverity;
@@ -19,7 +21,12 @@ export interface PushInput {
   body?: string | null;
   link?: NotificationLink | null;
   /** Про какой сервер: в title/body пишем токен `{server}`, имя подставится при показе (переименование видно сразу). */
-  server?: { id: string; name: string } | null;
+  server?: { id: string; name: string; host?: string | null } | null;
+  /**
+   * То же событие в Telegram (R6): тип для тумблера и инцидент, чтобы «Починилось» ушло ответом на
+   * исходное сообщение. Уходит независимо от того, попадает ли уведомление в колокольчик.
+   */
+  telegram?: { event: TelegramEvent; incidentId?: string | null } | null;
 }
 
 /** Токен имени сервера в тексте уведомления. */
@@ -40,6 +47,7 @@ export class NotificationsService {
   constructor(
     private readonly repo: NotificationsRepository,
     private readonly events: EventsService,
+    private readonly telegram: TelegramService,
   ) {}
 
   toDto(row: NotificationRow & { serverNameNow?: string | null }): Notification {
@@ -64,6 +72,19 @@ export class NotificationsService {
 
   /** Серверное событие: тихо, без исключений наружу. */
   async push(input: PushInput): Promise<void> {
+    if (input.telegram) {
+      const name = input.server?.name ?? 'сервер';
+      const fill = (t: string) => t.replaceAll(SERVER_TOKEN, name);
+      // В фоне: медленный Telegram не должен задерживать инцидент или обслуживание.
+      void this.telegram.dispatch({
+        event: input.telegram.event,
+        incidentId: input.telegram.incidentId ?? null,
+        title: fill(input.title),
+        body: input.body ? fill(input.body) : null,
+        server: input.server ? { name: input.server.name, host: input.server.host ?? null } : null,
+        link: input.link ?? null,
+      });
+    }
     // В колокольчик — только то, что требует внимания. Остальное есть в Журнале.
     if (!IMPORTANT.has(input.severity)) return;
     try {

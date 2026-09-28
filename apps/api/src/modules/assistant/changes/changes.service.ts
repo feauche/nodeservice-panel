@@ -17,6 +17,7 @@ import { CLS_USER } from '../../auth/cls-keys.js';
 import { IncidentsService } from '../../incidents/incidents.service.js';
 import { KnowledgeService } from '../../knowledge/knowledge.service.js';
 import { MaintenanceService } from '../../maintenance/maintenance.service.js';
+import { NotificationsService } from '../../notifications/notifications.service.js';
 import { ProvidersService } from '../../providers/providers.service.js';
 import { ServerChecksService } from '../../server-checks/server-checks.service.js';
 import { ServersService } from '../../servers/servers.service.js';
@@ -57,6 +58,7 @@ export class ChangesService {
     private readonly knowledge: KnowledgeService,
     private readonly audit: AuditService,
     private readonly cls: ClsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   private ctx(): ChangeCtx {
@@ -169,6 +171,15 @@ export class ChangesService {
       plan: { ...built.plan, raw: parsed.data } as unknown as Record<string, unknown>,
       status: 'proposed',
       expiresAt: new Date(Date.now() + CHANGE_TTL_HOURS * 3_600_000),
+    });
+    // Только в Telegram (тумблер «Карточка Джарвиса», по умолчанию выключен): в колокольчик не пишем —
+    // карточка и так в чате.
+    await this.notifications.push({
+      severity: 'info',
+      title: `Джарвис предлагает: ${built.plan.title}`,
+      body: input.reason?.trim() ? input.reason.trim().slice(0, 300) : null,
+      link: { to: '/assistant', label: 'Открыть Джарвиса' },
+      telegram: { event: 'jarvis_card' },
     });
     return { change: await this.present(row), reused: false };
   }

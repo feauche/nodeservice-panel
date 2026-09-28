@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import type { AuditResult, AuditSeverity, Me } from '@nodeservice/shared';
 import { PinoLogger } from 'nestjs-pino';
 
 import { AuditService } from '../audit/audit.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 export type AuthEvent =
   | 'auth.setup.completed'
@@ -50,6 +51,8 @@ export class AuthEventsService {
   constructor(
     private readonly logger: PinoLogger,
     private readonly audit: AuditService,
+    // Нет в консольной утилите панели (rescue CLI): там вход только пишется в Журнал.
+    @Optional() private readonly notifications?: NotificationsService,
   ) {
     this.logger.setContext('AuthEvents');
   }
@@ -86,5 +89,44 @@ export class AuthEventsService {
         ...(ctx.meta ?? {}),
       },
     });
+
+    // Telegram «Вход в панель»: вход без доверенного устройства (значит, новое) и блокировка после
+    // серии неудачных попыток. Вход с доверенного устройства — обычная жизнь, не шумим.
+    const newDevice = event === 'auth.login.success' && !(ctx.amr ?? []).includes('trusted');
+    if (this.notifications && (newDevice || event === 'auth.login.throttled'))
+      await this.notifications.push({
+        severity: 'info',
+        title: newDevice ? 'Вход в панель с нового устройства' : 'Серия неудачных попыток входа',
+        body: `${newDevice ? `Вошёл «${ctx.login ?? 'admin'}». ` : `Логин «${ctx.login ?? '—'}», вход временно заблокирован. `}IP ${ctx.ip}, ${deviceOf(ctx.ua)}. Если это не вы — смените пароль в «Настройки → Безопасность».`,
+        link: { to: '/settings/security', label: 'Открыть безопасность' },
+        telegram: { event: 'login' },
+      });
   }
+}
+
+/** «Chrome на macOS» из User-Agent — достаточно, чтобы узнать своё устройство. */
+function deviceOf(ua: string): string {
+  const browser = /Edg\//.test(ua)
+    ? 'Edge'
+    : /YaBrowser/.test(ua)
+      ? 'Яндекс Браузер'
+      : /Chrome\//.test(ua)
+        ? 'Chrome'
+        : /Firefox\//.test(ua)
+          ? 'Firefox'
+          : /Safari\//.test(ua)
+            ? 'Safari'
+            : 'браузер';
+  const os = /iPhone|iPad/.test(ua)
+    ? 'iOS'
+    : /Android/.test(ua)
+      ? 'Android'
+      : /Mac OS X/.test(ua)
+        ? 'macOS'
+        : /Windows/.test(ua)
+          ? 'Windows'
+          : /Linux/.test(ua)
+            ? 'Linux'
+            : 'неизвестной системе';
+  return `${browser} на ${os}`;
 }

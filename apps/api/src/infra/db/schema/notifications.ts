@@ -1,5 +1,7 @@
 import { sql } from 'drizzle-orm';
-import { index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { bigint, index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+
+import { incidents } from './incidents.js';
 
 /** Центр уведомлений (миграция 0023). Формат — packages/shared/src/notifications.ts. */
 export const notifications = pgTable(
@@ -21,3 +23,21 @@ export const notifications = pgTable(
   (t) => [index('notifications_created_idx').on(t.createdAt)],
 );
 export type NotificationRow = typeof notifications.$inferSelect;
+
+/**
+ * Какие сообщения Telegram ушли по инциденту (миграция 0041): «Починилось» отправляется ответом на
+ * исходное сообщение в том же чате — в ленте видна пара «сломалось → починилось».
+ */
+export const telegramMessages = pgTable(
+  'telegram_messages',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    incidentId: uuid('incident_id')
+      .notNull()
+      .references(() => incidents.id, { onDelete: 'cascade' }),
+    destinationId: text('destination_id').notNull(),
+    messageId: bigint('message_id', { mode: 'number' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('telegram_messages_incident_idx').on(t.incidentId, t.destinationId)],
+);

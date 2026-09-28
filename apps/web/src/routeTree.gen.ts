@@ -30,6 +30,7 @@ import { Route as SettingsAppearanceRouteImport } from './routes/settings.appear
 import { Route as SettingsAssistantRouteImport } from './routes/settings.assistant';
 import { Route as SettingsAutochecksRouteImport } from './routes/settings.autochecks';
 import { Route as SettingsIncidentsRouteImport } from './routes/settings.incidents';
+import { Route as SettingsNotificationsRouteImport } from './routes/settings.notifications';
 import { Route as SettingsSecurityRouteImport } from './routes/settings.security';
 
 const IndexRoute = IndexRouteImport.update({
@@ -137,6 +138,11 @@ const SettingsIncidentsRoute = SettingsIncidentsRouteImport.update({
   path: '/incidents',
   getParentRoute: () => SettingsRoute,
 } as any);
+const SettingsNotificationsRoute = SettingsNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
+  getParentRoute: () => SettingsRoute,
+} as any);
 const SettingsSecurityRoute = SettingsSecurityRouteImport.update({
   id: '/security',
   path: '/security',
@@ -164,6 +170,7 @@ export interface FileRoutesByFullPath {
   '/settings/assistant': typeof SettingsAssistantRoute;
   '/settings/autochecks': typeof SettingsAutochecksRoute;
   '/settings/incidents': typeof SettingsIncidentsRoute;
+  '/settings/notifications': typeof SettingsNotificationsRoute;
   '/settings/security': typeof SettingsSecurityRoute;
   '/settings/': typeof SettingsIndexRoute;
 }
@@ -187,6 +194,7 @@ export interface FileRoutesByTo {
   '/settings/assistant': typeof SettingsAssistantRoute;
   '/settings/autochecks': typeof SettingsAutochecksRoute;
   '/settings/incidents': typeof SettingsIncidentsRoute;
+  '/settings/notifications': typeof SettingsNotificationsRoute;
   '/settings/security': typeof SettingsSecurityRoute;
   '/settings': typeof SettingsIndexRoute;
 }
@@ -212,6 +220,7 @@ export interface FileRoutesById {
   '/settings/assistant': typeof SettingsAssistantRoute;
   '/settings/autochecks': typeof SettingsAutochecksRoute;
   '/settings/incidents': typeof SettingsIncidentsRoute;
+  '/settings/notifications': typeof SettingsNotificationsRoute;
   '/settings/security': typeof SettingsSecurityRoute;
   '/settings/': typeof SettingsIndexRoute;
 }
@@ -238,6 +247,7 @@ export interface FileRouteTypes {
     | '/settings/assistant'
     | '/settings/autochecks'
     | '/settings/incidents'
+    | '/settings/notifications'
     | '/settings/security'
     | '/settings/';
   fileRoutesByTo: FileRoutesByTo;
@@ -261,6 +271,7 @@ export interface FileRouteTypes {
     | '/settings/assistant'
     | '/settings/autochecks'
     | '/settings/incidents'
+    | '/settings/notifications'
     | '/settings/security'
     | '/settings';
   id:
@@ -285,6 +296,7 @@ export interface FileRouteTypes {
     | '/settings/assistant'
     | '/settings/autochecks'
     | '/settings/incidents'
+    | '/settings/notifications'
     | '/settings/security'
     | '/settings/';
   fileRoutesById: FileRoutesById;
@@ -457,6 +469,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsIncidentsRouteImport;
       parentRoute: typeof SettingsRoute;
     };
+    '/settings/notifications': {
+      id: '/settings/notifications';
+      path: '/notifications';
+      fullPath: '/settings/notifications';
+      preLoaderRoute: typeof SettingsNotificationsRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
     '/settings/security': {
       id: '/settings/security';
       path: '/security';
@@ -472,6 +491,7 @@ interface SettingsRouteChildren {
   SettingsAssistantRoute: typeof SettingsAssistantRoute;
   SettingsAutochecksRoute: typeof SettingsAutochecksRoute;
   SettingsIncidentsRoute: typeof SettingsIncidentsRoute;
+  SettingsNotificationsRoute: typeof SettingsNotificationsRoute;
   SettingsSecurityRoute: typeof SettingsSecurityRoute;
   SettingsIndexRoute: typeof SettingsIndexRoute;
 }
@@ -481,6 +501,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAssistantRoute: SettingsAssistantRoute,
   SettingsAutochecksRoute: SettingsAutochecksRoute,
   SettingsIncidentsRoute: SettingsIncidentsRoute,
+  SettingsNotificationsRoute: SettingsNotificationsRoute,
   SettingsSecurityRoute: SettingsSecurityRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 };

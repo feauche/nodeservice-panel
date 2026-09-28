@@ -802,6 +802,7 @@ export class IncidentRunnerService implements OnModuleInit {
           ? `${action.title} — только вручную. ${reason}.`
           : `${first ? `${row.detail} ` : ''}Предложено: ${action.title} (${level}), ${reason}. Подтвердите запуск в инциденте.`,
       link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
+      telegram: { event: 'needs_confirm', incidentId: row.id },
     });
     await this.audit.record({
       action: 'incident.action.proposed',
@@ -918,6 +919,7 @@ export class IncidentRunnerService implements OnModuleInit {
         ...this.serverOf(row),
         body: `${by === 'auto' ? 'Автоматически' : 'По вашей команде'} · ${note}`,
         link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
+        ...(result === 'helped' ? { telegram: { event: 'resolved' as const, incidentId: row.id } } : {}),
       });
     await this.audit.record({
       action: 'incident.autofix',

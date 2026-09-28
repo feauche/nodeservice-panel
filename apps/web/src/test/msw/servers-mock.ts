@@ -236,7 +236,7 @@ import { mockSecurity } from './security-mock';
 
 /** Реальный API требует свежий step-up на удаление/доверие/токен — мок ведёт себя так же. */
 const requireStepUp = () =>
-  mockSecurity.stepUpFresh ? null : problem(403, AUTH_PROBLEM.stepUp, 'Подтверди пароль, чтобы продолжить');
+  mockSecurity.stepUpFresh ? null : problem(403, AUTH_PROBLEM.stepUp, 'Подтвердите пароль, чтобы продолжить');
 
 const badAuth = (body: { auth?: { method?: string; password?: string } }): boolean =>
   body.auth?.method === 'password' && body.auth.password !== MOCK_SSH.password;

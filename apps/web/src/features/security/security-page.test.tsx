@@ -59,7 +59,7 @@ describe('SecurityPage', () => {
     const toggle = await screen.findByRole('switch', { name: '' });
     await user.click(toggle);
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Подтверди пароль' });
+    const dialog = await screen.findByRole('dialog', { name: 'Подтвердите пароль' });
     await user.type(within(dialog).getByLabelText('Пароль'), 'wrong');
     await user.click(within(dialog).getByRole('button', { name: 'Подтвердить' }));
     expect(await within(dialog).findByText(/Неверный/)).toBeInTheDocument();
@@ -77,7 +77,7 @@ describe('SecurityPage', () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole('switch'));
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Подтверди пароль' });
+    const dialog = await screen.findByRole('dialog', { name: 'Подтвердите пароль' });
     await user.click(within(dialog).getByRole('button', { name: 'Отмена' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(mockSecurity.policy.alwaysAskTotp).toBe(false);
@@ -140,7 +140,7 @@ describe('SecurityPage', () => {
     renderPage(SecurityPage, '/settings/security');
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: 'Показать' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Подтверди пароль' });
+    const dialog = await screen.findByRole('dialog', { name: 'Подтвердите пароль' });
     await user.type(within(dialog).getByLabelText('Пароль'), MOCK.password);
     await user.click(within(dialog).getByRole('button', { name: 'Подтвердить' }));
     const list = await screen.findByTestId('recovery-codes');

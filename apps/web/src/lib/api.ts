@@ -334,7 +334,7 @@ export function formatSeconds(total: number): string {
 /** Русское сообщение для ApiError — по type, потом по статусу. */
 export function apiErrorMessage(e: unknown): string {
   if (!isApiError(e)) {
-    return e instanceof Error && e.message ? e.message : 'Что-то пошло не так. Попробуй ещё раз.';
+    return e instanceof Error && e.message ? e.message : 'Что-то пошло не так. Попробуйте ещё раз.';
   }
   switch (e.type) {
     case AUTH_PROBLEM.invalidCredentials:
@@ -342,7 +342,7 @@ export function apiErrorMessage(e: unknown): string {
     case AUTH_PROBLEM.throttled:
       return e.retryAfterSeconds
         ? `Слишком много неудачных попыток — пауза ${formatSeconds(e.retryAfterSeconds)}. Она растёт с каждой серией, постоянной блокировки нет.`
-        : 'Слишком много неудачных попыток — подожди немного и попробуй снова.';
+        : 'Слишком много неудачных попыток — подождите немного и попробуйте снова.';
     case AUTH_PROBLEM.totpRequired:
       return 'Сначала подтверди вход кодом из приложения.';
     case AUTH_PROBLEM.invalidTotp:
@@ -352,13 +352,13 @@ export function apiErrorMessage(e: unknown): string {
     case AUTH_PROBLEM.setupDone:
       return 'Администратор уже создан — мастер первого запуска закрыт.';
     case AUTH_PROBLEM.setupToken:
-      return 'Токен первого запуска не подошёл. Сверь его с выводом установщика или docker logs nodeservice.';
+      return 'Токен первого запуска не подошёл. Сверьте его с выводом установщика или docker logs nodeservice.';
     case AUTH_PROBLEM.stepUp:
       return 'Нужно ещё раз подтвердить пароль.';
     case AUTH_PROBLEM.unauthenticated:
-      return 'Сессия закончилась — войди заново.';
+      return 'Сессия закончилась — войдите заново.';
     case AUTH_PROBLEM.locked:
-      return 'Экран заблокирован — введи пароль.';
+      return 'Экран заблокирован — введите пароль.';
     default:
       break;
   }

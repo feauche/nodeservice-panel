@@ -152,6 +152,8 @@ export const AUDIT_ACTIONS = {
   },
   'server.check.run': { category: 'server', label: 'Проверка сервера (реестр проверок)' },
   'server.check.explain': { category: 'server', label: 'Джарвис объяснил проверку сервера' },
+  'settings.telegram.updated': { category: 'settings', label: 'Уведомления в Telegram изменены' },
+  'settings.telegram.test': { category: 'settings', label: 'Тестовое сообщение в Telegram' },
   'settings.autochecks.updated': { category: 'settings', label: 'Автопроверки изменены' },
   'settings.incidents.updated': { category: 'settings', label: 'Настройки инцидентов изменены' },
   'settings.assistant.updated': { category: 'settings', label: 'Настройки Джарвиса изменены' },

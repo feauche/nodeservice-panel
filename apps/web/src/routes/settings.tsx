@@ -1,5 +1,14 @@
 import { createFileRoute, Link, Outlet } from '@tanstack/react-router';
-import { BookOpenTextIcon, BracesIcon } from 'lucide-react';
+import {
+  ActivityIcon,
+  BellIcon,
+  BookOpenTextIcon,
+  BracesIcon,
+  ShieldIcon,
+  SunIcon,
+  TriangleAlertIcon,
+} from 'lucide-react';
+import { JarvisIcon } from '@/components/jarvis-icon';
 import { AppShell } from '@/components/layout/app-shell';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { requireAuth } from '@/features/auth/guards';
@@ -13,12 +22,24 @@ export const Route = createFileRoute('/settings')({
   component: SettingsLayout,
 });
 
-const TABS = [
-  { to: '/settings/appearance', label: 'Внешний вид' },
-  { to: '/settings/security', label: 'Безопасность' },
-  { to: '/settings/autochecks', label: 'Автопроверки' },
-  { to: '/settings/incidents', label: 'Инциденты' },
-  { to: '/settings/assistant', label: 'Джарвис' },
+/** Разделы настроек рейкой слева (витрина `telegram-settings-variants.html`, вариант L2), по группам. */
+const GROUPS = [
+  {
+    title: 'Панель',
+    items: [
+      { to: '/settings/appearance', label: 'Внешний вид', icon: SunIcon },
+      { to: '/settings/security', label: 'Безопасность', icon: ShieldIcon },
+      { to: '/settings/notifications', label: 'Уведомления', icon: BellIcon },
+    ],
+  },
+  {
+    title: 'Слежение',
+    items: [
+      { to: '/settings/autochecks', label: 'Автопроверки', icon: ActivityIcon },
+      { to: '/settings/incidents', label: 'Инциденты', icon: TriangleAlertIcon },
+    ],
+  },
+  { title: 'Помощник', items: [{ to: '/settings/assistant', label: 'Джарвис', icon: JarvisIcon }] },
 ] as const;
 
 /** Сервисные страницы вне панели — маленькими кнопками у заголовка, с подсказкой куда ведут. */
@@ -59,22 +80,41 @@ function SettingsLayout() {
       subtitle="Всё, что можно настроить, — в одном месте"
       actions={<ServiceLinks />}
     >
-      <nav
-        aria-label="Разделы настроек"
-        className="mb-5 inline-flex max-w-full gap-0.5 overflow-x-auto rounded-[11px] border border-border bg-surface p-[3px]"
-      >
-        {TABS.filter((t) => isSectionOpen(t.to)).map((t) => (
-          <Link
-            key={t.to}
-            to={t.to}
-            className="rounded-lg px-[13px] py-1.5 text-[12.5px] font-medium whitespace-nowrap text-text-2 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand"
-            activeProps={{ className: 'bg-surface-3 text-foreground', 'aria-current': 'page' }}
-          >
-            {t.label}
-          </Link>
-        ))}
-      </nav>
-      <Outlet />
+      <div className="grid gap-5 lg:grid-cols-[210px_minmax(0,1fr)]">
+        <nav
+          aria-label="Разделы настроек"
+          className="flex gap-0.5 max-lg:overflow-x-auto max-lg:rounded-[11px] max-lg:border max-lg:border-border max-lg:bg-surface max-lg:p-[3px] lg:sticky lg:top-3 lg:flex-col lg:self-start"
+        >
+          {GROUPS.map((g) => {
+            const items = g.items.filter((t) => isSectionOpen(t.to));
+            if (items.length === 0) return null;
+            return (
+              <div key={g.title} className="flex gap-0.5 lg:flex-col">
+                <div className="px-3 pt-3 pb-1 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase max-lg:hidden">
+                  {g.title}
+                </div>
+                {items.map((t) => (
+                  <Link
+                    key={t.to}
+                    to={t.to}
+                    className="group flex items-center gap-2.5 rounded-[9px] px-3 py-2 text-[13px] font-medium whitespace-nowrap text-text-2 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand max-lg:py-1.5 max-lg:text-[12.5px]"
+                    activeProps={{ className: 'bg-surface-3 text-foreground', 'aria-current': 'page' }}
+                  >
+                    <t.icon
+                      className="size-[15px] text-text-3 group-aria-[current=page]:text-brand max-lg:hidden"
+                      aria-hidden="true"
+                    />
+                    {t.label}
+                  </Link>
+                ))}
+              </div>
+            );
+          })}
+        </nav>
+        <div className="min-w-0">
+          <Outlet />
+        </div>
+      </div>
     </AppShell>
   );
 }

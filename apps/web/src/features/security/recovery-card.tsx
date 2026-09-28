@@ -83,7 +83,7 @@ export function RecoveryRows() {
         onOpenChange={setConfirmOpen}
         kind="warn"
         title="Выпустить новые коды?"
-        description="Старые коды перестанут работать. Новые покажем один раз — сохрани их в надёжном месте."
+        description="Старые коды перестанут работать. Новые покажем один раз — сохраните их в надёжном месте."
         yesLabel="Да, выпустить"
         loading={regenerate.isPending}
         onConfirm={run}
@@ -147,7 +147,7 @@ function RecoveryCodesDialog({
           </DialogTitle>
           <DialogDescription className="text-[12.5px] text-text-2">
             {mode === 'new'
-              ? 'Каждый код — на один вход. Сохрани их: посмотреть снова можно здесь же, за паролем.'
+              ? 'Каждый код — на один вход. Сохраните их: посмотреть снова можно здесь же, за паролем.'
               : 'Каждый код — на один вход. Использованные зачёркнуты. Просмотр записан в Журнал.'}
           </DialogDescription>
         </DialogHeader>

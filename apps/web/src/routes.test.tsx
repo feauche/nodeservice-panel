@@ -34,9 +34,11 @@ describe('закрытые по этапам разделы', () => {
     resetMockState({ authenticated: true });
   });
 
-  it('/settings уводит на «Обзор», пока раздел закрыт; /incidents и /audit открыты', async () => {
+  it('настройки открыты целиком (R6): /settings/security и /settings/notifications не уводят; /incidents и /audit открыты', async () => {
     const r1 = renderAt('/settings/security');
-    await waitFor(() => expect(r1.state.location.pathname).toBe('/'));
+    await waitFor(() => expect(r1.state.location.pathname).toBe('/settings/security'));
+    const r0 = renderAt('/settings/notifications');
+    await waitFor(() => expect(r0.state.location.pathname).toBe('/settings/notifications'));
     const r2 = renderAt('/incidents');
     await waitFor(() => expect(r2.state.location.pathname).toBe('/incidents'));
     const r3 = renderAt('/audit');

@@ -14,6 +14,7 @@ import { remnawaveHandlers, seedRemnawave } from './remnawave-mock';
 import { mockSecurity, securityHandlers, seedSecurity } from './security-mock';
 import { resetServerChecks, serverChecksHandlers } from './server-checks-mock';
 import { seedServers, serversHandlers, terminalHistoryHandlers } from './servers-mock';
+import { resetTelegram, telegramHandlers } from './telegram-mock';
 
 /**
  * Мок /api/auth по контракту packages/shared/src/auth.ts.
@@ -80,6 +81,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
   seedAssistant();
   seedAnalysis();
   resetServerChecks();
+  resetTelegram();
   mockSnippets.items = [];
   Object.assign(mockState, {
     setupRequired: false,
@@ -164,6 +166,7 @@ export const handlers = [
   ...terminalHistoryHandlers,
   ...maintenanceHandlers,
   ...serverChecksHandlers,
+  ...telegramHandlers,
   ...providersHandlers,
   ...remnawaveHandlers,
   ...metricsHandlers,

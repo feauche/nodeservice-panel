@@ -6,7 +6,7 @@ import {
   NODE_ONLINE_DROP_PCT,
   type RemnawaveNode,
 } from '@nodeservice/shared';
-
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import { IncidentsRepository } from './incidents.repository.js';
@@ -53,6 +53,7 @@ export class NodeAnomalyJob {
     private readonly servers: ServersService,
     private readonly incidents: IncidentsRepository,
     private readonly blockCheck: NodeBlockCheckService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   @Interval(TICK_MS)
@@ -158,7 +159,7 @@ export class NodeAnomalyJob {
           ? ` Из-за рубежа порт отвечает (${alive.join(', ')}): сервер жив, закрыт именно путь из России — похоже на блокировку IP. Обычно помогает только смена IP.`
           : ` Из-за рубежа порт тоже не отвечает (${dead.join(', ')}): сервер, скорее всего, выключен, отключён хостером или арендодателем, либо закрыт firewall.`;
     }
-    await this.incidents.open({
+    const row = await this.incidents.open({
       serverId: matched?.id ?? null,
       serverName: matched?.name ?? node.name,
       kind: 'node_blocked',
@@ -167,5 +168,16 @@ export class NodeAnomalyJob {
       detail,
       timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
     });
+    // Раньше такой инцидент писался только в базу: ни колокольчика, ни Telegram. Сообщаем как обычный.
+    if (row)
+      await this.notifications.push({
+        severity: confirmed ? 'crit' : 'warn',
+        title,
+        body: detail,
+        // Сервер привязываем, только если нода есть в NodeService: у уведомления ссылка на запись сервера.
+        server: matched ? { id: matched.id, name: matched.name, host: node.address } : null,
+        link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
+        telegram: { event: confirmed ? 'incident_crit' : 'incident_warn', incidentId: row.id },
+      });
   }
 }

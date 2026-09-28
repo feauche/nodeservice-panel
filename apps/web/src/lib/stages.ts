@@ -23,10 +23,16 @@ export const OPEN_SECTIONS: ReadonlySet<string> = new Set<string>([
   '/knowledge',
   '/settings',
   '/settings/assistant',
+  // R6: уведомления в Telegram; вместе с ними открыты остальные разделы настроек — все применяются сервером.
+  '/settings/notifications',
+  '/settings/appearance',
+  '/settings/security',
+  '/settings/autochecks',
+  '/settings/incidents',
 ]);
 
 export const LOCKED_HINT =
-  'Раздел откроется на своём этапе. Сейчас открыты «Обзор», «Серверы», «Инциденты», «Журнал», «Джарвис», «База знаний» и настройки Джарвиса.';
+  'Раздел откроется на своём этапе. Сейчас открыты «Обзор», «Серверы», «Инциденты», «Журнал», «Джарвис», «База знаний» и «Настройки».';
 
 export function isSectionOpen(to: string): boolean {
   return OPEN_SECTIONS.has(to);

@@ -392,6 +392,7 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
       ...(server ? { server: { id: server.id, name: server.name } } : {}),
       body: found.join(' · '),
       link: { to: `/servers?open=${serverId}`, label: 'Открыть сервер' },
+      telegram: { event: 'maintenance' },
     });
   }
 }

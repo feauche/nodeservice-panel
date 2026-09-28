@@ -53,7 +53,7 @@ export function StepUpHost() {
         className="z-100 sm:max-w-[420px] rounded-2xl border-border bg-surface p-6"
       >
         <DialogHeader>
-          <DialogTitle className="font-heading text-[17px]">Подтверди пароль</DialogTitle>
+          <DialogTitle className="font-heading text-[17px]">Подтвердите пароль</DialogTitle>
           <DialogDescription className="text-[12.5px] text-text-2">
             Действие чувствительное — на всякий случай спросим пароль ещё раз. Подтверждение действует{' '}
             {STEP_UP_MINUTES} минут.
