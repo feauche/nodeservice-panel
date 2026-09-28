@@ -66,9 +66,9 @@ const TABS: Array<{ key: ServerModalTab; label: string }> = [
   { key: 'journal', label: 'Журнал' },
   { key: 'terminal', label: 'Терминал' },
   { key: 'maintenance', label: 'Обслуживание' },
+  { key: 'install', label: 'Установка' },
   { key: 'profile', label: 'Профиль' },
   { key: 'connection', label: 'Подключение' },
-  { key: 'install', label: 'Установка' },
 ];
 
 interface Props {
@@ -207,9 +207,9 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
       {tab === 'journal' && <JournalTab serverId={s.id} />}
       {tab === 'terminal' && <TerminalHistoryTab serverId={s.id} />}
       {tab === 'maintenance' && <MaintenanceTab server={s} />}
+      {tab === 'install' && <InstallTab server={s} />}
       {tab === 'profile' && <ProfileTab server={s} edit={edit.profile} />}
       {tab === 'connection' && <ConnectionTab server={s} edit={edit} />}
-      {tab === 'install' && <InstallTab server={s} />}
     </>
   );
   const dialogs = (

@@ -21,6 +21,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   ChevronDownIcon,
   GlobeIcon,
+  LayoutGridIcon,
+  ListIcon,
   PlusIcon,
   RefreshCwIcon,
   SearchIcon,
@@ -50,6 +52,7 @@ import { cn } from '@/lib/utils';
 import { AddServerDialog } from './add-server-dialog';
 import { ServerCard, ServerCardGhost } from './server-card';
 import { HEALTH_LABELS, type ServerHealth, serverHealth } from './server-health';
+import { ServerList, useServersView } from './server-list';
 import { openServer } from './server-modal-store';
 import { serversKeys, useCheckAllServers, useReorderServers, useServers } from './servers-api';
 
@@ -78,6 +81,7 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
   /** Выбранные страны фильтра (коды) и особое значение «без страны». */
   const [countries, setCountries] = useState<string[]>([]);
   const [addOpen, setAddOpen] = useState(false);
+  const [view, setView] = useServersView();
   const [checkAllOpen, setCheckAllOpen] = useState(false);
   const checkAll = useCheckAllServers();
   const reorder = useReorderServers();
@@ -330,6 +334,35 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
           </DropdownMenu>
         )}
         {items.length > 0 && (
+          <fieldset
+            className="m-0 flex h-9 items-center gap-[3px] rounded-[10px] border border-border bg-surface-2 p-[3px]"
+            aria-label="Вид"
+          >
+            <legend className="sr-only">Вид</legend>
+            {(
+              [
+                { key: 'cards', label: 'Карточки', Icon: LayoutGridIcon },
+                { key: 'list', label: 'Список', Icon: ListIcon },
+              ] as const
+            ).map(({ key, label, Icon }) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={view === key}
+                title={label}
+                onClick={() => setView(key)}
+                className={cn(
+                  'grid h-full w-8 cursor-pointer place-items-center rounded-[7px] text-text-2 transition-colors hover:text-foreground',
+                  view === key && 'bg-surface text-foreground shadow-[0_0_0_1px_var(--ns-border-2)]',
+                )}
+              >
+                <Icon className="size-3.5" aria-hidden="true" />
+                <span className="sr-only">{label}</span>
+              </button>
+            ))}
+          </fieldset>
+        )}
+        {items.length > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -418,42 +451,46 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
           </button>
         </p>
       )}
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        modifiers={[restrictAboveGrid]}
-        onDragStart={onDragStart}
-        onDragOver={onDragOver}
-        onDragCancel={onDragCancel}
-        onDragEnd={onDragEnd}
-      >
-        <SortableContext items={filtered.map((s) => s.id)} strategy={rectSortingStrategy}>
-          <div
-            ref={gridRef}
-            className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))] max-md:[grid-template-columns:1fr] 2xl:[grid-template-columns:repeat(3,minmax(0,1fr))]"
-          >
-            {filtered.map((s) => (
-              <ServerCard
-                key={s.id}
-                server={s}
-                metrics={metricsById.get(s.id) ?? null}
-                onOpen={openDetail}
-                onEdit={openEdit}
-              />
-            ))}
-          </div>
-        </SortableContext>
-        <DragOverlay dropAnimation={{ duration: 220, easing: 'cubic-bezier(0.2, 0, 0, 1)' }}>
-          {activeId
-            ? (() => {
-                const active = items.find((s) => s.id === activeId);
-                return active ? (
-                  <ServerCardGhost server={active} metrics={metricsById.get(active.id) ?? null} />
-                ) : null;
-              })()
-            : null}
-        </DragOverlay>
-      </DndContext>
+      {view === 'list' ? (
+        filtered.length > 0 && <ServerList servers={filtered} metricsById={metricsById} onOpen={openDetail} />
+      ) : (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          modifiers={[restrictAboveGrid]}
+          onDragStart={onDragStart}
+          onDragOver={onDragOver}
+          onDragCancel={onDragCancel}
+          onDragEnd={onDragEnd}
+        >
+          <SortableContext items={filtered.map((s) => s.id)} strategy={rectSortingStrategy}>
+            <div
+              ref={gridRef}
+              className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))] max-md:[grid-template-columns:1fr] 2xl:[grid-template-columns:repeat(3,minmax(0,1fr))]"
+            >
+              {filtered.map((s) => (
+                <ServerCard
+                  key={s.id}
+                  server={s}
+                  metrics={metricsById.get(s.id) ?? null}
+                  onOpen={openDetail}
+                  onEdit={openEdit}
+                />
+              ))}
+            </div>
+          </SortableContext>
+          <DragOverlay dropAnimation={{ duration: 220, easing: 'cubic-bezier(0.2, 0, 0, 1)' }}>
+            {activeId
+              ? (() => {
+                  const active = items.find((s) => s.id === activeId);
+                  return active ? (
+                    <ServerCardGhost server={active} metrics={metricsById.get(active.id) ?? null} />
+                  ) : null;
+                })()
+              : null}
+          </DragOverlay>
+        </DndContext>
+      )}
 
       <AddServerDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>

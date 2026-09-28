@@ -46,6 +46,27 @@ describe('ServersPage', () => {
     expect(screen.getAllByRole('button', { name: /Перетащить/ })).toHaveLength(2);
   });
 
+  it('вид «Список»: строка на сервер, клик открывает карточку, выбор помнится после перезагрузки', async () => {
+    const first = renderPage(Harness, '/servers');
+    await screen.findByText('de-fra-01');
+    const user = userEvent.setup();
+    expect(screen.getByRole('button', { name: 'Карточки' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: 'Список' }));
+    const rows = screen.getAllByTestId('server-row');
+    expect(rows).toHaveLength(2);
+    expect(screen.queryAllByRole('article')).toHaveLength(0);
+    expect(within(rows[1] as HTMLElement).getAllByText('SSH недоступен').length).toBeGreaterThan(0);
+    await user.click(rows[0] as HTMLElement);
+    expect(await screen.findByRole('dialog', { name: 'de-fra-01' })).toBeInTheDocument();
+    useServerModalStore.getState().close();
+    // «Перезагрузка страницы»: монтируем заново — выбранный вид остаётся
+    first.unmount();
+    renderPage(Harness, '/servers');
+    await screen.findByText('de-fra-01');
+    expect(screen.getByRole('button', { name: 'Список' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByTestId('server-row')).toHaveLength(2);
+  });
+
   it('фильтр по тегу (выпадающий список) и поиску', async () => {
     renderPage(Harness, '/servers');
     await screen.findByText('de-fra-01');
