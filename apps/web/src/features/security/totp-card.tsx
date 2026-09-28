@@ -3,12 +3,10 @@ import { CopyIcon, RefreshCwIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { GhostButton } from '@/features/auth/components/cta-button';
 import { OtpField } from '@/features/auth/components/otp-field';
-import { Pill, SettingsCard, SettingsRow } from '@/features/settings/settings-ui';
+import { Pill, RowButton, SettingsCard, SettingsRow } from '@/features/settings/settings-ui';
 import { apiErrorMessage, isApiError } from '@/lib/api';
 import { toast } from '@/lib/notify';
-import { RecoveryRows } from './recovery-card';
 import { useSecurityOverview, useTotpConfirm, useTotpReissue } from './security-api';
 import { formatDate, plural } from './security-format';
 import { StepUpCancelledError } from './step-up';
@@ -20,9 +18,9 @@ export function TotpCard() {
   return (
     <SettingsCard
       title="Двухфакторная защита"
-      hint="Коды из приложения-аутентификатора. Отключить можно только через Rescue CLI на сервере."
+      hint="Коды из приложения-аутентификатора. Отключить можно только через консольную утилиту на сервере панели."
     >
-      <div className="mt-1">
+      <div>
         <SettingsRow
           label="Состояние"
           hint={
@@ -37,12 +35,11 @@ export function TotpCard() {
           label="Перевыпуск"
           hint="Новый секрет и QR. Старые запомненные устройства и другие сессии будут сброшены."
         >
-          <GhostButton onClick={() => setOpen(true)}>
+          <RowButton onClick={() => setOpen(true)}>
             <RefreshCwIcon aria-hidden="true" />
             Перевыпустить
-          </GhostButton>
+          </RowButton>
         </SettingsRow>
-        <RecoveryRows />
       </div>
       <TotpReissueDialog open={open} onOpenChange={setOpen} />
     </SettingsCard>

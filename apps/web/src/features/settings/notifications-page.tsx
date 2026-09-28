@@ -10,15 +10,14 @@ import {
   type TelegramQuiet,
   type TelegramSettings,
 } from '@nodeservice/shared';
-import { Loader2Icon, PlusIcon, SendIcon, Trash2Icon } from 'lucide-react';
+import { BellIcon, Loader2Icon, PlusIcon, SendIcon, Trash2Icon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatAgo } from '@/features/security/security-format';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
-import { SettingsCard, Toggle } from './settings-ui';
+import { SaveBar, SectionHeader, SettingsCard, SettingsRow, Toggle } from './settings-ui';
 import { useTelegramSettings, useTestTelegram, useUpdateTelegram } from './telegram-api';
 
 /** Строка чата: сохранённая (по id, токен только маской) или новая (ссылка целиком, пока не сохранили). */
@@ -164,12 +163,17 @@ export function NotificationsPage() {
   };
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3.5">
+      <SectionHeader
+        icon={BellIcon}
+        title="Уведомления"
+        description="Куда и что присылать в Telegram. Колокольчик в панели получает всё, как и раньше."
+      />
       <SettingsCard
-        title="Telegram"
-        hint="Куда слать: одна строка — один чат. Можно разные боты и разные чаты, в том числе темы в группах."
+        title="Чаты Telegram"
+        hint="Одна строка — один чат. Можно разные боты и разные чаты, в том числе темы в группах."
       >
-        <div className="mt-3 flex flex-col gap-2">
+        <div className="flex flex-col gap-2 py-3">
           {draft.rows.map((r) => {
             const res = results[r.key];
             const saved = 'saved' in r ? r.saved : null;
@@ -304,140 +308,103 @@ export function NotificationsPage() {
         </div>
       </SettingsCard>
 
-      <SettingsCard
-        title="Что присылать"
-        hint="Одинаково для всех чатов. Колокольчик в панели получает всё, как и раньше."
-      >
+      <SettingsCard title="Что присылать" hint="Одинаково для всех чатов.">
         {TELEGRAM_EVENT_GROUPS.map((g) => (
-          <div key={g.title} className="mt-3">
-            <h3 className="m-0 mb-0.5 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
+          <div key={g.title} className="pt-2">
+            <h4 className="m-0 pt-1 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
               {g.title}
-            </h3>
-            {g.keys.map((k) => {
-              const tone = TELEGRAM_EVENT_TONE[k];
-              return (
-                <div
-                  key={k}
-                  className="flex items-center justify-between gap-4 border-t border-border py-2.5 first-of-type:border-t-0"
-                >
-                  <label htmlFor={`tg-ev-${k}`} className="min-w-0 cursor-pointer">
-                    <span className="text-[13px] font-semibold">
-                      {TELEGRAM_EVENT_LABELS[k]}
-                      {tone && (
-                        <span
-                          className={cn(
-                            'ml-1.5 inline-flex h-[18px] items-center rounded-[5px] px-1.5 align-[1px] text-[10.5px] font-semibold',
-                            TONE_BADGE[tone][0],
-                          )}
-                        >
-                          {TONE_BADGE[tone][1]}
-                        </span>
-                      )}
-                    </span>
-                    <span className="mt-px block text-[12px] text-text-3">{TELEGRAM_EVENT_HINTS[k]}</span>
-                  </label>
-                  <Toggle
-                    id={`tg-ev-${k}`}
-                    checked={draft.events[k]}
-                    onChange={(v) => setDraft({ ...draft, events: { ...draft.events, [k]: v } })}
-                  />
-                </div>
-              );
-            })}
+            </h4>
+            <div>
+              {g.keys.map((k) => {
+                const tone = TELEGRAM_EVENT_TONE[k];
+                return (
+                  <SettingsRow
+                    key={k}
+                    htmlFor={`tg-ev-${k}`}
+                    label={
+                      <>
+                        {TELEGRAM_EVENT_LABELS[k]}
+                        {tone && (
+                          <span
+                            className={cn(
+                              'ml-1.5 inline-flex h-[18px] items-center rounded-[5px] px-1.5 align-[1px] text-[10.5px] font-semibold',
+                              TONE_BADGE[tone][0],
+                            )}
+                          >
+                            {TONE_BADGE[tone][1]}
+                          </span>
+                        )}
+                      </>
+                    }
+                    hint={TELEGRAM_EVENT_HINTS[k]}
+                  >
+                    <Toggle
+                      id={`tg-ev-${k}`}
+                      checked={draft.events[k]}
+                      onChange={(v) => setDraft({ ...draft, events: { ...draft.events, [k]: v } })}
+                    />
+                  </SettingsRow>
+                );
+              })}
+            </div>
           </div>
         ))}
-        <div className="mt-3">
-          <h3 className="m-0 mb-0.5 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
-            Тишина
-          </h3>
-          <div className="flex items-start justify-between gap-4 py-2.5">
-            <div className="min-w-0">
-              <label htmlFor="tg-quiet" className="cursor-pointer text-[13px] font-semibold">
-                Тихие часы
-              </label>
-              <span className="mt-px block text-[12px] text-text-3">
-                Ночью приходят только критичные, остальное — утренней сводкой одним сообщением.
-              </span>
-              <div
-                className={cn(
-                  'mt-2 flex flex-wrap items-center gap-2 text-[12.5px] text-text-2',
-                  !draft.quiet.enabled && 'opacity-50',
-                )}
-              >
-                с
-                <select
-                  aria-label="Начало тихих часов"
-                  disabled={!draft.quiet.enabled}
-                  value={draft.quiet.from}
-                  onChange={(e) => setDraft({ ...draft, quiet: { ...draft.quiet, from: e.target.value } })}
-                  className="h-8 cursor-pointer rounded-[8px] border border-border bg-surface-2 px-2 font-mono text-[12.5px] disabled:cursor-default"
-                >
-                  {HALF_HOURS.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-                до
-                <select
-                  aria-label="Конец тихих часов"
-                  disabled={!draft.quiet.enabled}
-                  value={draft.quiet.to}
-                  onChange={(e) => setDraft({ ...draft, quiet: { ...draft.quiet, to: e.target.value } })}
-                  className="h-8 cursor-pointer rounded-[8px] border border-border bg-surface-2 px-2 font-mono text-[12.5px] disabled:cursor-default"
-                >
-                  {HALF_HOURS.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-                по вашему времени
-              </div>
-            </div>
-            <Toggle
-              id="tg-quiet"
-              checked={draft.quiet.enabled}
-              onChange={(v) => setDraft({ ...draft, quiet: { ...draft.quiet, enabled: v } })}
-            />
-          </div>
-        </div>
       </SettingsCard>
 
-      <div className="sticky bottom-3 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface/95 px-4 py-2.5 shadow-pop backdrop-blur">
-        <span className="text-[12.5px] text-text-3" aria-live="polite">
-          {invalid ? (
-            <span className="text-crit">Исправьте ссылку, отмеченную красным.</span>
-          ) : dirty ? (
-            <>
-              <span className="mr-1.5 inline-block size-1.5 rounded-full bg-warn align-middle" />
-              Есть несохранённые изменения
-            </>
-          ) : (
-            'Изменения попадают в Журнал. Токены после сохранения скрыты.'
-          )}
-        </span>
-        <span className="flex-1" />
-        {dirty && (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={update.isPending}
-            onClick={() => base && setDraft(base)}
-            className="min-w-[128px] rounded-[10px] px-4"
-          >
-            Отменить
-          </Button>
-        )}
-        <Button
-          type="button"
-          disabled={update.isPending || !dirty || invalid}
-          onClick={() => void save()}
-          className="min-w-[128px] rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover) disabled:opacity-50"
+      <SettingsCard
+        title="Тихие часы"
+        hint="Ночью приходят только критичные, остальное — утренней сводкой одним сообщением."
+      >
+        <SettingsRow
+          label="Тихие часы"
+          htmlFor="tg-quiet"
+          hint={`С ${draft.quiet.from} до ${draft.quiet.to} по вашему времени.`}
         >
-          {update.isPending ? 'Сохраняю…' : 'Сохранить'}
-        </Button>
-      </div>
+          <span className={cn('flex items-center gap-2', !draft.quiet.enabled && 'opacity-50')}>
+            <select
+              aria-label="Начало тихих часов"
+              disabled={!draft.quiet.enabled}
+              value={draft.quiet.from}
+              onChange={(e) => setDraft({ ...draft, quiet: { ...draft.quiet, from: e.target.value } })}
+              className="h-[34px] cursor-pointer rounded-[9px] border border-border bg-surface-2 px-2.5 font-mono text-[13px] disabled:cursor-default"
+            >
+              {HALF_HOURS.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+            <span className="text-[12px] text-text-3">—</span>
+            <select
+              aria-label="Конец тихих часов"
+              disabled={!draft.quiet.enabled}
+              value={draft.quiet.to}
+              onChange={(e) => setDraft({ ...draft, quiet: { ...draft.quiet, to: e.target.value } })}
+              className="h-[34px] cursor-pointer rounded-[9px] border border-border bg-surface-2 px-2.5 font-mono text-[13px] disabled:cursor-default"
+            >
+              {HALF_HOURS.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </span>
+          <Toggle
+            id="tg-quiet"
+            checked={draft.quiet.enabled}
+            onChange={(v) => setDraft({ ...draft, quiet: { ...draft.quiet, enabled: v } })}
+          />
+        </SettingsRow>
+      </SettingsCard>
+
+      <SaveBar
+        dirty={dirty}
+        pending={update.isPending}
+        onSave={() => void save()}
+        onReset={() => base && setDraft(base)}
+        error={invalid ? 'Исправьте ссылку, отмеченную красным.' : undefined}
+        note="Изменения попадают в Журнал. Токены после сохранения скрыты."
+      />
     </div>
   );
 }

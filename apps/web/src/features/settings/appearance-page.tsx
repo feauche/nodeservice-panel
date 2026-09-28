@@ -1,22 +1,23 @@
-import { CheckIcon } from 'lucide-react';
+import { CheckIcon, SunIcon } from 'lucide-react';
 
 import { Swatch } from '@/components/theme-menu';
 import { setTheme, THEMES } from '@/features/theme/theme';
 import { useTheme } from '@/features/theme/use-theme';
 import { cn } from '@/lib/utils';
 import { BrandCard } from './brand-card';
-import { SettingsCard } from './settings-ui';
+import { SectionHeader, SettingsCard } from './settings-ui';
 
 export function AppearancePage() {
   const theme = useTheme();
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <SettingsCard
-        className="flex flex-col"
-        title="Тема"
-        hint="Как выглядит панель: три варианта, переключаются мгновенно."
-      >
-        <div className="mt-3 flex flex-wrap gap-2">
+    <div className="flex flex-col gap-3.5">
+      <SectionHeader
+        icon={SunIcon}
+        title="Внешний вид"
+        description="Тема применяется сразу и хранится в этом браузере. Логотип и название — для всех, по кнопке «Сохранить»."
+      />
+      <SettingsCard title="Тема" hint="Три варианта, переключаются мгновенно.">
+        <div className="grid gap-2.5 py-3 sm:grid-cols-3">
           {THEMES.map((t) => {
             const on = t.key === theme;
             return (
@@ -26,7 +27,7 @@ export function AppearancePage() {
                 aria-pressed={on}
                 onClick={() => setTheme(t.key)}
                 className={cn(
-                  'flex min-w-0 flex-[1_1_100%] cursor-pointer items-center gap-[11px] rounded-[10px] border px-3 py-[9px] text-left transition-colors focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-2',
+                  'flex min-w-0 cursor-pointer items-center gap-[11px] rounded-[11px] border px-3 py-[10px] text-left transition-colors focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-2',
                   on
                     ? 'border-brand bg-brand-soft text-foreground'
                     : 'border-border bg-surface-2 text-text-2 hover:bg-surface-3 hover:text-foreground',
@@ -45,7 +46,6 @@ export function AppearancePage() {
             );
           })}
         </div>
-        <p className="mt-3 text-[11.5px] text-text-3">Тема хранится в этом браузере.</p>
       </SettingsCard>
       <BrandCard />
     </div>

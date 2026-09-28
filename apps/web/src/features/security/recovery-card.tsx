@@ -5,8 +5,7 @@ import { DialogActions, DialogPrimaryButton, DialogSecondaryButton } from '@/com
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { GhostButton } from '@/features/auth/components/cta-button';
-import { Pill, SettingsRow } from '@/features/settings/settings-ui';
+import { Pill, RowButton, SettingsCard, SettingsRow } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -15,7 +14,7 @@ import { formatDate } from './security-format';
 import { StepUpCancelledError } from './step-up';
 
 /** Строки «Коды восстановления» внутри карточки 2FA: остаток, показать (step-up), перевыпустить. */
-export function RecoveryRows() {
+export function RecoveryCard() {
   const overview = useSecurityOverview();
   const regenerate = useRegenerateRecoveryCodes();
   const view = useViewRecoveryCodes();
@@ -46,14 +45,10 @@ export function RecoveryRows() {
 
   return (
     <>
-      <h3 className="mt-4 mb-0.5 text-[11px] font-semibold tracking-[0.1em] text-text-3 uppercase">
-        Коды восстановления
-      </h3>
-      <p className="mb-1 text-[12.5px] text-text-2">
-        Запасной вход, если потеряешь телефон. Каждый код одноразовый; вход по коду сбрасывает запомненные
-        устройства.
-      </p>
-      <div>
+      <SettingsCard
+        title="Коды восстановления"
+        hint="Запасной вход, если потеряете телефон. Каждый код одноразовый; вход по коду сбрасывает запомненные устройства."
+      >
         <SettingsRow
           label="Осталось"
           hint={typeof left === 'number' && left <= 3 ? 'Мало — лучше выпустить новые.' : undefined}
@@ -65,18 +60,18 @@ export function RecoveryRows() {
           ) : (
             <span className="text-text-3">—</span>
           )}
-          <GhostButton onClick={() => void show()} disabled={view.isPending}>
+          <RowButton onClick={() => void show()} disabled={view.isPending}>
             <EyeIcon aria-hidden="true" />
             Показать
-          </GhostButton>
+          </RowButton>
         </SettingsRow>
         <SettingsRow label="Новый набор" hint="Старые коды перестанут работать сразу.">
-          <GhostButton onClick={() => setConfirmOpen(true)}>
+          <RowButton onClick={() => setConfirmOpen(true)}>
             <KeyRoundIcon aria-hidden="true" />
             Выпустить новые
-          </GhostButton>
+          </RowButton>
         </SettingsRow>
-      </div>
+      </SettingsCard>
 
       <ConfirmDialog
         open={confirmOpen}
@@ -157,7 +152,7 @@ function RecoveryCodesDialog({
             data-testid="recovery-codes-legacy"
           >
             Эти коды выпущены до обновления панели — тогда хранились только хеши, и показать их нельзя.
-            Выпусти новый набор: старые перестанут работать, новые можно будет смотреть здесь.
+            Выпустите новый набор: старые перестанут работать, новые можно будет смотреть здесь.
           </div>
         ) : (
           <ol

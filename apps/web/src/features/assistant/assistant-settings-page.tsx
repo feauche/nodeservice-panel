@@ -20,22 +20,30 @@ import {
   type AssistantRisk,
   matchAssistantPreset,
 } from '@nodeservice/shared';
+import { useSearch } from '@tanstack/react-router';
 import { LockIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { JarvisIcon } from '@/components/jarvis-icon';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PasswordField } from '@/features/auth/components/password-field';
-import { Pill, Segmented, SettingsCard, SettingsRail, Toggle } from '@/features/settings/settings-ui';
+import {
+  Pill,
+  RowButton,
+  SaveBar,
+  SectionHeader,
+  Segmented,
+  SettingsCard,
+  SettingsRow,
+  Toggle,
+} from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { ASSISTANT_SECTIONS, assistantSectionOf } from './assistant-sections';
 import { useAssistantSettings, useUpdateAssistantSettings } from './assistant-settings-api';
-
-type SectionKey = 'connection' | 'behavior' | 'permissions' | 'privacy';
 
 /** От короткого к подробному: так проще понять, что «токенов больше» справа. */
 const LEVEL_ORDER: readonly AssistantLevel[] = ['pro', 'intermediate', 'novice'];
@@ -85,7 +93,7 @@ function PermissionRow({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <div className="flex items-center gap-3.5 border-t border-border px-4 py-3 first:border-t-0 max-sm:items-start">
+    <div className="flex items-center gap-3.5 border-t border-border py-3 first:border-t-0 max-sm:items-start">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13.5px] font-semibold">
           {ASSISTANT_PERMISSION_LABELS[perm]}
@@ -110,7 +118,7 @@ function PermissionRow({
 /** То, что включено всегда и без переключателя: показываем, чтобы не гадать, что ещё видит Джарвис. */
 function AlwaysRow({ title, hint, risks }: { title: string; hint: string; risks: AssistantRisk[] }) {
   return (
-    <div className="flex items-center gap-3.5 border-t border-border px-4 py-3 first:border-t-0 max-sm:items-start">
+    <div className="flex items-center gap-3.5 border-t border-border py-3 first:border-t-0 max-sm:items-start">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13.5px] font-semibold">
           {title}
@@ -138,13 +146,9 @@ function PermissionGroup({
   children: React.ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-2xl border border-border bg-surface">
-      <h3 className="flex items-baseline gap-2 border-b border-border bg-surface-2 px-4 py-2.5 text-[13px] font-semibold">
-        {title}
-        {note && <span className="text-[12px] font-normal text-text-3">{note}</span>}
-      </h3>
+    <SettingsCard title={title} hint={note}>
       {children}
-    </section>
+    </SettingsCard>
   );
 }
 
@@ -152,7 +156,8 @@ function PermissionGroup({
 export function AssistantSettingsPage() {
   const settings = useAssistantSettings();
   const update = useUpdateAssistantSettings();
-  const [section, setSection] = useState<SectionKey>('connection');
+  // Подраздел — из адреса (`?s=`): ссылки на него стоят в левой рейке «Настроек».
+  const section = assistantSectionOf((useSearch({ strict: false }) as { s?: unknown }).s);
   const [apiKey, setApiKey] = useState('');
   const [provider, setProvider] = useState<AssistantProvider>('zveno');
   const [model, setModel] = useState('');
@@ -228,45 +233,25 @@ export function AssistantSettingsPage() {
 
   if (settings.isPending)
     return (
-      <div className="flex gap-6 max-lg:flex-col">
-        <Skeleton className="h-[200px] w-[210px] rounded-2xl max-lg:h-10 max-lg:w-full" />
-        <div className="flex min-w-0 flex-1 flex-col gap-4">
-          <Skeleton className="h-[76px] rounded-2xl" />
-          <Skeleton className="h-[340px] rounded-2xl" />
-        </div>
+      <div className="flex flex-col gap-4">
+        <Skeleton className="h-[52px] rounded-2xl" />
+        <Skeleton className="h-[340px] rounded-2xl" />
       </div>
     );
 
   return (
-    <div className="flex gap-6 max-lg:flex-col">
-      <SettingsRail
-        label="Разделы настроек Джарвиса"
-        value={section}
-        onChange={setSection}
-        items={[
-          { key: 'connection', label: 'Подключение', dirty: dirtyConnection },
-          { key: 'behavior', label: 'Поведение', dirty: dirtyBehavior },
-          { key: 'permissions', label: 'Разрешения', dirty: dirtyPermissions },
-          { key: 'privacy', label: 'Данные для провайдера' },
-        ]}
+    <div className="flex flex-col">
+      <SectionHeader
+        icon={JarvisIcon}
+        title={`Джарвис · ${ASSISTANT_SECTIONS.find((x) => x.key === section)?.label ?? ''}`}
+        description={
+          enabled
+            ? 'Ключ задан: Джарвис отвечает в чате, разбирает инциденты и подсказывает в терминале.'
+            : 'Ключ не задан: чат, разбор инцидентов и подсказки не работают.'
+        }
+        aside={<Pill tone={enabled ? 'ok' : 'muted'}>{enabled ? 'Включён' : 'Выключен'}</Pill>}
       />
-
-      <div className="flex min-w-0 flex-1 flex-col gap-4">
-        <div className="flex items-center gap-3.5 rounded-2xl border border-border bg-[linear-gradient(90deg,var(--color-ai-soft),transparent_70%)] bg-surface px-4 py-3.5">
-          <span className="grid size-11 flex-none place-items-center rounded-full border-2 border-ai text-ai shadow-[0_0_0_4px_var(--color-ai-soft)]">
-            <JarvisIcon className="size-5" aria-hidden="true" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="font-heading text-[16px] font-bold">Джарвис</div>
-            <div className="text-[12.5px] text-text-3">
-              {enabled
-                ? 'Ключ задан: Джарвис отвечает в чате, разбирает инциденты и подсказывает в терминале.'
-                : 'Ключ не задан: чат, разбор инцидентов и подсказки не работают.'}
-            </div>
-          </div>
-          <Pill tone={enabled ? 'ok' : 'muted'}>{enabled ? 'Включён' : 'Выключен'}</Pill>
-        </div>
-
+      <div className="flex min-w-0 flex-col gap-3.5">
         <div
           key={section}
           className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-bottom-1 duration-200"
@@ -276,79 +261,76 @@ export function AssistantSettingsPage() {
               title="Подключение"
               hint="Куда обращается Джарвис за ответами. Ключ хранится в панели зашифрованным."
             >
-              <div className="mt-2 flex flex-col gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="as-provider" className="text-[13.5px] font-medium">
-                    Провайдер
-                  </label>
-                  <span className="text-[12px] text-text-3">Шлюз к моделям. Другие добавим позже.</span>
-                  <Select value={provider} onValueChange={(v) => setProvider(v as AssistantProvider)}>
-                    <SelectTrigger id="as-provider" aria-label="Провайдер" className="mt-1">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ASSISTANT_PROVIDERS.map((p) => (
-                        <SelectItem key={p} value={p}>
-                          {ASSISTANT_PROVIDER_LABELS[p]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex flex-col gap-1.5 border-t border-border pt-4">
-                  <label htmlFor="as-model" className="text-[13.5px] font-medium">
-                    Модель
-                  </label>
-                  <span className="text-[12px] text-text-3">
+              <SettingsRow
+                stack
+                label="Провайдер"
+                htmlFor="as-provider"
+                hint="Шлюз к моделям. Другие добавим позже."
+              >
+                <Select value={provider} onValueChange={(v) => setProvider(v as AssistantProvider)}>
+                  <SelectTrigger id="as-provider" aria-label="Провайдер">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ASSISTANT_PROVIDERS.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {ASSISTANT_PROVIDER_LABELS[p]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </SettingsRow>
+              <SettingsRow
+                stack
+                label="Модель"
+                htmlFor="as-model"
+                hint={
+                  <>
                     Название модели у провайдера, например{' '}
-                    <code className="rounded bg-surface-2 px-1 font-mono text-[11.5px]">
+                    <code className="rounded bg-surface-2 px-1 font-mono text-[11px]">
                       anthropic/claude-sonnet-4-5
                     </code>{' '}
-                    или{' '}
-                    <code className="rounded bg-surface-2 px-1 font-mono text-[11.5px]">openai/gpt-4o</code>.
-                  </span>
-                  <Input
-                    id="as-model"
-                    aria-label="Модель"
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    placeholder="anthropic/claude-sonnet-4-5"
-                    className="mt-1 h-10 rounded-[10px] bg-surface-2 font-mono text-[13px]"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5 border-t border-border pt-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <label htmlFor="as-key" className="text-[13.5px] font-medium">
-                      Ключ (API key провайдера)
-                    </label>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={update.isPending || !enabled}
-                      onClick={() => setConfirmClear(true)}
-                      className="h-7 rounded-[8px] border-crit/35 bg-crit-soft px-2.5 text-[12px] text-crit hover:brightness-110 disabled:opacity-50"
-                    >
-                      Убрать ключ
-                    </Button>
-                  </div>
-                  <span className="text-[12px] text-text-3">
-                    {enabled
-                      ? 'Ключ уже сохранён. Введите новый, чтобы заменить.'
-                      : `Ключ из личного кабинета ${providerName}.`}
-                  </span>
-                  <PasswordField
-                    id="as-key"
-                    autoComplete="off"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={enabled ? '•••••••• (сохранён)' : 'sk-…'}
-                    className="mt-1"
-                  />
-                </div>
-              </div>
+                    или <code className="rounded bg-surface-2 px-1 font-mono text-[11px]">openai/gpt-4o</code>
+                    .
+                  </>
+                }
+              >
+                <Input
+                  id="as-model"
+                  aria-label="Модель"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder="anthropic/claude-sonnet-4-5"
+                  className="h-9 rounded-[9px] bg-surface-2 font-mono text-[13px]"
+                />
+              </SettingsRow>
+              <SettingsRow
+                stack
+                label="Ключ (API key провайдера)"
+                action={
+                  <RowButton
+                    tone="danger"
+                    disabled={update.isPending || !enabled}
+                    onClick={() => setConfirmClear(true)}
+                  >
+                    Убрать ключ
+                  </RowButton>
+                }
+                htmlFor="as-key"
+                hint={
+                  enabled
+                    ? 'Ключ уже сохранён. Введите новый, чтобы заменить.'
+                    : `Ключ из личного кабинета ${providerName}.`
+                }
+              >
+                <PasswordField
+                  id="as-key"
+                  autoComplete="off"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={enabled ? '•••••••• (сохранён)' : 'sk-…'}
+                />
+              </SettingsRow>
             </SettingsCard>
           )}
 
@@ -357,7 +339,7 @@ export function AssistantSettingsPage() {
               title="Подробность ответов"
               hint="Как подробно Джарвис объясняет. Влияет на длину ответов и на расход токенов у провайдера."
             >
-              <div className="mt-3 flex flex-col gap-4">
+              <div className="flex flex-col gap-4 py-3">
                 <Segmented
                   label="Подробность ответов"
                   value={level}
@@ -402,17 +384,14 @@ export function AssistantSettingsPage() {
 
           {section === 'permissions' && (
             <>
-              <div className="rounded-2xl border border-border bg-surface px-4 py-3.5">
-                <div className="flex flex-wrap items-baseline gap-x-2">
-                  <h2 className="text-[14.5px] font-semibold">Готовые наборы</h2>
-                  <span className="text-[12.5px] text-text-3">
-                    {preset ? 'Одним нажатием, дальше можно поправить.' : 'Сейчас настроено вручную.'}
-                  </span>
-                </div>
+              <SettingsCard
+                title="Готовые наборы"
+                hint={preset ? 'Одним нажатием, дальше можно поправить.' : 'Сейчас настроено вручную.'}
+              >
                 <div
                   role="radiogroup"
                   aria-label="Готовые наборы разрешений"
-                  className="mt-3 grid gap-2.5 md:grid-cols-3"
+                  className="grid gap-2.5 py-3 md:grid-cols-3"
                 >
                   {ASSISTANT_PRESET_KEYS.map((k) => (
                     // biome-ignore lint/a11y/useSemanticElements: карточка-переключатель со своей раскладкой
@@ -434,7 +413,7 @@ export function AssistantSettingsPage() {
                     </button>
                   ))}
                 </div>
-              </div>
+              </SettingsCard>
 
               <PermissionGroup title="Всегда включено" note="без переключателей">
                 <AlwaysRow
@@ -479,7 +458,7 @@ export function AssistantSettingsPage() {
               title="Данные для провайдера"
               hint={`Что уходит провайдеру нейросети (${providerName}), когда Джарвис отвечает. Зависит от разрешений.`}
             >
-              <ul className="mt-3 flex list-disc flex-col gap-1.5 pl-5 text-[13px] text-text-2">
+              <ul className="my-3 flex list-disc flex-col gap-1.5 pl-5 text-[13px] text-text-2">
                 <li>Метрики, состояние серверов и их названия.</li>
                 <li>Инциденты, их хронология и попытки починки.</li>
                 <li>Журнал событий и статьи базы знаний, которые нужны для ответа.</li>
@@ -499,46 +478,14 @@ export function AssistantSettingsPage() {
                   </li>
                 )}
               </ul>
-              <p className="mt-3 text-[12.5px] text-text-3">
+              <p className="mb-3 text-[12.5px] text-text-3">
                 Ключ хранится в панели зашифрованным и используется только для запросов к провайдеру.
               </p>
             </SettingsCard>
           )}
         </div>
 
-        <div className="sticky bottom-3 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface/95 px-4 py-2.5 shadow-pop backdrop-blur">
-          <span className="text-[12.5px] text-text-3" aria-live="polite">
-            {dirty ? (
-              <>
-                <span className="mr-1.5 inline-block size-1.5 rounded-full bg-warn align-middle" />
-                <span className="max-sm:hidden">Есть несохранённые изменения</span>
-                <span className="sm:hidden">Не сохранено</span>
-              </>
-            ) : (
-              'Изменения попадают в Журнал.'
-            )}
-          </span>
-          <span className="flex-1" />
-          {dirty && (
-            <Button
-              type="button"
-              variant="outline"
-              disabled={update.isPending}
-              onClick={reset}
-              className="rounded-[10px] px-4"
-            >
-              Отменить
-            </Button>
-          )}
-          <Button
-            type="button"
-            disabled={update.isPending || !dirty}
-            onClick={() => void save()}
-            className="rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover) disabled:opacity-50"
-          >
-            {update.isPending ? 'Сохраняю…' : 'Сохранить'}
-          </Button>
-        </div>
+        <SaveBar dirty={dirty} pending={update.isPending} onSave={() => void save()} onReset={reset} />
       </div>
 
       <ConfirmDialog

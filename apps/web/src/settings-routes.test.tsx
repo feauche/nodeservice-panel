@@ -45,7 +45,7 @@ describe('маршруты настроек', () => {
     expect(screen.getByRole('link', { name: 'Внешний вид' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('link', { name: 'Безопасность' })).not.toHaveAttribute('aria-current');
     expect(screen.getByRole('button', { name: /^Графит/ })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText('Тема хранится в этом браузере.')).toBeInTheDocument();
+    expect(screen.getByText(/Тема применяется сразу и хранится в этом браузере/)).toBeInTheDocument();
   });
 
   it('вкладка «Безопасность» показывает остаток кодов и способ входа текущей сессии', async () => {

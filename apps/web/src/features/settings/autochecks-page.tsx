@@ -1,14 +1,19 @@
 import { AUTOCHECKS_DEFAULTS, type AutochecksSettings, autochecksSettingsSchema } from '@nodeservice/shared';
-import { RotateCcwIcon } from 'lucide-react';
+import { ActivityIcon, RotateCcwIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
-import { cn } from '@/lib/utils';
 import { useAutochecks, useUpdateAutochecks } from './settings-api';
-import { SettingsCard, Toggle } from './settings-ui';
+import {
+  BarButton,
+  NumberField,
+  SaveBar,
+  SectionHeader,
+  SettingsCard,
+  SettingsRow,
+  Toggle,
+} from './settings-ui';
 
 /** Черновик формы: интервалы — строками, чтобы можно было спокойно печатать. */
 const toDraft = (s: AutochecksSettings) => ({
@@ -133,20 +138,22 @@ export function AutochecksPage() {
   };
 
   return (
-    <div className="max-w-[760px]">
-      <SettingsCard
+    <div className="flex flex-col gap-3.5">
+      <SectionHeader
+        icon={ActivityIcon}
         title="Автопроверки"
-        hint="Фоновые проверки панели и агента: что проверяем и как часто. Изменения действуют сразу после сохранения."
-      >
+        description="Фоновые проверки панели и агента: что проверяем и как часто. Действуют сразу после сохранения."
+      />
+      <SettingsCard title="Проверки" hint="Выключенная проверка не запускается совсем.">
         {autochecks.isPending && (
-          <div className="mt-2 flex flex-col gap-3">
+          <div className="flex flex-col gap-3 py-3">
             {CHECKS.map((c) => (
               <Skeleton key={c.id} className="h-[52px] rounded-[10px]" />
             ))}
           </div>
         )}
         {autochecks.isError && (
-          <p className="mt-2 rounded-[12px] border border-crit/30 bg-crit-soft px-4 py-3 text-[13px]">
+          <p className="my-3 rounded-[12px] border border-crit/30 bg-crit-soft px-4 py-3 text-[13px]">
             {apiErrorMessage(autochecks.error)}{' '}
             <button
               type="button"
@@ -157,85 +164,66 @@ export function AutochecksPage() {
             </button>
           </p>
         )}
-        {draft && (
-          <div className="mt-1">
-            {CHECKS.map((c) => {
-              const enabled = draft[c.on];
-              const error = errors[c.val];
-              return (
-                <div
-                  key={c.id}
-                  className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-border py-3.5 first:border-t-0"
-                >
-                  <div className="flex min-w-0 flex-1 basis-[300px] items-start gap-3">
-                    <div className="pt-0.5">
-                      <Toggle
-                        id={`${c.id}-toggle`}
-                        aria-label={c.label}
-                        checked={enabled}
-                        onChange={(v) => setDraft({ ...draft, [c.on]: v })}
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <label htmlFor={`${c.id}-interval`} className="block text-[13.5px] font-medium">
-                        {c.label}
-                      </label>
-                      <div className="mt-0.5 text-[12px] leading-normal text-text-3">{c.hint}</div>
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <div className={cn('flex items-center gap-2', !enabled && 'opacity-50')}>
-                      <Input
-                        id={`${c.id}-interval`}
-                        inputMode="numeric"
-                        disabled={!enabled}
-                        value={draft[c.val]}
-                        aria-invalid={error ? true : undefined}
-                        onChange={(e) => {
-                          setDraft({ ...draft, [c.val]: e.target.value });
-                          setErrors((p) => ({ ...p, [c.val]: '' }));
-                        }}
-                        className="h-9 w-[88px] rounded-[10px] bg-surface-2 text-right font-mono text-[13px] tabular-nums"
-                      />
-                      <span className="w-8 text-[12px] text-text-3">{c.unit}</span>
-                    </div>
-                    {error ? (
-                      <p role="alert" className="text-[11.5px] text-crit">
-                        {error}
-                      </p>
-                    ) : (
-                      <p className="text-[11.5px] text-text-3">
-                        {c.min}–{c.max}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border pt-4">
-          <Button
-            type="button"
-            disabled={!dirty || update.isPending}
-            onClick={() => void save()}
-            className="rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover) disabled:opacity-50"
-          >
-            {update.isPending ? 'Сохраняю…' : 'Сохранить'}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
+        {draft &&
+          CHECKS.map((c) => {
+            const enabled = draft[c.on];
+            const error = errors[c.val];
+            return (
+              <SettingsRow
+                key={c.id}
+                label={c.label}
+                htmlFor={`${c.id}-interval`}
+                hint={
+                  error ? (
+                    <span role="alert" className="text-crit">
+                      {error}
+                    </span>
+                  ) : (
+                    c.hint
+                  )
+                }
+              >
+                <NumberField
+                  id={`${c.id}-interval`}
+                  value={draft[c.val]}
+                  unit={c.unit}
+                  min={c.min}
+                  max={c.max}
+                  disabled={!enabled}
+                  invalid={Boolean(error)}
+                  onChange={(v) => {
+                    setDraft({ ...draft, [c.val]: v });
+                    setErrors((p) => ({ ...p, [c.val]: '' }));
+                  }}
+                />
+                <Toggle
+                  id={`${c.id}-toggle`}
+                  aria-label={c.label}
+                  checked={enabled}
+                  onChange={(v) => setDraft({ ...draft, [c.on]: v })}
+                />
+              </SettingsRow>
+            );
+          })}
+      </SettingsCard>
+      <SaveBar
+        dirty={dirty}
+        pending={update.isPending}
+        onSave={() => void save()}
+        onReset={() => {
+          if (saved) setDraft(toDraft(saved));
+          setErrors({});
+        }}
+        extra={
+          <BarButton
             disabled={update.isPending || !saved || isDefaults(saved)}
             onClick={() => void resetToDefaults()}
-            className="rounded-[10px] border-border bg-surface-2 px-4 text-text-2 hover:bg-surface-3 hover:text-foreground"
           >
-            <RotateCcwIcon className="size-4" aria-hidden="true" />
+            <RotateCcwIcon aria-hidden="true" />
             По умолчанию
-          </Button>
-          <span className="text-[11.5px] text-text-3">Изменение попадает в Журнал.</span>
-        </div>
-      </SettingsCard>
+          </BarButton>
+        }
+      />
     </div>
   );
 }

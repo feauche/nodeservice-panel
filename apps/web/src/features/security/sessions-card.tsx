@@ -2,8 +2,7 @@ import type { SessionInfo, TrustedDeviceInfo } from '@nodeservice/shared';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { shortUserAgent } from '@/features/audit/audit-format';
-import { GhostButton } from '@/features/auth/components/cta-button';
-import { Pill, SettingsCard } from '@/features/settings/settings-ui';
+import { Pill, RowButton, SettingsCard } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -17,32 +16,11 @@ import {
 } from './security-api';
 import { formatAgo, formatDate, loginMethod, plural } from './security-format';
 
-function RowButton({
-  children,
-  onClick,
-  disabled,
-}: {
-  children: string;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className="cursor-pointer rounded-[8px] px-2 py-1 text-[12px] font-medium text-text-3 transition-colors hover:bg-crit-soft hover:text-crit disabled:cursor-default disabled:opacity-40"
-    >
-      {children}
-    </button>
-  );
-}
-
 function ListRow({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <li
       className={cn(
-        'flex items-center justify-between gap-3 border-t border-border py-2.5 first:border-t-0',
+        'flex items-center justify-between gap-3 border-t border-border py-3 first:border-t-0',
         className,
       )}
     >
@@ -89,8 +67,13 @@ export function SessionsCard() {
     <SettingsCard
       title="Активные сессии"
       hint="Где вы сейчас вошли. Незнакомое устройство — завершите сессию и смените пароль."
+      footer={
+        <RowButton tone="danger" onClick={() => setOthersOpen(true)} disabled={others === 0}>
+          Завершить все, кроме текущей
+        </RowButton>
+      }
     >
-      <ul className="mt-2" aria-label="Активные сессии">
+      <ul className="m-0 list-none p-0 py-1" aria-label="Активные сессии">
         {sessions.isPending && <li className="py-3 text-[12.5px] text-text-3">Загружаю…</li>}
         {items.map((s) => (
           <ListRow key={s.id}>
@@ -106,17 +89,15 @@ export function SessionsCard() {
                 {formatAgo(s.lastSeenAt)}
               </div>
             </div>
-            <RowButton onClick={() => setTarget(s)} disabled={s.current}>
-              Завершить
-            </RowButton>
+            {/* Текущую завершить нельзя — для неё кнопки нет, метка «Текущая» это объясняет. */}
+            {!s.current && (
+              <RowButton tone="danger" onClick={() => setTarget(s)}>
+                Завершить
+              </RowButton>
+            )}
           </ListRow>
         ))}
       </ul>
-      <div className="mt-2">
-        <GhostButton onClick={() => setOthersOpen(true)} disabled={others === 0}>
-          Завершить все, кроме текущей
-        </GhostButton>
-      </div>
       <ConfirmDialog
         open={target !== null}
         onOpenChange={(o) => !o && setTarget(null)}
@@ -177,8 +158,15 @@ export function DevicesCard() {
     <SettingsCard
       title="Запомненные устройства"
       hint="Где отмечено «не спрашивать код 30 дней». Продления нет: через 30 дней код спросим снова."
+      footer={
+        items.length > 0 ? (
+          <RowButton tone="danger" onClick={() => setClearOpen(true)}>
+            Забыть все
+          </RowButton>
+        ) : undefined
+      }
     >
-      <ul className="mt-2" aria-label="Запомненные устройства">
+      <ul className="m-0 list-none p-0 py-1" aria-label="Запомненные устройства">
         {devices.isPending && <li className="py-3 text-[12.5px] text-text-3">Загружаю…</li>}
         {devices.data && items.length === 0 && (
           <li className="py-3 text-[12.5px] text-text-3">
@@ -199,15 +187,12 @@ export function DevicesCard() {
                 {formatAgo(d.lastUsedAt)} · до {formatDate(d.expiresAt)}
               </div>
             </div>
-            <RowButton onClick={() => setTarget(d)}>Забыть</RowButton>
+            <RowButton tone="danger" onClick={() => setTarget(d)}>
+              Забыть
+            </RowButton>
           </ListRow>
         ))}
       </ul>
-      {items.length > 0 && (
-        <div className="mt-2">
-          <GhostButton onClick={() => setClearOpen(true)}>Забыть все</GhostButton>
-        </div>
-      )}
       <ConfirmDialog
         open={target !== null}
         onOpenChange={(o) => !o && setTarget(null)}

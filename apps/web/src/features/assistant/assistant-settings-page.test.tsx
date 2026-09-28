@@ -1,5 +1,5 @@
 import { ASSISTANT_PERMISSIONS_DEFAULT } from '@nodeservice/shared';
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -7,6 +7,12 @@ import { mockAssistant } from '@/test/msw/assistant-mock';
 import { resetMockState } from '@/test/msw/handlers';
 import { renderPage } from '@/test/render';
 import { AssistantSettingsPage } from './assistant-settings-page';
+
+/** Подраздел — адрес `?s=`: в панели на него ведут ссылки левой рейки «Настроек». */
+const go = async (router: { navigate: (o: never) => Promise<void> }, s: string) =>
+  act(async () => {
+    await router.navigate({ to: '/settings/assistant', search: { s } } as never);
+  });
 
 describe('AssistantSettingsPage', () => {
   beforeEach(() => resetMockState({ authenticated: true }));
@@ -26,17 +32,17 @@ describe('AssistantSettingsPage', () => {
     mockAssistant.enabled = true;
     mockAssistant.level = 'intermediate';
     mockAssistant.permissions = { ...ASSISTANT_PERMISSIONS_DEFAULT };
-    renderPage(AssistantSettingsPage, '/settings/assistant');
+    const { router } = renderPage(AssistantSettingsPage, '/settings/assistant');
     const user = userEvent.setup();
     await screen.findByText('Включён');
 
-    await user.click(screen.getByRole('button', { name: 'Разрешения' }));
+    await go(router, 'permissions');
     // Автоглоссарий выключить нельзя: переключателя нет, он работает всегда
     expect(screen.queryByRole('switch', { name: /Автоглоссарий/ })).not.toBeInTheDocument();
     expect(screen.getByText('Автоглоссарий «Пояснения»')).toBeInTheDocument();
     await user.click(screen.getByRole('switch', { name: 'Еженедельная ревизия' }));
 
-    await user.click(screen.getByRole('button', { name: 'Поведение' }));
+    await go(router, 'behavior');
     await user.click(screen.getByRole('radio', { name: 'Кратко' }));
     expect(screen.getByText('Токенов: меньше')).toBeInTheDocument();
 
@@ -49,10 +55,10 @@ describe('AssistantSettingsPage', () => {
   it('готовые наборы: применяются одним нажатием и подсвечиваются, ручная правка их сбрасывает', async () => {
     mockAssistant.enabled = true;
     mockAssistant.permissions = { ...ASSISTANT_PERMISSIONS_DEFAULT };
-    renderPage(AssistantSettingsPage, '/settings/assistant');
+    const { router } = renderPage(AssistantSettingsPage, '/settings/assistant');
     const user = userEvent.setup();
     await screen.findByText('Включён');
-    await user.click(screen.getByRole('button', { name: 'Разрешения' }));
+    await go(router, 'permissions');
     expect(screen.getByRole('radio', { name: /Обычный/ })).toBeChecked();
 
     await user.click(screen.getByRole('radio', { name: /Максимальный автоматизм/ }));
@@ -73,10 +79,10 @@ describe('AssistantSettingsPage', () => {
   it('автоматический разбор зависит от разбора по кнопке и выключается вместе с ним', async () => {
     mockAssistant.enabled = true;
     mockAssistant.permissions = { ...ASSISTANT_PERMISSIONS_DEFAULT, autoAnalysis: true };
-    renderPage(AssistantSettingsPage, '/settings/assistant');
+    const { router } = renderPage(AssistantSettingsPage, '/settings/assistant');
     const user = userEvent.setup();
     await screen.findByText('Включён');
-    await user.click(screen.getByRole('button', { name: 'Разрешения' }));
+    await go(router, 'permissions');
     const auto = screen.getByRole('switch', { name: 'Автоматический разбор' });
     expect(auto).toBeChecked();
     await user.click(screen.getByRole('switch', { name: 'Разбор по кнопке' }));
@@ -87,10 +93,10 @@ describe('AssistantSettingsPage', () => {
 
   it('у каждого разрешения есть метки риска, у серверных чтений это видно сразу', async () => {
     mockAssistant.enabled = true;
-    renderPage(AssistantSettingsPage, '/settings/assistant');
-    const user = userEvent.setup();
+    const { router } = renderPage(AssistantSettingsPage, '/settings/assistant');
+
     await screen.findByText('Включён');
-    await user.click(screen.getByRole('button', { name: 'Разрешения' }));
+    await go(router, 'permissions');
     expect(screen.getByText('Серверы, только чтение')).toBeInTheDocument();
     expect(screen.getAllByText('Ходит на серверы').length).toBeGreaterThanOrEqual(3);
     expect(screen.getAllByText('Данные уходят провайдеру').length).toBeGreaterThanOrEqual(3);
@@ -104,10 +110,10 @@ describe('AssistantSettingsPage', () => {
   it('«Изменения по подтверждению»: отдельная группа «Изменения» под «Инциденты», подсказка, метка риска, наборы и сохранение', async () => {
     mockAssistant.enabled = true;
     mockAssistant.permissions = { ...ASSISTANT_PERMISSIONS_DEFAULT };
-    renderPage(AssistantSettingsPage, '/settings/assistant');
+    const { router } = renderPage(AssistantSettingsPage, '/settings/assistant');
     const user = userEvent.setup();
     await screen.findByText('Включён');
-    await user.click(screen.getByRole('button', { name: 'Разрешения' }));
+    await go(router, 'permissions');
 
     const groups = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
     expect(groups.indexOf('Инциденты')).toBeGreaterThanOrEqual(0);
@@ -137,27 +143,29 @@ describe('AssistantSettingsPage', () => {
   it('раздел «Данные для провайдера» показывает только то, что разрешено', async () => {
     mockAssistant.enabled = true;
     mockAssistant.permissions = { ...ASSISTANT_PERMISSIONS_DEFAULT, nodeLogs: false, terminalHints: false };
-    renderPage(AssistantSettingsPage, '/settings/assistant');
-    const user = userEvent.setup();
+    const { router } = renderPage(AssistantSettingsPage, '/settings/assistant');
+
     await screen.findByText('Включён');
-    await user.click(screen.getByRole('button', { name: 'Данные для провайдера' }));
+    await go(router, 'privacy');
     expect(screen.getByText(/Метрики, состояние серверов и их названия/)).toBeInTheDocument();
     expect(screen.queryByText(/журнала ноды/)).not.toBeInTheDocument();
     expect(screen.queryByText(/последние строки терминала/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Имена самых тяжёлых процессов/)).toBeInTheDocument();
   });
 
-  it('несохранённое видно в панели и точкой у раздела; «Отменить» возвращает как было', async () => {
+  it('несохранённое видно в панели и не теряется при переходе между подразделами; «Отменить» возвращает как было', async () => {
     mockAssistant.enabled = true;
     mockAssistant.level = 'intermediate';
-    renderPage(AssistantSettingsPage, '/settings/assistant');
+    const { router } = renderPage(AssistantSettingsPage, '/settings/assistant');
     const user = userEvent.setup();
     await screen.findByText('Включён');
     expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
-    await user.click(screen.getByRole('button', { name: 'Поведение' }));
+    await go(router, 'behavior');
     await user.click(screen.getByRole('radio', { name: 'Подробно' }));
     expect(screen.getByText('Есть несохранённые изменения')).toBeInTheDocument();
-    expect(within(screen.getByRole('button', { name: /Поведение/ })).getByRole('img')).toBeInTheDocument();
+    await go(router, 'permissions');
+    await go(router, 'behavior');
+    expect(screen.getByRole('radio', { name: 'Подробно' })).toBeChecked();
     await user.click(screen.getByRole('button', { name: 'Отменить' }));
     expect(screen.getByRole('radio', { name: 'Обычно' })).toBeChecked();
     expect(screen.queryByText('Есть несохранённые изменения')).not.toBeInTheDocument();

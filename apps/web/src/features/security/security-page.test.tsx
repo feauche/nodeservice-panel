@@ -101,9 +101,10 @@ describe('SecurityPage', () => {
     const user = userEvent.setup();
     const sessions = await screen.findByRole('list', { name: 'Активные сессии' });
     await waitFor(() => expect(within(sessions).getAllByRole('listitem')).toHaveLength(2));
+    // У текущей сессии кнопки нет совсем — только у чужой.
     const buttons = within(sessions).getAllByRole('button', { name: 'Завершить' });
-    expect(buttons[0]).toBeDisabled(); // текущая
-    await user.click(buttons[1] as HTMLElement);
+    expect(buttons).toHaveLength(1);
+    await user.click(buttons[0] as HTMLElement);
     await user.click(await screen.findByRole('button', { name: 'Да, завершить' }));
     await waitFor(() => expect(within(sessions).getAllByRole('listitem')).toHaveLength(1));
     expect(mockSecurity.sessions).toHaveLength(1);

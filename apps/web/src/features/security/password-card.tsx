@@ -1,10 +1,9 @@
 import { changePasswordRequestSchema } from '@nodeservice/shared';
 import { type FormEvent, useState } from 'react';
-import { Button } from '@/components/ui/button';
 import { Field } from '@/features/auth/components/field';
 import { PasswordField } from '@/features/auth/components/password-field';
 import { PasswordMeter } from '@/features/auth/components/password-meter';
-import { SettingsCard } from '@/features/settings/settings-ui';
+import { CardButton, SettingsCard } from '@/features/settings/settings-ui';
 import { apiErrorMessage, isApiError } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useChangePassword, useSecurityOverview } from './security-api';
@@ -49,8 +48,16 @@ export function PasswordCard() {
     <SettingsCard
       title="Пароль"
       hint={overview.data ? `Последняя смена — ${formatDate(overview.data.passwordChangedAt)}` : 'Загружаю…'}
+      footer={
+        <>
+          <span className="mr-auto text-[12px] text-text-3">Другие сессии будут завершены.</span>
+          <CardButton type="submit" form="pw-form" disabled={!current || !next || change.isPending}>
+            {change.isPending ? 'Меняю…' : 'Сменить пароль'}
+          </CardButton>
+        </>
+      }
     >
-      <form onSubmit={submit} className="mt-3 flex flex-col gap-3.5" noValidate>
+      <form id="pw-form" onSubmit={submit} className="flex flex-col gap-3.5 py-3" noValidate>
         <Field id="pw-current" label="Текущий пароль" error={errors.current}>
           <PasswordField
             id="pw-current"
@@ -86,16 +93,6 @@ export function PasswordCard() {
             {errors.form}
           </p>
         )}
-        <div className="flex items-center gap-3">
-          <Button
-            type="submit"
-            disabled={!current || !next || change.isPending}
-            className="rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover) disabled:opacity-50"
-          >
-            {change.isPending ? 'Меняю…' : 'Сменить пароль'}
-          </Button>
-          <span className="text-[11.5px] text-text-3">Другие сессии будут завершены.</span>
-        </div>
       </form>
     </SettingsCard>
   );

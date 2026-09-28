@@ -12,7 +12,7 @@ describe('IncidentsSettingsPage', () => {
 
   it('значения из настроек, «По умолчанию» задизейблена на дефолтах', async () => {
     renderPage(IncidentsSettingsPage, '/settings/incidents');
-    expect(await screen.findByLabelText('Порог CPU')).toHaveValue('90');
+    expect(await screen.findByLabelText('Порог процессора')).toHaveValue('90');
     expect(screen.getByLabelText('Время реакции')).toHaveValue('5');
     expect(screen.getByRole('button', { name: /По умолчанию/ })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
@@ -21,7 +21,7 @@ describe('IncidentsSettingsPage', () => {
   it('сохранение изменённого порога уходит в API', async () => {
     renderPage(IncidentsSettingsPage, '/settings/incidents');
     const user = userEvent.setup();
-    const cpu = await screen.findByLabelText('Порог CPU');
+    const cpu = await screen.findByLabelText('Порог процессора');
     await user.clear(cpu);
     await user.type(cpu, '80');
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
@@ -31,7 +31,7 @@ describe('IncidentsSettingsPage', () => {
   it('невалидный порог — ошибка у поля, запрос не уходит', async () => {
     renderPage(IncidentsSettingsPage, '/settings/incidents');
     const user = userEvent.setup();
-    const cpu = await screen.findByLabelText('Порог CPU');
+    const cpu = await screen.findByLabelText('Порог процессора');
     await user.clear(cpu);
     await user.type(cpu, '40');
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));

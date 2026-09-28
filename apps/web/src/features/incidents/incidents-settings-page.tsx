@@ -3,15 +3,20 @@ import {
   type IncidentsSettings,
   incidentsSettingsSchema,
 } from '@nodeservice/shared';
-import { RotateCcwIcon } from 'lucide-react';
+import { RotateCcwIcon, TriangleAlertIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SettingsCard, Toggle } from '@/features/settings/settings-ui';
+import {
+  BarButton,
+  NumberField,
+  SaveBar,
+  SectionHeader,
+  SettingsCard,
+  SettingsRow,
+  Toggle,
+} from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
-import { cn } from '@/lib/utils';
 import { useIncidentsSettings, useUpdateIncidentsSettings } from './incidents-settings-api';
 
 type NumKey = 'forDurationMinutes' | 'cpuPct' | 'memPct' | 'diskPct' | 'autofixCooldownMinutes';
@@ -44,7 +49,7 @@ const FIELDS: ReadonlyArray<{
   },
   {
     key: 'cpuPct',
-    label: 'Порог CPU',
+    label: 'Порог процессора',
     hint: 'Инцидент, если загрузка процессора держится выше.',
     unit: '%',
     min: 50,
@@ -129,115 +134,99 @@ export function IncidentsSettingsPage() {
     }
   };
 
-  return (
-    <div className="max-w-[760px]">
-      <SettingsCard
-        title="Инциденты"
-        hint="Когда панель заводит инцидент и как его чинить. Изменения действуют сразу после сохранения."
+  const row = (f: (typeof FIELDS)[number]) => {
+    if (!draft) return null;
+    const error = errors[f.key];
+    return (
+      <SettingsRow
+        key={f.key}
+        label={f.label}
+        htmlFor={`inc-${f.key}`}
+        hint={
+          error ? (
+            <span role="alert" className="text-crit">
+              {error}
+            </span>
+          ) : (
+            f.hint
+          )
+        }
       >
-        {settings.isPending && (
-          <div className="mt-2 flex flex-col gap-3">
-            {FIELDS.map((f) => (
-              <Skeleton key={f.key} className="h-[52px] rounded-[10px]" />
-            ))}
-          </div>
-        )}
-        {settings.isError && (
-          <p className="mt-2 rounded-[12px] border border-crit/30 bg-crit-soft px-4 py-3 text-[13px]">
-            {apiErrorMessage(settings.error)}{' '}
-            <button
-              type="button"
-              className="cursor-pointer underline"
-              onClick={() => void settings.refetch()}
+        <NumberField
+          id={`inc-${f.key}`}
+          value={draft[f.key]}
+          unit={f.unit}
+          min={f.min}
+          max={f.max}
+          invalid={Boolean(error)}
+          onChange={(v) => {
+            setDraft({ ...draft, [f.key]: v });
+            setErrors((p) => ({ ...p, [f.key]: '' }));
+          }}
+        />
+      </SettingsRow>
+    );
+  };
+
+  return (
+    <div className="flex flex-col gap-3.5">
+      <SectionHeader
+        icon={TriangleAlertIcon}
+        title="Инциденты"
+        description="Когда панель заводит инцидент и как его чинит. Действуют сразу после сохранения."
+      />
+      {settings.isPending && <Skeleton className="h-[320px] rounded-[14px]" />}
+      {settings.isError && (
+        <p className="rounded-[12px] border border-crit/30 bg-crit-soft px-4 py-3 text-[13px]">
+          {apiErrorMessage(settings.error)}{' '}
+          <button type="button" className="cursor-pointer underline" onClick={() => void settings.refetch()}>
+            Повторить
+          </button>
+        </p>
+      )}
+      {draft && (
+        <>
+          <SettingsCard title="Пороги" hint="Когда проблема на сервере становится инцидентом.">
+            {FIELDS.filter((f) => f.key !== 'autofixCooldownMinutes').map(row)}
+          </SettingsCard>
+          <SettingsCard
+            title="Автопочинка"
+            hint="Безопасные шаги для сигналов с режимом «Само». Подробно — «Инциденты → Автопочинка»."
+          >
+            <SettingsRow
+              label="Автопочинка"
+              htmlFor="inc-autofix"
+              hint="По умолчанию выключена — сначала панель только заводит инцидент."
             >
-              Повторить
-            </button>
-          </p>
-        )}
-        {draft && (
-          <div className="mt-1">
-            {FIELDS.map((f) => {
-              const error = errors[f.key];
-              return (
-                <div
-                  key={f.key}
-                  className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-border py-3.5 first:border-t-0"
-                >
-                  <div className="min-w-0 flex-1 basis-[300px]">
-                    <label htmlFor={`inc-${f.key}`} className="block text-[13.5px] font-medium">
-                      {f.label}
-                    </label>
-                    <div className="mt-0.5 text-[12px] leading-normal text-text-3">{f.hint}</div>
-                  </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <div className="flex items-center gap-2">
-                      <Input
-                        id={`inc-${f.key}`}
-                        inputMode="numeric"
-                        value={draft[f.key]}
-                        aria-invalid={error ? true : undefined}
-                        onChange={(e) => {
-                          setDraft({ ...draft, [f.key]: e.target.value });
-                          setErrors((p) => ({ ...p, [f.key]: '' }));
-                        }}
-                        className="h-9 w-[88px] rounded-[10px] bg-surface-2 text-right font-mono text-[13px] tabular-nums"
-                      />
-                      <span className="w-8 text-[12px] text-text-3">{f.unit}</span>
-                    </div>
-                    {error ? (
-                      <p role="alert" className="text-[11.5px] text-crit">
-                        {error}
-                      </p>
-                    ) : (
-                      <p className="text-[11.5px] text-text-3">
-                        {f.min}–{f.max}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-border py-3.5">
-              <div className="min-w-0 flex-1 basis-[300px]">
-                <div className="text-[13.5px] font-medium">Автопочинка</div>
-                <div className="mt-0.5 text-[12px] leading-normal text-text-3">
-                  Панель сама выполняет безопасные шаги для сигналов с политикой «Само». Настроить — в разделе
-                  «Инциденты» → «Автопочинка». По умолчанию выключено — сначала только заводит инцидент.
-                </div>
-              </div>
               <Toggle
                 id="inc-autofix"
                 aria-label="Автопочинка"
                 checked={draft.autofixEnabled}
                 onChange={(v) => setDraft({ ...draft, autofixEnabled: v })}
               />
-            </div>
-          </div>
-        )}
-        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border pt-4">
-          <Button
-            type="button"
-            disabled={!dirty || update.isPending}
-            onClick={() => void save()}
-            className={cn(
-              'rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover) disabled:opacity-50',
-            )}
-          >
-            {update.isPending ? 'Сохраняю…' : 'Сохранить'}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
+            </SettingsRow>
+            {FIELDS.filter((f) => f.key === 'autofixCooldownMinutes').map(row)}
+          </SettingsCard>
+        </>
+      )}
+      <SaveBar
+        dirty={dirty}
+        pending={update.isPending}
+        onSave={() => void save()}
+        onReset={() => {
+          if (saved) setDraft(toDraft(saved));
+          setErrors({});
+        }}
+        extra={
+          <BarButton
             disabled={update.isPending || !saved || isDefaults(saved)}
             onClick={() => void resetToDefaults()}
-            className="rounded-[10px] border-border bg-surface-2 px-4 text-text-2 hover:bg-surface-3 hover:text-foreground"
           >
-            <RotateCcwIcon className="size-4" aria-hidden="true" />
+            <RotateCcwIcon aria-hidden="true" />
             По умолчанию
-          </Button>
-          <span className="text-[11.5px] text-text-3">Изменение попадает в Журнал.</span>
-        </div>
-      </SettingsCard>
+          </BarButton>
+        }
+      />
     </div>
   );
 }

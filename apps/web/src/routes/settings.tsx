@@ -1,4 +1,4 @@
-import { createFileRoute, Link, Outlet } from '@tanstack/react-router';
+import { createFileRoute, Link, Outlet, useRouterState } from '@tanstack/react-router';
 import {
   ActivityIcon,
   BellIcon,
@@ -11,8 +11,10 @@ import {
 import { JarvisIcon } from '@/components/jarvis-icon';
 import { AppShell } from '@/components/layout/app-shell';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ASSISTANT_SECTIONS, assistantSectionOf } from '@/features/assistant/assistant-sections';
 import { requireAuth } from '@/features/auth/guards';
 import { isSectionOpen, requireSectionOpen } from '@/lib/stages';
+import { cn } from '@/lib/utils';
 
 export const Route = createFileRoute('/settings')({
   beforeLoad: async ({ context }) => {
@@ -74,6 +76,10 @@ function ServiceLinks() {
 }
 
 function SettingsLayout() {
+  const pathname = useRouterState({ select: (st) => st.location.pathname });
+  const search = useRouterState({ select: (st) => st.location.search }) as { s?: unknown };
+  const onAssistant = pathname === '/settings/assistant';
+  const assistantSection = assistantSectionOf(search.s);
   return (
     <AppShell
       title="Настройки"
@@ -94,24 +100,44 @@ function SettingsLayout() {
                   {g.title}
                 </div>
                 {items.map((t) => (
-                  <Link
-                    key={t.to}
-                    to={t.to}
-                    className="group flex items-center gap-2.5 rounded-[9px] px-3 py-2 text-[13px] font-medium whitespace-nowrap text-text-2 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand max-lg:py-1.5 max-lg:text-[12.5px]"
-                    activeProps={{ className: 'bg-surface-3 text-foreground', 'aria-current': 'page' }}
-                  >
-                    <t.icon
-                      className="size-[15px] text-text-3 group-aria-[current=page]:text-brand max-lg:hidden"
-                      aria-hidden="true"
-                    />
-                    {t.label}
-                  </Link>
+                  <div key={t.to} className="flex gap-0.5 lg:flex-col">
+                    <Link
+                      to={t.to}
+                      activeOptions={{ includeSearch: false }}
+                      className="group flex items-center gap-2.5 rounded-[9px] px-3 py-2 text-[13px] font-medium whitespace-nowrap text-text-2 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand max-lg:py-1.5 max-lg:text-[12.5px]"
+                      activeProps={{ className: 'bg-surface-3 text-foreground', 'aria-current': 'page' }}
+                    >
+                      <t.icon
+                        className="size-[15px] text-text-3 group-aria-[current=page]:text-brand max-lg:hidden"
+                        aria-hidden="true"
+                      />
+                      {t.label}
+                    </Link>
+                    {/* Подразделы Джарвиса — прямо в рейке под ним (вариант A), только когда он открыт. */}
+                    {t.to === '/settings/assistant' &&
+                      onAssistant &&
+                      ASSISTANT_SECTIONS.map((sec) => (
+                        <Link
+                          key={sec.key}
+                          to="/settings/assistant"
+                          search={{ s: sec.key }}
+                          aria-current={assistantSection === sec.key ? 'page' : undefined}
+                          className={cn(
+                            'rounded-[9px] py-1.5 pr-3 pl-9 text-[12.5px] whitespace-nowrap transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand max-lg:pl-3',
+                            assistantSection === sec.key ? 'font-medium text-brand' : 'text-text-3',
+                          )}
+                        >
+                          {sec.label}
+                        </Link>
+                      ))}
+                  </div>
                 ))}
               </div>
             );
           })}
         </nav>
-        <div className="min-w-0">
+        {/* Одна ширина содержимого у всех разделов. */}
+        <div className="min-w-0 max-w-[860px]">
           <Outlet />
         </div>
       </div>
