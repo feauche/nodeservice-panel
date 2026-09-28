@@ -3,8 +3,6 @@ import {
   EXPECTED_CONTAINERS_MAX,
   EXPECTED_PORTS_MAX,
   MAINTENANCE_WINDOW_MAX,
-  type NodeWatch,
-  normalizeProfilePatch,
   portNumberSchema,
   SERVER_IMPORTANCE,
   SERVER_IMPORTANCE_HINTS,
@@ -26,7 +24,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatAgo } from '@/features/security/security-format';
@@ -34,7 +32,8 @@ import { NodeStatePill, NodeWatchSegments } from '@/features/servers/node-watch-
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
-import { useRefreshInventory, useUpdateServer } from '../servers-api';
+import { useRefreshInventory } from '../servers-api';
+import type { ServerEdit } from './use-server-edit';
 
 type RowState = 'ok' | 'bad' | 'unknown';
 interface Row {
@@ -43,23 +42,6 @@ interface Row {
   label: string;
   state: RowState;
   text: string;
-}
-
-/** Порядок и вид, в котором профиль хранит панель: по нему определяем, есть ли несохранённые правки. */
-function canon(p: ServerProfile): ServerProfile {
-  const n = normalizeProfilePatch({
-    roles: p.roles,
-    expectedContainers: p.expectedContainers,
-    expectedPorts: p.expectedPorts,
-    maintenanceWindow: p.maintenanceWindow,
-  });
-  return {
-    roles: n.roles ?? [],
-    importance: p.importance,
-    maintenanceWindow: n.maintenanceWindow ?? null,
-    expectedContainers: n.expectedContainers ?? [],
-    expectedPorts: n.expectedPorts ?? [],
-  };
 }
 
 /** Что ожидается и что видно по снимку: одна строка на контейнер или порт. */
@@ -314,33 +296,15 @@ function RoleCard({
  * Вкладка «Профиль» (J3, вариант A5 + R2): нода Remnawave, функции сервера, важность, окно обслуживания и
  * таблица «ожидается / сейчас». Профиль читает Джарвис; расхождения считает панель по снимку состояния по SSH.
  */
-export function ProfileTab({ server }: { server: Server }) {
-  const update = useUpdateServer();
+export function ProfileTab({ server, edit }: { server: Server; edit: ServerEdit['profile'] }) {
   const refresh = useRefreshInventory();
-  const saved = canon(server.profile);
-  const savedKey = JSON.stringify([saved, server.nodeWatch]);
-  const [draft, setDraft] = useState<ServerProfile>(saved);
-  const [nodeWatch, setNodeWatch] = useState<NodeWatch>(server.nodeWatch);
-  const dirty = JSON.stringify([canon(draft), nodeWatch]) !== savedKey;
-  const reset = () => {
-    setDraft(saved);
-    setNodeWatch(server.nodeWatch);
-  };
-
-  // Другой сервер или сохранённое изменилось со стороны (и своих правок нет): показываем сохранённое.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: сброс нужен при смене сервера и сохранённого профиля
-  useEffect(reset, [server.id]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: см. выше
-  useEffect(() => {
-    if (!dirty) reset();
-  }, [savedKey]);
+  const { draft, patch, nodeWatch, setNodeWatch } = edit;
 
   const inventory = server.inventory;
   const rows = buildRows(draft, inventory);
   const bad = rows.filter((r) => r.state === 'bad').length;
   const expectedCount = draft.expectedContainers.length + draft.expectedPorts.length;
 
-  const patch = (over: Partial<ServerProfile>) => setDraft((d) => ({ ...d, ...over }));
   const toggleRole = (role: ServerRole) =>
     patch({
       roles: SERVER_ROLES.filter((r) => (r === role ? !draft.roles.includes(r) : draft.roles.includes(r))),
@@ -372,31 +336,6 @@ export function ProfileTab({ server }: { server: Server }) {
     try {
       await refresh.mutateAsync(server.id);
       toast.success('Состояние сервера обновлено.');
-    } catch (err) {
-      toast.error(apiErrorMessage(err));
-    }
-  };
-
-  const save = async () => {
-    const c = canon(draft);
-    try {
-      const next = await update.mutateAsync({
-        id: server.id,
-        patch: {
-          profile: {
-            roles: c.roles,
-            importance: c.importance,
-            maintenanceWindow: c.maintenanceWindow,
-            expectedContainers: c.expectedContainers,
-            expectedPorts: c.expectedPorts,
-          },
-          nodeWatch,
-        },
-      });
-      toast.success('Профиль сохранён.');
-      // Снимка ещё нет, а ожидаемое задано: снимаем состояние сразу, чтобы таблица показала, как обстоят дела.
-      if (!next.inventory && (c.expectedContainers.length > 0 || c.expectedPorts.length > 0))
-        void refresh.mutateAsync(server.id).catch(() => undefined);
     } catch (err) {
       toast.error(apiErrorMessage(err));
     }
@@ -470,7 +409,7 @@ export function ProfileTab({ server }: { server: Server }) {
           Первый вопрос: от него зависят инциденты. Панель следит за контейнером ноды и сообщает, если он
           остановился.
         </p>
-        <NodeWatchSegments value={nodeWatch} disabled={update.isPending} onChange={setNodeWatch} />
+        <NodeWatchSegments value={nodeWatch} onChange={setNodeWatch} />
       </section>
 
       <section aria-labelledby="pf-roles" className="flex flex-col gap-2">
@@ -644,29 +583,6 @@ export function ProfileTab({ server }: { server: Server }) {
           />
         </div>
       </section>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          disabled={!dirty || update.isPending}
-          onClick={() => void save()}
-          className="rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover) disabled:opacity-50"
-        >
-          {update.isPending ? 'Сохраняю…' : 'Сохранить'}
-        </Button>
-        {dirty && (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={update.isPending}
-            onClick={reset}
-            className="rounded-[10px] px-4"
-          >
-            Отменить
-          </Button>
-        )}
-        {dirty && <span className="text-[12px] text-text-3">Есть несохранённые изменения</span>}
-      </div>
     </div>
   );
 }

@@ -235,6 +235,55 @@ describe('вкладка «Профиль» (J3, A5 + R2 + C3)', () => {
     expect(within(dialog).queryByTestId('drift-pill')).toBeNull();
   });
 
+  it('правки не сбрасываются при смене вкладки; «Сохранить» с «Подключения» сохраняет и профиль', async () => {
+    const { dialog } = await openProfile();
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Выпускает трафик в интернет' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Подключение' }));
+    const name = within(dialog).getByLabelText('Название');
+    await user.clear(name);
+    await user.type(name, 'de-fra-02');
+    expect(within(dialog).getByText(/и на вкладке «Профиль»/)).toBeInTheDocument();
+    // Туда и обратно: обе правки на месте
+    await user.click(within(dialog).getByRole('button', { name: 'Профиль' }));
+    expect(within(dialog).getByRole('checkbox', { name: 'Выпускает трафик в интернет' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await user.click(within(dialog).getByRole('button', { name: 'Подключение' }));
+    expect(within(dialog).getByLabelText('Название')).toHaveValue('de-fra-02');
+
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(server().name).toBe('de-fra-02'));
+    expect(server().profile.roles).toEqual(['exit']);
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeDisabled());
+  });
+
+  it('«Сохранить» с «Профиля» сохраняет и подключение; ошибка в подключении открывает его вкладку', async () => {
+    const { dialog } = await openProfile();
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole('button', { name: 'Подключение' }));
+    await user.clear(within(dialog).getByLabelText('Порт'));
+    await user.type(within(dialog).getByLabelText('Порт'), '70000');
+    await user.click(within(dialog).getByRole('button', { name: 'Профиль' }));
+    const importance = within(dialog).getByRole('radiogroup', { name: 'Важность сервера' });
+    await user.click(within(importance).getByRole('radio', { name: 'Критичный' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
+    // Порт неверный: ничего не отправлено, открыта вкладка с ошибкой
+    expect(within(dialog).getByRole('button', { name: 'Подключение' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(server().profile.importance).not.toBe('critical');
+
+    await user.clear(within(dialog).getByLabelText('Порт'));
+    await user.type(within(dialog).getByLabelText('Порт'), '2222');
+    await user.click(within(dialog).getByRole('button', { name: 'Профиль' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(server().port).toBe(2222));
+    expect(server().profile.importance).toBe('critical');
+  });
+
   it('пилюля «Расхождения: N» в шапке открывает вкладку «Профиль»', async () => {
     const s = server();
     mockServers.items[0] = {

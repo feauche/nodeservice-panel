@@ -1,11 +1,4 @@
-import {
-  AGENT_STATUS_LABELS,
-  type MetricRange,
-  type Server,
-  type SshAuth,
-  type UpdateServerRequest,
-  updateServerRequestSchema,
-} from '@nodeservice/shared';
+import { AGENT_STATUS_LABELS, type MetricRange, type Server } from '@nodeservice/shared';
 import {
   ChevronDownIcon,
   CopyPlusIcon,
@@ -19,7 +12,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from 'lucide-react';
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { DialogPrimaryButton } from '@/components/dialog-actions';
@@ -42,20 +35,21 @@ import { useProviders } from '@/features/providers/providers-api';
 import { formatAgo } from '@/features/security/security-format';
 import { StepUpCancelledError } from '@/features/security/step-up';
 import { useTerminalStore } from '@/features/terminal/terminal-store';
-import { apiErrorMessage, isApiError } from '@/lib/api';
+import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useMediaQuery } from '@/lib/use-media';
 import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
-import { CountryField, type CountryPick } from './country-field';
+import { CountryField } from './country-field';
 import { AgentPill, HealthDot, osLine, SshPill } from './server-card';
 import { JournalTab } from './server-detail/journal-tab';
 import { MaintenanceTab } from './server-detail/maintenance-tab';
 import { MetricsTab } from './server-detail/metrics-tab';
 import { ProfileTab } from './server-detail/profile-tab';
 import { TerminalHistoryTab } from './server-detail/terminal-history-tab';
+import { AUTH_TABS, type ServerEdit, useServerEdit } from './server-detail/use-server-edit';
 import { serverHealth } from './server-health';
-import { useCheckServer, useDeleteServer, useDuplicateServer, useUpdateServer } from './servers-api';
+import { useCheckServer, useDeleteServer, useDuplicateServer } from './servers-api';
 
 export type ServerModalTab = 'metrics' | 'journal' | 'terminal' | 'maintenance' | 'profile' | 'connection';
 
@@ -91,8 +85,16 @@ const SIDE_BTN =
 /**
  * Окно сервера в две панели: слева факты и действия (всегда на месте), справа вкладки
  * «Метрики / Журнал / Подключение». На телефоне панели встают друг под другом.
+ * Перемонтируется при смене сервера: несохранённые правки другого сервера не переезжают.
  */
-export function ServerModal({ server, initialTab, onClose }: Props) {
+export function ServerModal({ server, ...rest }: Props) {
+  return server ? <ServerModalView key={server.id} server={server} {...rest} /> : null;
+}
+
+/** Вкладки, где что-то меняют: у них общая панель «Сохранить» внизу. */
+const EDIT_TABS: ReadonlySet<ServerModalTab> = new Set(['profile', 'connection']);
+
+function ServerModalView({ server: s, initialTab, onClose }: Props & { server: Server }) {
   const check = useCheckServer();
   const duplicate = useDuplicateServer();
   const remove = useDeleteServer();
@@ -106,14 +108,16 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
   // действия в нижней панели. В jsdom matchMedia нет — считаем, что не телефон.
   const phone = useMediaQuery('(max-width: 767px)', false);
   const providers = useProviders();
+  // Правки «Профиля» и «Подключения» живут здесь: переход между вкладками их не сбрасывает.
+  const edit = useServerEdit(s, () => setTab('connection'));
+  const tabDirty: Partial<Record<ServerModalTab, boolean>> = {
+    profile: edit.profile.dirty,
+    connection: edit.connection.dirty,
+  };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: вкладка выставляется при каждом открытии
   useEffect(() => {
-    if (server) setTab(initialTab);
-  }, [server?.id, initialTab]);
-
-  if (!server) return null;
-  const s = server;
+    setTab(initialTab);
+  }, [initialTab]);
   const metrics = overview.data?.servers.find((m) => m.serverId === s.id) ?? null;
   const health = serverHealth(s, metrics);
   const resources = [
@@ -189,8 +193,8 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
       {tab === 'journal' && <JournalTab serverId={s.id} />}
       {tab === 'terminal' && <TerminalHistoryTab serverId={s.id} />}
       {tab === 'maintenance' && <MaintenanceTab server={s} />}
-      {tab === 'profile' && <ProfileTab server={s} />}
-      {tab === 'connection' && <ConnectionTab server={s} />}
+      {tab === 'profile' && <ProfileTab server={s} edit={edit.profile} />}
+      {tab === 'connection' && <ConnectionTab server={s} edit={edit} />}
     </>
   );
   const dialogs = (
@@ -229,10 +233,18 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
           )}
         >
           {t.label}
+          {tabDirty[t.key] && (
+            <span
+              aria-hidden="true"
+              title="Есть несохранённые изменения"
+              className="ml-1.5 inline-block size-1.5 translate-y-[-2px] rounded-full bg-brand"
+            />
+          )}
         </button>
       ))}
     </fieldset>
   );
+  const saveBar = EDIT_TABS.has(tab) ? <SaveBar edit={edit} tab={tab} /> : null;
   const closeButton = (
     <Button
       type="button"
@@ -345,21 +357,24 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
             </div>
 
             {/* Содержимое вкладки; факты свёрнуты сверху, чтобы не съедать экран */}
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-              <details className="group mb-3 rounded-2xl border border-border bg-surface">
-                <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[13px] [&::-webkit-details-marker]:hidden">
-                  <span className="font-semibold">Подробнее о сервере</span>
-                  <span className="min-w-0 flex-1 truncate text-right text-[12px] text-text-3">
-                    адрес, система, аптайм
-                  </span>
-                  <ChevronDownIcon
-                    className="size-4 flex-none text-text-3 transition-transform group-open:rotate-180"
-                    aria-hidden="true"
-                  />
-                </summary>
-                <div className="border-t border-border px-4 py-3">{factsList}</div>
-              </details>
-              {content}
+            <div className="flex min-h-0 flex-col">
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+                <details className="group mb-3 rounded-2xl border border-border bg-surface">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[13px] [&::-webkit-details-marker]:hidden">
+                    <span className="font-semibold">Подробнее о сервере</span>
+                    <span className="min-w-0 flex-1 truncate text-right text-[12px] text-text-3">
+                      адрес, система, аптайм
+                    </span>
+                    <ChevronDownIcon
+                      className="size-4 flex-none text-text-3 transition-transform group-open:rotate-180"
+                      aria-hidden="true"
+                    />
+                  </summary>
+                  <div className="border-t border-border px-4 py-3">{factsList}</div>
+                </details>
+                {content}
+              </div>
+              {saveBar}
             </div>
 
             {/* Нижняя панель действий: под большим пальцем */}
@@ -499,6 +514,7 @@ export function ServerModal({ server, initialTab, onClose }: Props) {
                 {closeButton}
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{content}</div>
+              {saveBar}
             </div>
           </>
         )}
@@ -534,106 +550,106 @@ function PhoneAction({
   );
 }
 
-const AUTH_TABS = [
-  { key: 'keep', label: 'Не менять' },
-  { key: 'password', label: 'Пароль' },
-  { key: 'key', label: 'Свой ключ' },
-  { key: 'panel-key', label: 'Ключ панели' },
-] as const;
+/**
+ * Панель «Сохранить» под вкладками «Профиль» и «Подключение»: вне прокрутки, поэтому видна всегда.
+ * Сохраняет правки обеих вкладок одним запросом, откуда бы ни нажали.
+ */
+function SaveBar({ edit, tab }: { edit: ServerEdit; tab: ServerModalTab }) {
+  const { connection: c, profile: p } = edit;
+  const other = tab === 'profile' ? c.dirty : p.dirty;
+  const hint = c.endpointChanged
+    ? 'Смена адреса или пользователя сбросит отпечаток сервера: он запишется заново при первой проверке.'
+    : c.authTab !== 'keep'
+      ? 'Новые доступы проверяются настоящим подключением. Пароль не сохраняется.'
+      : tab === 'connection'
+        ? 'Название, теги и заметка на связь не влияют.'
+        : 'Профиль читает Джарвис, на работу сервера он не влияет.';
+  return (
+    <div className="flex flex-none items-center gap-3 border-t border-border bg-surface px-4 py-3.5 max-sm:flex-col max-sm:items-stretch md:px-5">
+      <div className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">
+        {edit.errors.form ? (
+          <p role="alert" className="m-0 text-crit">
+            {edit.errors.form}
+          </p>
+        ) : (
+          <>
+            {edit.dirty && (
+              <p className="m-0 font-medium text-text-2">
+                <span>Есть несохранённые изменения</span>
+                {other && (
+                  <span className="font-normal text-text-3">
+                    {tab === 'profile' ? ' — и на вкладке «Подключение»' : ' — и на вкладке «Профиль»'}.
+                    Сохранятся вместе.
+                  </span>
+                )}
+              </p>
+            )}
+            <p className={cn('m-0', edit.dirty && 'max-sm:hidden')}>{hint}</p>
+          </>
+        )}
+      </div>
+      <div className="flex flex-none gap-2 max-sm:flex-row-reverse">
+        {edit.dirty && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={edit.busy}
+            onClick={edit.reset}
+            className="h-10 rounded-[10px] px-4 max-sm:flex-1"
+          >
+            Отменить
+          </Button>
+        )}
+        <DialogPrimaryButton
+          type="button"
+          disabled={!edit.dirty || edit.busy}
+          onClick={() => void edit.save()}
+          className="h-10 rounded-[10px] px-5 max-sm:max-w-none max-sm:flex-1 sm:max-w-[180px]"
+        >
+          {edit.busy && <Loader2Icon className="animate-spin" aria-hidden="true" />}
+          Сохранить
+        </DialogPrimaryButton>
+      </div>
+    </div>
+  );
+}
 
 /** «Подключение»: общее и доступы SSH одним экраном; действия с сервером — в левой панели окна. */
-function ConnectionTab({ server }: { server: Server }) {
-  const update = useUpdateServer();
+function ConnectionTab({ server, edit }: { server: Server; edit: ServerEdit }) {
   const providers = useProviders();
-  const [form, setForm] = useState({ name: '', host: '', port: '22', sshUser: '', tags: '', notes: '' });
-  const [providerId, setProviderId] = useState<string | null>(null);
-  /** Что выбрали в поле «Страна»; null — не трогали, у сервера остаётся прежнее. */
-  const [countryPick, setCountryPick] = useState<CountryPick>(null);
-  const [authTab, setAuthTab] = useState<(typeof AUTH_TABS)[number]['key']>('keep');
-  const [password, setPassword] = useState('');
-  const [privateKey, setPrivateKey] = useState('');
-  const [passphrase, setPassphrase] = useState('');
-  const [errors, setErrors] = useState<Record<string, string>>({});
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: форма сбрасывается только при смене сервера, а не при каждом обновлении его объекта (проверка связи, дубль)
-  useEffect(() => {
-    setForm({
-      name: server.name,
-      host: server.host,
-      port: String(server.port),
-      sshUser: server.sshUser,
-      tags: server.tags.join(', '),
-      notes: server.notes ?? '',
-    });
-    setProviderId(server.providerId);
-    setCountryPick(null);
-    setAuthTab('keep');
-    setPassword('');
-    setPrivateKey('');
-    setPassphrase('');
-    setErrors({});
-  }, [server.id]);
-
-  const endpointChanged =
-    form.host !== server.host || form.port !== String(server.port) || form.sshUser !== server.sshUser;
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    const auth: SshAuth | undefined =
-      authTab === 'keep'
-        ? undefined
-        : authTab === 'password'
-          ? { method: 'password', password }
-          : authTab === 'key'
-            ? { method: 'key', privateKey, ...(passphrase ? { passphrase } : {}) }
-            : { method: 'panel-key' };
-    const parsed = updateServerRequestSchema.safeParse({
-      name: form.name,
-      host: form.host,
-      port: form.port,
-      sshUser: form.sshUser,
-      tags: form.tags
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean),
-      notes: form.notes.trim() ? form.notes.trim() : null,
-      providerId,
-      ...(countryPick ? { country: countryPick } : {}),
-      ...(auth ? { auth } : {}),
-    });
-    if (!parsed.success) {
-      const byPath: Record<string, string> = {};
-      for (const issue of parsed.error.issues) byPath[String(issue.path[0])] ??= issue.message;
-      setErrors(byPath);
-      return;
-    }
-    try {
-      await update.mutateAsync({ id: server.id, patch: parsed.data as UpdateServerRequest });
-      setErrors({});
-      setCountryPick(null);
-      toast.success(`«${parsed.data.name ?? server.name}» сохранён.`);
-    } catch (err) {
-      if (isApiError(err) && err.errors.length > 0) {
-        const byPath: Record<string, string> = {};
-        for (const er of err.errors) byPath[er.path] ??= er.message;
-        setErrors(byPath);
-      } else setErrors({ form: apiErrorMessage(err) });
-    }
-  };
-
-  const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    setForm((f) => ({ ...f, [key]: e.target.value }));
-    setErrors((p) => ({ ...p, [key]: '', form: '' }));
-  };
-
-  const busy = update.isPending;
+  const {
+    fields: form,
+    setField,
+    endpointChanged,
+    countryPick,
+    setCountryPick,
+    authTab,
+    setAuthTab,
+    password,
+    setPassword,
+    privateKey,
+    setPrivateKey,
+    passphrase,
+    setPassphrase,
+  } = edit.connection;
+  const errors = edit.errors;
+  const set =
+    (key: 'name' | 'host' | 'port' | 'sshUser' | 'tags' | 'notes') =>
+    (e: React.ChangeEvent<HTMLInputElement>) =>
+      setField(key, e.target.value);
+  const providerId = form.providerId;
+  const busy = edit.busy;
   const chosenProvider = providerId ? (providers.data?.items.find((p) => p.id === providerId) ?? null) : null;
 
   return (
     <form
-      onSubmit={submit}
+      // Enter в поле сохраняет всё, как кнопка «Сохранить» внизу окна.
+      onSubmit={(e) => {
+        e.preventDefault();
+        void edit.save();
+      }}
       noValidate
-      className="mx-auto flex min-h-full w-full max-w-[880px] flex-col gap-4"
+      className="mx-auto flex w-full max-w-[880px] flex-col gap-4"
     >
       {/* Общее */}
       <section className="rounded-2xl border border-border bg-surface-2/40 p-4">
@@ -678,10 +694,7 @@ function ConnectionTab({ server }: { server: Server }) {
                 id="sm-provider"
                 value={providerId}
                 disabled={busy}
-                onChange={(id) => {
-                  setProviderId(id);
-                  setErrors((p) => ({ ...p, providerId: '', form: '' }));
-                }}
+                onChange={(id) => setField('providerId', id)}
                 className="bg-surface-2"
               />
             </Field>
@@ -787,10 +800,7 @@ function ConnectionTab({ server }: { server: Server }) {
                   'h-full cursor-pointer rounded-[7px] px-3 text-[12px] font-medium text-text-3 transition-colors hover:text-foreground',
                   authTab === t.key && 'bg-surface text-foreground shadow-[0_1px_0_var(--ns-hairline)]',
                 )}
-                onClick={() => {
-                  setAuthTab(t.key);
-                  setErrors({});
-                }}
+                onClick={() => setAuthTab(t.key)}
               >
                 {t.label}
               </button>
@@ -847,29 +857,8 @@ function ConnectionTab({ server }: { server: Server }) {
         </div>
       </section>
 
-      {errors.form && (
-        <p role="alert" className="text-[12px] text-crit">
-          {errors.form}
-        </p>
-      )}
-      {/* Панель «Сохранить» закреплена у нижнего края прокрутки: кнопка видна всегда (витрина, вариант A) */}
-      <div className="sticky -bottom-4 z-10 -mx-4 -mb-4 mt-auto flex items-center gap-3 border-t border-border bg-surface/90 px-4 py-3.5 backdrop-blur-md max-sm:flex-col max-sm:items-stretch md:-bottom-5 md:-mx-5 md:-mb-5 md:px-5">
-        <p className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">
-          {endpointChanged
-            ? 'Смена адреса или пользователя сбросит отпечаток сервера: он запишется заново при первой проверке.'
-            : authTab !== 'keep'
-              ? 'Новые доступы проверяются настоящим подключением. Пароль не сохраняется.'
-              : 'Название, теги и заметка на связь не влияют.'}
-        </p>
-        <DialogPrimaryButton
-          type="submit"
-          disabled={busy}
-          className="h-10 rounded-[10px] px-5 max-sm:max-w-none sm:max-w-[180px]"
-        >
-          {update.isPending && <Loader2Icon className="animate-spin" aria-hidden="true" />}
-          Сохранить
-        </DialogPrimaryButton>
-      </div>
+      {/* Невидимая кнопка: без неё Enter в поле не отправляет форму (сама «Сохранить» — внизу окна) */}
+      <button type="submit" hidden tabIndex={-1} />
     </form>
   );
 }
