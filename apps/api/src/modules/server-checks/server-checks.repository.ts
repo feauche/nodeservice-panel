@@ -17,6 +17,7 @@ export function toCheckRun(r: ServerCheckRow): ServerCheckRun {
     finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
     output: r.output,
     error: r.error,
+    explanation: r.explanation,
   };
 }
 
@@ -45,6 +46,15 @@ export class ServerChecksRepository {
       .update(serverChecks)
       .set({ status, output, error, finishedAt: new Date() })
       .where(eq(serverChecks.id, id));
+  }
+
+  async findById(id: string): Promise<ServerCheckRow | undefined> {
+    const [row] = await this.db.select().from(serverChecks).where(eq(serverChecks.id, id)).limit(1);
+    return row;
+  }
+
+  async setExplanation(id: string, explanation: string): Promise<void> {
+    await this.db.update(serverChecks).set({ explanation }).where(eq(serverChecks.id, id));
   }
 
   async findRunning(serverId: string): Promise<ServerCheckRow | undefined> {

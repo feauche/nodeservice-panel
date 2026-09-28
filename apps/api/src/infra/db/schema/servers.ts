@@ -216,6 +216,8 @@ export const serverChecks = pgTable(
     finishedAt: timestamp('finished_at', { withTimezone: true }),
     output: text('output').notNull().default(''),
     error: text('error'),
+    /** Пересказ Джарвиса (миграция 0040). */
+    explanation: text('explanation'),
   },
   (t) => [
     index('server_checks_server_idx').on(t.serverId, t.check, t.startedAt),

@@ -12,6 +12,7 @@ import { notificationsHandlers, seedNotifications } from './notifications-mock';
 import { providersHandlers, seedProviders } from './providers-mock';
 import { remnawaveHandlers, seedRemnawave } from './remnawave-mock';
 import { mockSecurity, securityHandlers, seedSecurity } from './security-mock';
+import { resetServerChecks, serverChecksHandlers } from './server-checks-mock';
 import { seedServers, serversHandlers, terminalHistoryHandlers } from './servers-mock';
 
 /**
@@ -78,6 +79,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
   seedKnowledge();
   seedAssistant();
   seedAnalysis();
+  resetServerChecks();
   mockSnippets.items = [];
   Object.assign(mockState, {
     setupRequired: false,
@@ -161,6 +163,7 @@ export const handlers = [
   ...serversHandlers,
   ...terminalHistoryHandlers,
   ...maintenanceHandlers,
+  ...serverChecksHandlers,
   ...providersHandlers,
   ...remnawaveHandlers,
   ...metricsHandlers,

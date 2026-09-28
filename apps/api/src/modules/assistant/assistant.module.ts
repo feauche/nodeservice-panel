@@ -18,6 +18,8 @@ import { AssistantSettingsModule } from './assistant-settings.module.js';
 import { ChangesController } from './changes/changes.controller.js';
 import { ChangesRepository } from './changes/changes.repository.js';
 import { ChangesService } from './changes/changes.service.js';
+import { CheckExplainController } from './check-explain.controller.js';
+import { CheckExplainService } from './check-explain.service.js';
 import { FleetInventoryController } from './fleet-inventory.controller.js';
 import { FleetInventoryService } from './fleet-inventory.service.js';
 import { FleetProbeService } from './fleet-probe.service.js';
@@ -48,6 +50,7 @@ import { ZvenoProvider } from './zveno.provider.js';
     AssistantController,
     IncidentAnalysisController,
     TerminalHintController,
+    CheckExplainController,
     FleetInventoryController,
     ChangesController,
   ],
@@ -58,6 +61,7 @@ import { ZvenoProvider } from './zveno.provider.js';
     FleetInventoryService,
     ReadDepsService,
     TerminalHintService,
+    CheckExplainService,
     AssistantRepository,
     KbReviewService,
     ChangesRepository,

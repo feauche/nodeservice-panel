@@ -1,0 +1,56 @@
+import { screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { resetMockState } from '@/test/msw/handlers';
+import { mockServerChecks, seedServerChecks } from '@/test/msw/server-checks-mock';
+import { mockServers } from '@/test/msw/servers-mock';
+import { renderPage } from '@/test/render';
+import { ChecksTab } from './checks-tab';
+
+const server = () => {
+  const s = mockServers.items[0];
+  if (!s) throw new Error('нет мок-сервера');
+  return s;
+};
+
+describe('ChecksTab', () => {
+  beforeEach(() => resetMockState({ authenticated: true }));
+
+  it('лёгкие и тяжёлые — отдельно; статусы и вывод по раскрытию; «Объяснить» показывает пересказ', async () => {
+    seedServerChecks(server().id);
+    renderPage(() => <ChecksTab server={server()} />, '/');
+    const geo = await screen.findByTestId('check-geoblock');
+    expect(within(geo).getAllByText('Готово').length).toBeGreaterThan(0);
+    expect(within(screen.getByTestId('check-dpi')).getAllByText('Ошибка').length).toBeGreaterThan(0);
+    expect(within(screen.getByTestId('check-yabs')).getAllByText('Не запускалась').length).toBeGreaterThan(0);
+    expect(screen.getByText('Тяжёлые — только вручную')).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(within(geo).getByRole('button', { name: /Подробнее/ }));
+    expect(within(geo).getByTestId('check-output').textContent).toContain('spotify.com');
+    await user.click(within(geo).getByRole('button', { name: 'Объяснить' }));
+    expect(await within(geo).findByText(/не открывается только Spotify/)).toBeInTheDocument();
+  });
+
+  it('ручной запуск: строка идёт, вывод появляется и проверка завершается', async () => {
+    renderPage(() => <ChecksTab server={server()} />, '/');
+    const cpu = await screen.findByTestId('check-cpu');
+    const user = userEvent.setup();
+    await user.click(within(cpu).getByRole('button', { name: /Запустить/ }));
+    await waitFor(() => expect(mockServerChecks.runs.find((r) => r.check === 'cpu')?.status).toBe('ok'));
+    await waitFor(() => expect(within(cpu).getAllByText('Готово').length).toBeGreaterThan(0), {
+      timeout: 4000,
+    });
+  });
+
+  it('тяжёлая проверка — только после подтверждения', async () => {
+    renderPage(() => <ChecksTab server={server()} />, '/');
+    const yabs = await screen.findByTestId('check-yabs');
+    const user = userEvent.setup();
+    await user.click(within(yabs).getByRole('button', { name: /Запустить/ }));
+    expect(mockServerChecks.runs.some((r) => r.check === 'yabs')).toBe(false);
+    expect(await screen.findByText(/Тяжёлая проверка/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Запустить' }));
+    await waitFor(() => expect(mockServerChecks.runs.some((r) => r.check === 'yabs')).toBe(true));
+  });
+});

@@ -1,0 +1,266 @@
+import {
+  SERVER_CHECK_KEYS,
+  SERVER_CHECK_META,
+  type Server,
+  type ServerCheckKey,
+  type ServerCheckRun,
+} from '@nodeservice/shared';
+import { ChevronRightIcon, Loader2Icon, PlayIcon, SparklesIcon } from 'lucide-react';
+import { useState } from 'react';
+import { ConfirmDialog } from '@/components/confirm-dialog';
+import { JarvisIcon } from '@/components/jarvis-icon';
+import { Skeleton } from '@/components/ui/skeleton';
+import { formatAgo, formatIn } from '@/features/security/security-format';
+import { apiErrorMessage } from '@/lib/api';
+import { toast } from '@/lib/notify';
+import { cn } from '@/lib/utils';
+import { useExplainServerCheck, useRunServerCheck, useServerChecks } from '../server-checks-api';
+
+const LIGHT = SERVER_CHECK_KEYS.filter((k) => !SERVER_CHECK_META[k].heavy);
+const HEAVY = SERVER_CHECK_KEYS.filter((k) => SERVER_CHECK_META[k].heavy);
+
+function StatusBadge({ run }: { run: ServerCheckRun | undefined }) {
+  const [cls, label] = !run
+    ? ['bg-surface-3 text-text-3', 'Не запускалась']
+    : run.status === 'running'
+      ? ['bg-brand-soft text-brand', 'Идёт']
+      : run.status === 'ok'
+        ? ['bg-ok-soft text-ok', 'Готово']
+        : ['bg-crit-soft text-crit', 'Ошибка'];
+  return (
+    <span
+      className={cn(
+        'inline-flex h-[22px] items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-semibold whitespace-nowrap',
+        cls,
+      )}
+    >
+      {run?.status === 'running' ? (
+        <Loader2Icon className="size-3 animate-spin" aria-hidden="true" />
+      ) : (
+        <i className="size-1.5 rounded-full bg-current" aria-hidden="true" />
+      )}
+      {label}
+    </span>
+  );
+}
+
+function CheckRow({
+  check,
+  run,
+  busy,
+  onRun,
+  onExplain,
+  explaining,
+}: {
+  check: ServerCheckKey;
+  run: ServerCheckRun | undefined;
+  busy: boolean;
+  onRun: () => void;
+  onExplain: (runId: string) => void;
+  explaining: boolean;
+}) {
+  const meta = SERVER_CHECK_META[check];
+  const [open, setOpen] = useState(false);
+  const running = run?.status === 'running';
+  const canOpen = Boolean(run);
+  return (
+    <li className="border-t border-border px-4 py-3 first:border-t-0" data-testid={`check-${check}`}>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 md:grid-cols-[minmax(0,1fr)_130px_100px_172px]">
+        <div className="min-w-0">
+          <div className="text-[13.5px] font-semibold">{meta.label}</div>
+          <div className="text-[12px] text-text-3">{meta.what}</div>
+        </div>
+        <div className="max-md:hidden">
+          <StatusBadge run={run} />
+        </div>
+        <div className="text-[12px] text-text-3 max-md:hidden">{run ? formatAgo(run.startedAt) : '—'}</div>
+        <div className="flex items-center justify-end gap-1.5">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onRun}
+            title={busy ? 'На сервере уже идёт проверка' : meta.heavy ? meta.duration : undefined}
+            className={cn(
+              'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border bg-surface-2 px-3 text-[12.5px] font-medium whitespace-nowrap transition-colors disabled:cursor-default disabled:opacity-50',
+              meta.heavy
+                ? 'border-warn/40 text-warn hover:border-warn/70'
+                : 'border-border text-text-2 hover:border-border-2 hover:text-foreground',
+            )}
+          >
+            <PlayIcon className="size-3.5" aria-hidden="true" />
+            {meta.heavy ? 'Запустить…' : run ? 'Заново' : 'Запустить'}
+          </button>
+          {canOpen ? (
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-label={open ? `Свернуть «${meta.label}»` : `Подробнее: «${meta.label}»`}
+              onClick={() => setOpen((v) => !v)}
+              className="grid size-8 cursor-pointer place-items-center rounded-[8px] text-text-3 hover:bg-surface-3 hover:text-foreground"
+            >
+              <ChevronRightIcon
+                className={cn('size-4 transition-transform', open && 'rotate-90')}
+                aria-hidden="true"
+              />
+            </button>
+          ) : (
+            <span className="size-8" aria-hidden="true" />
+          )}
+        </div>
+      </div>
+      {/* На телефоне статус и время — под названием. */}
+      <div className="mt-1.5 flex items-center gap-2 md:hidden">
+        <StatusBadge run={run} />
+        {run && <span className="text-[12px] text-text-3">{formatAgo(run.startedAt)}</span>}
+      </div>
+      {open && run && (
+        <div className="mt-3 flex flex-col gap-2.5">
+          {run.error && <p className="m-0 text-[12.5px] text-crit">{run.error}</p>}
+          {!running && (
+            <div className="rounded-[10px] border border-ai/30 bg-ai-soft px-3 py-2.5 text-[12.5px]">
+              <div className="mb-1 flex items-center gap-1.5 text-[11.5px] font-semibold text-ai">
+                <JarvisIcon className="size-3.5" aria-hidden="true" />
+                Джарвис
+              </div>
+              {run.explanation ? (
+                <p className="m-0 whitespace-pre-line">{run.explanation}</p>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <span className="text-text-3">
+                    Прочитает вывод и перескажет простыми словами, что он значит для сервера.
+                  </span>
+                  <button
+                    type="button"
+                    disabled={explaining}
+                    onClick={() => onExplain(run.id)}
+                    className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-ai/35 bg-surface-2 px-3 text-[12.5px] font-medium text-ai disabled:opacity-60"
+                  >
+                    {explaining ? (
+                      <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <SparklesIcon className="size-3.5" aria-hidden="true" />
+                    )}
+                    {explaining ? 'Читаю вывод…' : 'Объяснить'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          <pre
+            data-testid="check-output"
+            className="m-0 max-h-[260px] overflow-auto rounded-[10px] border border-border bg-bg-2 px-3 py-2.5 font-mono text-[11.5px] leading-[1.55] text-text-2"
+          >
+            {run.output || (running ? 'Ждём первые строки вывода…' : 'Вывода нет.')}
+          </pre>
+          <p className="m-0 text-[11.5px] text-text-3">Скрипт: {meta.source}.</p>
+        </div>
+      )}
+    </li>
+  );
+}
+
+/**
+ * Вкладка «Проверки» (R5/J9, витрина `server-checks-variants.html`, вариант A): лёгкие проверки
+ * панель повторяет сама раз в сутки, тяжёлые — только по кнопке с подтверждением. Вывод сырой;
+ * пересказ простыми словами — по кнопке «Объяснить» у Джарвиса, сохраняется у запуска.
+ */
+export function ChecksTab({ server }: { server: Server }) {
+  const checks = useServerChecks(server.id);
+  const run = useRunServerCheck(server.id);
+  const explain = useExplainServerCheck(server.id);
+  const [confirm, setConfirm] = useState<ServerCheckKey | null>(null);
+  const [explainingId, setExplainingId] = useState<string | null>(null);
+
+  if (checks.isPending)
+    return (
+      <div className="flex flex-col gap-3">
+        <Skeleton className="h-5 w-2/3 rounded-md" />
+        <Skeleton className="h-[280px] rounded-2xl" />
+        <Skeleton className="h-[120px] rounded-2xl" />
+      </div>
+    );
+  if (checks.isError)
+    return (
+      <p
+        role="alert"
+        className="rounded-[12px] border border-crit/30 bg-crit-soft px-4 py-3 text-[13px] text-crit"
+      >
+        {apiErrorMessage(checks.error)}
+      </p>
+    );
+
+  const byKey = new Map(checks.data.items.map((r) => [r.check, r]));
+  const busy = run.isPending || checks.data.items.some((r) => r.status === 'running');
+  const start = async (check: ServerCheckKey, confirmHeavy = false) => {
+    try {
+      await run.mutateAsync({ check, confirmHeavy });
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    }
+  };
+  const onExplain = async (runId: string) => {
+    setExplainingId(runId);
+    try {
+      await explain.mutateAsync(runId);
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setExplainingId(null);
+    }
+  };
+  const row = (k: ServerCheckKey) => (
+    <CheckRow
+      key={k}
+      check={k}
+      run={byKey.get(k)}
+      busy={busy}
+      onRun={() => (SERVER_CHECK_META[k].heavy ? setConfirm(k) : void start(k))}
+      onExplain={(id) => void onExplain(id)}
+      explaining={explainingId !== null && explainingId === byKey.get(k)?.id}
+    />
+  );
+  const next = checks.data.nextAutoAt;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="m-0 mb-2 text-[12.5px] text-text-2">
+        Лёгкие проверки панель повторяет сама <b className="text-foreground">раз в сутки</b>
+        {next
+          ? `, следующая — ${formatIn(next) === 'уже истекла' ? 'в ближайшие минуты' : formatIn(next)}`
+          : ', первая — в ближайшее время'}
+        . На одном сервере одновременно идёт одна проверка.
+      </p>
+      <h3 className="m-0 px-0.5 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
+        Каждый день, автоматически
+      </h3>
+      <ul className="m-0 list-none overflow-hidden rounded-2xl border border-border bg-surface p-0">
+        {LIGHT.map(row)}
+      </ul>
+      <h3 className="m-0 mt-3 flex items-baseline gap-2 px-0.5 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
+        Тяжёлые — только вручную
+        <span className="text-[11.5px] font-normal tracking-normal normal-case">долго и тратят трафик</span>
+      </h3>
+      <ul className="m-0 list-none overflow-hidden rounded-2xl border border-border bg-surface p-0">
+        {HEAVY.map(row)}
+      </ul>
+      <ConfirmDialog
+        open={confirm !== null}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        kind="warn"
+        title={confirm ? `Запустить «${SERVER_CHECK_META[confirm].label}» на «${server.name}»?` : ''}
+        description={
+          confirm
+            ? `Тяжёлая проверка: ${SERVER_CHECK_META[confirm].duration}. Пока она идёт, скорость у пользователей этого сервера может просесть. Остановить её из панели нельзя — она закончится сама.`
+            : ''
+        }
+        yesLabel="Запустить"
+        loading={run.isPending}
+        onConfirm={async () => {
+          const k = confirm;
+          setConfirm(null);
+          if (k) await start(k, true);
+        }}
+      />
+    </div>
+  );
+}

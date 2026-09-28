@@ -1,4 +1,4 @@
-import { DEFAULT_SERVER_COUNTRY } from '@nodeservice/shared';
+import { type BlockProbeResult, DEFAULT_SERVER_COUNTRY } from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -6,7 +6,9 @@ import {
   combineVerdicts,
   isSafeBlockCheckTarget,
   parseBlockCheckOutput,
+  pickForeignProbes,
   pickRuProbes,
+  withForeign,
 } from './block-check.logic.js';
 
 const country = (code: string | null) => ({ ...DEFAULT_SERVER_COUNTRY, code });
@@ -155,5 +157,38 @@ describe('combineVerdicts', () => {
     expect(combineVerdicts([mk('tspu'), mk('unreachable')])).toBe('tspu');
     expect(combineVerdicts([mk('unreachable'), mk('ok')])).toBe('unreachable');
     expect(combineVerdicts([mk('ok'), mk('ok')])).toBe('ok');
+  });
+});
+
+describe('встречная проверка из-за рубежа', () => {
+  const mk = (verdict: BlockProbeResult['verdict']): BlockProbeResult => ({
+    from: 'x',
+    verdict,
+    detail: '',
+    stalledAtKb: null,
+    error: null,
+  });
+  it('из России молчит, из-за рубежа отвечает — блокировка IP; молчит везде — недоступен', () => {
+    expect(withForeign('unreachable', [mk('ok')])).toBe('ip_block');
+    expect(withForeign('unreachable', [mk('unreachable')])).toBe('unreachable');
+    expect(withForeign('unreachable', [])).toBe('unreachable');
+    expect(withForeign('tspu', [mk('ok')])).toBe('tspu');
+  });
+  it('зарубежные — только с рабочим SSH, известной страной не RU и не сама нода', () => {
+    const s = (id: string, code: string | null, sshOk: boolean | null = true) => ({
+      id,
+      name: id,
+      sshOk,
+      country: { code } as never,
+    });
+    expect(
+      pickForeignProbes('self', [
+        s('self', 'DE'),
+        s('ru', 'RU'),
+        s('none', null),
+        s('dead', 'NL', false),
+        s('de', 'DE'),
+      ]).map((x) => x.id),
+    ).toEqual(['de']);
   });
 });

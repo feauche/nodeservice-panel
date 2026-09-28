@@ -4,6 +4,7 @@ import { handlers, resetMockState } from '@/test/msw/handlers';
 import { mockIncidents } from '@/test/msw/incidents-mock';
 import { mockMaintenance } from '@/test/msw/maintenance-mock';
 import { mockProviders } from '@/test/msw/providers-mock';
+import { mockServerChecks, seedServerChecks } from '@/test/msw/server-checks-mock';
 import { mockServers } from '@/test/msw/servers-mock';
 import { installMockTerminalSocket } from './terminal-ws';
 
@@ -20,6 +21,9 @@ export async function startMockWorker(): Promise<void> {
   // Попытка починки в браузере идёт как на живой ноде — по шагу в секунду с небольшим.
   mockIncidents.stepMs = 1200;
   mockAnalysis.stepMs = 1500;
+  // Проверки: у первого сервера уже есть суточные результаты; ручной запуск печатает вывод по строке.
+  mockServerChecks.speedMs = 900;
+  for (const s of mockServers.items.slice(0, 1)) seedServerChecks(s.id);
   (window as unknown as { __nsMockAnalysis: typeof mockAnalysis }).__nsMockAnalysis = mockAnalysis;
   (window as unknown as { __nsMockIncidents: typeof mockIncidents }).__nsMockIncidents = mockIncidents;
   (window as unknown as { __nsMockMaintenance: typeof mockMaintenance }).__nsMockMaintenance =

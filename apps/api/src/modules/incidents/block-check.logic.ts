@@ -33,6 +33,30 @@ export function pickRuProbes(
     .slice(0, max);
 }
 
+/** Зарубежные серверы парка с рабочим SSH (страна известна и не Россия), не сама проверяемая нода. */
+export function pickForeignProbes(
+  excludeServerId: string | null,
+  all: Pick<Server, 'id' | 'name' | 'sshOk' | 'country'>[],
+  max = 2,
+): Pick<Server, 'id' | 'name'>[] {
+  return all
+    .filter(
+      (s) =>
+        s.id !== excludeServerId && s.sshOk === true && s.country.code !== null && s.country.code !== 'RU',
+    )
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+    .slice(0, max);
+}
+
+/**
+ * Итог с учётом встречной проверки из-за рубежа: из России порт не отвечает ни с одного сервера, а из-за
+ * рубежа отвечает хотя бы с одного — сервер жив, закрыт именно путь из России (блокировка IP).
+ */
+export function withForeign(ruVerdict: BlockVerdict, foreign: BlockProbeResult[]): BlockVerdict {
+  if (ruVerdict !== 'unreachable') return ruVerdict;
+  return foreign.some((p) => p.verdict === 'ok') ? 'ip_block' : 'unreachable';
+}
+
 /**
  * Адрес и имя маскировки приходят из Remnawave — панель эти данные не создаёт и не проверяет на
  * стороне Remnawave, а подставляет их в команду для ДРУГОГО сервера парка по SSH. Разрешаем только
@@ -197,7 +221,7 @@ export function parseBlockCheckOutput(from: string, stdout: string): BlockProbeR
  */
 export function combineVerdicts(probes: BlockProbeResult[]): BlockVerdict {
   if (probes.length === 0) return 'unreachable';
-  const priority: BlockVerdict[] = ['block_16_20', 'tspu', 'unreachable', 'ok'];
+  const priority: BlockVerdict[] = ['block_16_20', 'tspu', 'ip_block', 'unreachable', 'ok'];
   for (const v of priority) if (probes.some((p) => p.verdict === v)) return v;
   return 'ok';
 }

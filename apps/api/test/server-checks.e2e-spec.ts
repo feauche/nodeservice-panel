@@ -19,6 +19,7 @@ import { setupHttp } from '../src/common/http/setup-http.js';
 import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
+import { LLM_PROVIDER, type LlmRunInput } from '../src/modules/assistant/llm.provider.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
 import { FakeSsh, SSH_PASSWORD, SSH_USER } from './fake-ssh.js';
 
@@ -33,6 +34,16 @@ describe('server checks e2e', () => {
   let agent: InstanceType<typeof TestAgent>;
   let csrf: string;
   const ssh = new FakeSsh();
+  const llmCalls: LlmRunInput[] = [];
+  const llm = {
+    run: async (input: LlmRunInput) => {
+      llmCalls.push(input);
+      return {
+        stopReason: 'end' as const,
+        blocks: [{ type: 'text' as const, text: 'Геоблока нет, всё открывается.' }],
+      };
+    },
+  };
   let serverId = '';
 
   const list = async (): Promise<ServerChecksResponse> =>
@@ -55,7 +66,10 @@ describe('server checks e2e', () => {
 
   beforeAll(async () => {
     await ssh.start();
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(LLM_PROVIDER)
+      .useValue(llm)
+      .compile();
     app = moduleRef.createNestApplication<NestExpressApplication>({ bufferLogs: false, logger: false });
     setupHttp(app as NestExpressApplication);
     const db = app.get<Db>(DB);
@@ -150,5 +164,26 @@ describe('server checks e2e', () => {
         .sort(),
     ).toEqual(['cpu', 'ip_quality', 'ip_region'].sort());
     expect(res.items.some((r) => r.check === 'iperf3_ru')).toBe(false);
+  });
+
+  it('«Объяснить»: без настроенного Джарвиса — 409; с ним — пересказ сохраняется у запуска и второй раз модель не зовётся', async () => {
+    const geo = (await list()).items.find((r) => r.check === 'geoblock');
+    if (!geo) throw new Error('нет запуска геоблока');
+    const url = `/api/servers/${serverId}/checks/runs/${geo.id}/explain`;
+    await agent.post(url).set(CSRF_HEADER, csrf).expect(409);
+    await agent
+      .put('/api/settings/assistant')
+      .set(CSRF_HEADER, csrf)
+      .send({ apiKey: 'sk-test-0123456789', model: 'anthropic/claude-sonnet-4-5' })
+      .expect(200);
+    const first = await agent.post(url).set(CSRF_HEADER, csrf).expect(200);
+    expect(first.body.explanation).toBe('Геоблока нет, всё открывается.');
+    expect(llmCalls).toHaveLength(1);
+    expect(JSON.stringify(llmCalls[0]?.messages)).toContain('проверка geoblock');
+    await agent.post(url).set(CSRF_HEADER, csrf).expect(200);
+    expect(llmCalls).toHaveLength(1);
+    expect((await list()).items.find((r) => r.id === geo.id)?.explanation).toBe(
+      'Геоблока нет, всё открывается.',
+    );
   });
 });

@@ -139,7 +139,7 @@ export class NodeAnomalyJob {
         ? `${BLOCK_VERDICT_LABELS[result.verdict]} · ${node.name}`
         : `Резко упал онлайн, порт отвечает · ${node.name}`;
       detail = confirmed
-        ? `${dropLine} С серверов парка (${fromList}) порт ноды не отвечает совсем: сервер выключен, отключён хостером или арендодателем, либо закрыт firewall.`
+        ? `${dropLine} С российских серверов парка (${fromList}) порт ноды не отвечает совсем.`
         : `${dropLine} С серверов парка (${fromList}) порт ноды отвечает. Проверить блокировку ТСПУ и «16–20 КБ» не удалось: в Remnawave не нашлось имени маскировки этой ноды.`;
     } else {
       const fromList = result.probes.map((p) => p.from).join(', ');
@@ -148,6 +148,15 @@ export class NodeAnomalyJob {
         ? `${BLOCK_VERDICT_LABELS[result.verdict]} · ${node.name}`
         : `Резко упал онлайн, блокировка не подтвердилась · ${node.name}`;
       detail = `${dropLine} Проверено с серверов парка: ${fromList}. Вывод: ${BLOCK_VERDICT_LABELS[result.verdict]}. Подробности по каждому серверу: ${perProbe}.`;
+    }
+    // Встречная проверка из-за рубежа: называем прямо, что показала — это главный довод за или против.
+    if (result.foreign.length > 0) {
+      const alive = result.foreign.filter((p) => p.verdict === 'ok').map((p) => p.from);
+      const dead = result.foreign.filter((p) => p.verdict !== 'ok').map((p) => p.from);
+      detail +=
+        result.verdict === 'ip_block'
+          ? ` Из-за рубежа порт отвечает (${alive.join(', ')}): сервер жив, закрыт именно путь из России — похоже на блокировку IP. Обычно помогает только смена IP.`
+          : ` Из-за рубежа порт тоже не отвечает (${dead.join(', ')}): сервер, скорее всего, выключен, отключён хостером или арендодателем, либо закрыт firewall.`;
     }
     await this.incidents.open({
       serverId: matched?.id ?? null,

@@ -314,4 +314,40 @@ describe('J10: аномалия онлайна → проверка блокир
     );
     expect(after.items.some((i) => i.serverName === 'пятая-нода')).toBe(true);
   });
+
+  it('из России порт молчит, а с зарубежного сервера парка отвечает → крит «Похоже на блокировку IP из России»', async () => {
+    // Второй сервер парка — «зарубежный»: тот же тестовый sshd, страна вручную DE.
+    await agent
+      .post('/api/servers')
+      .set(CSRF_HEADER, csrf)
+      .send({
+        name: 'de-probe',
+        host: 'localhost',
+        port: ssh.port,
+        sshUser: SSH_USER,
+        auth: { method: 'password', password: SSH_PASSWORD },
+        country: { mode: 'manual', code: 'DE' },
+      })
+      .expect(201);
+    fake.node = { uuid: 'node-6', name: 'шестая-нода', address: '198.51.100.14', online: 100 };
+    fake.inbound = { sni: 'www.example.com', port: 8443 };
+    ssh.blockCheckOutput = '{"stage":"tcp","ok":false,"stalledAtKb":null}';
+    ssh.blockCheckPortOnlyOutput = '{"stage":"port","ok":true,"stalledAtKb":null}';
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run();
+    fake.node.online = 5;
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run();
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run();
+
+    const list = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=open').expect(200)).body,
+    );
+    const inc = list.items.find((i) => i.serverName === 'шестая-нода');
+    expect(inc?.severity).toBe('crit');
+    expect(inc?.title).toContain('блокировку IP из России');
+    expect(inc?.detail).toContain('Из-за рубежа порт отвечает (de-probe)');
+    ssh.blockCheckPortOnlyOutput = null;
+  });
 });

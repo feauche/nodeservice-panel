@@ -108,6 +108,8 @@ export const serverCheckRunSchema = z.object({
   /** Вывод скрипта без цветовых кодов. */
   output: z.string(),
   error: z.string().nullable(),
+  /** Пересказ Джарвиса по кнопке «Объяснить»; null — ещё не просили. Привязан к этому запуску. */
+  explanation: z.string().nullable(),
 });
 export type ServerCheckRun = z.infer<typeof serverCheckRunSchema>;
 

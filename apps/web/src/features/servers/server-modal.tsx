@@ -42,6 +42,7 @@ import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
 import { CountryField } from './country-field';
 import { AgentPill, HealthDot, osLine, SshPill } from './server-card';
+import { ChecksTab } from './server-detail/checks-tab';
 import { InstallTab } from './server-detail/install-tab';
 import { JournalTab } from './server-detail/journal-tab';
 import { MaintenanceTab } from './server-detail/maintenance-tab';
@@ -57,6 +58,7 @@ export type ServerModalTab =
   | 'journal'
   | 'terminal'
   | 'maintenance'
+  | 'checks'
   | 'profile'
   | 'connection'
   | 'install';
@@ -66,6 +68,7 @@ const TABS: Array<{ key: ServerModalTab; label: string }> = [
   { key: 'journal', label: 'Журнал' },
   { key: 'terminal', label: 'Терминал' },
   { key: 'maintenance', label: 'Обслуживание' },
+  { key: 'checks', label: 'Проверки' },
   { key: 'install', label: 'Установка' },
   { key: 'profile', label: 'Профиль' },
   { key: 'connection', label: 'Подключение' },
@@ -207,6 +210,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
       {tab === 'journal' && <JournalTab serverId={s.id} />}
       {tab === 'terminal' && <TerminalHistoryTab serverId={s.id} />}
       {tab === 'maintenance' && <MaintenanceTab server={s} />}
+      {tab === 'checks' && <ChecksTab server={s} />}
       {tab === 'install' && <InstallTab server={s} />}
       {tab === 'profile' && <ProfileTab server={s} edit={edit.profile} />}
       {tab === 'connection' && <ConnectionTab server={s} edit={edit} />}
@@ -242,7 +246,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
   const tabsBar = (
     <fieldset
       className={cn(
-        'm-0 flex h-10 min-w-0 items-center rounded-[11px] border border-border bg-surface-2 p-[3px]',
+        'm-0 flex h-10 min-w-0 items-center overflow-x-auto rounded-[11px] border border-border bg-surface-2 p-[3px] [scrollbar-width:none]',
         phone && 'h-9 w-full overflow-x-auto [scrollbar-width:none]',
       )}
     >
@@ -254,7 +258,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
           aria-pressed={tab === t.key}
           onClick={() => setTab(t.key)}
           className={cn(
-            'h-full flex-none cursor-pointer rounded-[8px] px-4 text-[13px] font-semibold whitespace-nowrap text-text-3 transition-colors hover:text-foreground',
+            'h-full flex-none cursor-pointer rounded-[8px] px-3 text-[13px] font-semibold whitespace-nowrap text-text-3 transition-colors hover:text-foreground',
             phone && 'px-3',
             tab === t.key && 'bg-surface text-foreground shadow-[0_1px_0_var(--ns-hairline)]',
           )}

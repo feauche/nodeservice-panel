@@ -45,6 +45,8 @@ export class FakeSsh {
   maintenance = { updates: 3, security: 1, reboot: false, failStep: '' as string };
   /** J10: что «печатает» проверка блокировки (ns-blockcheck) — одна строка JSON вида parseBlockCheckOutput. */
   blockCheckOutput = '{"stage":"data","ok":true,"stalledAtKb":null}';
+  /** Проверка только порта (имя маскировки пустое, так идёт встречная проверка из-за рубежа); null — как blockCheckOutput. */
+  blockCheckPortOnlyOutput: string | null = null;
   /** Реестр проверок (ns-check): вывод по ключу и код выхода (по умолчанию 0). */
   checks: { output: Record<string, string>; code: Record<string, number> } = { output: {}, code: {} };
 
@@ -133,7 +135,10 @@ export class FakeSsh {
                 );
                 stream.exit(this.checks.code[key] ?? 0);
               } else if (info.command.includes('# ns-blockcheck')) {
-                stream.write(`${this.blockCheckOutput}\n`);
+                const portOnly = info.command.replaceAll("'\\''", "'").includes("sni=''\n");
+                stream.write(
+                  `${portOnly && this.blockCheckPortOnlyOutput !== null ? this.blockCheckPortOnlyOutput : this.blockCheckOutput}\n`,
+                );
                 stream.exit(0);
               } else if (info.command.includes('ns-reach')) {
                 const state = this.reachQueue.shift() ?? 'open';

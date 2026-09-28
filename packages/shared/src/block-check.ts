@@ -27,10 +27,11 @@ export const BLOCK_CHECK_ATTEMPTS = 3;
 export const BLOCK_CHECK_CONNECT_TIMEOUT_SEC = 8;
 export const BLOCK_CHECK_READ_TIMEOUT_SEC = 12;
 
-export const BLOCK_VERDICTS = ['unreachable', 'tspu', 'block_16_20', 'ok'] as const;
+export const BLOCK_VERDICTS = ['unreachable', 'ip_block', 'tspu', 'block_16_20', 'ok'] as const;
 export type BlockVerdict = (typeof BLOCK_VERDICTS)[number];
 export const BLOCK_VERDICT_LABELS: Record<BlockVerdict, string> = {
   unreachable: 'Сервер недоступен',
+  ip_block: 'Похоже на блокировку IP из России',
   tspu: 'Похоже на блокировку ТСПУ',
   block_16_20: 'Похоже на блок «16–20 КБ»',
   ok: 'Проблем не обнаружено',
@@ -55,6 +56,12 @@ export const blockCheckResultSchema = z.object({
   /** null — SNI ноды не удалось определить (например, инбаунд не Reality), проверка не запускалась. */
   sniUsed: z.string().nullable(),
   probes: z.array(blockProbeResultSchema),
+  /**
+   * Встречная проверка порта с зарубежных серверов парка — только когда из России порт не отвечает.
+   * Из России нет, из-за рубежа есть — так выглядит блокировка IP на стороне России (тот же приём, что
+   * «SSH из России без VPN не заходит, а через VPN заходит»). Пусто — не понадобилась или не с чего.
+   */
+  foreign: z.array(blockProbeResultSchema).default([]),
   /** Итоговый вердикт по всем пробам вместе (см. combineVerdicts). */
   verdict: z.enum(BLOCK_VERDICTS),
 });

@@ -13,7 +13,9 @@ import {
   combineVerdicts,
   isSafeBlockCheckTarget,
   parseBlockCheckOutput,
+  pickForeignProbes,
   pickRuProbes,
+  withForeign,
 } from './block-check.logic.js';
 
 /**
@@ -94,6 +96,7 @@ export class NodeBlockCheckService {
         address,
         sniUsed: null,
         probes: [],
+        foreign: [],
         verdict: 'unreachable',
       };
     const probers = pickRuProbes(excludeServerId, allServers);
@@ -103,9 +106,26 @@ export class NodeBlockCheckService {
         address,
         sniUsed: sni || null,
         probes: [],
+        foreign: [],
         verdict: 'unreachable',
       };
     const probes = await Promise.all(probers.map((p) => this.probeFrom(p, address, port, sni || null)));
-    return { nodeName, address, sniUsed: sni || null, probes, verdict: combineVerdicts(probes) };
+    const ruVerdict = combineVerdicts(probes);
+    // Из России порт молчит — тот же вопрос, что владелец решает руками («по SSH из России не заходит,
+    // а через VPN заходит»): стучимся в тот же порт с зарубежных серверов парка. Только порт, без TLS.
+    const foreign =
+      ruVerdict === 'unreachable'
+        ? await Promise.all(
+            pickForeignProbes(excludeServerId, allServers).map((p) => this.probeFrom(p, address, port, null)),
+          )
+        : [];
+    return {
+      nodeName,
+      address,
+      sniUsed: sni || null,
+      probes,
+      foreign,
+      verdict: withForeign(ruVerdict, foreign),
+    };
   }
 }
