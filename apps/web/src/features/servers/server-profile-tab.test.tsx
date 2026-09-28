@@ -352,4 +352,19 @@ describe('вкладка «Профиль» (J3, A5 + R2 + C3)', () => {
     expect(within(dialog).getByRole('button', { name: 'Профиль' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(dialog).getByLabelText('Окно обслуживания')).toBeInTheDocument();
   });
+
+  it('вкладка «Установка»: готовая команда копируется, ничего не выполняется панелью', async () => {
+    const { dialog } = await openProfile();
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole('button', { name: 'Установка' }));
+    expect(
+      within(dialog).getByText(
+        /bash <\(curl -sL https:\/\/raw\.githubusercontent\.com\/feauche\/remnanode-installer/,
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText(/секретный ключ ноды/i)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Скопировать команду' }));
+    const copied = await navigator.clipboard.readText();
+    expect(copied).toContain('raw.githubusercontent.com/feauche/remnanode-installer');
+  });
 });

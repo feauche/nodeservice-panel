@@ -42,6 +42,7 @@ import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
 import { CountryField } from './country-field';
 import { AgentPill, HealthDot, osLine, SshPill } from './server-card';
+import { InstallTab } from './server-detail/install-tab';
 import { JournalTab } from './server-detail/journal-tab';
 import { MaintenanceTab } from './server-detail/maintenance-tab';
 import { MetricsTab } from './server-detail/metrics-tab';
@@ -51,7 +52,14 @@ import { AUTH_TABS, type ServerEdit, useServerEdit } from './server-detail/use-s
 import { serverHealth } from './server-health';
 import { useCheckServer, useDeleteServer, useDuplicateServer } from './servers-api';
 
-export type ServerModalTab = 'metrics' | 'journal' | 'terminal' | 'maintenance' | 'profile' | 'connection';
+export type ServerModalTab =
+  | 'metrics'
+  | 'journal'
+  | 'terminal'
+  | 'maintenance'
+  | 'profile'
+  | 'connection'
+  | 'install';
 
 const TABS: Array<{ key: ServerModalTab; label: string }> = [
   { key: 'metrics', label: 'Метрики' },
@@ -60,6 +68,7 @@ const TABS: Array<{ key: ServerModalTab; label: string }> = [
   { key: 'maintenance', label: 'Обслуживание' },
   { key: 'profile', label: 'Профиль' },
   { key: 'connection', label: 'Подключение' },
+  { key: 'install', label: 'Установка' },
 ];
 
 interface Props {
@@ -200,6 +209,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
       {tab === 'maintenance' && <MaintenanceTab server={s} />}
       {tab === 'profile' && <ProfileTab server={s} edit={edit.profile} />}
       {tab === 'connection' && <ConnectionTab server={s} edit={edit} />}
+      {tab === 'install' && <InstallTab server={s} />}
     </>
   );
   const dialogs = (
