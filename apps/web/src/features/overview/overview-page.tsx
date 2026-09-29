@@ -25,7 +25,7 @@ import { ResultPill } from '@/features/audit/audit-row';
 import { BillingTile } from '@/features/billing/billing-tile';
 import { useIncidents } from '@/features/incidents/incidents-api';
 import { useRemnawaveStatus } from '@/features/remnawave/remnawave-api';
-import { formatByteTotal } from '@/features/remnawave/remnawave-page';
+import { formatByteTotal, nodesOnline } from '@/features/remnawave/remnawave-page';
 import {
   CPU_WARN_PCT,
   MEM_WARN_PCT,
@@ -235,7 +235,7 @@ function RemnawaveTile() {
           Remnawave: {s.stats.nodesOnline} из {s.stats.nodesTotal} нод на связи
         </div>
         <div className="text-[12px] text-text-3">
-          {s.stats.online.now} пользователей онлайн из {s.stats.users.total} ·{' '}
+          {nodesOnline(s.nodes)} онлайн на нодах · {s.stats.users.total} пользователей ·{' '}
           {formatByteTotal(s.stats.trafficBytesLifetime)} трафика
         </div>
       </div>

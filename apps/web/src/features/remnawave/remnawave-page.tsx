@@ -23,6 +23,7 @@ import { useServers } from '@/features/servers/servers-api';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
+import { plural } from '@/lib/plural';
 import { cn } from '@/lib/utils';
 import {
   useConnectRemnawave,
@@ -67,11 +68,19 @@ function Tile({ caps, value, sub }: { caps: string; value: string; sub?: string 
 }
 
 /** Сводка (B2): пользователи, онлайн сейчас, ноды на связи, трафик всего. */
-function StatsTiles({ stats }: { stats: RemnawaveStats }) {
+/** Онлайн на нодах — сумма подключённых по всем нодам (то, что реально идёт через серверы). */
+export const nodesOnline = (nodes: readonly RemnawaveNode[]): number =>
+  nodes.reduce((sum, n) => sum + (n.usersOnline ?? 0), 0);
+
+function StatsTiles({ stats, nodes }: { stats: RemnawaveStats; nodes: readonly RemnawaveNode[] }) {
   return (
     <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
       <Tile caps="Пользователей" value={String(stats.users.total)} />
-      <Tile caps="Онлайн сейчас" value={String(stats.online.now)} />
+      <Tile
+        caps="Онлайн на нодах"
+        value={String(nodesOnline(nodes))}
+        sub={`подписок в сети ${stats.online.now}`}
+      />
       <Tile caps="Нод на связи" value={String(stats.nodesOnline)} sub={`из ${stats.nodesTotal}`} />
       <Tile caps="Трафик всего" value={formatByteTotal(stats.trafficBytesLifetime)} />
     </div>
@@ -153,55 +162,58 @@ function NodeRow({ node, matched, onAdd }: { node: RemnawaveNode; matched: boole
 }
 
 /** Плашка про срок TLS-сертификата домена панели (D1) — своя проверка, не данные из API Remnawave. */
-function CertBanner({ cert, domain }: { cert: RemnawaveCert; domain: string }) {
-  if (cert.status === 'unknown')
-    return (
-      <div className="flex items-start gap-2.5 rounded-2xl border border-border bg-surface-2 px-4 py-3 text-[12.5px] text-text-2">
-        <ShieldQuestionIcon className="mt-0.5 size-4 flex-none text-text-3" aria-hidden="true" />
-        <div>
-          <div className="font-semibold">Сертификат панели не проверен</div>
-          <div className="text-text-3">{cert.note ?? 'Не удалось проверить сертификат по HTTPS.'}</div>
-        </div>
-      </div>
-    );
+const SHORT_DATE = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short' });
+const daysWord = (n: number) => plural(n, 'день', 'дня', 'дней');
+
+/**
+ * Сертификат панели — метка под доменом (витрина `remnawave-cert-variants.html`, A): зелёная — в порядке,
+ * жёлтая — скоро истечёт, красная — истёк, серая — не проверен. Точная дата и совет — в подсказке.
+ */
+function CertChip({ cert, domain }: { cert: RemnawaveCert; domain: string }) {
   const days = cert.daysLeft ?? 0;
   const when = cert.expiresAt ? formatDate(cert.expiresAt) : '—';
-  if (cert.status === 'ok')
-    return (
-      <div className="flex items-start gap-2.5 rounded-2xl border border-ok/30 bg-ok-soft px-4 py-3 text-[12.5px] text-ok">
-        <ShieldCheckIcon className="mt-0.5 size-4 flex-none" aria-hidden="true" />
-        <div>
-          <div className="font-semibold">Сертификат в порядке</div>
-          <div className="opacity-90">
-            {domain}, до {when} (ещё {days} {days === 1 ? 'день' : days < 5 ? 'дня' : 'дней'})
-          </div>
-        </div>
-      </div>
-    );
-  const crit = cert.status === 'expired';
+  const short = cert.expiresAt ? SHORT_DATE.format(new Date(cert.expiresAt)).replace('.', '') : '—';
+  const view =
+    cert.status === 'unknown'
+      ? {
+          tone: 'bg-surface-3 text-text-2',
+          Icon: ShieldQuestionIcon,
+          text: 'Сертификат не проверен',
+          title: cert.note ?? 'Не удалось проверить сертификат по HTTPS.',
+        }
+      : cert.status === 'ok'
+        ? {
+            tone: 'bg-ok-soft text-ok',
+            Icon: ShieldCheckIcon,
+            text: `Сертификат до ${short} · ${days} ${daysWord(days)}`,
+            title: `${domain}: сертификат в порядке, до ${when}.`,
+          }
+        : cert.status === 'expired'
+          ? {
+              tone: 'bg-crit-soft text-crit',
+              Icon: ShieldAlertIcon,
+              text: `Сертификат истёк ${short}`,
+              title: `${domain}: сертификат просрочен с ${when}. Часть функций Remnawave может быть недоступна.`,
+            }
+          : {
+              tone: 'bg-warn-soft text-warn',
+              Icon: ShieldAlertIcon,
+              text: `Сертификат истекает через ${days} ${daysWord(days)}`,
+              title: `${domain}: сертификат до ${when}. Продлите его на самом сервере панели.`,
+            };
+  const Icon = view.Icon;
   return (
-    <div
+    <span
+      title={view.title}
+      data-testid="rw-cert"
       className={cn(
-        'flex items-start gap-2.5 rounded-2xl border px-4 py-3 text-[12.5px]',
-        crit ? 'border-crit/40 bg-crit-soft text-crit' : 'border-warn/40 bg-warn-soft text-warn',
+        'inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-semibold whitespace-nowrap',
+        view.tone,
       )}
     >
-      <ShieldAlertIcon className="mt-0.5 size-4 flex-none" aria-hidden="true" />
-      <div>
-        <div className="font-semibold">
-          {crit ? 'Сертификат панели истёк' : 'Сертификат панели скоро истечёт'}
-        </div>
-        <div className="opacity-90">
-          {domain} —{' '}
-          {crit
-            ? `просрочен с ${when}`
-            : `осталось ${days} ${days === 1 ? 'день' : days < 5 ? 'дня' : 'дней'} (до ${when})`}
-          {crit
-            ? '. Часть функций Remnawave может быть недоступна.'
-            : '. Продлите его на самом сервере панели.'}
-        </div>
-      </div>
-    </div>
+      <Icon className="size-3.5 flex-none" aria-hidden="true" />
+      {view.text}
+    </span>
   );
 }
 
@@ -345,15 +357,19 @@ export function RemnawavePage() {
               <h2 className="font-heading text-[15px] font-bold">Подключено</h2>
             </div>
             <p className="mt-1 font-mono text-[13px] text-text-2">{s.domain}</p>
-            {s.error ? (
+            {(s.cert || (!s.error && s.checkedAt)) && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                {s.cert && <CertChip cert={s.cert} domain={s.domain ?? ''} />}
+                {!s.error && s.checkedAt && (
+                  <span className="text-[12px] text-text-3">Проверено {formatDate(s.checkedAt)}</span>
+                )}
+              </div>
+            )}
+            {s.error && (
               <p role="alert" className="mt-1.5 max-w-[560px] text-[12.5px] text-crit">
                 Сейчас недоступна: {s.error}. Показаны данные последней успешной проверки
                 {s.checkedAt ? ` (${formatDate(s.checkedAt)})` : ''}.
               </p>
-            ) : (
-              s.checkedAt && (
-                <p className="mt-1.5 text-[12px] text-text-3">Проверено {formatDate(s.checkedAt)}</p>
-              )
             )}
           </div>
           <div className="flex flex-none gap-2">
@@ -383,7 +399,7 @@ export function RemnawavePage() {
 
         {s.stats && (
           <div className="mt-4 border-t border-border pt-4">
-            <StatsTiles stats={s.stats} />
+            <StatsTiles stats={s.stats} nodes={s.nodes} />
             <p className="mt-2.5 text-[12px] text-text-3">
               Активные {s.stats.users.active} · выключены {s.stats.users.disabled} · лимит{' '}
               {s.stats.users.limited} · истекли {s.stats.users.expired} — за сутки {s.stats.online.lastDay}{' '}
@@ -409,8 +425,6 @@ export function RemnawavePage() {
           </ul>
         </section>
       )}
-
-      {s.cert && <CertBanner cert={s.cert} domain={s.domain ?? ''} />}
 
       <ConfirmDialog
         open={confirmOpen}

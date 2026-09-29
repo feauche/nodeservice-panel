@@ -124,7 +124,9 @@ describe('OverviewPage (по демо)', () => {
     };
     const { router } = renderPage(OverviewPage, '/', ['/servers/remnawave']);
     const tile = await screen.findByText('Remnawave: 4 из 5 нод на связи');
-    expect(screen.getByText('236 пользователей онлайн из 870 · 18.4 ТБ трафика')).toBeInTheDocument();
+    expect(
+      screen.getByText(/^\d+ онлайн на нодах · 870 пользователей · 18\.4 ТБ трафика$/),
+    ).toBeInTheDocument();
     const user = userEvent.setup();
     await user.click(tile);
     await waitFor(() => expect(router.state.location.pathname).toBe('/servers/remnawave'));

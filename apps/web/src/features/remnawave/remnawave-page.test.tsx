@@ -57,11 +57,12 @@ describe('RemnawavePage', () => {
     expect(await screen.findByRole('heading', { name: 'Подключено' })).toBeInTheDocument();
     expect(screen.getByText('vpn-panel.example.com')).toBeInTheDocument();
     expect(screen.getByText('870')).toBeInTheDocument(); // пользователей
-    expect(screen.getByText('236')).toBeInTheDocument(); // онлайн сейчас
+    // Онлайн — сумма по нодам (42 + нет данных), подписки в сети — подписью.
+    expect(screen.getByText('подписок в сети 236')).toBeInTheDocument();
     expect(screen.getByText('bridge')).toBeInTheDocument();
     expect(screen.getByText('exit-nl')).toBeInTheDocument();
     expect(screen.getByText('Node did not respond in time')).toBeInTheDocument();
-    expect(screen.getByText('Сертификат в порядке')).toBeInTheDocument();
+    expect(screen.getByTestId('rw-cert')).toHaveTextContent(/^Сертификат до \d+ нояб? · \d+ дн/);
     expect(screen.queryByLabelText('Домен панели')).not.toBeInTheDocument();
     expect(await screen.findByText('Remnawave подключена.')).toBeInTheDocument();
   });
