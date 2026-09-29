@@ -21,6 +21,7 @@ import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
+import { DetailText } from './detail-text';
 import { IncidentAnalysis } from './incident-analysis';
 import { AttemptsAccordion, ProposalBlock, Timeline } from './incident-blocks';
 import { durationText, outcomeSentence } from './incident-format';
@@ -210,7 +211,7 @@ export function IncidentCasePage({ id }: { id: string }) {
             />
             {/* Текст бывает блоками по строкам (падение онлайна: откуда проверяли, вывод) — строки сохраняем. */}
             <p className="text-[13.5px] leading-normal whitespace-pre-line">
-              {inc.detail}
+              <DetailText text={inc.detail} />
               {inc.detail.includes('\n') ? '\n\n' : ' '}
               <span className="text-text-2">{outcomeSentence(inc, now)}.</span>
             </p>
