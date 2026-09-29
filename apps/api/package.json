@@ -1,11 +1,11 @@
 {
   "name": "api",
-  "version": "0.39.1",
+  "version": "0.39.2",
   "private": true,
   "description": "NodeService panel backend (NestJS)",
   "license": "UNLICENSED",
   "scripts": {
-    "build": "nest build",
+    "build": "nest build && node scripts/check-dist-imports.mjs",
     "dev": "nest start --watch",
     "start": "node dist/main",
     "start:debug": "nest start --debug --watch",
