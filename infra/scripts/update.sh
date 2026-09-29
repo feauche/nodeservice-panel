@@ -36,8 +36,13 @@ switch_to_deploy_key() {
 cd "$APP_DIR"
 # Текущий образ запоминаем ДО смены кода и версии — он и есть точка отката.
 OLD_IMG=$("${COMPOSE[@]}" config --images | grep nodeservice-api || true)
-if [[ -n "$OLD_IMG" ]] && docker image inspect "$OLD_IMG" >/dev/null 2>&1; then
+# Только если api с этим образом сейчас здоров: иначе повторный update после неудачного запомнил бы
+# сломанный образ, и rollback вернул бы его же.
+api_health=$(docker inspect -f '{{.State.Health.Status}}' nodeservice-api-1 2>/dev/null || echo none)
+if [[ -n "$OLD_IMG" ]] && docker image inspect "$OLD_IMG" >/dev/null 2>&1 && [[ "$api_health" == "healthy" ]]; then
     docker tag "$OLD_IMG" nodeservice-api:prev
+elif [[ -n "$OLD_IMG" ]]; then
+    echo -e "${Y}api сейчас не работает ($api_health) — точку отката оставляю прежней.${N}"
 fi
 
 if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
