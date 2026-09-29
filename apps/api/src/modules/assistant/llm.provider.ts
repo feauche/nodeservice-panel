@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 
+import { repairToolInput } from './tool-input-repair.js';
+
 /**
  * Предел длины одного ответа модели. 4096 не хватало на длинную статью: вызов save_kb_article обрывался
  * посреди аргументов и приходил пустым («не задан заголовок»). Платится только то, что реально написано.
@@ -90,7 +92,7 @@ export class AnthropicProvider implements LlmProvider {
           id: b.id,
           name: b.name,
           // Ответ упёрся в предел длины — последний вызов недописан.
-          input: res.stop_reason === 'max_tokens' ? TRUNCATED_TOOL_INPUT : b.input,
+          input: res.stop_reason === 'max_tokens' ? TRUNCATED_TOOL_INPUT : repairToolInput(b.input),
         };
       return { type: 'text', text: '' };
     });

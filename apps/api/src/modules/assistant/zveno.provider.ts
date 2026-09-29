@@ -7,6 +7,7 @@ import {
   type LlmRunInput,
   TRUNCATED_TOOL_INPUT,
 } from './llm.provider.js';
+import { repairToolInput } from './tool-input-repair.js';
 
 /** Базовый URL zveno.ai (OpenAI-совместимый шлюз). Переопределяется env ZVENO_BASE_URL. */
 const BASE_URL = process.env.ZVENO_BASE_URL ?? 'https://api.zveno.ai/v1';
@@ -97,7 +98,7 @@ export class ZvenoProvider implements LlmProvider {
     for (const call of msg?.tool_calls ?? []) {
       let parsed: unknown = {};
       try {
-        parsed = JSON.parse(call.function.arguments || '{}');
+        parsed = repairToolInput(JSON.parse(call.function.arguments || '{}'));
       } catch {
         // Аргументы не разобрались — почти всегда ответ оборвался на пределе длины (finish_reason length).
         parsed = TRUNCATED_TOOL_INPUT;
