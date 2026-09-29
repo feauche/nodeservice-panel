@@ -759,7 +759,9 @@ export class ServersService {
       token,
       serverId: id,
       expiresAt: expiresAt.toISOString(),
-      installCommand: `curl -fsSL https://github.com/${this.config.get('AGENT_REPO')}/releases/latest/download/install.sh | sh -s -- --token ${token} --panel ${base}`,
+      // Старая привязка агента (state.json) иначе переживает установку: агент пишет «токен игнорирую» и новый
+      // токен пропадает зря — повторная установка ничего не меняла (случай «Казахстан-1»).
+      installCommand: `rm -f /var/lib/nodeservice-agent/state.json 2>/dev/null; curl -fsSL https://github.com/${this.config.get('AGENT_REPO')}/releases/latest/download/install.sh | sh -s -- --token ${token} --panel ${base}`,
     };
   }
 }

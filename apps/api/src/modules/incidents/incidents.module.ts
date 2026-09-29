@@ -8,6 +8,9 @@ import { RemnawaveModule } from '../remnawave/remnawave.module.js';
 import { SecurityModule } from '../security/security.module.js';
 import { ServersModule } from '../servers/servers.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
+import { AgentPendingJob } from './agent-pending.job.js';
+import { EgressController } from './egress.controller.js';
+import { EgressCheckService } from './egress-check.service.js';
 import { IncidentMetricsService } from './incident-metrics.service.js';
 import { IncidentReminderJob } from './incident-reminder.job.js';
 import { IncidentRunnerService } from './incident-runner.service.js';
@@ -32,7 +35,7 @@ import { NodeProbeJob } from './node-probe.job.js';
     RemnawaveModule,
     BillingModule,
   ],
-  controllers: [IncidentsController],
+  controllers: [IncidentsController, EgressController],
   providers: [
     IncidentsRepository,
     IncidentsService,
@@ -42,10 +45,18 @@ import { NodeProbeJob } from './node-probe.job.js';
     IncidentMetricsService,
     IncidentRunnerService,
     NodeBlockCheckService,
+    EgressCheckService,
+    AgentPendingJob,
     NodeAnomalyJob,
     NodeBlockRecheckJob,
     IncidentReminderJob,
   ],
-  exports: [IncidentsService, IncidentRunnerService, IncidentMetricsService, NodeBlockCheckService],
+  exports: [
+    IncidentsService,
+    IncidentRunnerService,
+    IncidentMetricsService,
+    NodeBlockCheckService,
+    EgressCheckService,
+  ],
 })
 export class IncidentsModule {}

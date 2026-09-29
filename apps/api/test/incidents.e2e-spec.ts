@@ -24,12 +24,16 @@ import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
+import { AgentPendingJob } from '../src/modules/incidents/agent-pending.job.js';
+import { egressVerdict } from '../src/modules/incidents/egress-check.logic.js';
+import { EgressCheckService } from '../src/modules/incidents/egress-check.service.js';
 import { IncidentMetricsService } from '../src/modules/incidents/incident-metrics.service.js';
 import { IncidentRunnerService } from '../src/modules/incidents/incident-runner.service.js';
 import { IncidentsRepository } from '../src/modules/incidents/incidents.repository.js';
 import { IncidentsService, PARTIAL_MARK } from '../src/modules/incidents/incidents.service.js';
 import { NodeBlockCheckService } from '../src/modules/incidents/node-block-check.service.js';
 import { NotificationsService } from '../src/modules/notifications/notifications.service.js';
+import { ServersService } from '../src/modules/servers/servers.service.js';
 import { FakeSsh, SSH_PASSWORD, SSH_USER } from './fake-ssh.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -215,6 +219,64 @@ describe('incidents e2e', () => {
     }
   });
 
+  it('куда сервер может выйти: заходим через другой сервер парка; «Ожидает агента» объясняется словами', async () => {
+    const db = app.get<Db>(DB);
+    const jumpRes = await agent
+      .post('/api/servers')
+      .set(CSRF_HEADER, csrf)
+      .send({
+        name: 'jump-host',
+        host: '127.0.0.1',
+        port: ssh.port,
+        sshUser: SSH_USER,
+        auth: { method: 'password', password: SSH_PASSWORD },
+      })
+      .expect(201);
+    const jumpId = serverSchema.parse(jumpRes.body).id;
+    try {
+      // Фоновая автоустановка агента на новом сервере ставит «Ожидает агента» — дождёмся её, потом сбросим.
+      for (let i = 0; i < 60; i += 1) {
+        const r = await db.execute<{ agent_status: string }>(
+          sql`select agent_status from servers where id = ${jumpId}`,
+        );
+        if (r.rows[0]?.agent_status === 'pending') break;
+        await new Promise((res) => setTimeout(res, 100));
+      }
+      await db.execute(sql`update servers set ssh_ok = true, agent_status = 'online' where id = ${jumpId}`);
+      const all = await app.get(ServersService).list();
+      const me = all.find((x) => x.id === serverId);
+      if (!me) throw new Error('нет сервера');
+      const panelHost = new URL(process.env.PUBLIC_URL ?? 'http://localhost').hostname;
+      ssh.egressClosed = ['ya.ru', 'vk.com', panelHost];
+      const before = ssh.forwards;
+      const rep = await app.get(EgressCheckService).check(me, all, ['jump-host']);
+      expect(rep?.via).toBe('jump-host');
+      expect(ssh.forwards).toBe(before + 1);
+      expect(rep && egressVerdict(rep)).toBe('ru_and_panel_cut');
+
+      // «Ожидает агента» дольше паузы → панель выясняет причину и пишет её в колокольчик (один раз).
+      const mine = async () =>
+        notificationsResponseSchema
+          .parse((await agent.get('/api/notifications').expect(200)).body)
+          .items.filter((n) => n.title.includes('не выходит на связь'));
+      const was = (await mine()).length;
+      await db.execute(
+        sql`update servers set agent_status = 'pending', ssh_ok = true where id = ${serverId}`,
+      );
+      await app.get(AgentPendingJob).run();
+      const notes = await mine();
+      expect(notes).toHaveLength(was + 1);
+      expect(notes[0]?.body).toMatch(/причина в сети сервера, повторная установка не поможет/);
+      expect(notes[0]?.body).toMatch(/• ya.ru — не подключается/);
+      await app.get(AgentPendingJob).run();
+      expect(await mine()).toHaveLength(was + 1);
+    } finally {
+      ssh.egressClosed = [];
+      await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
+      await agent.delete(`/api/servers/${jumpId}`).set(CSRF_HEADER, csrf);
+    }
+  });
+
   it('с панели сервер молчит, а из Германии порт SSH открыт → одно дело «Недоступен из части сетей», не «Сервер недоступен»', async () => {
     const db = app.get<Db>(DB);
     const svc = app.get(IncidentsService);
@@ -251,6 +313,8 @@ describe('incidents e2e', () => {
       expect(inc?.detail).toMatch(/• Мост — порт не отвечает/);
       expect(inc?.detail).toMatch(/• Германия-1 — порт открыт/);
       expect(inc?.detail).toMatch(/не отвечает с Мост/);
+      expect(inc?.detail).toMatch(/Куда сервер может выйти/);
+      expect(inc?.detail).toMatch(/• google.com — открыто/);
       expect(inc?.timeline.map((e) => e.action).join('\n')).toMatch(/Присоединено: «Агент не в сети»/);
 
       // Повторный тик — второго дела нет.

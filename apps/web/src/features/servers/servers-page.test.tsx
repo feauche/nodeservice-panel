@@ -1,3 +1,4 @@
+import type { Server } from '@nodeservice/shared';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
@@ -65,6 +66,29 @@ describe('ServersPage', () => {
     await screen.findByText('de-fra-01');
     expect(screen.getByRole('button', { name: 'Список' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getAllByTestId('server-row')).toHaveLength(2);
+  });
+
+  it('агент молчит: метрик нет, «Выяснить почему» → «Нет связи с панелью», причина и «Что проверено»', async () => {
+    const second = mockServers.items[1] as Server;
+    mockServers.items[1] = { ...second, agentStatus: 'pending' };
+    renderPage(Harness, '/servers');
+    await screen.findByText('de-fra-01');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Список' }));
+    await user.click(screen.getAllByTestId('server-row')[1] as HTMLElement);
+    const dialog = await screen.findByRole('dialog', { name: second.name });
+    expect(within(dialog).getByText('Метрик нет — агент не на связи')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Выяснить почему' }));
+    expect(await within(dialog).findByText('Нет связи с панелью')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/сеть сервера не пропускает трафик к панели и в Россию/),
+    ).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Что проверено' }));
+    const box = within(dialog).getByRole('region', { name: 'Что проверено' });
+    expect(within(box).getByText(/через «Германия-1»/)).toBeInTheDocument();
+    expect(within(box).getAllByText('не подключается')).toHaveLength(3);
+    expect(within(box).getByText('14 мс')).toBeInTheDocument();
+    expect(within(box).getByRole('button', { name: 'Скопировать текст для хостера' })).toBeInTheDocument();
   });
 
   it('фильтр по тегам: поиск внутри, несколько тегов, «Сбросить»; и поиск по серверам', async () => {

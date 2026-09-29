@@ -78,16 +78,31 @@ export class MetricsService {
     const vmOk = [cpu, mem, disk, rx, tx, uptime, spark].every((r) => r !== null);
     const fleetSpark = (res: VmMatrixSeries[] | null): Array<number | null> =>
       res?.[0]?.points.map(([, v]) => (Number.isFinite(v) ? v : null)) ?? [];
-    const servers: OverviewServerMetrics[] = rows.map((row) => ({
-      serverId: row.id,
-      cpuPct: lastFor(cpu, row.id),
-      memPct: lastFor(mem, row.id),
-      diskPct: lastFor(disk, row.id),
-      netRxBps: lastFor(rx, row.id),
-      netTxBps: lastFor(tx, row.id),
-      uptimeSec: lastFor(uptime, row.id),
-      cpuSpark: sparkFor(spark, row.id),
-    }));
+    // Агент не на связи — последние значения устарели (могут быть многочасовой давности): не показываем их
+    // вовсе, иначе карточка рисует «CPU 12 %» у сервера, который молчит (решение владельца 29.09.2026).
+    const servers: OverviewServerMetrics[] = rows.map((row) =>
+      row.agentStatus !== 'online'
+        ? {
+            serverId: row.id,
+            cpuPct: null,
+            memPct: null,
+            diskPct: null,
+            netRxBps: null,
+            netTxBps: null,
+            uptimeSec: null,
+            cpuSpark: [],
+          }
+        : {
+            serverId: row.id,
+            cpuPct: lastFor(cpu, row.id),
+            memPct: lastFor(mem, row.id),
+            diskPct: lastFor(disk, row.id),
+            netRxBps: lastFor(rx, row.id),
+            netTxBps: lastFor(tx, row.id),
+            uptimeSec: lastFor(uptime, row.id),
+            cpuSpark: sparkFor(spark, row.id),
+          },
+    );
     return {
       vmOk,
       servers,

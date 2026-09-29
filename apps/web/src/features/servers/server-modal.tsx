@@ -41,6 +41,7 @@ import { toast } from '@/lib/notify';
 import { useMediaQuery } from '@/lib/use-media';
 import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
+import { AgentWhy, agentSilent, EgressDetails, panelCut, useEgress } from './agent-why';
 import { CountryField } from './country-field';
 import { AgentPill, HealthDot, osLine, SshPill } from './server-card';
 import { ChecksTab } from './server-detail/checks-tab';
@@ -118,6 +119,9 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
   const [range, setRange] = useState<MetricRange>('1h');
   const [installOpen, setInstallOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [whyOpen, setWhyOpen] = useState(false);
+  const egress = useEgress(s);
+  const noPanel = agentSilent(s) && panelCut(egress.data?.report);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   // Телефон — своя раскладка (вариант 1 витрины): шапка + вкладки сверху, факты свёрнуты,
   // действия в нижней панели. В jsdom matchMedia нет — считаем, что не телефон.
@@ -219,15 +223,32 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
     ['Проверка SSH', s.lastSshCheckAt ? formatAgo(s.lastSshCheckAt) : 'Ещё не было'],
     [
       'Агент',
-      s.agentVersion
-        ? `${AGENT_STATUS_LABELS[s.agentStatus]} · ${s.agentVersion.startsWith('v') ? s.agentVersion : `v${s.agentVersion}`}`
-        : AGENT_STATUS_LABELS[s.agentStatus],
+      noPanel ? (
+        <span key="a" className="font-semibold text-warn">
+          Нет связи с панелью
+        </span>
+      ) : s.agentVersion ? (
+        `${AGENT_STATUS_LABELS[s.agentStatus]} · ${s.agentVersion.startsWith('v') ? s.agentVersion : `v${s.agentVersion}`}`
+      ) : (
+        AGENT_STATUS_LABELS[s.agentStatus]
+      ),
     ],
   ];
 
   const content = (
     <>
-      {tab === 'metrics' && <MetricsTab serverId={s.id} range={range} onRange={setRange} />}
+      {whyOpen && agentSilent(s) && <EgressDetails server={s} />}
+      {tab === 'metrics' &&
+        (s.agentStatus === 'online' ? (
+          <MetricsTab serverId={s.id} range={range} onRange={setRange} />
+        ) : (
+          // Агент молчит — прошлые метрики устарели, не показываем их (решение владельца 29.09.2026).
+          <div className="grid h-40 place-items-center rounded-2xl border border-dashed border-border text-center text-[13px] text-text-3">
+            {s.agentStatus === 'not_installed' || s.agentStatus === 'installing'
+              ? 'Метрик нет — агент ещё не установлен'
+              : 'Метрик нет — агент не на связи'}
+          </div>
+        ))}
       {tab === 'journal' && <JournalTab serverId={s.id} />}
       {tab === 'terminal' && <TerminalHistoryTab serverId={s.id} />}
       {tab === 'maintenance' && <MaintenanceTab server={s} />}
@@ -411,6 +432,11 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
             {/* Содержимое вкладки; факты свёрнуты сверху, чтобы не съедать экран */}
             <div className="flex min-h-0 flex-col">
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+                {agentSilent(s) && (
+                  <div className="mb-3">
+                    <AgentWhy server={s} open={whyOpen} onToggle={() => setWhyOpen((v) => !v)} />
+                  </div>
+                )}
                 <details className="group mb-3 rounded-2xl border border-border bg-surface">
                   <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[13px] [&::-webkit-details-marker]:hidden">
                     <span className="font-semibold">Подробнее о сервере</span>
@@ -496,6 +522,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
               </DialogHeader>
 
               {factsList}
+              <AgentWhy server={s} open={whyOpen} onToggle={() => setWhyOpen((v) => !v)} />
 
               <div className="mt-auto flex flex-col gap-1.5 border-t border-border pt-4">
                 <Button

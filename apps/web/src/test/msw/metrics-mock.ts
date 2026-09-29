@@ -63,7 +63,8 @@ export const metricsHandlers = [
     const servers: OverviewServerMetrics[] = mockServers.items.map((s) => {
       const seed = hash(s.id);
       const now = Math.floor(Date.now() / 1000);
-      const has = mockMetrics.hasData;
+      // Как на сервере: агент не на связи — последние значения устарели, их нет.
+      const has = mockMetrics.hasData && s.agentStatus === 'online';
       return {
         serverId: s.id,
         cpuPct: has ? value('cpuPct', seed, now) : null,

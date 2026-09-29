@@ -16,6 +16,8 @@ import { AuditRepository } from '../audit/audit.repository.js';
 import { AuditService } from '../audit/audit.service.js';
 import { BillingService } from '../billing/billing.service.js';
 import { NODE_ONLINE_METRIC } from '../fleet-stats/fleet-stats.service.js';
+import { egressText } from '../incidents/egress-check.logic.js';
+import { EgressCheckService } from '../incidents/egress-check.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
 import { NodeBlockCheckService } from '../incidents/node-block-check.service.js';
 import { resolveUpstreamTarget } from '../incidents/upstream-target.js';
@@ -112,6 +114,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     private readonly notifications: NotificationsService,
     private readonly kbRepo: KnowledgeRepository,
     private readonly auditRepo: AuditRepository,
+    private readonly egress: EgressCheckService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -486,6 +489,16 @@ export class IncidentAnalysisService implements OnModuleInit {
       checked['порт из разных стран'] = reach.length > 0;
       if (result) this.evidenceReach.set(inc.id, result);
       out.push(reachText(me.port, reach, panelOpen));
+
+      // Куда может выйти сам сервер (Россия, панель, зарубеж) — заходим напрямую или через сервер, откуда
+      // он доступен. Это отличает «фильтрация у хостера» от «сервер лежит» и от «сломан агент».
+      if (me.sshOk !== true || me.agentStatus !== 'online') {
+        await step('Проверяю, куда сервер может выйти');
+        const openFrom = reach.filter((r) => r.open).map((r) => r.from);
+        const egress = await soft(this.egress.check(me, all, openFrom));
+        checked['выход с сервера наружу'] = Boolean(egress && egress.results.length > 0);
+        if (egress && egress.results.length > 0) out.push(egressText(egress));
+      }
     }
 
     await step('Сверяю со сбоями на других серверах');

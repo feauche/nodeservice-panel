@@ -7,6 +7,7 @@ import { autochecksHandlers, seedAutochecks } from './autochecks-mock';
 import { backupsHandlers, seedBackups } from './backups-mock';
 import { billingHandlers, seedBilling } from './billing-mock';
 import { capacityHandlers, resetCapacity } from './capacity-mock';
+import { egressHandlers, resetEgress } from './egress-mock';
 import { fleetStatsHandlers, resetFleetStats } from './fleet-stats-mock';
 import { incidentsHandlers, seedIncidents } from './incidents-mock';
 import { knowledgeHandlers, seedKnowledge } from './knowledge-mock';
@@ -81,6 +82,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
   seedBilling();
   seedBackups();
   resetCapacity();
+  resetEgress();
   resetFleetStats();
   seedRemnawave();
   seedMetrics();
@@ -180,6 +182,7 @@ export const handlers = [
   ...billingHandlers,
   ...backupsHandlers,
   ...capacityHandlers,
+  ...egressHandlers,
   ...fleetStatsHandlers,
   ...remnawaveHandlers,
   ...metricsHandlers,

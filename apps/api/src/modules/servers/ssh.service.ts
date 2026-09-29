@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { Duplex } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { Injectable, Logger } from '@nestjs/common';
 import { EMPTY_FACTS, type ServerFacts } from '@nodeservice/shared';
@@ -39,6 +40,8 @@ export interface SshSession {
   execAsUser(command: string): Promise<{ code: number; stdout: string; stderr: string }>;
   /** Долгая команда с живым выводом; сам вывод не копится — только код завершения. */
   execStream(command: string, opts?: SshExecStreamOptions): Promise<{ code: number }>;
+  /** Соединение с другим адресом через этот сервер (для входа «через ступеньку»). */
+  forward(host: string, port: number): Promise<Duplex>;
   end(): void;
 }
 
@@ -104,13 +107,45 @@ export function fingerprintSha256(key: Buffer): string {
 export class SshService {
   private readonly log = new Logger(SshService.name);
 
-  async connect(target: SshTarget): Promise<SshSession> {
+  /**
+   * Подключение к серверу. `via` — «ступенька»: панель напрямую до сервера не достаёт (путь закрыт у хостера),
+   * а другой сервер парка достаёт — заходим на него и уже оттуда открываем соединение к цели (как ProxyJump).
+   * Host key цели проверяется так же, как при прямом входе.
+   */
+  async connect(target: SshTarget, opts: { via?: SshTarget } = {}): Promise<SshSession> {
+    let jump: SshSession | null = null;
+    let sock: Duplex | undefined;
+    if (opts.via) {
+      jump = await this.connect(opts.via);
+      try {
+        sock = await jump.forward(target.host, target.port);
+      } catch (err) {
+        jump.end();
+        throw serverProblems.sshUnreachable(
+          target.host,
+          `через ${opts.via.host}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    try {
+      const session = await this.connectDirect(target, sock);
+      if (!jump) return session;
+      const j = jump;
+      return { ...session, end: () => (session.end(), j.end()) };
+    } catch (err) {
+      jump?.end();
+      throw err;
+    }
+  }
+
+  private async connectDirect(target: SshTarget, sock?: Duplex): Promise<SshSession> {
     const client = new Client();
     let hostKeyFp = '';
     const config: ConnectConfig = {
       host: target.host,
       port: target.port,
       username: target.user,
+      ...(sock ? { sock } : {}),
       readyTimeout: CONNECT_TIMEOUT_MS,
       // На всякий случай: панель никогда не пробует agent/интерактивные методы.
       tryKeyboard: false,
@@ -148,6 +183,15 @@ export class SshService {
     const session: SshSession = {
       hostKeyFp,
       end: () => client.end(),
+      forward: (host, port) =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('таймаут соединения')), CONNECT_TIMEOUT_MS);
+          client.forwardOut('127.0.0.1', 0, host, port, (err, stream) => {
+            clearTimeout(timer);
+            if (err) reject(err);
+            else resolve(stream);
+          });
+        }),
       execStream: (command, opts = {}) =>
         new Promise((resolve, reject) => {
           const timeoutMs = opts.timeoutMs ?? EXEC_TIMEOUT_MS;

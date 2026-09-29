@@ -123,9 +123,12 @@ function Gauges({
 function CardSpark({
   metrics,
   health,
+  silent = false,
 }: {
   metrics: OverviewServerMetrics | null | undefined;
   health: ServerHealth;
+  /** Агент не на связи: метрик нет не «пока», а потому что он молчит. */
+  silent?: boolean;
 }) {
   const values = metrics?.cpuSpark ?? [];
   const enough = values.filter((v) => v !== null).length >= 2;
@@ -134,7 +137,9 @@ function CardSpark({
       {enough ? (
         <Sparkline values={values} stroke={HEALTH_COLORS[health]} stretch className="h-full w-full" />
       ) : (
-        <div className="grid h-full place-items-center text-[11px] text-text-3">Метрик пока нет</div>
+        <div className="grid h-full place-items-center text-[11px] text-text-3">
+          {silent ? 'Агент не на связи — метрик нет' : 'Метрик пока нет'}
+        </div>
       )}
     </div>
   );
@@ -315,7 +320,11 @@ export function ServerCardGhost({
       </div>
       <StatusPills server={server} />
       <Gauges metrics={metrics} offline={health === 'crit'} />
-      <CardSpark metrics={metrics} health={health} />
+      <CardSpark
+        metrics={metrics}
+        health={health}
+        silent={server.agentStatus === 'offline' || server.agentStatus === 'pending'}
+      />
       <CardFooter
         server={server}
         provider={provider}
@@ -475,7 +484,11 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
 
       <StatusPills server={server} />
       <Gauges metrics={metrics} offline={health === 'crit'} />
-      <CardSpark metrics={metrics} health={health} />
+      <CardSpark
+        metrics={metrics}
+        health={health}
+        silent={server.agentStatus === 'offline' || server.agentStatus === 'pending'}
+      />
       <CardFooter
         server={server}
         provider={provider}

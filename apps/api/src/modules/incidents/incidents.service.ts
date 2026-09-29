@@ -36,6 +36,8 @@ import { ServersService } from '../servers/servers.service.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { type CountryReach, countryReachLines } from './block-check.logic.js';
+import { egressText } from './egress-check.logic.js';
+import { EgressCheckService } from './egress-check.service.js';
 import { IncidentMetricsService } from './incident-metrics.service.js';
 import { IncidentRunnerService } from './incident-runner.service.js';
 import { IncidentsRepository } from './incidents.repository.js';
@@ -88,6 +90,7 @@ export class IncidentsService {
     private readonly billing: BillingService,
     private readonly servers: ServersService,
     private readonly blockCheck: NodeBlockCheckService,
+    private readonly egress: EgressCheckService,
   ) {}
 
   /**
@@ -579,6 +582,11 @@ export class IncidentsService {
     }
     const closed = reach.filter((r) => !r.open).map((r) => r.from);
     const opened = reach.filter((r) => r.open).map((r) => r.from);
+    // Заходим на сам сервер через тот, откуда он доступен, и смотрим, куда он может выйти: так видно, что
+    // режет сеть сервера (Россию, панель), а не сам сервер. Не вышло — дело всё равно заводится.
+    const all = await this.servers.list().catch(() => []);
+    const me = all.find((x) => x.id === server.id);
+    const out = me ? await this.egress.check(me, all, opened) : null;
     const detail = [
       `${PARTIAL_MARK} агент не выходит на связь и панель не заходит по SSH, но сам сервер работает: порт SSH ${server.port} открыт не отовсюду.`,
       '',
@@ -586,6 +594,7 @@ export class IncidentsService {
       ...countryReachLines(reach, panelOpen),
       '',
       `Похоже: путь до сервера закрыт из части сетей — ${closed.length ? `не отвечает с ${closed.join(', ')}` : 'часть проверяющих не отвечает'}${panelOpen ? '' : ' и с сервера панели (поэтому молчат агент и SSH)'}, а с ${opened.join(', ')} открыт. Чаще всего это блокировка в этих странах (ТСПУ в России) или сбой маршрута у хостера. Сервер выключать и переустанавливать ничего не нужно: помогает смена IP или ожидание, пока починят сеть.`,
+      ...(out && out.results.length > 0 ? ['', egressText(out)] : []),
     ].join('\n');
     if (!existing) {
       await this.openIncident(server, 'node_blocked', detail, 'Недоступен из части сетей');

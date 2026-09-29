@@ -136,6 +136,11 @@ export const AUDIT_ACTIONS = {
   'server.host_key.trusted': { category: 'server', label: 'Доверен новый отпечаток сервера' },
   'server.enrollment.issued': { category: 'server', label: 'Выпущен токен подключения агента' },
   'server.agent.install': { category: 'server', label: 'Установка агента по SSH' },
+  'server.agent.pending_explained': {
+    category: 'server',
+    label: 'Выяснено, почему агент не выходит на связь',
+  },
+  'server.egress.checked': { category: 'server', label: 'Проверка «куда сервер может выйти»' },
   'server.agent.enrolled': { category: 'server', label: 'Агент подключён к серверу' },
   'server.agent.online': { category: 'server', label: 'Агент вышел на связь' },
   'server.agent.offline': { category: 'server', label: 'Агент пропал со связи' },

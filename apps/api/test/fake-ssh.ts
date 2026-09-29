@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto';
-import type { AddressInfo } from 'node:net';
+import { type AddressInfo, connect as tcpConnect } from 'node:net';
 import { Server as SshServer } from 'ssh2';
 
 import { toOpenSshPrivate } from '../src/modules/servers/panel-key.service.js';
@@ -52,6 +52,11 @@ export class FakeSsh {
   speedTest = '@@down=900000000\n@@up=612000000\n@@downms=8000\n@@upms=8000\n';
   /** Реестр проверок (ns-check): вывод по ключу и код выхода (по умолчанию 0). */
   checks: { output: Record<string, string>; code: Record<string, number> } = { output: {}, code: {} };
+  /** «Куда сервер может выйти» (ns-egress): метки целей, которые «не подключаются»; пинг панели. */
+  egressClosed: string[] = [];
+  egressPing = true;
+  /** Сколько раз через этот сервер открывали соединение к другому («ступенька»). */
+  forwards = 0;
 
   async start(port = 0): Promise<void> {
     this.hostKey ??= toOpenSshPrivate(generateKeyPairSync('ed25519').privateKey, 'fake-host');
@@ -69,6 +74,15 @@ export class FakeSsh {
           return ctx.reject(['password', 'publickey']);
         })
         .on('ready', () => {
+          // Вход «через ступеньку»: панель просит этот сервер открыть TCP к цели.
+          client.on('tcpip', (accept, _reject, info) => {
+            this.forwards += 1;
+            const channel = accept();
+            const sock = tcpConnect(info.destPort, info.destIP);
+            sock.on('error', () => channel.close());
+            channel.on('error', () => sock.destroy());
+            channel.pipe(sock).pipe(channel);
+          });
           client.on('session', (accept) => {
             const session = accept();
             let ptyCols = 80;
@@ -85,7 +99,18 @@ export class FakeSsh {
             session.on('exec', (acceptExec, _reject, info) => {
               this.execLog.push(info.command);
               const stream = acceptExec();
-              if (info.command.includes('# ns-inspect:')) {
+              if (info.command.includes('# ns-egress')) {
+                // Строки вида «0 open 12»: цели по порядку из команды, закрытые — по адресу цели.
+                const hosts = [...info.command.matchAll(/\/dev\/tcp\/([^/]+)\/(\d+)/g)].map(
+                  (m) => m[1] ?? '',
+                );
+                const out = hosts.map((h, i) =>
+                  this.egressClosed.includes(h) ? `${i} closed` : `${i} open ${10 + i}`,
+                );
+                if (info.command.includes('ping -c')) out.push(this.egressPing ? 'ping ok' : 'ping fail');
+                stream.write(`${out.join('\n')}\n`);
+                stream.exit(0);
+              } else if (info.command.includes('# ns-inspect:')) {
                 // Узкие инструменты чтения (J2): по метке в первой строке команды отдаём типичный вывод.
                 const kind = /# ns-inspect:([a-z-]+(?::[a-z]+)?)/.exec(info.command)?.[1] ?? '';
                 stream.write(INSPECT_OUTPUT[kind] ?? `неизвестная метка ${kind}\n`);
