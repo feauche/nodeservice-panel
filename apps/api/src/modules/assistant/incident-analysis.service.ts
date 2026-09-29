@@ -96,6 +96,8 @@ function explain(err: unknown): string {
 export class IncidentAnalysisService implements OnModuleInit {
   private readonly log = new Logger(IncidentAnalysisService.name);
   private readonly running = new Set<string>();
+  /** Проверка доступности, собранная уликами, — до сдачи разбора (покажется карточкой под выводом). */
+  private readonly evidenceReach = new Map<string, NonNullable<IncidentAnalysis['reachability']>>();
 
   constructor(
     private readonly settings: AssistantSettingsStore,
@@ -263,56 +265,7 @@ export class IncidentAnalysisService implements OnModuleInit {
         );
         metricText = out?.content ?? null;
       }
-      let nowText: string | null = null;
-      let nodeRef: { uuid: string; name: string } | null = null;
-      if (CONNECTIVITY_KINDS.has(inc.kind)) {
-        await step('Смотрю онлайн ноды сейчас');
-        const host = inc.serverId
-          ? ((await deps.servers.list()).find((s) => s.id === inc.serverId)?.host ?? null)
-          : null;
-        const st = await this.remnawave.status().catch(() => null);
-        nowText = st ? nodeNowText(inc, st, host) : null;
-        // Свежая проверка порта: при «Разобрать заново» Джарвис должен видеть, что сейчас, а не только
-        // то, что было при открытии. Нода может и не быть сервером NodeService — адрес берём из Remnawave.
-        const node = st?.connected
-          ? ((host ? st.nodes.find((n) => n.address === host) : undefined) ??
-            st.nodes.find((n) => n.name === inc.serverName))
-          : undefined;
-        if (node) nodeRef = { uuid: node.uuid, name: node.name };
-        if (node) {
-          await step('Проверяю порт ноды сейчас');
-          const inbound = await this.remnawave.nodeInbound(node.uuid);
-          const result = await this.blockCheck
-            .check(
-              node.name,
-              node.address,
-              inbound?.port ?? null,
-              inbound?.sni ?? null,
-              inc.serverId,
-              await deps.servers.list(),
-            )
-            .catch(() => null);
-          if (result) {
-            const all = await deps.servers.list();
-            const me = inc.serverId ? (all.find((x) => x.id === inc.serverId) ?? null) : null;
-            const target = await resolveUpstreamTarget(me, all, this.remnawave).catch(() => null);
-            if (target) {
-              await step('Проверяю вход этого выхода');
-              result.entry = await this.blockCheck.checkEntry(target, me?.id ?? null, all).catch(() => null);
-            }
-          }
-          const fresh = result ? freshCheckText(result) : null;
-          if (fresh) nowText = nowText ? `${nowText}\n${fresh}` : fresh;
-        }
-      }
-      let billingLines: string[] = [];
-      if (inc.serverId && BILLING_DOWN_KINDS.has(inc.kind)) {
-        await step('Сверяюсь с биллингом');
-        billingLines = await this.billing.paymentRiskForServer(inc.serverId).catch(() => []);
-      }
-      const evidence = CONNECTIVITY_KINDS.has(inc.kind)
-        ? await this.gatherEvidence(inc, deps, step, nodeRef, billingLines.length > 0)
-        : [];
+      const { nowText, billingLines, evidence } = await this.collectConnectivity(inc, deps, step);
       const messages: LlmMsg[] = [
         {
           role: 'user',
@@ -322,7 +275,8 @@ export class IncidentAnalysisService implements OnModuleInit {
         },
       ];
       let submission: Submission | null = null;
-      let reach: IncidentAnalysis['reachability'] = null;
+      let reach: IncidentAnalysis['reachability'] = this.evidenceReach.get(id) ?? null;
+      this.evidenceReach.delete(id);
       let nudged = false;
       for (let round = 0; round < MAX_ROUNDS && !submission; round += 1) {
         if (Date.now() > deadline) throw new AnalysisError('Разбор занял слишком много времени. Повторите.');
@@ -400,6 +354,70 @@ export class IncidentAnalysisService implements OnModuleInit {
     }
   }
 
+  /**
+   * Всё про связь сервера — и для разбора, и для каждого вопроса по нему: снимок ноды в Remnawave, проверка
+   * блокировки из России (подключение → TLS с именем маскировки → 16–20 КБ), биллинг и улики.
+   */
+  private async collectConnectivity(
+    inc: Incident,
+    deps: ReadDeps,
+    step: (label: string) => Promise<void>,
+  ): Promise<{ nowText: string | null; billingLines: string[]; evidence: string[] }> {
+    let nowText: string | null = null;
+    let nodeRef: { uuid: string; name: string } | null = null;
+    let blockChecked = false;
+    if (CONNECTIVITY_KINDS.has(inc.kind)) {
+      await step('Смотрю онлайн ноды сейчас');
+      const host = inc.serverId
+        ? ((await deps.servers.list()).find((s) => s.id === inc.serverId)?.host ?? null)
+        : null;
+      const st = await this.remnawave.status().catch(() => null);
+      nowText = st ? nodeNowText(inc, st, host) : null;
+      // Свежая проверка порта: при «Разобрать заново» Джарвис должен видеть, что сейчас, а не только
+      // то, что было при открытии. Нода может и не быть сервером NodeService — адрес берём из Remnawave.
+      const node = st?.connected
+        ? ((host ? st.nodes.find((n) => n.address === host) : undefined) ??
+          st.nodes.find((n) => n.name === inc.serverName))
+        : undefined;
+      if (node) nodeRef = { uuid: node.uuid, name: node.name };
+      if (node) {
+        await step('Проверяю порт ноды сейчас');
+        const inbound = await this.remnawave.nodeInbound(node.uuid);
+        const result = await this.blockCheck
+          .check(
+            node.name,
+            node.address,
+            inbound?.port ?? null,
+            inbound?.sni ?? null,
+            inc.serverId,
+            await deps.servers.list(),
+          )
+          .catch(() => null);
+        if (result) {
+          const all = await deps.servers.list();
+          const me = inc.serverId ? (all.find((x) => x.id === inc.serverId) ?? null) : null;
+          const target = await resolveUpstreamTarget(me, all, this.remnawave).catch(() => null);
+          if (target) {
+            await step('Проверяю вход этого выхода');
+            result.entry = await this.blockCheck.checkEntry(target, me?.id ?? null, all).catch(() => null);
+          }
+        }
+        blockChecked = Boolean(result && result.probes.length > 0);
+        const fresh = result ? freshCheckText(result) : null;
+        if (fresh) nowText = nowText ? `${nowText}\n${fresh}` : fresh;
+      }
+    }
+    let billingLines: string[] = [];
+    if (inc.serverId && BILLING_DOWN_KINDS.has(inc.kind)) {
+      await step('Сверяюсь с биллингом');
+      billingLines = await this.billing.paymentRiskForServer(inc.serverId).catch(() => []);
+    }
+    const evidence = CONNECTIVITY_KINDS.has(inc.kind)
+      ? await this.gatherEvidence(inc, deps, step, nodeRef, billingLines.length > 0, blockChecked)
+      : [];
+    return { nowText, billingLines, evidence };
+  }
+
   /** Чтения разбора; поиск в базе знаний и по Журналу идут через общий исполнитель инструментов. */
   private async runAnalysisTool(name: string, input: unknown, deps: ReadDeps) {
     const arg = (input ?? {}) as Record<string, unknown>;
@@ -419,6 +437,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     step: (label: string) => Promise<void>,
     node: { uuid: string; name: string } | null,
     billingChecked: boolean,
+    blockChecked = false,
   ): Promise<string[]> {
     const out: string[] = [];
     const checked: Record<string, boolean> = {};
@@ -448,12 +467,25 @@ export class IncidentAnalysisService implements OnModuleInit {
 
     if (me) {
       await step('Проверяю порт SSH из разных стран');
-      const [reach, panelOpen] = await Promise.all([
-        soft(this.blockCheck.countryReach(me.host, me.port, me.id, all)),
+      // Та же проверка, что у Джарвиса в чате (по серверу на страну, время ответа, пинг): разбор и чат не
+      // должны видеть разное. Результат ещё и карточкой под выводом — с флагами и миллисекундами.
+      const [result, panelOpen] = await Promise.all([
+        soft(deps.probe.reachability(me, all, [me.port])),
         soft(this.incidents.probeHost(me.host, me.port)),
       ]);
-      checked['порт из разных стран'] = Boolean(reach && reach.length > 0);
-      out.push(reachText(me.port, reach ?? [], panelOpen));
+      const countryOf = new Map(all.map((s) => [s.name, s.country.code]));
+      const reach = (result?.probes ?? [])
+        .filter((p) => p.ok)
+        .map((p) => ({
+          from: p.from,
+          country: countryOf.get(p.from) ?? null,
+          open: p.ports[0]?.open ?? false,
+          ms: p.ports[0]?.ms ?? null,
+          ping: p.ping,
+        }));
+      checked['порт из разных стран'] = reach.length > 0;
+      if (result) this.evidenceReach.set(inc.id, result);
+      out.push(reachText(me.port, reach, panelOpen));
     }
 
     await step('Сверяю со сбоями на других серверах');
@@ -513,6 +545,11 @@ export class IncidentAnalysisService implements OnModuleInit {
       );
 
     checked['биллинг'] = billingChecked || BILLING_DOWN_KINDS.has(inc.kind);
+    checked[
+      node
+        ? 'проверка блокировки ТСПУ из России'
+        : 'проверка блокировки ТСПУ (сервер не найден среди нод Remnawave)'
+    ] = blockChecked;
     out.push(coverageText(checked));
     return out;
   }
@@ -534,10 +571,21 @@ export class IncidentAnalysisService implements OnModuleInit {
     try {
       const deps = this.readDeps(cfg);
       const past = analysis.thread;
+      // Про связь — свежие улики на момент вопроса («перепроверь» должно значить именно это), а не только дело.
+      const fresh = CONNECTIVITY_KINDS.has(inc.kind)
+        ? await this.collectConnectivity(inc, deps, async () => undefined).catch(() => null)
+        : null;
+      const data = dataBlock(
+        incidentCase(inc),
+        null,
+        fresh?.nowText ?? null,
+        fresh?.billingLines ?? [],
+        fresh?.evidence ?? [],
+      );
       const messages: LlmMsg[] = [
         {
           role: 'user',
-          content: text(`${dataBlock(incidentCase(inc), null)}\n\n${past[0]?.question ?? question}`),
+          content: text(`${data}\n\n${past[0]?.question ?? question}`),
         },
       ];
       past.forEach((t, i) => {

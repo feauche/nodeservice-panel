@@ -17,6 +17,7 @@ import {
   pickCountryProbes,
   pickForeignProbes,
   pickRuProbes,
+  settleAttempts,
   withForeign,
 } from './block-check.logic.js';
 import type { UpstreamTarget } from './upstream-target.js';
@@ -71,9 +72,8 @@ export class NodeBlockCheckService {
         });
       }
     }
-    const verdict = combineVerdicts(attempts);
-    // attempts всегда непустой (BLOCK_CHECK_ATTEMPTS >= 1), а verdict всегда взят из одной из попыток.
-    const winner = (attempts.find((a) => a.verdict === verdict) ?? attempts[0]) as BlockProbeResult;
+    // Ни одна попытка не дошла до цели — это «проверить не удалось», а не «порт закрыт».
+    const winner = settleAttempts(attempts, sni === null) ?? (attempts[0] as BlockProbeResult);
     return { ...winner, from: prober.name };
   }
 
@@ -114,7 +114,20 @@ export class NodeBlockCheckService {
         verdict: 'unreachable',
         entry: null,
       };
-    const probes = await Promise.all(probers.map((p) => this.probeFrom(p, address, port, sni || null)));
+    // Проверяющий, на который панель не зашла, о ноде ничего не знает — в вердикт не идёт.
+    const probes = (
+      await Promise.all(probers.map((p) => this.probeFrom(p, address, port, sni || null)))
+    ).filter((p) => p.error !== 'ssh');
+    if (probes.length === 0)
+      return {
+        nodeName,
+        address,
+        sniUsed: sni || null,
+        probes: [],
+        foreign: [],
+        verdict: 'unreachable',
+        entry: null,
+      };
     const ruVerdict = combineVerdicts(probes);
     // Из России порт молчит — тот же вопрос, что владелец решает руками («по SSH из России не заходит,
     // а через VPN заходит»): стучимся в тот же порт с зарубежных серверов парка. Только порт, без TLS.
@@ -122,7 +135,7 @@ export class NodeBlockCheckService {
       ruVerdict === 'unreachable'
         ? await Promise.all(
             pickForeignProbes(excludeServerId, allServers).map((p) => this.probeFrom(p, address, port, null)),
-          )
+          ).then((r) => r.filter((p) => p.error !== 'ssh'))
         : [];
     return {
       nodeName,
@@ -147,12 +160,14 @@ export class NodeBlockCheckService {
   ): Promise<CountryReach[]> {
     if (!isSafeBlockCheckTarget(address, port, null)) return [];
     const probers = pickCountryProbes(excludeServerId, allServers);
-    return Promise.all(
+    // Проверяющий, на который панель не зашла, в список не попадает: «не смогли проверить» ≠ «закрыт».
+    const results = await Promise.all(
       probers.map(async (p) => {
         const r = await this.probeFrom(p, address, port, null);
-        return { from: p.name, country: p.country.code, open: r.verdict === 'ok' && r.error !== 'ssh' };
+        return r.error === 'ssh' ? null : { from: p.name, country: p.country.code, open: r.verdict === 'ok' };
       }),
     );
+    return results.filter((r): r is CountryReach => r !== null);
   }
 
   /**

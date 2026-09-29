@@ -1,3 +1,8 @@
+import { execFileSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   type BlockProbeResult,
   DEFAULT_SERVER_COUNTRY,
@@ -17,6 +22,7 @@ import {
   pickCountryProbes,
   pickForeignProbes,
   pickRuProbes,
+  settleAttempts,
   withForeign,
 } from './block-check.logic.js';
 
@@ -312,5 +318,56 @@ describe('проверка «из каждой страны»', () => {
       '• Сервер панели — порт не отвечает',
     ]);
     expect(countryReachLines([], null)).toEqual([]);
+  });
+});
+
+describe('команда проверки на самом деле доходит до адреса', () => {
+  // Регрессия «Казахстан-1»: адрес уходил во вложенный bash как «\$addr», где переменной нет, — порт
+  // «не отвечал» отовсюду. Гоняем настоящую команду против открытого и закрытого порта на этой машине.
+  const run = (port: number): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'ns-bc-'));
+    // На macOS нет timeout — подставляем простую замену, на Linux берётся настоящий.
+    const shim = join(dir, 'timeout');
+    writeFileSync(shim, '#!/bin/sh\nshift\nexec "$@"\n');
+    chmodSync(shim, 0o755);
+    const cmd = buildBlockCheckCommand('127.0.0.1', port, null);
+    return execFileSync('sh', ['-c', cmd], {
+      env: { ...process.env, PATH: `${process.env.PATH}:${dir}` },
+      encoding: 'utf8',
+    });
+  };
+
+  it('открытый порт — «порт отвечает», закрытый — «не отвечает»', async () => {
+    const srv = createServer((s) => s.end());
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const port = (srv.address() as { port: number }).port;
+    try {
+      expect(parseBlockCheckOutput('тест', run(port)).verdict).toBe('ok');
+    } finally {
+      await new Promise((r) => srv.close(r));
+    }
+    expect(parseBlockCheckOutput('тест', run(port)).verdict).toBe('unreachable');
+  });
+});
+
+describe('итог попыток с одного сервера — без ложных выводов', () => {
+  const at = (verdict: BlockProbeResult['verdict'], error: string | null = null): BlockProbeResult => ({
+    from: 'Мост',
+    verdict,
+    detail: verdict,
+    stalledAtKb: null,
+    error,
+  });
+  it('только порт: одно удачное подключение — порт открыт', () => {
+    expect(settleAttempts([at('unreachable'), at('ok'), at('unreachable')], true)?.verdict).toBe('ok');
+  });
+  it('полная проверка: большинство, ничья — по приоритету', () => {
+    expect(settleAttempts([at('tspu'), at('ok'), at('ok')], false)?.verdict).toBe('ok');
+    expect(settleAttempts([at('tspu'), at('tspu'), at('ok')], false)?.verdict).toBe('tspu');
+    expect(settleAttempts([at('tspu'), at('ok')], false)?.verdict).toBe('tspu');
+  });
+  it('не зашли на проверяющий сервер — попытка не считается; ни одной — «проверить не удалось»', () => {
+    expect(settleAttempts([at('unreachable', 'ssh'), at('ok')], false)?.verdict).toBe('ok');
+    expect(settleAttempts([at('unreachable', 'ssh'), at('unreachable', 'ssh')], true)).toBeNull();
   });
 });

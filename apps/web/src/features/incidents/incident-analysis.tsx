@@ -17,12 +17,15 @@ import {
   RefreshCwIcon,
   SendIcon,
 } from 'lucide-react';
-import { type FormEvent, type ReactNode, useState } from 'react';
+import { type FormEvent, type ReactNode, useMemo, useState } from 'react';
 
 import { JarvisIcon } from '@/components/jarvis-icon';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAssistantStatus } from '@/features/assistant/assistant-api';
+import { linkifyServers } from '@/features/assistant/link-servers';
 import { ReachabilityCard } from '@/features/assistant/reachability-card';
+import { Markdown, ServerCountryContext } from '@/features/knowledge/markdown';
+import { useServers } from '@/features/servers/servers-api';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -421,9 +424,7 @@ function DoneBlock({
               <p className="m-0 max-w-[78%] self-end rounded-[12px_12px_4px_12px] bg-brand-soft px-3 py-2 text-[13px]">
                 {t.question}
               </p>
-              <p className="m-0 max-w-[92%] whitespace-pre-line rounded-[12px_12px_12px_4px] border border-border bg-surface-2 px-3 py-2 text-[13px] leading-normal">
-                {t.answer}
-              </p>
+              <AnswerText text={t.answer} />
             </div>
           ))}
           {pending && (
@@ -503,5 +504,26 @@ function DoneBlock({
         )}
       </div>
     </Shell>
+  );
+}
+
+/**
+ * Ответ Джарвиса на вопрос по разбору — с разметкой, как в чате: жирный, списки, серверы ссылками с флагом
+ * страны (раньше показывался сырой текст со звёздочками).
+ */
+function AnswerText({ text }: { text: string }) {
+  const servers = useServers();
+  const items = servers.data?.items ?? [];
+  const countryById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const srv of items) if (srv.country.code) map[srv.id] = srv.country.code;
+    return map;
+  }, [items]);
+  return (
+    <div className="max-w-[92%] rounded-[12px_12px_12px_4px] border border-border bg-surface-2 px-3 py-2">
+      <ServerCountryContext.Provider value={countryById}>
+        <Markdown content={linkifyServers(text, items)} className="-my-1 text-[13px]" />
+      </ServerCountryContext.Provider>
+    </div>
   );
 }

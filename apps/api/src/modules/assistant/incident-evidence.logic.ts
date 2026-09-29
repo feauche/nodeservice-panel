@@ -102,12 +102,25 @@ export function connectionText(
 }
 
 /** Порт SSH из каждой страны и что это значит. */
-export function reachText(port: number, reach: readonly CountryReach[], panelOpen: boolean | null): string {
+/** Строка проверки: откуда, открыт ли порт, время ответа и пинг, если есть. */
+export interface ReachLine extends CountryReach {
+  ms?: number | null;
+  ping?: number | null;
+}
+
+const reachLine = (r: ReachLine): string => {
+  const extra = [r.ms != null ? `${r.ms} мс` : null, r.ping != null ? `пинг ${r.ping} мс` : null].filter(
+    Boolean,
+  );
+  return `• ${r.from} — ${r.open ? 'порт открыт' : 'порт не отвечает'}${extra.length ? ` (${extra.join(', ')})` : ''}`;
+};
+
+export function reachText(port: number, reach: readonly ReachLine[], panelOpen: boolean | null): string {
   if (reach.length === 0)
     return `Порт SSH ${port} из других стран проверить не с чего: нет серверов парка с известной страной и рабочим SSH.${
       panelOpen === null ? '' : ` С сервера панели порт ${panelOpen ? 'открыт' : 'не отвечает'}.`
     }`;
-  const lines = reach.map((r) => `• ${r.from} — ${r.open ? 'порт открыт' : 'порт не отвечает'}`);
+  const lines = reach.map(reachLine);
   if (panelOpen !== null) lines.push(`• Сервер панели — ${panelOpen ? 'порт открыт' : 'порт не отвечает'}`);
   const open = reach.filter((r) => r.open);
   const closed = reach.filter((r) => !r.open);

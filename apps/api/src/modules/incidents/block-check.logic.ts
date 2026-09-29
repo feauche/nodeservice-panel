@@ -153,8 +153,11 @@ export function buildBlockCheckCommand(address: string, port: number, sni: strin
       `addr=${q(address)}`,
       `port=${port}`,
       `sni=${q(sni ?? '')}`,
-      // Шаг 1: обычный TCP-порт — если недоступен вообще, дальше проверять нечего.
-      `if ! timeout ${BLOCK_CHECK_CONNECT_TIMEOUT_SEC} bash -c "exec 3<>/dev/tcp/\\$addr/\\$port" 2>/dev/null; then`,
+      // Шаг 1: обычный TCP-порт — если недоступен вообще, дальше проверять нечего. Адрес и порт
+      // подставляет внешняя оболочка: во вложенном bash переменных addr и port нет (они не экспортированы),
+      // и с «\$addr» проверка всегда шла на пустой адрес — «порт не отвечает» отовсюду (случай «Казахстан-1»).
+      // Подставлять безопасно: форма адреса проверена isSafeBlockCheckTarget, порт — число.
+      `if ! timeout ${BLOCK_CHECK_CONNECT_TIMEOUT_SEC} bash -c "exec 3<>/dev/tcp/$addr/$port" 2>/dev/null; then`,
       '  echo \'{"stage":"tcp","ok":false,"stalledAtKb":null}\'',
       '  exit 0',
       'fi',
@@ -283,6 +286,26 @@ export function combineVerdicts(probes: BlockProbeResult[]): BlockVerdict {
   const priority: BlockVerdict[] = ['block_16_20', 'tspu', 'ip_block', 'unreachable', 'ok'];
   for (const v of priority) if (probes.some((p) => p.verdict === v)) return v;
   return 'ok';
+}
+
+/**
+ * Итог нескольких попыток с ОДНОГО сервера. Ложных выводов быть не должно (требование владельца):
+ * - попытка, в которой панель не зашла на сам проверяющий сервер, о цели ничего не говорит — не считается;
+ * - проверка только порта: одно удачное подключение — доказательство, что порт открыт (сбой одной попытки
+ *   не делает его «закрытым»);
+ * - полная проверка (TLS и данные): большинство попыток, ничья — по приоритету combineVerdicts.
+ * null — ни одна попытка не дошла до цели (проверить не удалось).
+ */
+export function settleAttempts(attempts: BlockProbeResult[], portOnly: boolean): BlockProbeResult | null {
+  const valid = attempts.filter((a) => a.error !== 'ssh');
+  if (valid.length === 0) return null;
+  if (portOnly) return valid.find((a) => a.verdict === 'ok') ?? (valid[0] as BlockProbeResult);
+  const counts = new Map<BlockVerdict, number>();
+  for (const a of valid) counts.set(a.verdict, (counts.get(a.verdict) ?? 0) + 1);
+  const top = Math.max(...counts.values());
+  const leaders = valid.filter((a) => counts.get(a.verdict) === top);
+  const verdict = combineVerdicts(leaders);
+  return leaders.find((a) => a.verdict === verdict) ?? (valid[0] as BlockProbeResult);
 }
 
 /** «Порт не отвечает совсем.» → «порт не отвечает совсем» — для строки списка. */

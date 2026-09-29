@@ -5,6 +5,7 @@ import {
   ANALYSIS_TOOLS,
   ASK_TOOLS,
   analysisSystem,
+  askSystem,
   nodeNowText,
   parseSubmission,
   pickAutoAnalysis,
@@ -223,5 +224,17 @@ describe('nodeNowText', () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+describe('как читать связь', () => {
+  it('правила связи есть и в разборе, и в вопросах: открыт откуда-то — не выключен, пока агент молчит — не восстановилось', () => {
+    const ask = askSystem('novice', { verdict: 'x', confidence: 'high' } as never);
+    for (const s of [analysisSystem('novice'), ask]) {
+      expect(s).toContain('сервер ВКЛЮЧЁН');
+      expect(s).toContain('Это НЕ «восстановилось»');
+      expect(s).toContain('Пока агент и SSH молчат — не восстановилось');
+    }
+    expect(ask).toContain('разбор был неверен');
   });
 });

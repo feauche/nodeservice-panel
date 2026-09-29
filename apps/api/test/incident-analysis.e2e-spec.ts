@@ -249,6 +249,18 @@ describe('разбор инцидента Джарвисом e2e', () => {
     ])
       expect(data, s).toContain(s);
     expect(fake.seen.at(-1)?.system).toContain('не меньше 90%');
+    expect(data).toContain('проверка блокировки ТСПУ');
+
+    // Вопрос по разбору про связь — свежие улики на момент вопроса, а не только дело.
+    const askedFrom = fake.seen.length;
+    await agent
+      .post(`/api/incidents/${id}/analysis/ask`)
+      .set(CSRF_HEADER, csrf)
+      .send({ question: 'Перепроверьте, точно недоступен?' })
+      .expect(200);
+    const askData = JSON.stringify(fake.seen[askedFrom]?.messages[0]);
+    expect(askData).toContain('Улики, собранные панелью перед разбором');
+    expect(fake.seen[askedFrom]?.system).toContain('КАК ЧИТАТЬ СВЯЗЬ');
   });
 
   it('пока идёт разбор — повторный запуск и вопрос дают 409; итог приходит после', async () => {
