@@ -24,7 +24,7 @@ import {
   useState,
 } from 'react';
 import { JarvisIcon } from '@/components/jarvis-icon';
-import { Markdown, ServerHealthContext } from '@/features/knowledge/markdown';
+import { Markdown, ServerCountryContext, ServerHealthContext } from '@/features/knowledge/markdown';
 import { type ServerHealth, serverHealth } from '@/features/servers/server-health';
 import { openServer } from '@/features/servers/server-modal-store';
 import { useServers } from '@/features/servers/servers-api';
@@ -103,6 +103,11 @@ function AssistantChat() {
   const healthById = useMemo(() => {
     const map: Record<string, ServerHealth> = {};
     for (const srv of serversQuery.data?.items ?? []) map[srv.id] = serverHealth(srv);
+    return map;
+  }, [serversQuery.data]);
+  const countryById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const srv of serversQuery.data?.items ?? []) if (srv.country.code) map[srv.id] = srv.country.code;
     return map;
   }, [serversQuery.data]);
   const send = useSendMessage();
@@ -284,39 +289,41 @@ function AssistantChat() {
         >
           {messages.length === 0 && !busy && !shownPending && <EmptyChat />}
           <ServerHealthContext.Provider value={healthById}>
-            {messages.map((m, i) => (
-              <MessageRow
-                key={m.id}
-                message={m}
-                grouped={m.role === 'assistant' && messages[i - 1]?.role === 'assistant'}
-                interim={m.role === 'assistant' && messages[i + 1]?.role === 'assistant'}
-              />
-            ))}
-            {shownPending && (
-              <MessageRow
-                message={{
-                  id: 'pending-user',
-                  role: 'user',
-                  content: shownPending,
-                  citations: [],
-                  proposals: [],
-                  reachability: [],
-                  activity: [],
-                  createdAt: '',
-                }}
-              />
-            )}
-            {busy && live.length > 0 && (
-              <div className="flex max-w-[92%] gap-3">
-                <span className="size-8 flex-none" aria-hidden="true" />
-                <div className="flex min-w-0 flex-1 flex-col gap-2">
-                  {live.map((a) => (
-                    <ActivityRow key={a.id} activity={a} />
-                  ))}
+            <ServerCountryContext.Provider value={countryById}>
+              {messages.map((m, i) => (
+                <MessageRow
+                  key={m.id}
+                  message={m}
+                  grouped={m.role === 'assistant' && messages[i - 1]?.role === 'assistant'}
+                  interim={m.role === 'assistant' && messages[i + 1]?.role === 'assistant'}
+                />
+              ))}
+              {shownPending && (
+                <MessageRow
+                  message={{
+                    id: 'pending-user',
+                    role: 'user',
+                    content: shownPending,
+                    citations: [],
+                    proposals: [],
+                    reachability: [],
+                    activity: [],
+                    createdAt: '',
+                  }}
+                />
+              )}
+              {busy && live.length > 0 && (
+                <div className="flex max-w-[92%] gap-3">
+                  <span className="size-8 flex-none" aria-hidden="true" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-2">
+                    {live.map((a) => (
+                      <ActivityRow key={a.id} activity={a} />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-            {busy && <TypingRow />}
+              )}
+              {busy && <TypingRow />}
+            </ServerCountryContext.Provider>
           </ServerHealthContext.Provider>
         </div>
 

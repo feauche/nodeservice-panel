@@ -82,6 +82,11 @@ export class NotificationsService {
     return { items: items.map((r) => this.toDto(r)), unread, total };
   }
 
+  /** Часовой пояс владельца для времени в сообщениях (из настроек уведомлений). */
+  timeZone(): Promise<string> {
+    return this.telegram.timeZone();
+  }
+
   /** Серверное событие: тихо, без исключений наружу. */
   async push(input: PushInput): Promise<void> {
     if (input.telegram) {

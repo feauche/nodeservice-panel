@@ -197,6 +197,7 @@ export class BillingService {
       target: { type: 'billing', id: row.id, display: row.title },
       metadata: { kind: BILLING_KIND_LABELS[row.kind], amount: formatMoney(row.amountMinor, row.currency) },
     });
+    this.kickReminders();
     return this.toDto(row);
   }
 
@@ -236,6 +237,7 @@ export class BillingService {
       target: { type: 'billing', id: row.id, display: row.title },
       ...(Object.keys(changes).length > 0 ? { changes } : {}),
     });
+    this.kickReminders();
     return this.toDto(row);
   }
 
@@ -333,6 +335,7 @@ export class BillingService {
         ...(payment.rate && row.currency !== 'RUB' ? { rate: payment.rate } : {}),
       },
     });
+    this.kickReminders();
     return { item: await this.toDto(item), payment: this.paymentDto(payment, true) };
   }
 
@@ -909,6 +912,7 @@ export class BillingService {
         ),
       );
     let sent = 0;
+    const timeZone = await this.notifications.timeZone().catch(() => DEFAULT_TZ);
     const [srv, prov] = await Promise.all([
       this.db.select({ id: servers.id, name: servers.name }).from(servers),
       this.db.select({ id: providers.id, name: providers.name }).from(providers),
@@ -941,6 +945,7 @@ export class BillingService {
         servers: ids.map((id) => ({ name: sName.get(id) ?? 'сервер', down: down.has(id) })),
         note: it.note,
         now,
+        timeZone,
       });
       const downNames = ids.filter((id) => down.has(id)).map((id) => sName.get(id));
       await this.notifications.push({
@@ -962,17 +967,48 @@ export class BillingService {
         .set({ notifiedState: kind, notifiedAt: now })
         .where(eq(billingItems.id, it.id));
       sent += 1;
+      this.log.log(
+        `Биллинг: ${kind === 'overdue' ? 'просрочено' : 'скоро оплата'} — «${it.title}», срок ${it.paidUntil.toISOString()}`,
+      );
     }
     return sent;
   }
 
+  /** Проверка сроков идёт одна за раз: и по минутной задаче, и сразу после правки карточки. */
+  private remindersBusy = false;
+
   async tick(): Promise<void> {
+    // Шаги независимы: сбой автоплатежа или досчёта курса не должен отменять напоминания.
+    const step = async (name: string, fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+      } catch (err) {
+        this.log.warn(`Биллинг (${name}): ${err instanceof Error ? err.message : err}`);
+      }
+    };
+    await step('автоплатёж', () => this.runAutoCharge());
+    await step('напоминания', () => this.checkReminders());
+    await step('курс ЦБ', () => this.fillMissingRates());
+  }
+
+  /** Напоминания без наложения запусков. */
+  async checkReminders(): Promise<number> {
+    if (this.remindersBusy) return 0;
+    this.remindersBusy = true;
     try {
-      await this.runAutoCharge();
-      await this.fillMissingRates();
-      await this.runReminders();
-    } catch (err) {
-      this.log.warn(`Биллинг: ${err instanceof Error ? err.message : err}`);
+      return await this.runReminders();
+    } finally {
+      this.remindersBusy = false;
     }
+  }
+
+  /** После правки даты — проверить сразу, не дожидаясь минутной задачи. */
+  private kickReminders(): void {
+    if (process.env.NODE_ENV === 'test') return;
+    setTimeout(() => {
+      this.checkReminders().catch((err) =>
+        this.log.warn(`Биллинг (напоминания): ${err instanceof Error ? err.message : err}`),
+      );
+    }, 500);
   }
 }

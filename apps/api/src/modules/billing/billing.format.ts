@@ -29,6 +29,19 @@ export interface BillingMessageInput {
   timeZone?: string;
 }
 
+/** Подпись часового пояса: «МСК» для Москвы, иначе «UTC+6» — чтобы время в Telegram не читалось как местное. */
+export function zoneLabel(at: Date, timeZone: string): string {
+  if (timeZone === 'Europe/Moscow') return 'МСК';
+  try {
+    const part = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' })
+      .formatToParts(at)
+      .find((p) => p.type === 'timeZoneName')?.value;
+    return part ? part.replace('GMT', 'UTC').replace(/^UTC$/, 'UTC+0') : timeZone;
+  } catch {
+    return timeZone;
+  }
+}
+
 const when = (at: Date, timeZone: string) =>
   new Intl.DateTimeFormat('ru-RU', {
     timeZone,
@@ -62,7 +75,7 @@ export function formatBillingMessage(m: BillingMessageInput): string {
     who,
     '',
     money,
-    `📅 до <b>${esc(when(m.paidUntil, tz))}</b> · ${esc(billingPeriodLabel(m.periodUnit, m.periodCount))}`,
+    `📅 до <b>${esc(when(m.paidUntil, tz))}</b> ${esc(`(${zoneLabel(m.paidUntil, tz)})`)} · ${esc(billingPeriodLabel(m.periodUnit, m.periodCount))}`,
   ];
   if (m.domain) lines.push(`🌐 ${esc(m.domain)}`);
   if (m.servers.length > 0) {

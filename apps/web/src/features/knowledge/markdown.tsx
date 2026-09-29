@@ -2,7 +2,7 @@ import hljs from 'highlight.js/lib/common';
 import dockerfile from 'highlight.js/lib/languages/dockerfile';
 import nginx from 'highlight.js/lib/languages/nginx';
 import { createContext, Fragment, type ReactNode, useContext } from 'react';
-
+import { CountryFlag } from '@/components/country-flag';
 import { HEALTH_COLORS, HEALTH_LABELS, type ServerHealth } from '@/features/servers/server-health';
 import { openServer } from '@/features/servers/server-modal-store';
 import { cn } from '@/lib/utils';
@@ -98,9 +98,12 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
 
 /** Состояние серверов по id: у ссылки на сервер в тексте появляется цветная точка. Без провайдера точки нет. */
 export const ServerHealthContext = createContext<Record<string, ServerHealth>>({});
+/** Страна сервера по id (из карточки сервера): флаг перед названием, чтобы «Мост» было видно, чей он. */
+export const ServerCountryContext = createContext<Record<string, string>>({});
 
 function ServerLink({ id, children }: { id: string; children: ReactNode }) {
   const health = useContext(ServerHealthContext)[id];
+  const country = useContext(ServerCountryContext)[id];
   return (
     <button
       type="button"
@@ -115,6 +118,9 @@ function ServerLink({ id, children }: { id: string; children: ReactNode }) {
           className="mr-1.5 inline-block size-[7px] rounded-full align-middle"
           style={{ background: HEALTH_COLORS[health] }}
         />
+      )}
+      {country && (
+        <CountryFlag code={country} size="sm" decorative className="mr-1.5 inline-block align-[-1px]" />
       )}
       {children}
     </button>

@@ -26,6 +26,7 @@ import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
 import { BillingService } from '../src/modules/billing/billing.service.js';
+import { BillingRatesService } from '../src/modules/billing/billing-rates.service.js';
 import { BILLING_RATES_SOURCE } from '../src/modules/billing/billing-rates.source.js';
 import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications/telegram/telegram.client.js';
 
@@ -245,6 +246,12 @@ describe('billing e2e', () => {
     );
     expect(res.payment.rate).toBe(0);
     rates.down = false;
+    // ЦБ не ответил — панель не повторяет запрос каждую секунду (раньше это тормозило напоминания).
+    const calls = rates.calls.length;
+    expect(await app.get(BillingService).fillMissingRates()).toBe(0);
+    expect(rates.calls.length).toBe(calls);
+    // Прошло полчаса — пробует снова и досчитывает рубли.
+    (app.get(BillingRatesService) as unknown as { failedAt: Map<string, number> }).failedAt.clear();
     expect(await app.get(BillingService).fillMissingRates()).toBe(1);
     const hist = billingPaymentsResponseSchema.parse(
       (await agent.get(`/api/billing/items/${itemId}/payments`).expect(200)).body,

@@ -25,7 +25,10 @@ describe('сообщение биллинга в Telegram', () => {
     expect(t).toContain('<b>Hetzner</b> · DE-1 Falkenstein');
     expect(t).toContain('<b>€4.51</b>');
     expect(t).toContain('≈ 468 ₽ по курсу ЦБ');
-    expect(t).toContain('1 октября, 12:00');
+    expect(t).toContain('1 октября, 12:00</b> (МСК)');
+    expect(formatBillingMessage({ ...base, state: 'soon', timeZone: 'Asia/Omsk' })).toContain(
+      '1 октября, 15:00</b> (UTC+6)',
+    );
     expect(t).toContain('раз в месяц');
     expect(t).not.toContain('недоступен');
   });

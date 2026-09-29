@@ -3,14 +3,14 @@ import { Interval } from '@nestjs/schedule';
 
 import { BillingService } from './billing.service.js';
 
-/** Раз в 10 минут: автоплатежи, досчёт рублей по курсу, напоминания об оплате. */
+/** Раз в минуту: автоплатежи, напоминания об оплате (срок наступил — сообщение в ту же минуту), досчёт рублей. */
 @Injectable()
 export class BillingJob {
   private running = false;
 
   constructor(private readonly billing: BillingService) {}
 
-  @Interval(10 * 60_000)
+  @Interval(60_000)
   async tick(): Promise<void> {
     if (process.env.NODE_ENV === 'test' || this.running) return;
     this.running = true;

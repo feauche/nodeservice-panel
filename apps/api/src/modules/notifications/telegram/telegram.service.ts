@@ -308,6 +308,11 @@ export class TelegramService {
   }
 
   /** Когда по инциденту в последний раз писали в Telegram (отсчёт для напоминаний); null — не писали. */
+  /** Часовой пояс владельца (из настроек уведомлений, подставляется браузером) — для времени в сообщениях. */
+  async timeZone(): Promise<string> {
+    return (await this.store.load()).quiet.timeZone;
+  }
+
   async lastMessageAt(incidentId: string): Promise<Date | null> {
     const [row] = await this.db
       .select({ at: telegramMessages.createdAt })

@@ -12,6 +12,7 @@ export const moscowDate = (at: Date): string =>
 
 /** Курс не старше недели считаем пригодным, если свежий не получить (выходные, сбой сети). */
 const STALE_DAYS = 7;
+const RETRY_AFTER_FAIL_MS = 30 * 60_000;
 
 /**
  * Курсы ЦБ РФ. Кэш по дням в таблице billing_rates: один запрос к ЦБ на дату. Если ЦБ недоступен —
@@ -21,6 +22,11 @@ const STALE_DAYS = 7;
 export class BillingRatesService {
   private readonly log = new Logger(BillingRatesService.name);
   private readonly inflight = new Map<string, Promise<{ usd: number; eur: number; date: string } | null>>();
+  /**
+   * Когда ЦБ последний раз не ответил за эту дату. cbr.ru часто не отвечает зарубежным серверам, а ждать его
+   * при каждом расчёте — это десятки секунд на каждую оплату: повторяем не чаще раза в полчаса.
+   */
+  private readonly failedAt = new Map<string, number>();
 
   constructor(
     @Inject(DB) private readonly db: Db,
@@ -40,7 +46,8 @@ export class BillingRatesService {
       .orderBy(desc(billingRates.date))
       .limit(1);
     if (cached?.date === date) return cached;
-    if (opts.fetch !== false) {
+    const recentlyFailed = Date.now() - (this.failedAt.get(date) ?? 0) < RETRY_AFTER_FAIL_MS;
+    if (opts.fetch !== false && !recentlyFailed) {
       let p = this.inflight.get(date);
       if (!p) {
         p = this.load(date).finally(() => this.inflight.delete(date));
@@ -57,9 +64,11 @@ export class BillingRatesService {
   private async load(date: string): Promise<{ usd: number; eur: number; date: string } | null> {
     const r = await this.source.fetch(date).catch(() => null);
     if (!r) {
-      this.log.warn(`Курс ЦБ на ${date} получить не удалось`);
+      this.failedAt.set(date, Date.now());
+      this.log.warn(`Курс ЦБ на ${date} получить не удалось — следующая попытка через 30 минут`);
       return null;
     }
+    this.failedAt.delete(date);
     // Кэшируем под запрошенной датой: на выходных ЦБ отдаёт курс пятницы/субботы — он и действует.
     await this.db
       .insert(billingRates)
