@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { dueInWords, dueStateOf, extendTarget, occurrencesUntil, periodBounds } from './billing.logic.js';
+import {
+  dueInWords,
+  dueStateOf,
+  extendTarget,
+  occurrenceDates,
+  occurrencesUntil,
+  periodBounds,
+} from './billing.logic.js';
 
 const now = new Date('2026-09-29T09:00:00Z'); // вторник, 12:00 по Москве
 
@@ -91,5 +98,27 @@ describe('billing.logic', () => {
     expect(dueInWords(new Date('2026-09-29T14:00:00Z'), now)).toBe('через 5 часов');
     expect(dueInWords(new Date('2026-09-26T08:00:00Z'), now)).toBe('просрочено на 3 дня');
     expect(dueInWords(new Date('2026-09-28T08:00:00Z'), now)).toBe('просрочено на 1 день');
+  });
+
+  it('даты будущих оплат: просроченная — сейчас, дальше по периоду; разовая — один раз', () => {
+    const from = new Date('2026-09-29T09:00:00Z');
+    const to = new Date('2026-12-01T00:00:00Z');
+    const monthly = occurrenceDates(
+      { paidUntil: new Date('2026-09-20T09:00:00Z'), periodUnit: 'month', periodCount: 1 },
+      from,
+      to,
+    );
+    expect(monthly.map((o) => [o.at.toISOString().slice(0, 10), o.overdue])).toEqual([
+      ['2026-09-29', true],
+      ['2026-10-20', false],
+      ['2026-11-20', false],
+    ]);
+    expect(
+      occurrenceDates(
+        { paidUntil: new Date('2026-10-05T00:00:00Z'), periodUnit: 'once', periodCount: 1 },
+        from,
+        to,
+      ),
+    ).toHaveLength(1);
   });
 });

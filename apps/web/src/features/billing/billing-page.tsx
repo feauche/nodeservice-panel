@@ -30,6 +30,7 @@ import {
 import { BillingCard } from './billing-card';
 import { rub } from './billing-format';
 import { ExtendDialog } from './extend-dialog';
+import { ForecastView } from './forecast-view';
 import { HistoryDialog } from './history-dialog';
 import { ItemDialog } from './item-dialog';
 import { currencyLine, StatsView } from './stats-view';
@@ -208,7 +209,31 @@ export function BillingPage({
       </div>
 
       {view === 'stats' ? (
-        <StatsView period={period} onPeriod={setPeriod} />
+        <div className="flex flex-col gap-6">
+          <section aria-labelledby="bill-forecast" className="flex flex-col gap-3">
+            <h2
+              id="bill-forecast"
+              className="m-0 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase"
+            >
+              Прогноз — сколько предстоит заплатить
+            </h2>
+            <ForecastView
+              onOpenItem={(id) => {
+                const it = list.find((x) => x.id === id);
+                if (it) setExtending(it);
+              }}
+            />
+          </section>
+          <section aria-labelledby="bill-paid" className="flex flex-col gap-3">
+            <h2
+              id="bill-paid"
+              className="m-0 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase"
+            >
+              Оплачено
+            </h2>
+            <StatsView period={period} onPeriod={setPeriod} />
+          </section>
+        </div>
       ) : (
         <>
           {view === 'items' && (

@@ -51,6 +51,7 @@ describe('набор инструментов Джарвиса', () => {
         'check_certificate',
         'check_reachability',
         'get_billing',
+        'get_fleet_stats',
         'get_fleet_status',
         'get_incident',
         'get_maintenance',

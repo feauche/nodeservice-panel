@@ -5,6 +5,7 @@ import {
   type BillingPayment,
   type BillingStatPeriod,
   billingExtendResponseSchema,
+  billingForecastSchema,
   billingItemSchema,
   billingItemsResponseSchema,
   billingPaymentSchema,
@@ -46,6 +47,8 @@ export const billingApi = {
     request(`/billing/payments/${id}`, { method: 'DELETE', schema: billingItemSchema }),
   summary: (signal?: AbortSignal) =>
     api.get(`/billing/summary?tz=${encodeURIComponent(browserTz())}`, billingSummarySchema, signal),
+  forecast: (signal?: AbortSignal) =>
+    api.get(`/billing/forecast?tz=${encodeURIComponent(browserTz())}`, billingForecastSchema, signal),
   stats: (period: BillingStatPeriod, signal?: AbortSignal) =>
     api.get(
       `/billing/stats?period=${period}&tz=${encodeURIComponent(browserTz())}`,
@@ -59,6 +62,7 @@ export const billingKeys = {
   list: (archived: boolean) => ['billing', 'items', archived] as const,
   payments: (id: string) => ['billing', 'payments', id] as const,
   summary: ['billing', 'summary'] as const,
+  forecast: ['billing', 'forecast'] as const,
   stats: (period: BillingStatPeriod) => ['billing', 'stats', period] as const,
 };
 
@@ -79,6 +83,14 @@ export function useBillingSummary(enabled = true) {
     staleTime: 30_000,
     refetchInterval: 60_000,
     enabled,
+  });
+}
+
+export function useBillingForecast() {
+  return useQuery({
+    queryKey: billingKeys.forecast,
+    queryFn: ({ signal }) => billingApi.forecast(signal),
+    staleTime: 30_000,
   });
 }
 

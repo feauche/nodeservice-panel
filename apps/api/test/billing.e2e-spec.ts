@@ -3,12 +3,14 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import {
   billingExtendResponseSchema,
+  billingForecastSchema,
   billingItemSchema,
   billingItemsResponseSchema,
   billingPaymentsResponseSchema,
   billingStatsSchema,
   billingSummarySchema,
   CSRF_HEADER,
+  fleetStatsSchema,
 } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import type { Redis } from 'ioredis';
@@ -216,6 +218,19 @@ describe('billing e2e', () => {
     expect(st.months.reduce((a, m) => a + (m.byKind.server ?? 0), 0)).toBe(50_000);
   });
 
+  it('прогноз: ближайшие недели, 30 дней, до конца года и в год по сегодняшнему курсу', async () => {
+    const f = billingForecastSchema.parse(
+      (await agent.get('/api/billing/forecast?tz=Europe/Moscow').expect(200)).body,
+    );
+    expect(f.weeks).toHaveLength(3);
+    expect(f.months).toHaveLength(7);
+    expect(f.months[3]?.paidRubMinor).toBe(50_000);
+    // Одна оплата €4.51 раз в месяц по курсу 100 — 451 ₽ за раз, 12 раз в год.
+    expect(f.perYearRubMinor).toBe(45_100 * 12);
+    expect(f.first?.title).toBe('DE-1 Falkenstein');
+    expect(f.rateMissing).toBe(false);
+  });
+
   it('ЦБ недоступен: оплата записывается, рубли досчитываются позже', async () => {
     await db.execute(sql`truncate billing_rates`);
     rates.down = true;
@@ -279,6 +294,20 @@ describe('billing e2e', () => {
     expect(await svc.runAutoCharge()).toBe(1);
     const item = billingItemSchema.parse((await agent.get('/api/billing/items').expect(200)).body.items[0]);
     expect(item.dueState).not.toBe('overdue');
+  });
+
+  it('статистика парка: доступность по инцидентам, стоимость из биллинга; без хранилища метрик — честно vmOk=false', async () => {
+    // SSH-инцидент открыт 3 дня назад и не закрыт: из 30 дней сервер 3 дня не на связи — 90 %.
+    await db.execute(sql`update incidents set opened_at = now() - interval '3 days' where kind = 'ssh_down'`);
+    const st = fleetStatsSchema.parse((await agent.get('/api/fleet/stats?period=month').expect(200)).body);
+    expect(st.servers.map((x) => x.name)).toEqual(['DE-1']);
+    expect(st.availability.incidents).toBeGreaterThanOrEqual(1);
+    expect(st.availability.pct).toBe(90);
+    expect(st.servers[0]?.uptimePct).toBe(90);
+    expect(st.incidentsByKind[0]).toMatchObject({ kind: 'ssh_down', label: expect.any(String) });
+    expect(st.cost.spentRubMinor).toBeGreaterThan(0);
+    if (!st.vmOk) expect(st.traffic.rxBytes).toBeNull();
+    await agent.get('/api/fleet/stats?period=year').expect(400);
   });
 
   it('архив и удаление', async () => {

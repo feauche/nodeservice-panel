@@ -5,6 +5,8 @@ import {
   BILLING_PROBLEM,
   type BillingCurrency,
   type BillingExtend,
+  type BillingForecast,
+  type BillingForecastItem,
   type BillingItem,
   type BillingItemUpsert,
   type BillingPayment,
@@ -40,8 +42,11 @@ import {
   dueStateOf,
   extendTarget,
   localDate,
+  localMidnight,
+  occurrenceDates,
   occurrencesUntil,
   periodBounds,
+  timesPerYear,
   toRubMinor,
 } from './billing.logic.js';
 import { BillingRatesService } from './billing-rates.service.js';
@@ -591,6 +596,93 @@ export class BillingService {
     };
   }
 
+  /** Прогноз: сколько предстоит заплатить — по неделям, по месяцам, до конца года и в год. */
+  async forecast(tzRaw?: string): Promise<BillingForecast> {
+    const tz = validTz(tzRaw);
+    const now = new Date();
+    const active = await this.activeRows();
+    const r = await this.rates.ratesOn(now).catch(() => null);
+    const prov = await this.db.select({ id: providers.id, name: providers.name }).from(providers);
+    const pName = new Map(prov.map((p) => [p.id, p.name]));
+    const rateOf = (c: BillingCurrency) =>
+      c === 'RUB' ? 1 : c === 'USD' ? (r?.usd ?? null) : (r?.eur ?? null);
+    const { y, m } = localDate(now, tz);
+    const yearEnd = periodBounds('year', now, tz).to;
+    const horizon = new Date(
+      Math.max(yearEnd.getTime(), localMidnight(y, m + 4, 1, tz).getTime(), now.getTime() + 366 * DAY_MS),
+    );
+    let rateMissing = false;
+    const all: BillingForecastItem[] = [];
+    for (const it of active) {
+      const rate = rateOf(it.currency);
+      if (rate === null) rateMissing = true;
+      for (const o of occurrenceDates(it, now, horizon))
+        all.push({
+          itemId: it.id,
+          title: it.title,
+          provider: it.providerId ? (pName.get(it.providerId) ?? null) : null,
+          date: o.at.toISOString(),
+          overdue: o.overdue,
+          amountMinor: it.amountMinor,
+          currency: it.currency,
+          rubMinor: rate === null ? null : toRubMinor(it.amountMinor, rate),
+          auto: it.autoCharge,
+        });
+    }
+    all.sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+    const within = (from: Date, to: Date) =>
+      all.filter((i) => Date.parse(i.date) >= from.getTime() && Date.parse(i.date) < to.getTime());
+    const sum = (list: BillingForecastItem[]) => list.reduce((a, i) => a + (i.rubMinor ?? 0), 0);
+    const in7 = within(now, new Date(now.getTime() + 7 * DAY_MS));
+    const in30 = within(now, new Date(now.getTime() + 30 * DAY_MS));
+    const inYear = within(now, yearEnd);
+    // В год — нынешний набор оплат, приведённый к году: месяц — 12 раз, неделя — 52, день — 365; разовые не входят.
+    const perYear = active.reduce((acc, it) => {
+      const rate = rateOf(it.currency);
+      const times = timesPerYear(it.periodUnit, it.periodCount);
+      return rate === null || times === 0 ? acc : acc + Math.round(times * toRubMinor(it.amountMinor, rate));
+    }, 0);
+
+    const week = periodBounds('week', now, tz);
+    const weeks: BillingForecast['weeks'] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const from = new Date(week.from.getTime() + i * 7 * DAY_MS);
+      const to = new Date(week.to.getTime() + i * 7 * DAY_MS);
+      const items = within(i === 0 ? now : from, to);
+      weeks.push({ from: from.toISOString(), to: to.toISOString(), rubMinor: sum(items), items });
+    }
+
+    const monthFrom = localMidnight(y, m - 3, 1, tz);
+    const paidRows = await this.db
+      .select({ rub: billingPayments.amountRubMinor, paidAt: billingPayments.paidAt })
+      .from(billingPayments)
+      .where(and(eq(billingPayments.counted, true), gte(billingPayments.paidAt, monthFrom)));
+    const months: BillingForecast['months'] = [];
+    for (let off = -3; off <= 3; off += 1) {
+      const from = localMidnight(y, m + off, 1, tz);
+      const to = localMidnight(y, m + off + 1, 1, tz);
+      const ld = localDate(from, tz);
+      months.push({
+        year: ld.y,
+        month: ld.m,
+        paidRubMinor: paidRows
+          .filter((p) => p.paidAt >= from && p.paidAt < to)
+          .reduce((a, p) => a + p.rub, 0),
+        forecastRubMinor: to <= now ? 0 : sum(within(from > now ? from : now, to)),
+      });
+    }
+    return {
+      next7: { rubMinor: sum(in7), count: in7.length },
+      next30: { rubMinor: sum(in30), count: in30.length, auto: in30.filter((i) => i.auto).length },
+      restOfYear: { rubMinor: sum(inYear), months: 12 - m + 1 },
+      perYearRubMinor: perYear,
+      first: all[0] ?? null,
+      weeks,
+      months,
+      rateMissing,
+    };
+  }
+
   /* ─────────── Для Джарвиса и разбора инцидентов ─────────── */
 
   private async briefs(rows: BillingItemRow[], now: Date): Promise<BillingBrief[]> {
@@ -631,12 +723,58 @@ export class BillingService {
     month: { spent: string; expected: string; payments: number };
     year: { spent: string };
     rates: string | null;
+    forecast: {
+      next7: string;
+      next30: string;
+      restOfYear: string;
+      perYear: string;
+      byMonth: Array<{ month: string; paid: string; forecast: string }>;
+      upcoming: Array<{ title: string; date: string; amount: string; rub: string | null; auto: boolean }>;
+      note: string;
+    };
   }> {
     const now = new Date();
     let active = await this.activeRows();
     if (opts.serverId) active = active.filter((i) => i.serverIds.includes(opts.serverId as string));
     const s = await this.summary();
+    const f = await this.forecast();
+    const MONTHS = [
+      'январь',
+      'февраль',
+      'март',
+      'апрель',
+      'май',
+      'июнь',
+      'июль',
+      'август',
+      'сентябрь',
+      'октябрь',
+      'ноябрь',
+      'декабрь',
+    ];
     const out: Awaited<ReturnType<BillingService['forAssistant']>> = {
+      forecast: {
+        next7: `≈ ${formatRub(f.next7.rubMinor)} (${f.next7.count})`,
+        next30: `≈ ${formatRub(f.next30.rubMinor)} (${f.next30.count}, из них автоплатежом ${f.next30.auto})`,
+        restOfYear: `≈ ${formatRub(f.restOfYear.rubMinor)}`,
+        perYear: `≈ ${formatRub(f.perYearRubMinor)}`,
+        byMonth: f.months.map((mm) => ({
+          month: `${MONTHS[mm.month - 1]} ${mm.year}`,
+          paid: formatRub(mm.paidRubMinor),
+          forecast: `≈ ${formatRub(mm.forecastRubMinor)}`,
+        })),
+        upcoming: f.weeks
+          .flatMap((w) => w.items)
+          .slice(0, 15)
+          .map((i) => ({
+            title: i.title,
+            date: i.overdue ? 'просрочено — платить сейчас' : i.date,
+            amount: formatMoney(i.amountMinor, i.currency),
+            rub: i.currency === 'RUB' || i.rubMinor === null ? null : `≈ ${formatRub(i.rubMinor)}`,
+            auto: i.auto,
+          })),
+        note: 'Прогноз по активным оплатам, $ и € — по сегодняшнему курсу ЦБ (приблизительно). «perYear» — нынешний набор оплат в пересчёте на год.',
+      },
       items: await this.briefs(active, now),
       month: {
         spent: formatRub(s.month.spentRubMinor),

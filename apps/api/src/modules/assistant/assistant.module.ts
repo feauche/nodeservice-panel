@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { AuditModule } from '../audit/audit.module.js';
 import { BillingModule } from '../billing/billing.module.js';
+import { FleetStatsModule } from '../fleet-stats/fleet-stats.module.js';
 import { IncidentsModule } from '../incidents/incidents.module.js';
 import { KnowledgeModule } from '../knowledge/knowledge.module.js';
 import { MaintenanceModule } from '../maintenance/maintenance.module.js';
@@ -42,6 +43,7 @@ import { ZvenoProvider } from './zveno.provider.js';
     MaintenanceModule,
     ServerChecksModule,
     BillingModule,
+    FleetStatsModule,
     ProvidersModule,
     RemnawaveModule,
     AuditModule,

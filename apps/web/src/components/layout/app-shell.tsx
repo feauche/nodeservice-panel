@@ -513,10 +513,12 @@ interface AppShellProps {
   subtitle?: string;
   /** Маленькие сервисные кнопки справа от заголовка (например, ссылки на документацию API). */
   actions?: ReactNode;
+  /** Переключатель всей страницы справа от заголовка (например, «Сейчас / Статистика» в «Обзоре»). */
+  aside?: ReactNode;
   children: ReactNode;
 }
 
-export function AppShell({ title, subtitle, actions, children }: AppShellProps) {
+export function AppShell({ title, subtitle, actions, aside, children }: AppShellProps) {
   // Живой поток: серверы, инциденты и уведомления обновляются в момент изменения, без опроса.
   useEventsStream();
   // Автоблокировка экрана при бездействии — по политике безопасности.
@@ -621,6 +623,7 @@ export function AppShell({ title, subtitle, actions, children }: AppShellProps) 
                 </div>
                 {subtitle && <p className="mt-[5px] text-[13.5px] text-text-2">{subtitle}</p>}
               </div>
+              {aside && <div className="flex-none self-start pt-1 max-sm:w-full">{aside}</div>}
             </div>
           )}
           <div className="animate-fade">{children}</div>

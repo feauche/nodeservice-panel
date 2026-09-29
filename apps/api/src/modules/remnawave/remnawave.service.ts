@@ -1,4 +1,5 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   REMNAWAVE_CERT_CHECK_INTERVAL_MIN,
   REMNAWAVE_PROBLEM,
@@ -7,6 +8,7 @@ import {
 } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
+import type { Env } from '../../config/env.schema.js';
 import { AuditService } from '../audit/audit.service.js';
 import {
   REMNAWAVE_CLIENT,
@@ -26,7 +28,35 @@ export class RemnawaveService {
     private readonly store: RemnawaveSettingsStore,
     @Inject(REMNAWAVE_CLIENT) private readonly client: RemnawaveClient,
     private readonly audit: AuditService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
+
+  /**
+   * Онлайн каждой ноды — в VictoriaMetrics (раз в минуту, при каждом чтении Remnawave): из этого строится
+   * «Онлайн на нодах» в статистике парка. Недоступная VM ничего не ломает.
+   */
+  private async recordOnline(
+    nodes: Array<{ uuid: string; name: string; usersOnline: number | null }>,
+  ): Promise<void> {
+    if (process.env.NODE_ENV === 'test') return;
+    const clean = (v: string) => v.replace(/["\\\n]/g, '');
+    const lines = nodes
+      .filter((n) => n.usersOnline !== null)
+      .map(
+        (n) =>
+          `nodeservice_node_online{node_uuid="${clean(n.uuid)}",node_name="${clean(n.name)}"} ${n.usersOnline}`,
+      );
+    if (lines.length === 0) return;
+    try {
+      await fetch(`${this.config.get('VM_URL')}/api/v1/import/prometheus`, {
+        method: 'POST',
+        body: `${lines.join('\n')}\n`,
+        signal: AbortSignal.timeout(3_000),
+      });
+    } catch {
+      // Метрики — не главное: следующая минута запишет снова.
+    }
+  }
 
   /** J10: SNI и порт ноды для проверки блокировки — только когда проверка реально запускается. */
   async nodeInbound(nodeUuid: string): Promise<RemnawaveNodeInbound | null> {
@@ -142,6 +172,7 @@ export class RemnawaveService {
     const cert = fresh && before?.cert ? before.cert : await this.client.checkCertificate(domain);
     if (!fresh || !before?.cert) this.certCheckedAt = Date.now();
     await this.store.updateSnapshot({ checkedAt: new Date().toISOString(), error: null, stats, nodes, cert });
+    void this.recordOnline(nodes);
   }
 
   private async fetchOrThrow(domain: string, apiKey: string) {

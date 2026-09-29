@@ -127,3 +127,35 @@ export const toRubMinor = (amountMinor: number, rate: number): number => Math.ro
 
 /** Срок словами — общий с интерфейсом. */
 export { billingDueInWords as dueInWords } from '@nodeservice/shared';
+
+/**
+ * Даты будущих оплат в [from, to): просроченная — один раз «сейчас» (from), дальше по периоду. Разовая —
+ * не больше одного раза. Ограничение — на случай «каждый день» на год.
+ */
+export function occurrenceDates(
+  item: { paidUntil: Date; periodUnit: BillingPeriodUnit; periodCount: number },
+  from: Date,
+  to: Date,
+  cap = 400,
+): Array<{ at: Date; overdue: boolean }> {
+  const out: Array<{ at: Date; overdue: boolean }> = [];
+  let d = item.paidUntil;
+  if (d < from) {
+    out.push({ at: from, overdue: true });
+    if (item.periodUnit === 'once') return out;
+    while (d < from && out.length < cap) d = addBillingPeriod(d, item.periodUnit, item.periodCount);
+  }
+  while (d < to && out.length < cap) {
+    out.push({ at: d, overdue: false });
+    if (item.periodUnit === 'once') break;
+    d = addBillingPeriod(d, item.periodUnit, item.periodCount);
+  }
+  return out;
+}
+
+/** Сколько раз в год платится оплата с таким периодом; разовая — 0. */
+export function timesPerYear(unit: BillingPeriodUnit, count: number): number {
+  if (unit === 'once') return 0;
+  const perUnit = unit === 'day' ? 365 : unit === 'week' ? 52 : unit === 'month' ? 12 : 1;
+  return perUnit / count;
+}

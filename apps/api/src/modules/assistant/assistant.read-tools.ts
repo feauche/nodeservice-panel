@@ -6,6 +6,8 @@ import {
   actionMeta,
   COUNTRY_STATUS_LABELS,
   countryName,
+  FLEET_STATS_PERIOD_LABELS,
+  type FleetStatsPeriod,
   INCIDENT_CHAINS,
   type Incident,
   METRIC_RANGES,
@@ -25,6 +27,7 @@ import {
 } from '@nodeservice/shared';
 
 import type { BillingService } from '../billing/billing.service.js';
+import type { FleetStatsService } from '../fleet-stats/fleet-stats.service.js';
 import type { IncidentMetricsService } from '../incidents/incident-metrics.service.js';
 import type { IncidentsService } from '../incidents/incidents.service.js';
 import type { MaintenanceService } from '../maintenance/maintenance.service.js';
@@ -184,9 +187,18 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
     },
   },
   {
+    name: 'get_fleet_stats',
+    description:
+      'Статистика всего парка за период: трафик (сколько прошло приёма и отдачи, сравнение с прошлым таким же периодом, пик скорости и когда, по дням), нагрузка (средняя и пиковая по процессору, памяти, соединениям, заполнение и рост диска и на каком сервере пик), доступность (% времени на связи, инциденты по видам и среднее время до починки), стоимость из биллинга (₽ за ТБ и на пользователя), онлайн на нодах (пик и средний), таблица по серверам. Зови на «сколько трафика прошло за неделю», «какой сервер грузится сильнее», «как парк работал за месяц». period: day | week | month (30 дней) | quarter (90 дней).',
+    input_schema: {
+      type: 'object',
+      properties: { period: { type: 'string', enum: ['day', 'week', 'month', 'quarter'] } },
+    },
+  },
+  {
     name: 'get_billing',
     description:
-      'Биллинг: что и когда оплачивать — серверы, аренда у провайдеров, домены, сертификаты, прочее. По каждой активной оплате: тип, название, провайдер, серверы (у сертификата — где он развёрнут), сумма и примерно в рублях по курсу ЦБ, период, до какого момента оплачено, срок словами («через 2 дня», «просрочено на 1 день»), автоплатёж, заметка. Плюс итоги: оплачено за месяц и год в рублях по курсу на день оплаты, сколько ещё ожидается до конца месяца. Зови, когда спрашивают про оплату, деньги, сроки, где развёрнут сертификат, и когда сервер недоступен: просроченная оплата — частая причина. serverId — только оплаты этого сервера (id или имя); archived — добавить архив.',
+      'Биллинг: что и когда оплачивать — серверы, аренда у провайдеров, домены, сертификаты, прочее. По каждой активной оплате: тип, название, провайдер, серверы (у сертификата — где он развёрнут), сумма и примерно в рублях по курсу ЦБ, период, до какого момента оплачено, срок словами («через 2 дня», «просрочено на 1 день»), автоплатёж, заметка. Плюс итоги: оплачено за месяц и год в рублях по курсу на день оплаты, сколько ещё ожидается до конца месяца, и прогноз (forecast): сколько платить в ближайшие 7 и 30 дней, до конца года, в год, по месяцам и список ближайших оплат с датами. Зови и на вопросы «сколько мне платить в октябре», «что оплачивать на этой неделе». Зови, когда спрашивают про оплату, деньги, сроки, где развёрнут сертификат, и когда сервер недоступен: просроченная оплата — частая причина. serverId — только оплаты этого сервера (id или имя); archived — добавить архив.',
     input_schema: {
       type: 'object',
       properties: {
@@ -233,6 +245,8 @@ export interface ReadDeps {
   >;
   /** Что разрешено Джарвису сейчас: чтения по SSH и предложения проверяются на этом. */
   permissions: AssistantPermissions;
+  /** Статистика парка за период (трафик, нагрузка, доступность, стоимость, онлайн нод). */
+  fleetStats?: Pick<FleetStatsService, 'stats'>;
   /** Биллинг: оплаты, сроки, итоги. Нет — инструмент скажет, что раздел недоступен. */
   billing?: Pick<BillingService, 'forAssistant'>;
   /** Живая строка в чате о долгом действии (есть только в чате, не в разборе инцидентов). */
@@ -945,6 +959,49 @@ export async function runReadTool(
       citations: cite,
       proposals: [],
       activity: [finished],
+    };
+  }
+
+  if (name === 'get_fleet_stats') {
+    if (!deps.fleetStats) return none('Статистика парка сейчас недоступна.');
+    const period = ['day', 'week', 'month', 'quarter'].includes(String(arg.period))
+      ? (arg.period as FleetStatsPeriod)
+      : 'week';
+    const st = await deps.fleetStats.stats(period);
+    const tb = (b: number | null) => (b === null ? null : `${(b / 1e12).toFixed(2)} ТБ`);
+    const mbps = (v: number | null) => (v === null ? null : `${Math.round(v / 1e6)} Мбит/с`);
+    return {
+      content: JSON.stringify({
+        period: FLEET_STATS_PERIOD_LABELS[period],
+        from: st.from,
+        to: st.to,
+        metricsAvailable: st.vmOk,
+        traffic: {
+          rx: tb(st.traffic.rxBytes),
+          tx: tb(st.traffic.txBytes),
+          previousPeriodTotal: tb(st.traffic.prevTotalBytes),
+          peak: mbps(st.traffic.peakBps),
+          peakAt: st.traffic.peakAt,
+          average: mbps(st.traffic.avgBps),
+          byBucket: st.traffic.buckets.map((b) => ({ from: b.at, total: tb(b.bytes) })),
+        },
+        availability: st.availability,
+        cost: {
+          spent: `${Math.round(st.cost.spentRubMinor / 100)} ₽`,
+          perTb: st.cost.perTbRubMinor === null ? null : `${Math.round(st.cost.perTbRubMinor / 100)} ₽`,
+          perUser:
+            st.cost.perUserRubMinor === null ? null : `${(st.cost.perUserRubMinor / 100).toFixed(1)} ₽`,
+        },
+        load: st.load,
+        incidentsByKind: st.incidentsByKind,
+        nodesOnline: { peak: st.online.peak, peakAt: st.online.peakAt, average: st.online.avg },
+        servers: st.servers.map((x) => ({ ...x, trafficBytes: undefined, traffic: tb(x.trafficBytes) })),
+        hint: st.vmOk
+          ? 'Проценты нагрузки — средние по времени; доступность — по инцидентам «агент/SSH недоступен». Числа пересказывай по-русски, без таблиц кода.'
+          : 'Хранилище метрик не ответило: трафик и нагрузка неизвестны, скажи об этом прямо.',
+      }),
+      citations: [],
+      proposals: [],
     };
   }
 

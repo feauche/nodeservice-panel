@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
+  type BillingForecast,
   type BillingItem,
   type BillingPayment,
   type BillingStats,
@@ -20,6 +21,7 @@ import {
   billingArchiveSchema,
   billingExtendResponseSchema,
   billingExtendSchema,
+  billingForecastSchema,
   billingItemSchema,
   billingItemsResponseSchema,
   billingItemUpsertSchema,
@@ -48,6 +50,7 @@ export class BillingPaymentUpdateDto extends createZodDto(billingPaymentUpdateSc
 export class BillingArchiveDto extends createZodDto(billingArchiveSchema) {}
 export class BillingSummaryDto extends createZodDto(billingSummarySchema) {}
 export class BillingStatsDto extends createZodDto(billingStatsSchema) {}
+export class BillingForecastDto extends createZodDto(billingForecastSchema) {}
 export class BillingListQueryDto extends createZodDto(billingListQuerySchema) {}
 export class BillingSummaryQueryDto extends createZodDto(billingSummaryQuerySchema) {}
 export class BillingStatsQueryDto extends createZodDto(billingStatsQuerySchema) {}
@@ -142,6 +145,13 @@ export class BillingController {
   @ApiOkResponse({ type: BillingSummaryDto })
   summary(@Query() q: BillingSummaryQueryDto): Promise<BillingSummary> {
     return this.billing.summary(q.tz);
+  }
+
+  @Get('forecast')
+  @ApiOperation({ summary: 'Прогноз оплат: 7 и 30 дней, до конца года, в год, по неделям и месяцам' })
+  @ApiOkResponse({ type: BillingForecastDto })
+  forecast(@Query() q: BillingSummaryQueryDto): Promise<BillingForecast> {
+    return this.billing.forecast(q.tz);
   }
 
   @Get('stats')

@@ -3,6 +3,8 @@ import {
   BILLING_KINDS,
   type BillingCurrency,
   type BillingDueState,
+  type BillingForecast,
+  type BillingForecastItem,
   type BillingItem,
   type BillingItemUpsert,
   type BillingPayment,
@@ -354,7 +356,84 @@ const withUndo = (itemId: string): BillingPayment[] => {
     .map((p, idx) => ({ ...p, undoable: idx === 0 && p.extendedTo === item?.paidUntil }));
 };
 
+function forecast(): BillingForecast {
+  const now = new Date();
+  const horizon = new Date(now.getFullYear() + 1, now.getMonth() + 4, 1);
+  const all: BillingForecastItem[] = [];
+  for (const i of mockBilling.items) {
+    if (i.archivedAt) continue;
+    let d = new Date(i.paidUntil);
+    const push = (at: Date, overdue: boolean) =>
+      all.push({
+        itemId: i.id,
+        title: i.title,
+        provider: mockProviders.items.find((p) => p.id === i.providerId)?.name ?? null,
+        date: at.toISOString(),
+        overdue,
+        amountMinor: i.amountMinor,
+        currency: i.currency,
+        rubMinor: Math.round(i.amountMinor * rateOf(i.currency)),
+        auto: i.autoCharge,
+      });
+    if (d < now) {
+      push(now, true);
+      if (i.periodUnit === 'once') continue;
+      while (d < now) d = addBillingPeriod(d, i.periodUnit, i.periodCount);
+    }
+    for (let n = 0; d < horizon && n < 400; n += 1) {
+      push(d, false);
+      if (i.periodUnit === 'once') break;
+      d = addBillingPeriod(d, i.periodUnit, i.periodCount);
+    }
+  }
+  all.sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+  const within = (from: Date, to: Date) =>
+    all.filter((x) => Date.parse(x.date) >= from.getTime() && Date.parse(x.date) < to.getTime());
+  const sum = (l: BillingForecastItem[]) => l.reduce((a, x) => a + (x.rubMinor ?? 0), 0);
+  const in7 = within(now, new Date(now.getTime() + 7 * DAY));
+  const in30 = within(now, new Date(now.getTime() + 30 * DAY));
+  const wk = bounds('week');
+  const weeks = [0, 1, 2].map((k) => {
+    const from = new Date(wk.from.getTime() + k * 7 * DAY);
+    const to = new Date(wk.to.getTime() + k * 7 * DAY);
+    const items = within(k === 0 ? now : from, to);
+    return { from: from.toISOString(), to: to.toISOString(), rubMinor: sum(items), items };
+  });
+  const months = [-3, -2, -1, 0, 1, 2, 3].map((off) => {
+    const from = new Date(now.getFullYear(), now.getMonth() + off, 1);
+    const to = new Date(now.getFullYear(), now.getMonth() + off + 1, 1);
+    return {
+      year: from.getFullYear(),
+      month: from.getMonth() + 1,
+      paidRubMinor: mockBilling.payments
+        .filter(
+          (p) => p.counted && Date.parse(p.paidAt) >= from.getTime() && Date.parse(p.paidAt) < to.getTime(),
+        )
+        .reduce((a, p) => a + p.amountRubMinor, 0),
+      forecastRubMinor: to <= now ? 0 : sum(within(from > now ? from : now, to)),
+    };
+  });
+  const perUnit = { day: 365, week: 52, month: 12, year: 1, once: 0 } as const;
+  return {
+    next7: { rubMinor: sum(in7), count: in7.length },
+    next30: { rubMinor: sum(in30), count: in30.length, auto: in30.filter((x) => x.auto).length },
+    restOfYear: { rubMinor: sum(within(now, bounds('year').to)), months: 12 - now.getMonth() },
+    perYearRubMinor: mockBilling.items
+      .filter((i) => !i.archivedAt)
+      .reduce(
+        (a, i) =>
+          a + Math.round((perUnit[i.periodUnit] / i.periodCount) * i.amountMinor * rateOf(i.currency)),
+        0,
+      ),
+    first: all[0] ?? null,
+    weeks,
+    months,
+    rateMissing: false,
+  };
+}
+
 export const billingHandlers = [
+  http.get('/api/billing/forecast', () => HttpResponse.json(forecast())),
   http.get('/api/billing/items', ({ request }) => {
     const archived = new URL(request.url).searchParams.get('archived') === '1';
     const items = mockBilling.items

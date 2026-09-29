@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { AssistantPermissions } from '@nodeservice/shared';
 
 import { BillingService } from '../billing/billing.service.js';
+import { FleetStatsService } from '../fleet-stats/fleet-stats.service.js';
 import { IncidentMetricsService } from '../incidents/incident-metrics.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
 import { MaintenanceService } from '../maintenance/maintenance.service.js';
@@ -25,6 +26,7 @@ export class ReadDepsService {
     private readonly checks: ServerChecksService,
     private readonly probe: FleetProbeService,
     private readonly billing: BillingService,
+    private readonly fleetStats: FleetStatsService,
   ) {}
 
   get(permissions: AssistantPermissions): ReadDeps {
@@ -38,6 +40,7 @@ export class ReadDepsService {
       checks: this.checks,
       probe: this.probe,
       billing: this.billing,
+      fleetStats: this.fleetStats,
       permissions,
     };
   }

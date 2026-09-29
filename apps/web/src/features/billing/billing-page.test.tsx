@@ -108,6 +108,13 @@ describe('BillingPage', () => {
     await waitFor(() => expect(cards().length).toBe(6));
     const user = userEvent.setup();
     await user.click(screen.getByRole('radio', { name: 'Статистика' }));
+    // Прогноз: итоги вперёд, недели и месяцы; нажатие на оплату открывает «Продлить».
+    expect(await screen.findByTestId('forecast-30')).toHaveTextContent(/≈/);
+    expect(screen.getByTestId('forecast-months')).toBeInTheDocument();
+    const weeks = screen.getByTestId('forecast-weeks');
+    await user.click(within(weeks).getAllByRole('button')[0] as HTMLElement);
+    expect(await screen.findByRole('dialog')).toHaveTextContent(/Продлить/);
+    await user.click(screen.getByRole('button', { name: 'Готово' }));
     expect(await screen.findByTestId('billing-chart')).toBeInTheDocument();
     expect(await screen.findByTestId('billing-by-provider')).toHaveTextContent(/Aéza/);
     await user.click(screen.getByRole('radio', { name: 'Год' }));

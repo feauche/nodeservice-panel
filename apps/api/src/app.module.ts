@@ -21,6 +21,7 @@ import { AuditModule } from './modules/audit/audit.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { EventsModule } from './modules/events/events.module.js';
+import { FleetStatsModule } from './modules/fleet-stats/fleet-stats.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { HousekeepingModule } from './modules/housekeeping/housekeeping.module.js';
 import { IncidentsModule } from './modules/incidents/incidents.module.js';
@@ -99,6 +100,7 @@ import { TerminalModule } from './modules/terminal/terminal.module.js';
     MaintenanceModule,
     ServerChecksModule,
     BillingModule,
+    FleetStatsModule,
     IncidentsModule,
     HousekeepingModule,
     EventsModule,

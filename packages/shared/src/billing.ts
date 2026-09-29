@@ -303,3 +303,55 @@ export function billingDueInWords(paidUntil: Date, now: Date): string {
   if (ms >= 20 * 3_600_000) return `через ${Math.max(1, ahead)} ${dayWord(Math.max(1, ahead))}`;
   return hours >= 1 ? `через ${hours} ${hourWord(hours)}` : 'меньше чем через час';
 }
+
+/** Одна будущая оплата в прогнозе. */
+export const billingForecastItemSchema = z.object({
+  itemId: z.string().uuid(),
+  title: z.string(),
+  provider: z.string().nullable(),
+  /** Когда платить; просроченная — «сейчас». */
+  date: z.string(),
+  overdue: z.boolean(),
+  amountMinor: z.number().int(),
+  currency: billingCurrencySchema,
+  /** В рублях по сегодняшнему курсу; null — курса нет. */
+  rubMinor: z.number().int().nullable(),
+  /** Спишется сама (автоплатёж). */
+  auto: z.boolean(),
+});
+export type BillingForecastItem = z.infer<typeof billingForecastItemSchema>;
+
+/**
+ * Прогноз оплат (витрина `billing-forecast-variants.html`, A): все будущие списания по активным оплатам,
+ * в рублях по сегодняшнему курсу ЦБ (со знаком «≈»). Архив не учитывается.
+ */
+export const billingForecastSchema = z.object({
+  next7: z.object({ rubMinor: z.number().int(), count: z.number().int() }),
+  next30: z.object({ rubMinor: z.number().int(), count: z.number().int(), auto: z.number().int() }),
+  /** С сегодняшнего дня до 1 января. */
+  restOfYear: z.object({ rubMinor: z.number().int(), months: z.number().int() }),
+  /** Сколько в год при нынешнем наборе оплат. */
+  perYearRubMinor: z.number().int(),
+  first: billingForecastItemSchema.nullable(),
+  /** Ближайшие три календарные недели (пн–вс), первая — текущая. */
+  weeks: z.array(
+    z.object({
+      from: z.string(),
+      to: z.string(),
+      rubMinor: z.number().int(),
+      items: z.array(billingForecastItemSchema),
+    }),
+  ),
+  /** Три прошлых месяца, текущий и три следующих: оплачено (по курсу дня оплаты) и прогноз. */
+  months: z.array(
+    z.object({
+      year: z.number().int(),
+      month: z.number().int(),
+      paidRubMinor: z.number().int(),
+      forecastRubMinor: z.number().int(),
+    }),
+  ),
+  /** Есть $ или €, а курса ЦБ нет — суммы в рублях неполные. */
+  rateMissing: z.boolean(),
+});
+export type BillingForecast = z.infer<typeof billingForecastSchema>;

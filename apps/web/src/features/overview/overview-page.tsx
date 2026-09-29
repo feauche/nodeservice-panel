@@ -408,7 +408,7 @@ export function OverviewPage() {
       </div>
 
       {/* Требует внимания + Трафик парка */}
-      <div className="grid gap-4 lg:grid-cols-[1fr_1.15fr]">
+      <div className="grid gap-4 lg:grid-cols-2">
         <Panel
           title="Требует внимания"
           right={

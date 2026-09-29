@@ -15,6 +15,7 @@ import { AuditRepository } from '../audit/audit.repository.js';
 import { AuditService } from '../audit/audit.service.js';
 import { BillingService } from '../billing/billing.service.js';
 import { EventsService } from '../events/events.service.js';
+import { FleetStatsService } from '../fleet-stats/fleet-stats.service.js';
 import { IncidentMetricsService } from '../incidents/incident-metrics.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
 import { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
@@ -82,6 +83,7 @@ export class AssistantService {
     private readonly maintenance: MaintenanceService,
     private readonly checks: ServerChecksService,
     private readonly billing: BillingService,
+    private readonly fleetStats: FleetStatsService,
     private readonly probe: FleetProbeService,
     private readonly kb: KnowledgeRepository,
     private readonly knowledge: KnowledgeService,
@@ -225,6 +227,7 @@ export class AssistantService {
       checks: this.checks,
       probe: this.probe,
       billing: this.billing,
+      fleetStats: this.fleetStats,
       kb: this.kb,
       audit: this.auditRepo,
       conversations: this.repo,
