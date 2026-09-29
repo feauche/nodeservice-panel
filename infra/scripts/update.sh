@@ -74,9 +74,27 @@ after=$(git rev-parse --short HEAD)
 # («Резервные копии → Копия перед обновлением»): тогда панель кладёт метку .skip-before-update.
 mkdir -p -m 700 "$APP_DIR/backups"; chown 10001:10001 "$APP_DIR/backups" 2>/dev/null || true
 rm -f /etc/cron.d/nodeservice-backup
+# Копию делает сама панель — по настройкам из «Резервных копий» (пароль, метрики, папки, Telegram, проверка).
+# Не ответила (не запущена, старая версия, копия уже идёт) — консольная копия, как раньше: БД + .env.
+panel_backup() {
+    "${COMPOSE[@]}" exec -T api node -e '
+const sig = require("node:crypto").createHmac("sha256", process.env.APP_SECRET)
+  .update("nodeservice-internal:backup:pre_update").digest("hex");
+fetch("http://127.0.0.1:" + (process.env.PORT || 3000) + "/api/internal/backups/pre-update",
+  { method: "POST", headers: { "x-nodeservice-internal": sig } })
+  .then(async (r) => {
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok) { console.error(b.detail || ("код " + r.status)); process.exit(1); }
+    console.log(b.name + " (" + (b.size / 1048576).toFixed(1) + " МБ" + (b.encrypted ? ", с паролем" : "") + ")");
+  })
+  .catch((e) => { console.error(e.message); process.exit(1); });' 2>&1
+}
 if [[ -f "$APP_DIR/backups/.skip-before-update" ]]; then
     echo -e "${Y}Копия перед обновлением выключена в панели — пропускаю.${N}"
+elif out=$(panel_backup); then
+    echo -e "${G}Копия панели перед обновлением: $out${N}"
 else
+    echo -e "${Y}Панель не сделала копию (${out:-нет ответа}) — делаю консольную: БД + .env.${N}"
     bash "$APP_DIR/infra/scripts/backup.sh"
 fi
 

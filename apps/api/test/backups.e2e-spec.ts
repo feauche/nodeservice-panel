@@ -27,6 +27,7 @@ import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
 import { BACKUP_TOOLS, type BackupTools } from '../src/modules/backups/backup-tools.js';
 import { BackupsService } from '../src/modules/backups/backups.service.js';
+import { internalSignature } from '../src/modules/backups/backups-internal.controller.js';
 import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications/telegram/telegram.client.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -290,5 +291,24 @@ describe('резервные копии e2e', () => {
     expect(tg.texts.some((t) => t.includes('Резервная копия не получилась'))).toBe(true);
     const r = backupsResponseSchema.parse((await agent.get('/api/backups').expect(200)).body);
     expect(r.run.lastError).toContain('нет связи с базой');
+  });
+
+  it('копия перед обновлением: служебный запрос с подписью — копия по настройкам панели; без подписи — 404', async () => {
+    const secret = app.get(ConfigService).get('APP_SECRET') as string;
+    await request(app.getHttpServer()).post('/api/internal/backups/pre-update').expect(404);
+    await request(app.getHttpServer())
+      .post('/api/internal/backups/pre-update')
+      .set('x-nodeservice-internal', internalSignature(secret, 'другое'))
+      .expect(404);
+    const r = await request(app.getHttpServer())
+      .post('/api/internal/backups/pre-update')
+      .set('x-nodeservice-internal', internalSignature(secret, 'backup:pre_update'))
+      .expect(200);
+    expect(r.body).toMatchObject({ encrypted: true });
+    const list = backupsResponseSchema.parse((await agent.get('/api/backups').expect(200)).body);
+    expect(list.items.find((i) => i.name === r.body.name)).toMatchObject({
+      kind: 'pre_update',
+      verified: true,
+    });
   });
 });

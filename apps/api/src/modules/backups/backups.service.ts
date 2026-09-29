@@ -315,6 +315,28 @@ export class BackupsService implements OnModuleInit {
       });
   }
 
+  /**
+   * Копия с ожиданием конца — для обновления панели: настройки те же, что у копии по расписанию (пароль,
+   * метрики, папки, Telegram); ход виден на странице, сбой — как у обычной копии (колокольчик, Telegram).
+   */
+  async runAndWait(kind: BackupKind, actor: string): Promise<BackupItem> {
+    if (!this.toolsState.ok)
+      throw problem(HttpStatus.SERVICE_UNAVAILABLE, {
+        type: BACKUP_PROBLEM.unavailable,
+        detail: this.toolsState.reason ?? 'Копии сейчас недоступны.',
+      });
+    this.busy();
+    this.runState = { stage: 'db', startedAt: new Date().toISOString(), mode: 'backup', lastError: null };
+    try {
+      return await this.create(kind, {}, actor);
+    } catch (err) {
+      await this.fail(kind, err, actor);
+      throw err;
+    } finally {
+      this.runState = { ...this.runState, stage: null, mode: null, startedAt: null };
+    }
+  }
+
   /** Сделать копию и дождаться (для «перед восстановлением» и тестов). */
   async create(
     kind: BackupKind,

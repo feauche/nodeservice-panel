@@ -8,10 +8,11 @@ import { BACKUP_TOOLS, PgBackupTools } from './backup-tools.js';
 import { BackupsController } from './backups.controller.js';
 import { BackupsJob } from './backups.job.js';
 import { BackupsService } from './backups.service.js';
+import { BackupsInternalController } from './backups-internal.controller.js';
 
 /** Резервные копии панели: по расписанию и вручную, отправка в Telegram, восстановление. */
 @Module({
-  controllers: [BackupsController],
+  controllers: [BackupsController, BackupsInternalController],
   providers: [
     BackupSettingsStore,
     BackupsService,

@@ -27,9 +27,14 @@ export function setupHttp(app: NestExpressApplication): void {
   // Все мутирующие запросы к API — только с CSRF-токеном (GET/HEAD/OPTIONS пропускаются).
   const csrf = app.get(CsrfService).middleware();
   // /api/agent/* — API для агентов, не браузеров: cookie-сессий нет, аутентификация токеном
-  // и подписью ed25519, CSRF неприменим.
+  // и подписью ed25519, CSRF неприменим. /api/internal/* — служебные запросы изнутри контейнера api
+  // (nodeservice update): только с 127.0.0.1 и с подписью из APP_SECRET, браузер их не делает.
   app.use((req: Request, res: Response, next: NextFunction) =>
-    req.path.startsWith('/api/') && !req.path.startsWith('/api/agent/') ? csrf(req, res, next) : next(),
+    req.path.startsWith('/api/') &&
+    !req.path.startsWith('/api/agent/') &&
+    !req.path.startsWith('/api/internal/')
+      ? csrf(req, res, next)
+      : next(),
   );
   app.setGlobalPrefix('api');
 }
