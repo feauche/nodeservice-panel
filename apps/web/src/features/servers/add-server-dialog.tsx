@@ -17,6 +17,7 @@ import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { CountryField, type CountryPick } from './country-field';
 import { useCreateServer, useTestConnection } from './servers-api';
+import { splitTagList, TagInput, useTagCounts } from './tag-input';
 
 const AUTH_TABS = [
   { key: 'password', label: 'Пароль' },
@@ -143,6 +144,7 @@ export function AddServerDialog({ open, onOpenChange, initialName, initialHost }
   const test = useTestConnection();
   const create = useCreateServer();
   const [form, setForm] = useState({ name: '', host: '', port: '22', sshUser: 'root', tags: '', notes: '' });
+  const tagCounts = useTagCounts();
   const [providerId, setProviderId] = useState<string | null>(null);
   /** Страна: не выбрали или «Определять автоматически» — поле не шлём, панель определит по IP сама. */
   const [countryPick, setCountryPick] = useState<CountryPick>(null);
@@ -327,15 +329,14 @@ export function AddServerDialog({ open, onOpenChange, initialName, initialHost }
               />
             </Field>
             <Field id="srv-tags" label="Теги" error={errors.tags || undefined}>
-              <Input
+              <TagInput
                 id="srv-tags"
                 disabled={busy}
-                aria-invalid={errors.tags ? true : undefined}
-                aria-describedby={errors.tags ? 'srv-tags-error' : undefined}
-                placeholder="prod, de"
-                value={form.tags}
-                onChange={set('tags')}
-                className={inputClass}
+                invalid={Boolean(errors.tags)}
+                describedBy={errors.tags ? 'srv-tags-error' : undefined}
+                value={splitTagList(form.tags)}
+                onChange={(t) => setForm((f) => ({ ...f, tags: t.join(', ') }))}
+                counts={tagCounts}
               />
             </Field>
           </div>

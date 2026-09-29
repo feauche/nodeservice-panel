@@ -1,5 +1,18 @@
 import Anthropic from '@anthropic-ai/sdk';
 
+/**
+ * Предел длины одного ответа модели. 4096 не хватало на длинную статью: вызов save_kb_article обрывался
+ * посреди аргументов и приходил пустым («не задан заголовок»). Платится только то, что реально написано.
+ */
+export const LLM_MAX_OUTPUT_TOKENS = 16_000;
+/** Сколько ждём ответ модели: 16 тыс. токенов пишутся дольше полутора минут. */
+export const LLM_TIMEOUT_MS = 240_000;
+/**
+ * Вызов инструмента оборвался на пределе длины: аргументы неполные. Инструмент не выполняем, а модели
+ * объясняем, что случилось (см. runTool).
+ */
+export const TRUNCATED_TOOL_INPUT = { __truncated: true } as const;
+
 /** Блок сообщения (совместим с Anthropic content blocks). */
 export type LlmBlock =
   | { type: 'text'; text: string }
@@ -38,7 +51,7 @@ export const LLM_PROVIDER = Symbol('LLM_PROVIDER');
  * Что показать администратору вместо техподробностей сбоя провайдера модели. Статус нельзя брать из 5xx:
  * фильтр ошибок подменяет текст любой ошибки от 500 на общий, поэтому вызывающий код отвечает 424.
  */
-export function describeLlmError(err: unknown, seconds = 90): string {
+export function describeLlmError(err: unknown, seconds = LLM_TIMEOUT_MS / 1000): string {
   const m = err instanceof Error ? `${err.name} ${err.message}` : String(err);
   if (/Timeout|Abort/i.test(m))
     return `Провайдер модели не ответил за ${seconds} секунд. Повторите вопрос; если так каждый раз, выберите модель побыстрее в «Настройки → Джарвис».`;
@@ -53,10 +66,10 @@ export function describeLlmError(err: unknown, seconds = 90): string {
 /** Реальный провайдер поверх Anthropic SDK. */
 export class AnthropicProvider implements LlmProvider {
   async run(input: LlmRunInput): Promise<LlmResp> {
-    const client = new Anthropic({ apiKey: input.apiKey });
+    const client = new Anthropic({ apiKey: input.apiKey, timeout: LLM_TIMEOUT_MS });
     const res = await client.messages.create({
       model: input.model,
-      max_tokens: 4096,
+      max_tokens: LLM_MAX_OUTPUT_TOKENS,
       system: input.system,
       ...(input.tools.length > 0
         ? {
@@ -71,9 +84,17 @@ export class AnthropicProvider implements LlmProvider {
     });
     const blocks: LlmBlock[] = res.content.map((b) => {
       if (b.type === 'text') return { type: 'text', text: b.text };
-      if (b.type === 'tool_use') return { type: 'tool_use', id: b.id, name: b.name, input: b.input };
+      if (b.type === 'tool_use')
+        return {
+          type: 'tool_use',
+          id: b.id,
+          name: b.name,
+          // Ответ упёрся в предел длины — последний вызов недописан.
+          input: res.stop_reason === 'max_tokens' ? TRUNCATED_TOOL_INPUT : b.input,
+        };
       return { type: 'text', text: '' };
     });
-    return { stopReason: res.stop_reason === 'tool_use' ? 'tool_use' : 'end', blocks };
+    const hasTool = blocks.some((b) => b.type === 'tool_use');
+    return { stopReason: res.stop_reason === 'tool_use' || hasTool ? 'tool_use' : 'end', blocks };
   }
 }

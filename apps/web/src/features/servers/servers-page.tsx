@@ -16,7 +16,14 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable';
-import { countryName, type Server, type ServersResponse } from '@nodeservice/shared';
+import {
+  countryName,
+  normalizeTag,
+  type Server,
+  type ServersResponse,
+  similarTag,
+  tagCounts,
+} from '@nodeservice/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   ChevronDownIcon,
@@ -37,9 +44,9 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
@@ -55,6 +62,7 @@ import { HEALTH_LABELS, type ServerHealth, serverHealth } from './server-health'
 import { ServerList, useServersView } from './server-list';
 import { openServer } from './server-modal-store';
 import { serversKeys, useCheckAllServers, useReorderServers, useServers } from './servers-api';
+import { TagsManageDialog } from './tags-manage-dialog';
 
 export interface ServersPageProps {
   /** Фильтр по тегу из URL (?tag=prod) — ссылку можно переслать. */
@@ -107,7 +115,19 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
   const visual = dragOrder
     ? (dragOrder.map((id) => items.find((s) => s.id === id)).filter(Boolean) as Server[])
     : items;
-  const allTags = useMemo(() => [...new Set(items.flatMap((s) => s.tags))].sort(), [items]);
+  const tagCountMap = useMemo(() => tagCounts(items), [items]);
+  const allTags = useMemo(
+    () =>
+      Object.keys(tagCountMap).sort(
+        (a, b) => (tagCountMap[b] ?? 0) - (tagCountMap[a] ?? 0) || a.localeCompare(b),
+      ),
+    [tagCountMap],
+  );
+  /** Выбранные теги — в адресе через запятую (?tag=node,exit): ссылку можно переслать. */
+  const selectedTags = useMemo(() => (tag ? tag.split(',').filter(Boolean) : []), [tag]);
+  const setSelectedTags = (next: string[]) => onTag(next.length ? next.join(',') : undefined);
+  const [tagQuery, setTagQuery] = useState('');
+  const [manageTags, setManageTags] = useState(false);
   /** Страны, которые есть у серверов, с числом серверов; фильтр не показывается, пока стран нет ни у одного. */
   const countryStats = useMemo(() => {
     const byCode = new Map<string, number>();
@@ -133,7 +153,7 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
   }, [items, metricsById]);
   const filtered = visual.filter((s) => {
     if (health !== 'all' && healthOf(s) !== health) return false;
-    if (tag && !s.tags.includes(tag)) return false;
+    if (selectedTags.length > 0 && !selectedTags.every((t) => s.tags.includes(t))) return false;
     if (countries.length > 0 && !countries.includes(s.country.code ?? NO_COUNTRY)) return false;
     if (q) {
       const needle = q.toLowerCase();
@@ -304,32 +324,79 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
           </DropdownMenu>
         )}
         {allTags.length > 0 && (
-          <DropdownMenu>
+          <DropdownMenu onOpenChange={(o) => !o && setTagQuery('')}>
             <DropdownMenuTrigger asChild>
               <Button
                 type="button"
                 variant="outline"
-                data-active={Boolean(tag)}
+                data-active={selectedTags.length > 0}
                 className="h-9 rounded-[10px] border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:bg-surface-3 hover:text-foreground data-[active=true]:border-brand/40 data-[active=true]:text-foreground"
               >
                 <TagIcon className="size-3.5" aria-hidden="true" />
-                {tag ? `Тег: ${tag}` : 'Теги'}
+                {selectedTags.length === 1 ? `Тег: ${selectedTags[0]}` : 'Теги'}
+                {selectedTags.length > 1 && (
+                  <span className="rounded-full bg-brand-soft px-1.5 text-[11px] font-semibold text-brand">
+                    {selectedTags.length}
+                  </span>
+                )}
                 <ChevronDownIcon className="size-3.5 opacity-70" aria-hidden="true" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="min-w-[180px]">
-              <DropdownMenuLabel>Фильтр по тегу</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={tag ?? ''}
-                onValueChange={(v) => onTag(v === '' ? undefined : v)}
-              >
-                <DropdownMenuRadioItem value="">Все серверы</DropdownMenuRadioItem>
-                {allTags.map((t) => (
-                  <DropdownMenuRadioItem key={t} value={t}>
-                    {t}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
+            <DropdownMenuContent align="start" className="max-h-[360px] min-w-[260px]">
+              <DropdownMenuLabel>Фильтр по тегам</DropdownMenuLabel>
+              <div className="px-1 pb-1">
+                <Input
+                  aria-label="Найти тег"
+                  placeholder="Найти тег…"
+                  value={tagQuery}
+                  onChange={(e) => setTagQuery(e.target.value)}
+                  // Буквы — в поиск, а не в «прыжок по пунктам» меню.
+                  onKeyDown={(e) => e.stopPropagation()}
+                  className="h-8 rounded-[8px] bg-surface-2 text-[13px]"
+                />
+              </div>
+              {allTags
+                .filter((t) => t.includes(normalizeTag(tagQuery)))
+                .map((t) => {
+                  const like = similarTag(t, tagCountMap);
+                  return (
+                    <DropdownMenuCheckboxItem
+                      key={t}
+                      checked={selectedTags.includes(t)}
+                      // Список остаётся открытым: теги выбирают по несколько.
+                      onSelect={(e) => e.preventDefault()}
+                      onCheckedChange={(on) =>
+                        setSelectedTags(on ? [...selectedTags, t] : selectedTags.filter((k) => k !== t))
+                      }
+                      className="py-1.5 pr-8 text-[13px]"
+                    >
+                      <span className="min-w-0 flex-1 truncate">
+                        {t}
+                        {like && <span className="ml-1.5 text-[11px] text-warn">похоже на {like.tag}</span>}
+                      </span>
+                      <span className="mr-1 text-[11.5px] text-text-3 tabular-nums">{tagCountMap[t]}</span>
+                    </DropdownMenuCheckboxItem>
+                  );
+                })}
+              <div className="mt-1 flex items-center gap-2 border-t border-border px-2 pt-1.5 pb-0.5 text-[12px] text-text-3">
+                <span className="flex-1">
+                  {selectedTags.length > 1
+                    ? `Все выбранные: ${selectedTags.length}`
+                    : `Выбрано: ${selectedTags.length}`}
+                </span>
+                <button
+                  type="button"
+                  disabled={selectedTags.length === 0}
+                  onClick={() => setSelectedTags([])}
+                  className="cursor-pointer text-brand underline-offset-2 hover:underline disabled:cursor-default disabled:opacity-50 disabled:no-underline"
+                >
+                  Сбросить
+                </button>
+              </div>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setManageTags(true)} className="text-[13px] text-brand">
+                Управление тегами…
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -493,6 +560,7 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
       )}
 
       <AddServerDialog open={addOpen} onOpenChange={setAddOpen} />
+      <TagsManageDialog open={manageTags} onOpenChange={setManageTags} />
     </div>
   );
 }

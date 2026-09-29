@@ -13,6 +13,7 @@ import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import { describeAnomaly } from './block-check.logic.js';
 import { IncidentsRepository } from './incidents.repository.js';
+import { IncidentsService } from './incidents.service.js';
 import { NodeBlockCheckService } from './node-block-check.service.js';
 import { resolveUpstreamTarget } from './upstream-target.js';
 
@@ -60,6 +61,7 @@ export class NodeAnomalyJob {
     private readonly incidents: IncidentsRepository,
     private readonly blockCheck: NodeBlockCheckService,
     private readonly notifications: NotificationsService,
+    private readonly incidentsService: IncidentsService,
   ) {}
 
   @Interval(TICK_MS)
@@ -157,19 +159,25 @@ export class NodeAnomalyJob {
       result.entry = await this.blockCheck
         .checkEntry(target, matched?.id ?? null, allServers)
         .catch(() => null);
-    const { title, detail, confirmed } = describeAnomaly({
+    const overdue = matched ? await this.incidentsService.overdueFor(matched.id) : [];
+    const described = describeAnomaly({
       nodeName: node.name,
       before,
       after,
       windowMin: NODE_ONLINE_DROP_WINDOW_MIN,
       result,
       portKnown: Boolean(inbound?.port),
+      overdue,
     });
+    const { title, detail, confirmed } = described;
+    // Агент на связи — сервер жив, порт закрыт у самой ноды или файрволом: это не «Сервер недоступен».
+    const kind =
+      described.kind === 'server_down' && matched?.agentStatus === 'online' ? 'node_blocked' : described.kind;
     const row = await this.incidents.open({
       serverId: matched?.id ?? null,
       serverName: matched?.name ?? node.name,
-      kind: 'node_blocked',
-      severity: confirmed ? 'crit' : 'warn',
+      kind,
+      severity: confirmed || kind === 'server_down' ? 'crit' : 'warn',
       title,
       detail,
       timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
@@ -177,16 +185,17 @@ export class NodeAnomalyJob {
     // Раньше такой инцидент писался только в базу: ни колокольчика, ни Telegram. Сообщаем как обычный.
     if (row)
       await this.notifications.push({
-        severity: confirmed ? 'crit' : 'warn',
+        severity: confirmed || kind === 'server_down' ? 'crit' : 'warn',
         title,
         body: detail,
         // Сервер привязываем, только если нода есть в NodeService: у уведомления ссылка на запись сервера.
         server: matched ? { id: matched.id, name: matched.name, host: node.address } : null,
         link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
         telegram: {
-          event: confirmed ? 'incident_crit' : 'incident_warn',
+          event: confirmed || kind === 'server_down' ? 'incident_crit' : 'incident_warn',
           incidentId: row.id,
-          kind: 'node_blocked',
+          kind,
+          awaitAnalysis: await this.incidentsService.analysisWillFollow(),
           serverKey: matched?.id ?? `node:${node.uuid}`,
           server: { name: matched?.name ?? node.name, host: node.address },
         },

@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildBlockCheckCommand,
   combineVerdicts,
+  describeAnomaly,
   entrySide,
   isSafeBlockCheckTarget,
   parseBlockCheckOutput,
@@ -229,6 +230,38 @@ describe('вход сервера-выхода', () => {
       'Выход отвечает, а вход — нет: похоже, лёг вход — напишите: Иван.',
     );
     expect(entrySide({ ...base, entry: null })).toBeNull();
+  });
+
+  it('не отвечает ни из России, ни из-за рубежа — «Сервер недоступен», а не блокировка; просрочка из биллинга — фактом', () => {
+    const down = { ...base, foreign: [probe('unreachable')], entry: entry('unreachable') };
+    const plain = describeAnomaly({
+      nodeName: 'guardora',
+      before: 476,
+      after: 0,
+      windowMin: 5,
+      result: down,
+      portKnown: true,
+    });
+    expect(plain.kind).toBe('server_down');
+    expect(plain.title).toBe('Сервер недоступен · guardora');
+    const paid = describeAnomaly({
+      nodeName: 'guardora (Аренда)',
+      before: 476,
+      after: 0,
+      windowMin: 5,
+      result: down,
+      portKnown: true,
+      overdue: ['Аренда «Guardora»: 2 500 ₽, оплачено до 29 сентября, 00:00 — просрочено на 15 часов'],
+    });
+    expect(paid.title).toBe('Сервер недоступен — просрочена оплата · guardora (Аренда)');
+    expect(paid.detail).toContain('💳 Просрочена оплата: Аренда «Guardora»');
+    expect(paid.detail).toContain('отключили за неоплату');
+    expect(paid.detail).not.toContain('возможно, не оплачена аренда');
+    // Только из России не отвечает — зарубежной проверки нет: это ещё не «сервер недоступен».
+    expect(
+      describeAnomaly({ nodeName: 'x', before: 100, after: 0, windowMin: 5, result: base, portKnown: true })
+        .kind,
+    ).toBe('node_blocked');
   });
 
   it('адрес входа: порт по умолчанию 443', () => {

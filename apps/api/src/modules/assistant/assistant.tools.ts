@@ -202,6 +202,12 @@ export interface ToolOutcome {
 export async function runTool(name: string, input: unknown, deps: ToolDeps): Promise<ToolOutcome> {
   const arg = (input ?? {}) as Record<string, unknown>;
   const empty: ToolOutcome = { content: '', citations: [], proposals: [] };
+  if (arg.__truncated)
+    return {
+      ...empty,
+      content:
+        'Вызов не выполнен: ответ оборвался на пределе длины, аргументы дошли не целиком. Сделай вызов короче: длинную статью сохрани двумя-тремя статьями поменьше (например, «… — часть 1», «… — часть 2») или сократи текст. Не говори, что «не задан заголовок» — дело было в длине.',
+    };
 
   const read = await runReadTool(name, arg, deps);
   if (read) return read;

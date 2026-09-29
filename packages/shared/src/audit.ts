@@ -120,6 +120,8 @@ export const AUDIT_ACTIONS = {
   'server.created': { category: 'server', label: 'Сервер добавлен' },
   'server.duplicated': { category: 'server', label: 'Сервер продублирован' },
   'server.reordered': { category: 'server', label: 'Порядок серверов изменён' },
+  'server.tags.renamed': { category: 'server', label: 'Тег переименован на всех серверах' },
+  'server.tags.deleted': { category: 'server', label: 'Тег убран со всех серверов' },
   'server.updated': { category: 'server', label: 'Сервер изменён' },
   'remnawave.connected': { category: 'settings', label: 'Remnawave подключена' },
   'remnawave.disconnected': { category: 'settings', label: 'Remnawave отключена' },

@@ -823,6 +823,28 @@ export class BillingService {
     );
   }
 
+  /**
+   * Только уже просроченные оплаты сервера (срок прошёл) — факт для инцидента «Сервер недоступен»:
+   * «Аренда «Guardora»: 2 500 ₽, оплачено до 29 сентября, 00:00 — просрочено на 15 часов».
+   */
+  async overdueForServer(serverId: string, now = new Date()): Promise<string[]> {
+    const rows = await this.db
+      .select()
+      .from(billingItems)
+      .where(
+        and(
+          isNull(billingItems.archivedAt),
+          lte(billingItems.paidUntil, now),
+          sql`${billingItems.serverIds} @> ${JSON.stringify([serverId])}::jsonb`,
+        ),
+      );
+    const briefs = await this.briefs(rows, now);
+    return briefs.map(
+      (b) =>
+        `${b.kind} «${b.title}»${b.provider ? ` у ${b.provider}` : ''}: ${b.amount}, оплачено до ${b.paidUntil} — ${b.due}`,
+    );
+  }
+
   /* ─────────── Фоновая задача: автоплатёж, напоминания, досчёт рублей ─────────── */
 
   /** Автоплатёж: в срок продлеваем на период и учитываем сумму карточки. */

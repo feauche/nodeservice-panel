@@ -57,6 +57,26 @@ export function outcomeSentence(inc: Incident, now: number): string {
   return 'Наблюдаем';
 }
 
+/** Заголовок дела без имени сервера (оно в строке отдельно): «Сервер недоступен — просрочена оплата». */
+export function titleOnly(inc: Pick<Incident, 'title'>): string {
+  const i = inc.title.lastIndexOf(' · ');
+  return i > 0 ? inc.title.slice(0, i) : inc.title;
+}
+
+/**
+ * Вторая строка в списке: готовый разбор Джарвиса важнее «Автопочинки нет» — он называет причину. Шаг,
+ * который ждёт подтверждения, и ход починки остаются главными.
+ */
+export function listSubtitle(inc: Incident, now: number): string {
+  const a = inc.analysis;
+  const waitingStep = inc.status !== 'resolved' && (inc.proposal || graceLeftS(inc, now) !== null);
+  if (!waitingStep && a?.status === 'done' && a.verdict) {
+    const first = a.verdict.split(/(?<=[.!?])\s/)[0] ?? a.verdict;
+    return `Джарвис: ${first.length > 160 ? `${first.slice(0, 159)}…` : first}`;
+  }
+  return outcomeSentence(inc, now);
+}
+
 /** Длительность: «38 с», «6 мин», «1 ч 12 мин»; для открытого — с многоточием. */
 export function durationText(inc: Incident, now: number): string {
   const end = inc.resolvedAt ? new Date(inc.resolvedAt).getTime() : now;

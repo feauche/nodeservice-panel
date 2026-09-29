@@ -334,6 +334,27 @@ export const serversHandlers = [
     mockServers.items = [...mockServers.items.slice(0, at + 1), copy, ...mockServers.items.slice(at + 1)];
     return HttpResponse.json(copy, { status: 201 });
   }),
+  http.post('/api/servers/tags/rename', async ({ request }) => {
+    const b = (await request.json()) as { from: string; to: string };
+    const to = b.to.trim().toLowerCase();
+    let updated = 0;
+    mockServers.items = mockServers.items.map((srv) => {
+      if (!srv.tags.includes(b.from)) return srv;
+      updated += 1;
+      return { ...srv, tags: [...new Set(srv.tags.map((t) => (t === b.from ? to : t)))] };
+    });
+    return HttpResponse.json({ updated });
+  }),
+  http.post('/api/servers/tags/delete', async ({ request }) => {
+    const b = (await request.json()) as { tag: string };
+    let updated = 0;
+    mockServers.items = mockServers.items.map((srv) => {
+      if (!srv.tags.includes(b.tag)) return srv;
+      updated += 1;
+      return { ...srv, tags: srv.tags.filter((t) => t !== b.tag) };
+    });
+    return HttpResponse.json({ updated });
+  }),
   http.post('/api/servers/reorder', async ({ request }) => {
     const body = (await request.json()) as { ids?: string[] };
     const byId = new Map(mockServers.items.map((s) => [s.id, s]));

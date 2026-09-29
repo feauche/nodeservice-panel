@@ -15,6 +15,7 @@ import { IncidentsService } from '../incidents/incidents.service.js';
 import { NodeBlockCheckService } from '../incidents/node-block-check.service.js';
 import { resolveUpstreamTarget } from '../incidents/upstream-target.js';
 import { KnowledgeService } from '../knowledge/knowledge.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { playbookForKind, renderPlaybook } from './assistant.playbooks.js';
 import { incidentCase, type ReadDeps, runReadTool, toolsFor } from './assistant.read-tools.js';
@@ -85,6 +86,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     private readonly remnawave: RemnawaveService,
     private readonly billing: BillingService,
     private readonly blockCheck: NodeBlockCheckService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -350,7 +352,11 @@ export class IncidentAnalysisService implements OnModuleInit {
         error: null,
         steps: [...steps],
       });
+      // Сообщение в Telegram ждало разбора — теперь уходит с выводом Джарвиса.
+      this.notifications.releaseAfterAnalysis(id, submission.verdict, submission.confidence ?? null);
     } catch (err) {
+      // Разбор не получился — отложенное сообщение уходит как есть, без вывода.
+      this.notifications.releaseAfterAnalysis(id, null);
       if (err instanceof Gone) return;
       if (!(err instanceof AnalysisError))
         this.log.warn(`Разбор ${id}: ${err instanceof Error ? err.message : err}`);

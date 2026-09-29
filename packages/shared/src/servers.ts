@@ -58,6 +58,8 @@ export const sshUserSchema = z
 export const tagSchema = z
   .string()
   .trim()
+  // Один вид тегов: «Node» и «node» — один тег (см. tags.ts).
+  .toLowerCase()
   .min(1)
   .max(24, 'Тег — до 24 символов')
   .regex(/^[\p{L}\p{N}_-]+$/u, 'Тег — буквы, цифры, дефис');
@@ -83,7 +85,11 @@ export const NODE_STATE_LABELS: Record<NodeState, string> = {
   none: 'контейнер не найден',
 };
 
-export const tagsSchema = z.array(tagSchema).max(SERVER_TAGS_MAX, `До ${SERVER_TAGS_MAX} тегов`).default([]);
+export const tagsSchema = z
+  .array(tagSchema)
+  .max(SERVER_TAGS_MAX, `До ${SERVER_TAGS_MAX} тегов`)
+  .transform((t) => [...new Set(t)])
+  .default([]);
 
 /* ---------- статусы ---------- */
 export const AGENT_STATUSES = ['not_installed', 'installing', 'pending', 'online', 'offline'] as const;
@@ -228,7 +234,11 @@ export const updateServerRequestSchema = z.object({
   host: hostSchema.optional(),
   port: z.coerce.number().int().min(1).max(65535).optional(),
   sshUser: sshUserSchema.optional(),
-  tags: z.array(tagSchema).max(SERVER_TAGS_MAX, `До ${SERVER_TAGS_MAX} тегов`).optional(),
+  tags: z
+    .array(tagSchema)
+    .max(SERVER_TAGS_MAX, `До ${SERVER_TAGS_MAX} тегов`)
+    .transform((t) => [...new Set(t)])
+    .optional(),
   notes: z.string().trim().max(SERVER_NOTES_MAX).nullable().optional(),
   providerId: z.uuid().nullable().optional(),
   nodeWatch: nodeWatchSchema.optional(),

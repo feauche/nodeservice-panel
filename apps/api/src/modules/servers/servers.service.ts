@@ -334,6 +334,33 @@ export class ServersService {
     return this.toDto(copy);
   }
 
+  /**
+   * «Управление тегами»: переименовать тег на всех серверах. Если новый уже есть у сервера — слить (без
+   * повтора). Одна запись в Журнале на всю операцию.
+   */
+  async renameTag(from: string, to: string): Promise<{ updated: number }> {
+    if (from === to) return { updated: 0 };
+    const all = await this.repo.list();
+    const rows = all.filter((r) => r.tags.includes(from));
+    // Новый тег уже был в парке — это слияние, а не переименование.
+    const merged = all.some((r) => r.tags.includes(to));
+    for (const r of rows)
+      await this.repo.update(r.id, { tags: [...new Set(r.tags.map((t) => (t === from ? to : t)))] });
+    await this.audit.record({
+      action: 'server.tags.renamed',
+      metadata: { from, to, servers: rows.length, merged: merged ? 'да' : 'нет' },
+    });
+    return { updated: rows.length };
+  }
+
+  /** Убрать тег со всех серверов. */
+  async deleteTag(tag: string): Promise<{ updated: number }> {
+    const rows = (await this.repo.list()).filter((r) => r.tags.includes(tag));
+    for (const r of rows) await this.repo.update(r.id, { tags: r.tags.filter((t) => t !== tag) });
+    await this.audit.record({ action: 'server.tags.deleted', metadata: { tag, servers: rows.length } });
+    return { updated: rows.length };
+  }
+
   /** Ручной порядок карточек (drag-and-drop на странице серверов). */
   async reorder(ids: string[]): Promise<Server[]> {
     await this.repo.setOrder(ids);

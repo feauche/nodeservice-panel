@@ -622,3 +622,21 @@ describe('служебные статьи', () => {
     expect(saved).toBe(0);
   });
 });
+
+describe('обрезанный вызов инструмента', () => {
+  it('не выполняется и объясняет модели, что дело в длине, а не в «пустом заголовке»', async () => {
+    let saved = false;
+    const d = {
+      ...deps(),
+      permissions: { ...deps().permissions, kbWrite: true },
+      saveArticle: async () => {
+        saved = true;
+        return { id: 'x', title: 'x' };
+      },
+    } as unknown as ToolDeps;
+    const r = await runTool('save_kb_article', { __truncated: true }, d);
+    expect(saved).toBe(false);
+    expect(r.content).toMatch(/оборвался на пределе длины/);
+    expect(r.content).toMatch(/часть 1/);
+  });
+});

@@ -263,7 +263,9 @@ export function describeAnomaly(input: {
   windowMin: number;
   result: BlockCheckResult;
   portKnown: boolean;
-}): { title: string; detail: string; confirmed: boolean } {
+  /** Просроченные оплаты сервера из «Биллинга» (факты, см. BillingService.overdueForServer). */
+  overdue?: readonly string[];
+}): { title: string; detail: string; confirmed: boolean; kind: 'node_blocked' | 'server_down' } {
   const { nodeName, before, after, windowMin, result } = input;
   const pct = before > 0 ? Math.round(((before - after) / before) * 100) : 0;
   const lines = [`Онлайн: ${before} → ${after} (−${pct} %) за ${windowMin} минут`];
@@ -278,7 +280,7 @@ export function describeAnomaly(input: {
         ? 'Проверить не удалось: нет ни одного российского сервера парка с рабочим SSH для встречной проверки.'
         : 'Проверить не удалось: в Remnawave не нашёлся порт подключения этой ноды.',
     );
-    return { title, detail: lines.join('\n'), confirmed };
+    return { title, detail: lines.join('\n'), confirmed, kind: 'node_blocked' };
   }
   const entry = result.entry;
   lines.push('', entry ? 'Выход — этот сервер, из России:' : 'Из России:', ...result.probes.map(probeLine));
@@ -311,12 +313,30 @@ export function describeAnomaly(input: {
   lines.push('', verdict);
   const side = entrySide(result);
   if (side) lines.push(side);
-  if (rental && result.verdict === 'unreachable')
-    lines.push('Сервер арендован: если он недоступен целиком, возможно, не оплачена аренда.');
+  const overdue = input.overdue ?? [];
+  // Сервер не отвечает ни из России, ни из-за рубежа — это не блокировка, а недоступность целиком.
+  const wholeDown = result.verdict === 'unreachable' && result.foreign.length > 0;
+  if (result.verdict === 'unreachable' && overdue.length > 0)
+    lines.push(
+      '',
+      ...overdue.map((o) => `💳 Просрочена оплата: ${o}.`),
+      'Самая вероятная причина — отключили за неоплату: продлите у провайдера и отметьте продление в «Биллинге».',
+    );
+  else if (rental && result.verdict === 'unreachable')
+    lines.push(
+      'Сервер арендован: если он недоступен целиком, возможно, не оплачена аренда (в «Биллинге» просрочки нет).',
+    );
+  if (wholeDown)
+    return {
+      title: `${overdue.length > 0 ? 'Сервер недоступен — просрочена оплата' : 'Сервер недоступен'} · ${nodeName}`,
+      detail: lines.join('\n'),
+      confirmed,
+      kind: 'server_down',
+    };
   title = confirmed
     ? `${BLOCK_VERDICT_LABELS[result.verdict]} · ${nodeName}`
     : portOnly
       ? `Резко упал онлайн, порт отвечает · ${nodeName}`
       : `Резко упал онлайн, блокировка не подтвердилась · ${nodeName}`;
-  return { title, detail: lines.join('\n'), confirmed };
+  return { title, detail: lines.join('\n'), confirmed, kind: 'node_blocked' };
 }

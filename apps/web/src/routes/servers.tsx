@@ -10,7 +10,8 @@ import { ServersPage } from '@/features/servers/servers-page';
 const serversSearchSchema = z.object({
   /** Открытая модалка сервера (?open=<id>) — ссылку можно переслать. */
   open: z.uuid().optional().catch(undefined),
-  tag: z.string().trim().min(1).max(24).optional().catch(undefined),
+  /** Теги фильтра через запятую (?tag=node,exit). */
+  tag: z.string().trim().min(1).max(300).optional().catch(undefined),
 });
 
 export const Route = createFileRoute('/servers')({

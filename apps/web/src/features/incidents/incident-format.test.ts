@@ -1,7 +1,14 @@
 import type { Incident } from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
 
-import { closedAtMs, humanSeconds, outcomeSentence, weekStats } from './incident-format';
+import {
+  closedAtMs,
+  humanSeconds,
+  listSubtitle,
+  outcomeSentence,
+  titleOnly,
+  weekStats,
+} from './incident-format';
 
 const NOW = Date.parse('2026-09-25T12:00:00Z');
 const iso = (minAgo: number) => new Date(NOW - minAgo * 60_000).toISOString();
@@ -84,5 +91,44 @@ describe('closedAtMs и humanSeconds', () => {
     expect(humanSeconds(40)).toBe('40 с');
     expect(humanSeconds(360)).toBe('6 мин');
     expect(humanSeconds(33120)).toBe('9 ч 12 мин');
+  });
+});
+
+describe('строка в списке инцидентов', () => {
+  it('заголовок без имени сервера — настоящий, а не подпись вида', () => {
+    expect(titleOnly({ title: 'Сервер недоступен — просрочена оплата · guardora (Аренда)' })).toBe(
+      'Сервер недоступен — просрочена оплата',
+    );
+  });
+
+  it('готовый разбор Джарвиса — вместо «Автопочинки нет»; ждущий подтверждения шаг важнее', () => {
+    const analysis = {
+      status: 'done',
+      startedAt: iso(5),
+      finishedAt: iso(4),
+      steps: [],
+      verdict: 'Оплата аренды просрочена на 15 часов — вероятно, отключили за неоплату. Остальное вторично.',
+      confidence: 'high',
+      evidence: [],
+      unknown: null,
+      nextAction: null,
+      basedOn: { attempts: 0, resolved: false },
+      model: 'm',
+      error: null,
+      thread: [],
+    } as unknown as Incident['analysis'];
+    const inc = base({ kind: 'server_down', status: 'open', resolvedAt: null, resolvedBy: null, analysis });
+    expect(listSubtitle(inc, NOW)).toBe(
+      'Джарвис: Оплата аренды просрочена на 15 часов — вероятно, отключили за неоплату.',
+    );
+    const waiting = base({
+      kind: 'agent_offline',
+      status: 'open',
+      resolvedAt: null,
+      resolvedBy: null,
+      analysis,
+      proposal: { action: 'agent_reinstall', level: 'T2', reason: 'x', proposedAt: iso(1) },
+    });
+    expect(listSubtitle(waiting, NOW)).toMatch(/Ждёт подтверждения/);
   });
 });

@@ -28,6 +28,7 @@ import { tcpOpen } from '../../common/net/tcp-open.js';
 import type { IncidentRow, ServerRow } from '../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
+import { BillingService } from '../billing/billing.service.js';
 import { MaintenanceService } from '../maintenance/maintenance.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ServersRepository } from '../servers/servers.repository.js';
@@ -77,7 +78,22 @@ export class IncidentsService {
     private readonly metrics: IncidentMetricsService,
     private readonly notifications: NotificationsService,
     private readonly maintenance: MaintenanceService,
+    private readonly billing: BillingService,
   ) {}
+
+  /**
+   * Джарвис сам разберёт новое дело (включены «Разбор» и «Автоматический разбор»): тогда сообщение в
+   * Telegram ждёт разбора и уходит уже с его выводом (решение владельца 29.09.2026).
+   */
+  async analysisWillFollow(): Promise<boolean> {
+    const a = await this.settingsService.getAssistant().catch(() => null);
+    return Boolean(a?.enabled && a.permissions.analysis && a.permissions.autoAnalysis);
+  }
+
+  /** Просроченные оплаты сервера — факты для «Сервер недоступен». */
+  async overdueFor(serverId: string): Promise<string[]> {
+    return this.billing.overdueForServer(serverId).catch(() => []);
+  }
 
   toDto(row: IncidentRow): Incident {
     return {
@@ -443,14 +459,21 @@ export class IncidentsService {
       const why = hostDown
         ? `Сервер не отвечает: агент молчит, порт SSH ${server.host}:${server.port} не открывается.`
         : 'Сервер не отвечает: агент молчит, по SSH панель зайти не может.';
-      const detail = `${why} Обычно это значит, что сервер выключен, завис или отрезан у хостера — проверьте в панели хостера и оплату. Агент и SSH — следствие, переустанавливать агента бессмысленно.`;
+      const overdue = open ? [] : await this.overdueFor(server.id);
+      const detail = [
+        `${why} Обычно это значит, что сервер выключен, завис или отрезан у хостера — проверьте в панели хостера и оплату. Агент и SSH — следствие, переустанавливать агента бессмысленно.`,
+        ...overdue.map((o) => `💳 Просрочена оплата: ${o}. Самая вероятная причина — отключили за неоплату.`),
+      ].join('\n');
       let main = open;
       if (!main) {
         const earlier =
           (await this.repo.findOpen(server.id, 'agent_offline')) ??
           (await this.repo.findOpen(server.id, 'ssh_down'));
-        main = earlier ? await this.refineToServerDown(earlier, server, detail) : undefined;
-        if (!main) await this.openIncident(server, 'server_down', detail);
+        main = earlier
+          ? await this.refineToServerDown(earlier, server, detail, overdue.length > 0)
+          : undefined;
+        const label = overdue.length > 0 ? 'Сервер недоступен — просрочена оплата' : undefined;
+        if (!main) await this.openIncident(server, 'server_down', detail, label);
         main ??= await this.repo.findOpen(server.id, 'server_down');
       }
       // Остальные дела по этому серверу с той же причиной — закрываем с пояснением, куда они делись.
@@ -474,7 +497,10 @@ export class IncidentsService {
       }
       return;
     }
-    if (open && !open.attempts.some((a) => a.status === 'running'))
+    // Закрываем, только если сервер действительно ответил: агент на связи или порт SSH открылся. Дело,
+    // открытое проверкой онлайна у сервера без агента (аренда), закрывает перепроверка онлайна.
+    const answered = agentOff || server.agentStatus === 'online';
+    if (open && answered && !open.attempts.some((a) => a.status === 'running'))
       await this.autoResolve(
         open,
         agentOff
@@ -493,6 +519,7 @@ export class IncidentsService {
     row: IncidentRow,
     server: ServerRow,
     detail: string,
+    overdue = false,
   ): Promise<IncidentRow | undefined> {
     const meta = INCIDENT_KIND_META.server_down;
     const dropped = row.proposal
@@ -501,9 +528,11 @@ export class IncidentsService {
     const updated = await this.repo.update(row.id, {
       kind: 'server_down',
       severity: meta.severity,
-      title: `${meta.label} · ${server.name}`,
+      title: `${overdue ? 'Сервер недоступен — просрочена оплата' : meta.label} · ${server.name}`,
       detail,
       proposal: null,
+      // Прежний разбор был про агента или SSH — пусть Джарвис разберёт уже «Сервер недоступен».
+      analysis: null,
       timeline: [
         ...row.timeline,
         ev(
@@ -518,7 +547,12 @@ export class IncidentsService {
       severity: 'crit',
       title: incidentTitleToken(meta.label),
       server: { id: server.id, name: server.name, host: server.host },
-      telegram: { event: 'incident_crit', incidentId: updated.id, kind: 'server_down' },
+      telegram: {
+        event: 'incident_crit',
+        incidentId: updated.id,
+        kind: 'server_down',
+        awaitAnalysis: await this.analysisWillFollow(),
+      },
       body: `Уточнено: ${detail}`,
       link: { to: `/incidents/${updated.id}`, label: 'Открыть инцидент' },
     });
@@ -580,7 +614,13 @@ export class IncidentsService {
       : 'Панель не может подключиться к серверу по SSH.';
   }
 
-  private async openIncident(server: ServerRow, kind: IncidentKind, detail: string): Promise<void> {
+  private async openIncident(
+    server: ServerRow,
+    kind: IncidentKind,
+    detail: string,
+    /** Своя подпись вместо вида (например, «Сервер недоступен — просрочена оплата»). */
+    label?: string,
+  ): Promise<void> {
     const meta = INCIDENT_KIND_META[kind];
     const m = await this.metrics.latestFor(server.id).catch(() => undefined);
     const row = await this.repo.open({
@@ -588,9 +628,9 @@ export class IncidentsService {
       serverName: server.name,
       kind,
       severity: meta.severity,
-      title: `${meta.label} · ${server.name}`,
+      title: `${label ?? meta.label} · ${server.name}`,
       detail,
-      timeline: [ev('auto', `Обнаружено: ${meta.label}`, 'detect')],
+      timeline: [ev('auto', `Обнаружено: ${label ?? meta.label}`, 'detect')],
       snapshot: {
         cpu: m?.cpu ?? null,
         mem: m?.mem ?? null,
@@ -616,6 +656,7 @@ export class IncidentsService {
           event: meta.severity === 'crit' ? 'incident_crit' : 'incident_warn',
           incidentId: row.id,
           kind,
+          awaitAnalysis: await this.analysisWillFollow(),
         },
         body:
           decision === 'waiting'

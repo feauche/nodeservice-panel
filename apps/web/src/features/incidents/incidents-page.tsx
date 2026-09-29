@@ -1,4 +1,4 @@
-import { INCIDENT_KIND_META, type Incident, type IncidentStatus } from '@nodeservice/shared';
+import type { Incident, IncidentStatus } from '@nodeservice/shared';
 import { Link } from '@tanstack/react-router';
 import { ChevronRightIcon, Trash2Icon, WrenchIcon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -17,7 +17,8 @@ import {
   durationText,
   hhmm,
   humanSeconds,
-  outcomeSentence,
+  listSubtitle,
+  titleOnly,
   type WeekStats,
 } from './incident-format';
 import {
@@ -311,11 +312,11 @@ function IncidentRow({ inc, now }: { inc: Incident; now: number }) {
       <span className="hidden truncate text-[13px] font-semibold md:block">{inc.serverName}</span>
       <span className="min-w-0">
         <span className="block text-[13px] font-semibold max-md:line-clamp-2 md:truncate">
-          {INCIDENT_KIND_META[inc.kind].label}
+          {titleOnly(inc)}
         </span>
         <span className="block text-[12.5px] text-text-3 md:hidden">{inc.serverName}</span>
         <span className="block text-[12.5px] text-text-2 max-md:line-clamp-2 md:truncate">
-          {outcomeSentence(inc, now)}
+          {listSubtitle(inc, now)}
         </span>
       </span>
       <span className="flex items-center gap-1.5 max-md:self-start">

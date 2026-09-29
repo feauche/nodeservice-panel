@@ -53,6 +53,7 @@ import { TerminalHistoryTab } from './server-detail/terminal-history-tab';
 import { AUTH_TABS, type ServerEdit, useServerEdit } from './server-detail/use-server-edit';
 import { serverHealth } from './server-health';
 import { useCheckServer, useDeleteServer, useDuplicateServer, useServers } from './servers-api';
+import { splitTagList, TagInput, useTagCounts } from './tag-input';
 
 export type ServerModalTab =
   | 'metrics'
@@ -668,6 +669,7 @@ function SaveBar({ edit, tab }: { edit: ServerEdit; tab: ServerModalTab }) {
 /** «Подключение»: общее и доступы SSH одним экраном; действия с сервером — в левой панели окна. */
 function ConnectionTab({ server, edit }: { server: Server; edit: ServerEdit }) {
   const providers = useProviders();
+  const tagCounts = useTagCounts(server.id);
   const {
     fields: form,
     setField,
@@ -719,14 +721,14 @@ function ConnectionTab({ server, edit }: { server: Server; edit: ServerEdit }) {
               className="h-10 rounded-[10px] bg-surface-2"
             />
           </Field>
-          <Field id="sm-tags" label="Теги (через запятую)" error={errors.tags || undefined}>
-            <Input
+          <Field id="sm-tags" label="Теги" error={errors.tags || undefined}>
+            <TagInput
               id="sm-tags"
-              aria-invalid={errors.tags ? true : undefined}
-              aria-describedby={errors.tags ? 'sm-tags-error' : undefined}
-              value={form.tags}
-              onChange={set('tags')}
-              className="h-10 rounded-[10px] bg-surface-2"
+              invalid={Boolean(errors.tags)}
+              describedBy={errors.tags ? 'sm-tags-error' : undefined}
+              value={splitTagList(form.tags)}
+              onChange={(t) => setField('tags', t.join(', '))}
+              counts={tagCounts}
             />
           </Field>
         </div>

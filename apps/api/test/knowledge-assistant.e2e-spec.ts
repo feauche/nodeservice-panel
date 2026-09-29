@@ -655,7 +655,7 @@ describe('knowledge + assistant e2e', () => {
       .set(CSRF_HEADER, csrf)
       .send({ message: 'СБОЙ-ТАЙМАУТ' })
       .expect(424);
-    expect(slow.body.detail).toContain('не ответил за 90 секунд');
+    expect(slow.body.detail).toContain('не ответил за 240 секунд');
   });
 
   it('память: search_conversations находит прошлую беседу и не показывает текущую', async () => {

@@ -21,6 +21,9 @@ import {
   ReorderServersRequestDto,
   ServerDto,
   ServersResponseDto,
+  TagDeleteDto,
+  TagOpResultDto,
+  TagRenameDto,
   TestConnectionRequestDto,
   TestConnectionResponseDto,
   TrustHostKeyRequestDto,
@@ -79,6 +82,22 @@ export class ServersController {
   @ApiOkResponse({ type: ServersResponseDto })
   async reorder(@Body() body: ReorderServersRequestDto): Promise<ServersResponseDto> {
     return { items: await this.servers.reorder(body.ids) };
+  }
+
+  @Post('tags/rename')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Переименовать тег на всех серверах (если новый уже есть — слить)' })
+  @ApiOkResponse({ type: TagOpResultDto })
+  renameTag(@Body() body: TagRenameDto): Promise<TagOpResultDto> {
+    return this.servers.renameTag(body.from, body.to);
+  }
+
+  @Post('tags/delete')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Убрать тег со всех серверов' })
+  @ApiOkResponse({ type: TagOpResultDto })
+  deleteTag(@Body() body: TagDeleteDto): Promise<TagOpResultDto> {
+    return this.servers.deleteTag(body.tag);
   }
 
   @Post(':id/duplicate')

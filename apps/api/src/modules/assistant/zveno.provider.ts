@@ -1,4 +1,12 @@
-import type { LlmBlock, LlmProvider, LlmResp, LlmRunInput } from './llm.provider.js';
+import {
+  LLM_MAX_OUTPUT_TOKENS,
+  LLM_TIMEOUT_MS,
+  type LlmBlock,
+  type LlmProvider,
+  type LlmResp,
+  type LlmRunInput,
+  TRUNCATED_TOOL_INPUT,
+} from './llm.provider.js';
 
 /** Базовый URL zveno.ai (OpenAI-совместимый шлюз). Переопределяется env ZVENO_BASE_URL. */
 const BASE_URL = process.env.ZVENO_BASE_URL ?? 'https://api.zveno.ai/v1';
@@ -61,7 +69,7 @@ export class ZvenoProvider implements LlmProvider {
       },
       body: JSON.stringify({
         model: input.model,
-        max_tokens: 4096,
+        max_tokens: LLM_MAX_OUTPUT_TOKENS,
         messages,
         // Пустой список инструментов провайдеры отвергают: без инструментов поле не отправляем.
         ...(input.tools.length > 0
@@ -73,7 +81,7 @@ export class ZvenoProvider implements LlmProvider {
             }
           : {}),
       }),
-      signal: AbortSignal.timeout(90_000),
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -91,8 +99,10 @@ export class ZvenoProvider implements LlmProvider {
       try {
         parsed = JSON.parse(call.function.arguments || '{}');
       } catch {
-        parsed = {};
+        // Аргументы не разобрались — почти всегда ответ оборвался на пределе длины (finish_reason length).
+        parsed = TRUNCATED_TOOL_INPUT;
       }
+      if (choice?.finish_reason === 'length') parsed = TRUNCATED_TOOL_INPUT;
       blocks.push({ type: 'tool_use', id: call.id, name: call.function.name, input: parsed });
     }
     // Есть вызовы — значит tool_use, каким бы ни был finish_reason: иначе вызов теряется, а модель «обещала».

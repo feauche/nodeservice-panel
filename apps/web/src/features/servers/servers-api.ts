@@ -8,8 +8,10 @@ import {
   type ServersResponse,
   serverSchema,
   serversResponseSchema,
+  type TagOpResult,
   type TestConnectionRequest,
   type TestConnectionResponse,
+  tagOpResultSchema,
   testConnectionResponseSchema,
   type UpdateServerRequest,
 } from '@nodeservice/shared';
@@ -161,6 +163,25 @@ export function useReorderServers() {
       toast.error('Не получилось сохранить порядок — вернул как было.');
     },
     onSuccess: (res) => qc.setQueryData(serversKeys.list, res),
+  });
+}
+
+/** «Управление тегами»: переименовать (слить) или убрать тег на всех серверах. */
+export function useRenameTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { from: string; to: string }): Promise<TagOpResult> =>
+      api.post('/servers/tags/rename', body, tagOpResultSchema),
+    onSettled: () => void qc.invalidateQueries({ queryKey: serversKeys.list }),
+  });
+}
+
+export function useDeleteTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tag: string): Promise<TagOpResult> =>
+      api.post('/servers/tags/delete', { tag }, tagOpResultSchema),
+    onSettled: () => void qc.invalidateQueries({ queryKey: serversKeys.list }),
   });
 }
 

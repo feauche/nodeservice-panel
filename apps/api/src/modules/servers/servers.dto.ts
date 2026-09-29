@@ -5,6 +5,9 @@ import {
   reorderServersRequestSchema,
   serverSchema,
   serversResponseSchema,
+  tagDeleteSchema,
+  tagOpResultSchema,
+  tagRenameSchema,
   testConnectionRequestSchema,
   testConnectionResponseSchema,
   trustHostKeyRequestSchema,
@@ -20,5 +23,8 @@ export class CreateServerRequestDto extends createZodDto(createServerRequestSche
 export class UpdateServerRequestDto extends createZodDto(updateServerRequestSchema) {}
 export class TrustHostKeyRequestDto extends createZodDto(trustHostKeyRequestSchema) {}
 export class ReorderServersRequestDto extends createZodDto(reorderServersRequestSchema) {}
+export class TagRenameDto extends createZodDto(tagRenameSchema) {}
+export class TagDeleteDto extends createZodDto(tagDeleteSchema) {}
+export class TagOpResultDto extends createZodDto(tagOpResultSchema) {}
 export class PanelKeyResponseDto extends createZodDto(panelKeyResponseSchema) {}
 export class EnrollmentTokenResponseDto extends createZodDto(enrollmentTokenResponseSchema) {}

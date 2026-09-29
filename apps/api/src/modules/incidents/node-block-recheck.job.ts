@@ -84,7 +84,11 @@ export class NodeBlockRecheckJob {
     if (this.busy) return;
     this.busy = true;
     try {
-      const open = (await this.incidentsRepo.list('open')).filter((i) => i.kind === 'node_blocked');
+      // «Сервер недоступен» от проверки онлайна (у сервера без агента) тоже закрывается возвратом онлайна.
+      const open = (await this.incidentsRepo.list('open')).filter(
+        (i) =>
+          i.kind === 'node_blocked' || (i.kind === 'server_down' && baselineFromDetail(i.detail) !== null),
+      );
       for (const id of this.watch.keys()) if (!open.some((r) => r.id === id)) this.watch.delete(id);
       if (open.length === 0) return;
       const status = await this.remnawave.status();

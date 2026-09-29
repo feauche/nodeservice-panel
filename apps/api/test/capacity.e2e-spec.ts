@@ -141,4 +141,48 @@ describe('ёмкость парка e2e', () => {
       .send({ manualMbit: 1000 })
       .expect(404);
   });
+
+  it('теги: слить опечатку «noed» с «node» на всех серверах (без повтора), переименовать, убрать', async () => {
+    const db = app.get<Db>(DB);
+    const mk = async (name: string, tags: string[]) => {
+      const r = await db.execute(
+        sql`insert into servers (name, host, port, ssh_user, auth_method, tags, sort_order) values (${name}, '203.0.113.50', 22, 'root', 'panel-key', ${JSON.stringify(tags)}::jsonb, 100) returning id`,
+      );
+      return (r.rows[0] as { id: string }).id;
+    };
+    const a = await mk('tags-a', ['noed', 'exit']);
+    const b = await mk('tags-b', ['node', 'noed']);
+    const tagsOf = async (id: string) =>
+      ((await agent.get(`/api/servers/${id}`).expect(200)).body as { tags: string[] }).tags;
+
+    const merged = await agent
+      .post('/api/servers/tags/rename')
+      .set(CSRF_HEADER, csrf)
+      .send({ from: 'noed', to: 'Node' })
+      .expect(200);
+    expect(merged.body.updated).toBe(2);
+    expect(await tagsOf(a)).toEqual(['node', 'exit']);
+    expect(await tagsOf(b)).toEqual(['node']);
+
+    await agent
+      .post('/api/servers/tags/rename')
+      .set(CSRF_HEADER, csrf)
+      .send({ from: 'exit', to: 'выход' })
+      .expect(200);
+    expect(await tagsOf(a)).toEqual(['node', 'выход']);
+    const del = await agent
+      .post('/api/servers/tags/delete')
+      .set(CSRF_HEADER, csrf)
+      .send({ tag: 'node' })
+      .expect(200);
+    expect(del.body.updated).toBe(2);
+    expect(await tagsOf(b)).toEqual([]);
+
+    const audit = auditListResponseSchema.parse(
+      (await agent.get('/api/audit?page=1&pageSize=20').expect(200)).body,
+    );
+    const acts = audit.items.map((i) => i.action);
+    expect(acts).toContain('server.tags.renamed');
+    expect(acts).toContain('server.tags.deleted');
+  });
 });

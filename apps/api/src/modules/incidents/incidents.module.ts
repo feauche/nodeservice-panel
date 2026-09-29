@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 
+import { BillingModule } from '../billing/billing.module.js';
+
 import { MaintenanceModule } from '../maintenance/maintenance.module.js';
 import { MetricsModule } from '../metrics/metrics.module.js';
 import { RemnawaveModule } from '../remnawave/remnawave.module.js';
@@ -21,7 +23,15 @@ import { NodeProbeJob } from './node-probe.job.js';
 
 /** R3: инциденты, детекция с гистерезисом, реестр действий T0–T3 с пред-/пост-проверкой и откатом. */
 @Module({
-  imports: [ServersModule, SettingsModule, MetricsModule, SecurityModule, MaintenanceModule, RemnawaveModule],
+  imports: [
+    ServersModule,
+    SettingsModule,
+    MetricsModule,
+    SecurityModule,
+    MaintenanceModule,
+    RemnawaveModule,
+    BillingModule,
+  ],
   controllers: [IncidentsController],
   providers: [
     IncidentsRepository,

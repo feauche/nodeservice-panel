@@ -67,20 +67,49 @@ describe('ServersPage', () => {
     expect(screen.getAllByTestId('server-row')).toHaveLength(2);
   });
 
-  it('фильтр по тегу (выпадающий список) и поиску', async () => {
+  it('фильтр по тегам: поиск внутри, несколько тегов, «Сбросить»; и поиск по серверам', async () => {
     renderPage(Harness, '/servers');
     await screen.findByText('de-fra-01');
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Теги' }));
-    await user.click(await screen.findByRole('menuitemradio', { name: 'de' }));
+    await user.type(await screen.findByLabelText('Найти тег'), 'de');
+    expect(screen.queryByRole('menuitemcheckbox', { name: /^prod/ })).toBeNull();
+    await user.click(screen.getByRole('menuitemcheckbox', { name: /^de/ }));
+    await user.keyboard('{Escape}');
     await waitFor(() => expect(cards()).toHaveLength(1));
-    expect(screen.getByRole('button', { name: 'Тег: de' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Тег: de' }));
-    await user.click(await screen.findByRole('menuitemradio', { name: 'Все серверы' }));
+    await user.click(await screen.findByRole('button', { name: 'Сбросить' }));
+    await user.keyboard('{Escape}');
     await waitFor(() => expect(cards()).toHaveLength(2));
     await user.type(screen.getByLabelText('Поиск по серверам'), 'node-2');
     await waitFor(() => expect(cards()).toHaveLength(1));
     expect(screen.getByText('nl-ams-02')).toBeInTheDocument();
+  });
+
+  it('«Управление тегами»: опечатка помечена и сливается с популярным тегом на всех серверах', async () => {
+    const [a, b] = mockServers.items;
+    if (a && b) {
+      a.tags = ['node', 'prod'];
+      b.tags = ['noed', 'node'];
+    }
+    mockServers.items.push({
+      ...(a as (typeof mockServers.items)[number]),
+      id: '0192c000-cafe-7000-8000-00000000abcd',
+      name: 'x-3',
+      tags: ['node'],
+    });
+    renderPage(Harness, '/servers');
+    await screen.findByText('de-fra-01');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Теги' }));
+    expect(await screen.findByText('похоже на node')).toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: 'Управление тегами…' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Слить с «node»' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Слить' }));
+    await waitFor(() =>
+      expect(mockServers.items.find((s) => s.name === 'nl-ams-02')?.tags).toEqual(['node']),
+    );
   });
 
   it('дублировать из меню: копия появляется сразу, имя с номером', async () => {

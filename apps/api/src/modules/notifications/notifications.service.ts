@@ -14,7 +14,7 @@ import { problem } from '../../common/filters/problem-details.filter.js';
 import type { NotificationRow } from '../../infra/db/schema/index.js';
 import { EventsService } from '../events/events.service.js';
 import { NotificationsRepository } from './notifications.repository.js';
-import { TelegramService } from './telegram/telegram.service.js';
+import { type TelegramDispatch, TelegramService } from './telegram/telegram.service.js';
 
 export interface PushInput {
   severity: NotificationSeverity;
@@ -38,8 +38,16 @@ export interface PushInput {
     server?: { name: string; host?: string | null } | null;
     /** Готовый HTML для Telegram (биллинг) вместо обычного блочного формата. */
     html?: string | null;
+    /**
+     * Инцидент сейчас разберёт Джарвис: в Telegram отправляем после разбора — уже с выводом
+     * (releaseAfterAnalysis). Не дождались за ANALYSIS_WAIT_MS — уходит как есть. Колокольчик — сразу.
+     */
+    awaitAnalysis?: boolean;
   } | null;
 }
+
+/** Сколько Telegram ждёт разбора Джарвиса: автоматический разбор стартует через минуту-две после открытия. */
+export const ANALYSIS_WAIT_MS = process.env.NODE_ENV === 'test' ? 50 : 4 * 60_000;
 
 /** Токен имени сервера в тексте уведомления. */
 export const SERVER_TOKEN = '{server}';
@@ -88,24 +96,72 @@ export class NotificationsService {
   }
 
   /** Серверное событие: тихо, без исключений наружу. */
+  /** Сообщения в Telegram, которые ждут разбора Джарвиса: id инцидента → что отправить и запасной таймер. */
+  private readonly deferred = new Map<string, { dispatch: TelegramDispatch; timer: NodeJS.Timeout }>();
+
+  /**
+   * Разбор готов (или не получился — verdict null): отправить отложенное сообщение, дописав вывод Джарвиса
+   * первым блоком. Ничего не ждало — ничего не делаем (сообщение уже ушло).
+   */
+  releaseAfterAnalysis(incidentId: string, verdict: string | null, confidence: string | null = null): void {
+    const d = this.deferred.get(incidentId);
+    if (!d) return;
+    clearTimeout(d.timer);
+    this.deferred.delete(incidentId);
+    const conf =
+      confidence === 'high'
+        ? 'уверенность высокая'
+        : confidence === 'medium'
+          ? 'уверенность средняя'
+          : confidence === 'low'
+            ? 'уверенность низкая'
+            : null;
+    const body = verdict
+      ? `🤖 Разбор Джарвиса${conf ? ` (${conf})` : ''}: ${verdict}\n\n${d.dispatch.body ?? ''}`.trim()
+      : (d.dispatch.body ?? null);
+    void this.telegram.dispatch({ ...d.dispatch, body });
+  }
+
   async push(input: PushInput): Promise<void> {
     if (input.telegram) {
       const name = input.server?.name ?? 'сервер';
       const fill = (t: string) => t.replaceAll(SERVER_TOKEN, name);
+      const incidentId = input.telegram.incidentId ?? null;
+      if (input.telegram.awaitAnalysis && incidentId && !input.telegram.html) {
+        const dispatch: TelegramDispatch = {
+          event: input.telegram.event,
+          incidentId,
+          kind: input.telegram.kind ?? null,
+          serverKey: input.telegram.serverKey ?? input.server?.id ?? null,
+          title: fill(input.title),
+          body: input.body ? fill(input.body) : null,
+          server:
+            input.telegram.server ??
+            (input.server ? { name: input.server.name, host: input.server.host ?? null } : null),
+          link: input.link ?? null,
+          html: null,
+        };
+        const prev = this.deferred.get(incidentId);
+        if (prev) clearTimeout(prev.timer);
+        const timer = setTimeout(() => this.releaseAfterAnalysis(incidentId, null), ANALYSIS_WAIT_MS);
+        timer.unref?.();
+        this.deferred.set(incidentId, { dispatch, timer });
+      }
       // В фоне: медленный Telegram не должен задерживать инцидент или обслуживание.
-      void this.telegram.dispatch({
-        event: input.telegram.event,
-        incidentId: input.telegram.incidentId ?? null,
-        kind: input.telegram.kind ?? null,
-        serverKey: input.telegram.serverKey ?? input.server?.id ?? null,
-        title: fill(input.title),
-        body: input.body ? fill(input.body) : null,
-        server:
-          input.telegram.server ??
-          (input.server ? { name: input.server.name, host: input.server.host ?? null } : null),
-        link: input.link ?? null,
-        html: input.telegram.html ?? null,
-      });
+      else
+        void this.telegram.dispatch({
+          event: input.telegram.event,
+          incidentId: input.telegram.incidentId ?? null,
+          kind: input.telegram.kind ?? null,
+          serverKey: input.telegram.serverKey ?? input.server?.id ?? null,
+          title: fill(input.title),
+          body: input.body ? fill(input.body) : null,
+          server:
+            input.telegram.server ??
+            (input.server ? { name: input.server.name, host: input.server.host ?? null } : null),
+          link: input.link ?? null,
+          html: input.telegram.html ?? null,
+        });
     }
     // В колокольчик — только то, что требует внимания. Остальное есть в Журнале.
     if (!IMPORTANT.has(input.severity)) return;
