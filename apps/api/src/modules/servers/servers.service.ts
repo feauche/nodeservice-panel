@@ -24,7 +24,7 @@ import {
 } from '@nodeservice/shared';
 
 import { CryptoService } from '../../common/crypto/crypto.service.js';
-import { problem } from '../../common/filters/problem-details.filter.js';
+import { errorText, problem } from '../../common/filters/problem-details.filter.js';
 import type { Env } from '../../config/env.schema.js';
 import type { ServerRow, servers } from '../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
@@ -533,6 +533,8 @@ export class ServersService {
       port: row.port,
       user: row.sshUser,
       ...auth,
+      // Не root — всё, что панель делает на сервере, идёт через sudo.
+      ...(row.sshUser !== 'root' ? { sudo: true } : {}),
       ...(row.hostKeyFp ? { expectedHostKeyFp: row.hostKeyFp } : {}),
     };
   }
@@ -691,7 +693,7 @@ export class ServersService {
         result: 'failed',
         severity: 'warn',
         target: { type: 'server', id, display: row.name },
-        metadata: { reason: String((err as Error).message ?? err).slice(0, 300) },
+        metadata: { reason: errorText(err).slice(0, 300) },
       });
       throw err;
     } finally {

@@ -44,6 +44,16 @@ export function problem(status: number, body: ProblemBody): HttpException {
   return new HttpException(body, status);
 }
 
+/** Текст ошибки для Журнала и заметок: у problem() — его detail, а не «Http Exception». */
+export function errorText(err: unknown): string {
+  if (err instanceof HttpException) {
+    const r = err.getResponse();
+    if (typeof r === 'object' && r && 'detail' in r && typeof r.detail === 'string') return r.detail;
+    if (typeof r === 'string') return r;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
 const TITLES: Record<number, string> = {
   400: 'Неверный запрос',
   401: 'Требуется вход',

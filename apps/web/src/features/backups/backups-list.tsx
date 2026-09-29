@@ -17,14 +17,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Pill, RowButton } from '@/features/settings/settings-ui';
+import { Pill } from '@/features/settings/settings-ui';
 import { backupsApi } from './backups-api';
 import { formatSize, formatWhen } from './backups-format';
 
 /**
- * «Копии на сервере» (вариант A). Таблица подстраивается под ширину блока, а не экрана (container query):
- * кнопки действий видны, пока помещаются; уже — одна кнопка «⋯» со списком действий; совсем узко —
- * строка складывается: время и имя сверху, размер и состояние под ними.
+ * «Копии на сервере» (вариант A). Колонки постоянной ширины — значения ровно под заголовками; действия —
+ * одной кнопкой «⋯» со списком. Ширина — по блоку, а не по экрану (container query): совсем узко строка
+ * складывается — время и имя сверху, размер и состояние под ними.
  */
 export function BackupsList({
   items,
@@ -55,14 +55,14 @@ export function BackupsList({
         </p>
       </div>
       <div
-        className="hidden grid-cols-[minmax(0,1fr)_68px_150px_30px] items-center gap-3 border-t border-border bg-surface-2/60 px-[18px] py-2 text-[11px] font-semibold tracking-[0.05em] text-text-3 uppercase @min-[560px]:grid @min-[800px]:grid-cols-[minmax(0,1fr)_68px_150px_auto]"
+        className="hidden grid-cols-[minmax(0,1fr)_76px_190px_32px] items-center gap-3 border-t border-border bg-surface-2/60 px-[18px] py-2 text-[11px] font-semibold tracking-[0.05em] text-text-3 uppercase @min-[560px]:grid"
         aria-hidden="true"
       >
         <span>Когда</span>
         <span className="text-right">Размер</span>
         <span>Состояние</span>
         <span className="text-right">
-          <span className="@max-[799px]:sr-only">Действия</span>
+          <span className="sr-only">Действия</span>
         </span>
       </div>
       {loading ? (
@@ -110,7 +110,7 @@ function Row({
   const kind =
     BACKUP_KIND_LABELS[item.kind] + (item.kind === 'pre_update' && item.version ? ` ${item.version}` : '');
   return (
-    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 border-t border-border px-[18px] py-2.5 max-md:px-4 @min-[560px]:grid-cols-[minmax(0,1fr)_68px_150px_30px] @min-[800px]:grid-cols-[minmax(0,1fr)_68px_150px_auto]">
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 border-t border-border px-[18px] py-2.5 max-md:px-4 @min-[560px]:grid-cols-[minmax(0,1fr)_76px_190px_32px]">
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
           <b className="text-[13.5px] font-semibold whitespace-nowrap">{when}</b>
@@ -205,32 +205,8 @@ function Actions({
   const when = item.createdAt;
   return (
     <>
-      {/* Широко — три кнопки. */}
-      <span className="hidden gap-1.5 @min-[800px]:flex">
-        <a
-          href={backupsApi.downloadUrl(item.name)}
-          download
-          aria-label={`Скачать копию ${item.name}`}
-          className="inline-flex h-[30px] items-center justify-center gap-1.5 rounded-[9px] border border-border bg-surface-2 px-[11px] text-[12.5px] font-medium whitespace-nowrap text-text-2 transition-colors hover:border-border-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand [&_svg]:size-3.5"
-        >
-          <DownloadIcon aria-hidden="true" />
-          Скачать
-        </a>
-        <RowButton
-          disabled={busy}
-          onClick={onRestore}
-          className="border-warn/35 text-warn hover:border-warn/60"
-        >
-          <RotateCcwIcon aria-hidden="true" />
-          Восстановить
-        </RowButton>
-        <RowButton tone="danger" disabled={busy} onClick={onDelete} aria-label={`Удалить копию ${item.name}`}>
-          <Trash2Icon aria-hidden="true" />
-          Удалить
-        </RowButton>
-      </span>
-      {/* Не помещаются — одна кнопка со списком. */}
-      <span className="@min-[800px]:hidden">
+      {/* Действия — всегда одной кнопкой «⋯» со списком: колонки остаются ровно под заголовками. */}
+      <span>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button

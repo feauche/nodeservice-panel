@@ -21,7 +21,7 @@ import {
   incidentTitleToken,
 } from '@nodeservice/shared';
 
-import { problem } from '../../common/filters/problem-details.filter.js';
+import { errorText, problem } from '../../common/filters/problem-details.filter.js';
 import type { IncidentRow } from '../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -578,7 +578,7 @@ export class IncidentRunnerService implements OnModuleInit {
         session.end();
       }
     } catch (err) {
-      return { ok: false, note: String((err as Error).message ?? err).slice(0, 160) };
+      return { ok: false, note: errorText(err).slice(0, 160) };
     }
   }
 

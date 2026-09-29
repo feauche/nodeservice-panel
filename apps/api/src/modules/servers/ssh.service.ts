@@ -14,6 +14,11 @@ export interface SshTarget {
   privateKey?: string;
   passphrase?: string;
   password?: string;
+  /**
+   * Пользователь не root: команды панели выполняются через `sudo -n` (без пароля). Проверяется при
+   * подключении; нужен NOPASSWD в sudoers.
+   */
+  sudo?: boolean;
   /** Ожидаемый отпечаток host key («SHA256:…»); не совпал → hostKeyMismatch. */
   expectedHostKeyFp?: string;
 }
@@ -30,6 +35,8 @@ export interface SshExecStreamOptions {
 export interface SshSession {
   hostKeyFp: string;
   exec(command: string): Promise<{ code: number; stdout: string; stderr: string }>;
+  /** Команда от имени самого пользователя, без sudo (например, свой ~/.ssh). */
+  execAsUser(command: string): Promise<{ code: number; stdout: string; stderr: string }>;
   /** Долгая команда с живым выводом; сам вывод не копится — только код завершения. */
   execStream(command: string, opts?: SshExecStreamOptions): Promise<{ code: number }>;
   end(): void;
@@ -68,6 +75,20 @@ function authFailed(target: SshTarget): string {
   return target.privateKey
     ? `Сервер не принял ключ. Проверьте, что открытая часть этого ключа есть в ~/.ssh/authorized_keys пользователя «${target.user}» и что вход по ключу на сервере разрешён.`
     : 'Сервер не принял пароль. Проверьте пароль и пользователя; на некоторых серверах вход по паролю выключен.';
+}
+
+/** Строка в одинарных кавычках для sh. */
+export function shellQuote(s: string): string {
+  return `'${s.replaceAll("'", `'\\''`)}'`;
+}
+
+/** Почему sudo не пустил — и что сделать владельцу. */
+export function sudoAdvice(stderr: string, user: string): string {
+  if (/command not found|not found/i.test(stderr))
+    return 'На сервере нет sudo. Войдите под root или установите sudo.';
+  if (/password is required|terminal is required|askpass/i.test(stderr))
+    return `sudo просит пароль. Разрешите «${user}» sudo без пароля: на сервере выполните от root «echo '${user} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/nodeservice && chmod 440 /etc/sudoers.d/nodeservice» — или войдите под root.`;
+  return `«${user}» нельзя запускать команды через sudo. Войдите под root или добавьте пользователя в sudoers с NOPASSWD.`;
 }
 
 /** Отпечаток в нотации OpenSSH. */
@@ -123,7 +144,8 @@ export class SshService {
       client.connect(config);
     });
 
-    return {
+    const asRoot = (command: string) => (target.sudo ? `sudo -n sh -c ${shellQuote(command)}` : command);
+    const session: SshSession = {
       hostKeyFp,
       end: () => client.end(),
       execStream: (command, opts = {}) =>
@@ -154,7 +176,7 @@ export class SshService {
             return;
           }
           opts.signal?.addEventListener('abort', onAbort, { once: true });
-          client.exec(command, (err, stream) => {
+          client.exec(asRoot(command), (err, stream) => {
             if (err) {
               finish(() => reject(serverProblems.sshCommand(command.slice(0, 60), err.message)));
               return;
@@ -167,33 +189,44 @@ export class SshService {
             stream.on('close', (code: number | null) => finish(() => resolve({ code: code ?? -1 })));
           });
         }),
-      exec: (command) =>
-        new Promise((resolve, reject) => {
-          const timer = setTimeout(() => {
-            client.end();
-            reject(serverProblems.sshCommand(command, 'таймаут выполнения'));
-          }, EXEC_TIMEOUT_MS);
-          client.exec(command, (err, stream) => {
-            if (err) {
-              clearTimeout(timer);
-              reject(serverProblems.sshCommand(command, err.message));
-              return;
-            }
-            let stdout = '';
-            let stderr = '';
-            stream.on('data', (d: Buffer) => {
-              if (stdout.length < OUTPUT_MAX) stdout += d.toString('utf8');
-            });
-            stream.stderr.on('data', (d: Buffer) => {
-              if (stderr.length < OUTPUT_MAX) stderr += d.toString('utf8');
-            });
-            stream.on('close', (code: number | null) => {
-              clearTimeout(timer);
-              resolve({ code: code ?? -1, stdout, stderr });
-            });
-          });
-        }),
+      exec: (command) => runPlain(asRoot(command)),
+      execAsUser: (command) => runPlain(command),
     };
+    function runPlain(command: string): Promise<{ code: number; stdout: string; stderr: string }> {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          client.end();
+          reject(serverProblems.sshCommand(command, 'таймаут выполнения'));
+        }, EXEC_TIMEOUT_MS);
+        client.exec(command, (err, stream) => {
+          if (err) {
+            clearTimeout(timer);
+            reject(serverProblems.sshCommand(command, err.message));
+            return;
+          }
+          let stdout = '';
+          let stderr = '';
+          stream.on('data', (d: Buffer) => {
+            if (stdout.length < OUTPUT_MAX) stdout += d.toString('utf8');
+          });
+          stream.stderr.on('data', (d: Buffer) => {
+            if (stderr.length < OUTPUT_MAX) stderr += d.toString('utf8');
+          });
+          stream.on('close', (code: number | null) => {
+            clearTimeout(timer);
+            resolve({ code: code ?? -1, stdout, stderr });
+          });
+        });
+      });
+    }
+    if (target.sudo) {
+      const chk = await session.execAsUser('sudo -n true');
+      if (chk.code !== 0) {
+        client.end();
+        throw serverProblems.sudoRequired(target.user, sudoAdvice(chk.stderr, target.user));
+      }
+    }
+    return session;
   }
 
   /** Открыть PTY по SSH для веб-терминала (host key проверяется так же, как в connect). */
@@ -287,7 +320,8 @@ export class SshService {
   async installAuthorizedKey(session: SshSession, publicKeyLine: string): Promise<void> {
     const line = publicKeyLine.replaceAll("'", '');
     const cmd = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && grep -qxF '${line}' ~/.ssh/authorized_keys || echo '${line}' >> ~/.ssh/authorized_keys`;
-    const res = await session.exec(cmd);
+    // В ~/.ssh самого пользователя, под которым входит панель, — не через sudo (иначе ключ ляжет к root).
+    const res = await session.execAsUser(cmd);
     if (res.code !== 0)
       throw serverProblems.sshCommand('установка ключа панели', res.stderr || `код ${res.code}`);
   }

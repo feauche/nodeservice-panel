@@ -3,6 +3,10 @@ import { SERVER_PROBLEM } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
 
+/** Коды цвета терминала (ESC[31m и подобные) — из вывода скриптов. */
+const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[A-Za-z]`, 'g');
+export const stripAnsi = (s: string): string => s.replace(ANSI_RE, '');
+
 export const serverProblems = {
   sshUnreachable: (host: string, detail?: string) =>
     problem(HttpStatus.BAD_GATEWAY, {
@@ -21,7 +25,13 @@ export const serverProblems = {
   sshCommand: (command: string, detail: string) =>
     problem(HttpStatus.BAD_GATEWAY, {
       type: SERVER_PROBLEM.sshCommand,
-      detail: `Команда на сервере не выполнилась (${command}): ${detail}`,
+      // Скрипты красят вывод (ESC[31m…) — в сообщении панели эти коды видны мусором.
+      detail: `Команда на сервере не выполнилась (${command}): ${stripAnsi(detail).trim()}`,
+    }),
+  sudoRequired: (user: string, detail: string) =>
+    problem(HttpStatus.BAD_GATEWAY, {
+      type: SERVER_PROBLEM.sshCommand,
+      detail: `Панель входит как «${user}», а для работы с сервером нужны права администратора. ${detail}`,
     }),
   nameTaken: (name: string) =>
     problem(HttpStatus.CONFLICT, {
