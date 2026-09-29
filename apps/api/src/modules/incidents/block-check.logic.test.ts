@@ -9,10 +9,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildBlockCheckCommand,
   combineVerdicts,
+  countryReachLines,
   describeAnomaly,
   entrySide,
   isSafeBlockCheckTarget,
   parseBlockCheckOutput,
+  pickCountryProbes,
   pickForeignProbes,
   pickRuProbes,
   withForeign,
@@ -269,5 +271,46 @@ describe('вход сервера-выхода', () => {
     expect(splitUpstreamAddress('1.2.3.4:8443')).toEqual({ host: '1.2.3.4', port: 8443 });
     expect(isExitOnly(['exit'])).toBe(true);
     expect(isExitOnly(['entry', 'exit'])).toBe(false);
+  });
+});
+
+describe('проверка «из каждой страны»', () => {
+  const all = [
+    { id: 'de1', name: 'Германия-1', sshOk: true, country: country('DE') },
+    { id: 'de2', name: 'Германия-2', sshOk: true, country: country('DE') },
+    { id: 'nl', name: 'Нидерланды', sshOk: true, country: country('NL') },
+    { id: 'ru', name: 'Мост', sshOk: true, country: country('RU') },
+    { id: 'pl', name: 'Польша', sshOk: false, country: country('PL') },
+    { id: 'x', name: 'Без страны', sshOk: true, country: country(null) },
+    { id: 'kz', name: 'Казахстан', sshOk: true, country: country('KZ') },
+  ];
+
+  it('Россия первой, дальше по одному серверу на страну, без цели, без упавших и без страны', () => {
+    expect(pickCountryProbes('kz', all).map((s) => s.id)).toEqual(['ru', 'de1', 'nl']);
+  });
+
+  it('не больше max', () => {
+    expect(pickCountryProbes('kz', all, 2).map((s) => s.id)).toEqual(['ru', 'de1']);
+  });
+
+  it('из-за рубежа — по одному на страну, Россию не берёт', () => {
+    expect(pickForeignProbes('kz', all).map((s) => s.id)).toEqual(['de1', 'nl', 'de2']);
+  });
+
+  it('строки дела: по серверу на строку и сервер панели', () => {
+    expect(
+      countryReachLines(
+        [
+          { from: 'Мост', country: 'RU', open: false },
+          { from: 'Германия-1', country: 'DE', open: true },
+        ],
+        false,
+      ),
+    ).toEqual([
+      '• Мост — порт не отвечает',
+      '• Германия-1 — порт открыт',
+      '• Сервер панели — порт не отвечает',
+    ]);
+    expect(countryReachLines([], null)).toEqual([]);
   });
 });

@@ -35,19 +35,76 @@ export function pickRuProbes(
     .slice(0, max);
 }
 
-/** Зарубежные серверы парка с рабочим SSH (страна известна и не Россия), не сама проверяемая нода. */
+/**
+ * Зарубежные серверы парка с рабочим SSH (страна известна и не Россия), не сама проверяемая нода —
+ * по одному на страну: две Германии подряд ничего не добавляют, а Германия и Нидерланды — да.
+ */
 export function pickForeignProbes(
   excludeServerId: string | null,
   all: Pick<Server, 'id' | 'name' | 'sshOk' | 'country'>[],
-  max = 2,
+  max = 3,
 ): Pick<Server, 'id' | 'name'>[] {
-  return all
+  const pool = all
     .filter(
       (s) =>
         s.id !== excludeServerId && s.sshOk === true && s.country.code !== null && s.country.code !== 'RU',
     )
-    .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
-    .slice(0, max);
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  return onePerCountry(pool, max);
+}
+
+/** По одному серверу из каждой страны (в порядке списка), потом добираем вторыми из тех же стран. */
+function onePerCountry<T extends Pick<Server, 'country'>>(pool: T[], max: number): T[] {
+  const seen = new Set<string>();
+  const first: T[] = [];
+  const rest: T[] = [];
+  for (const s of pool) {
+    const c = s.country.code ?? '?';
+    if (seen.has(c)) rest.push(s);
+    else {
+      seen.add(c);
+      first.push(s);
+    }
+  }
+  return [...first, ...rest].slice(0, max);
+}
+
+/**
+ * Проверяющие «из каждой страны» для вопроса «жив ли сервер»: Россия первой (там блокируют чаще всего),
+ * дальше по одной стране; сама проверяемая машина не участвует.
+ */
+export function pickCountryProbes(
+  excludeServerId: string | null,
+  all: Pick<Server, 'id' | 'name' | 'sshOk' | 'country'>[],
+  max = 6,
+): Array<Pick<Server, 'id' | 'name' | 'country'>> {
+  const pool = all
+    .filter((s) => s.id !== excludeServerId && s.sshOk === true && s.country.code !== null)
+    .sort((a, b) => {
+      const ra = a.country.code === 'RU' ? 0 : 1;
+      const rb = b.country.code === 'RU' ? 0 : 1;
+      return ra - rb || a.name.localeCompare(b.name, 'ru');
+    });
+  const one = onePerCountry(pool, pool.length);
+  const countries = new Set(one.map((s) => s.country.code));
+  return one.slice(0, Math.min(countries.size, max));
+}
+
+/** Результат проверки «из каждой страны»: откуда порт открыт, откуда нет. */
+export interface CountryReach {
+  from: string;
+  country: string | null;
+  open: boolean;
+}
+
+/**
+ * Строки для дела: «Открыт: 🇩🇪 Германия - 1, 🇳🇱 …» / «Закрыт: …» не флагами (флаги рисует панель), а
+ * по одному серверу на строку, как в проверке блокировки: «• Германия - 1 — порт открыт».
+ */
+export function countryReachLines(results: CountryReach[], panelOpen: boolean | null): string[] {
+  const lines = results.map((r) => `• ${r.from} — ${r.open ? 'порт открыт' : 'порт не отвечает'}`);
+  if (panelOpen !== null) lines.push(`• Сервер панели — ${panelOpen ? 'порт открыт' : 'порт не отвечает'}`);
+  return lines;
 }
 
 /**

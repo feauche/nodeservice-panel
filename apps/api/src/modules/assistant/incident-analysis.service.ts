@@ -2,26 +2,34 @@ import { HttpException, HttpStatus, Inject, Injectable, Logger, type OnModuleIni
 import { Interval } from '@nestjs/schedule';
 import {
   ANALYSIS_THREAD_MAX,
+  AUDIT_ACTIONS,
   AUTOFIX_GRACE_SECONDS,
   INCIDENT_CHART_METRIC,
   type Incident,
   type IncidentAnalysis,
+  KB_SOURCE_LABELS,
+  type KbSource,
 } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
+import { AuditRepository } from '../audit/audit.repository.js';
 import { AuditService } from '../audit/audit.service.js';
 import { BillingService } from '../billing/billing.service.js';
+import { NODE_ONLINE_METRIC } from '../fleet-stats/fleet-stats.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
 import { NodeBlockCheckService } from '../incidents/node-block-check.service.js';
 import { resolveUpstreamTarget } from '../incidents/upstream-target.js';
+import { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
 import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { playbookForKind, renderPlaybook } from './assistant.playbooks.js';
 import { incidentCase, type ReadDeps, runReadTool, toolsFor } from './assistant.read-tools.js';
+import { runTool, type ToolDeps } from './assistant.tools.js';
 import { ReadDepsService } from './assistant-read-deps.service.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
 import {
+  ANALYSIS_EXTRA,
   ANALYSIS_TOOLS,
   ASK_TOOLS,
   AUTO_ANALYSIS_PER_HOUR,
@@ -36,6 +44,19 @@ import {
   type Submission,
   stepLabel,
 } from './incident-analysis.logic.js';
+import {
+  CONNECTIVITY_KINDS,
+  changesText,
+  connectionText,
+  coverageText,
+  fleetText,
+  historyText,
+  kbQuery,
+  kbText,
+  onlineText,
+  reachText,
+  summarizeOnline,
+} from './incident-evidence.logic.js';
 import { LLM_PROVIDER, type LlmBlock, type LlmMsg, type LlmProvider } from './llm.provider.js';
 
 /** Сбои «сервер недоступен»: к делу добавляем просроченную оплату — частая причина. */
@@ -87,6 +108,8 @@ export class IncidentAnalysisService implements OnModuleInit {
     private readonly billing: BillingService,
     private readonly blockCheck: NodeBlockCheckService,
     private readonly notifications: NotificationsService,
+    private readonly kbRepo: KnowledgeRepository,
+    private readonly auditRepo: AuditRepository,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -241,7 +264,8 @@ export class IncidentAnalysisService implements OnModuleInit {
         metricText = out?.content ?? null;
       }
       let nowText: string | null = null;
-      if (inc.kind === 'node_blocked') {
+      let nodeRef: { uuid: string; name: string } | null = null;
+      if (CONNECTIVITY_KINDS.has(inc.kind)) {
         await step('Смотрю онлайн ноды сейчас');
         const host = inc.serverId
           ? ((await deps.servers.list()).find((s) => s.id === inc.serverId)?.host ?? null)
@@ -254,6 +278,7 @@ export class IncidentAnalysisService implements OnModuleInit {
           ? ((host ? st.nodes.find((n) => n.address === host) : undefined) ??
             st.nodes.find((n) => n.name === inc.serverName))
           : undefined;
+        if (node) nodeRef = { uuid: node.uuid, name: node.name };
         if (node) {
           await step('Проверяю порт ноды сейчас');
           const inbound = await this.remnawave.nodeInbound(node.uuid);
@@ -285,11 +310,14 @@ export class IncidentAnalysisService implements OnModuleInit {
         await step('Сверяюсь с биллингом');
         billingLines = await this.billing.paymentRiskForServer(inc.serverId).catch(() => []);
       }
+      const evidence = CONNECTIVITY_KINDS.has(inc.kind)
+        ? await this.gatherEvidence(inc, deps, step, nodeRef, billingLines.length > 0)
+        : [];
       const messages: LlmMsg[] = [
         {
           role: 'user',
           content: text(
-            `${dataBlock(incidentCase(inc), metricText, nowText, billingLines)}\n\nСделайте разбор.`,
+            `${dataBlock(incidentCase(inc), metricText, nowText, billingLines, evidence)}\n\nСделайте разбор.`,
           ),
         },
       ];
@@ -328,7 +356,7 @@ export class IncidentAnalysisService implements OnModuleInit {
             content = parsed.ok ? 'Разбор принят.' : parsed.error;
           } else if (ANALYSIS_TOOLS.some((t) => t.name === use.name)) {
             try {
-              const out = await runReadTool(use.name, (use.input ?? {}) as Record<string, unknown>, deps);
+              const out = await this.runAnalysisTool(use.name, use.input, deps);
               content = out?.content ?? 'Нет данных.';
               if (out?.reachability?.[0]) reach = out.reachability[0];
             } catch (err) {
@@ -370,6 +398,123 @@ export class IncidentAnalysisService implements OnModuleInit {
         })
         .catch(() => undefined);
     }
+  }
+
+  /** Чтения разбора; поиск в базе знаний и по Журналу идут через общий исполнитель инструментов. */
+  private async runAnalysisTool(name: string, input: unknown, deps: ReadDeps) {
+    const arg = (input ?? {}) as Record<string, unknown>;
+    if (ANALYSIS_EXTRA.has(name))
+      return runTool(name, arg, { ...deps, kb: this.kbRepo, audit: this.auditRepo } as unknown as ToolDeps);
+    return runReadTool(name, arg, deps);
+  }
+
+  /**
+   * Улики по сбою связи — собираются до первого круга модели (решение владельца 29.09.2026: учитывать всё —
+   * онлайн, агент, SSH, доступность из разных стран, сбои по парку, прошлые дела, Журнал, базу знаний).
+   * Любая часть может не получиться: тогда она попадает в «не удалось», а не роняет разбор.
+   */
+  private async gatherEvidence(
+    inc: Incident,
+    deps: ReadDeps,
+    step: (label: string) => Promise<void>,
+    node: { uuid: string; name: string } | null,
+    billingChecked: boolean,
+  ): Promise<string[]> {
+    const out: string[] = [];
+    const checked: Record<string, boolean> = {};
+    const soft = async <T>(p: Promise<T>): Promise<T | null> => p.catch(() => null);
+    const all = (await soft(deps.servers.list())) ?? [];
+    const me = inc.serverId ? all.find((s) => s.id === inc.serverId) : undefined;
+
+    checked['агент и SSH'] = Boolean(me);
+    if (me) out.push(connectionText(me));
+
+    if (node) {
+      await step('Смотрю онлайн ноды за 6 часов');
+      const end = Math.floor(Date.now() / 1000);
+      const series = await soft(
+        deps.metrics.queryRange(
+          `max(${NODE_ONLINE_METRIC}{node_uuid="${node.uuid.replace(/["\\\n]/g, '')}"})`,
+          end - 6 * 3600,
+          end,
+          300,
+        ),
+      );
+      const points = series?.[0]?.points ?? [];
+      checked['онлайн ноды'] = points.length > 0;
+      if (points.length > 0)
+        out.push(onlineText(node.name, summarizeOnline(points, Date.parse(inc.openedAt))));
+    } else checked['онлайн ноды (сервер не нода Remnawave)'] = false;
+
+    if (me) {
+      await step('Проверяю порт SSH из разных стран');
+      const [reach, panelOpen] = await Promise.all([
+        soft(this.blockCheck.countryReach(me.host, me.port, me.id, all)),
+        soft(this.incidents.probeHost(me.host, me.port)),
+      ]);
+      checked['порт из разных стран'] = Boolean(reach && reach.length > 0);
+      out.push(reachText(me.port, reach ?? [], panelOpen));
+    }
+
+    await step('Сверяю со сбоями на других серверах');
+    const open = await soft(this.incidents.list('open'));
+    checked['сбои по парку'] = Boolean(open);
+    if (open) out.push(fleetText(inc, open.items));
+
+    if (inc.serverId) {
+      await step('Смотрю прошлые дела этого сервера');
+      const from = new Date(Date.now() - 30 * 86_400_000).toISOString();
+      const past = await soft(this.incidents.list('all', { openedFrom: from, page: 1, pageSize: 100 }));
+      checked['прошлые дела сервера'] = Boolean(past);
+      if (past)
+        out.push(
+          historyText(
+            inc,
+            past.items.filter((i) => i.serverId === inc.serverId),
+          ),
+        );
+
+      await step('Смотрю Журнал по серверу за сутки');
+      const log = await soft(
+        this.auditRepo.list({
+          targetId: inc.serverId,
+          from: new Date(Date.now() - 86_400_000).toISOString(),
+          page: 1,
+          pageSize: 10,
+        }),
+      );
+      checked['Журнал'] = Boolean(log);
+      if (log)
+        out.push(
+          changesText(
+            log.items.map((e) => ({
+              at: e.occurredAt,
+              action:
+                (AUDIT_ACTIONS as Record<string, { label: string } | undefined>)[e.action]?.label ?? e.action,
+              result: e.result,
+            })),
+          ),
+        );
+    }
+
+    await step('Ищу похожие случаи в базе знаний');
+    const docs = await soft(this.kbRepo.searchForContext(kbQuery(inc), 3));
+    checked['база знаний'] = Boolean(docs);
+    if (docs)
+      out.push(
+        kbText(
+          docs.map((d) => ({
+            title: d.title,
+            content: d.content,
+            updatedAt: d.updatedAt,
+            source: KB_SOURCE_LABELS[d.source as KbSource] ?? d.source,
+          })),
+        ),
+      );
+
+    checked['биллинг'] = billingChecked || BILLING_DOWN_KINDS.has(inc.kind);
+    out.push(coverageText(checked));
+    return out;
   }
 
   /** Уточняющий вопрос по готовому разбору; ответ и вопрос остаются в инциденте. */
@@ -423,7 +568,7 @@ export class IncidentAnalysisService implements OnModuleInit {
           let content: string;
           try {
             content =
-              (await runReadTool(use.name, (use.input ?? {}) as Record<string, unknown>, deps))?.content ??
+              (await this.runAnalysisTool(use.name, use.input, deps))?.content ??
               'Этот инструмент недоступен.';
           } catch {
             content = 'Инструмент временно недоступен.';

@@ -79,10 +79,21 @@ describe('pickProbes', () => {
       srv({ name: 'c', host: '3.3.3.3', providerId: 'p2' }),
       srv({ name: 'd', host: '4.4.4.4', providerId: 'p2' }),
     ];
-    const names = pickProbes(target, all).map((s) => s.name);
+    const names = pickProbes(target, all, 3).map((s) => s.name);
     expect(names).toHaveLength(3);
     expect(names.slice(0, 2)).toEqual(['a', 'c']);
     expect(names).not.toContain('b');
+  });
+  it('сначала по одному из каждой страны', () => {
+    const c = (code: string) => ({ code, name: code }) as Server['country'];
+    const all = [
+      target,
+      srv({ name: 'de1', host: '5.5.5.1', providerId: 'p1', country: c('DE') }),
+      srv({ name: 'de2', host: '6.6.6.1', providerId: 'p2', country: c('DE') }),
+      srv({ name: 'fi', host: '7.7.7.1', providerId: 'p1', country: c('FI') }),
+      srv({ name: 'ru', host: '8.8.8.1', providerId: 'p1', country: c('RU') }),
+    ];
+    expect(pickProbes(target, all, 3).map((s) => s.name)).toEqual(['de1', 'fi', 'ru']);
   });
   it('не больше max и без адресов, непригодных для команды', () => {
     const all = [

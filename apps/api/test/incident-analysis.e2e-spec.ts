@@ -212,6 +212,45 @@ describe('разбор инцидента Джарвисом e2e', () => {
     expect(JSON.stringify(audit.body)).toContain('incident.analysis.run');
   });
 
+  it('сбой связи: панель до разбора собирает улики — агент и SSH, порт из стран, парк, прошлые дела, Журнал, база знаний', async () => {
+    fake.script = 'ok';
+    await app.get<Db>(DB).execute(sql`delete from incidents`);
+    const row = await app.get(IncidentsRepository).open({
+      serverId,
+      serverName: 'ana-host',
+      kind: 'server_down',
+      severity: 'crit',
+      title: 'Сервер недоступен · ana-host',
+      detail: 'Сервер не отвечает.',
+      timeline: [],
+    });
+    const id = row?.id ?? '';
+    const before = fake.seen.length;
+    await run(id).expect(202);
+    const inc = await settled(id);
+    expect(inc.analysis?.status).toBe('done');
+    for (const s of [
+      'Проверяю порт SSH из разных стран',
+      'Сверяю со сбоями на других серверах',
+      'Смотрю прошлые дела этого сервера',
+      'Смотрю Журнал по серверу за сутки',
+      'Ищу похожие случаи в базе знаний',
+    ])
+      expect(inc.analysis?.steps).toContain(s);
+    const data = JSON.stringify(fake.seen[before]?.messages[0]);
+    for (const s of [
+      'Улики, собранные панелью перед разбором',
+      'Связь с панелью:',
+      'Порт SSH',
+      'Другие серверы в это время',
+      'Прошлые дела этого сервера за 30 дней',
+      'Изменения по серверу в Журнале за сутки',
+      'Проверено панелью до разбора',
+    ])
+      expect(data, s).toContain(s);
+    expect(fake.seen.at(-1)?.system).toContain('не меньше 90%');
+  });
+
   it('пока идёт разбор — повторный запуск и вопрос дают 409; итог приходит после', async () => {
     fake.script = 'gated';
     let release!: () => void;

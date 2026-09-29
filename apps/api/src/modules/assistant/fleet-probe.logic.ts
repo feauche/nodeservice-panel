@@ -4,7 +4,7 @@ import { FIND_NODE, SH } from '../incidents/actions.registry.js';
 import { maskSecrets } from './terminal-hint.logic.js';
 
 /** Сколько независимых серверов задействуем и сколько портов проверяем за раз. */
-export const PROBE_MAX = 3;
+export const PROBE_MAX = 5;
 export const PORTS_MAX = 3;
 
 const HOST_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/;
@@ -26,8 +26,8 @@ const prefix24 = (host: string): string | null => {
 };
 
 /**
- * Выбор независимых проверяющих: не сам сервер, SSH работает, разные хостеры и подсети.
- * Сначала по одному от каждого хостера, потом добираем остальными, но не из уже занятой подсети /24.
+ * Выбор независимых проверяющих: не сам сервер, SSH работает, разные страны, хостеры и подсети.
+ * Сначала по одному из каждой страны, потом от каждого хостера, потом добираем остальными, но не из уже занятой подсети /24.
  */
 export function pickProbes(target: Pick<Server, 'id'>, all: Server[], max = PROBE_MAX): Server[] {
   const pool = all
@@ -42,9 +42,24 @@ export function pickProbes(target: Pick<Server, 'id'>, all: Server[], max = PROB
     const net = prefix24(s.host);
     if (net) nets.add(net);
   };
+  // Сначала по одному из каждой страны: закрыто из России и открыто из Германии — главное, что надо увидеть.
+  const countries = new Set<string>();
   for (const s of pool) {
     if (chosen.length >= max) break;
-    if (!providers.has(s.providerId ?? `none:${s.id}`) && !nets.has(prefix24(s.host) ?? '')) take(s);
+    const c = s.country?.code;
+    if (c && !countries.has(c)) {
+      countries.add(c);
+      take(s);
+    }
+  }
+  for (const s of pool) {
+    if (chosen.length >= max) break;
+    if (
+      !chosen.includes(s) &&
+      !providers.has(s.providerId ?? `none:${s.id}`) &&
+      !nets.has(prefix24(s.host) ?? '')
+    )
+      take(s);
   }
   for (const s of pool) {
     if (chosen.length >= max) break;

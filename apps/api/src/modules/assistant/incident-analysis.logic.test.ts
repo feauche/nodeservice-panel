@@ -91,6 +91,8 @@ describe('инструменты и промпты разбора', () => {
         'inspect_processes',
         'list_incidents',
         'run_server_check',
+        'search_audit',
+        'search_kb',
         'submit_analysis',
       ].sort(),
     );

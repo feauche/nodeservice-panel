@@ -32,11 +32,14 @@ import { BillingService } from '../billing/billing.service.js';
 import { MaintenanceService } from '../maintenance/maintenance.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ServersRepository } from '../servers/servers.repository.js';
+import { ServersService } from '../servers/servers.service.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
 import { SettingsService } from '../settings/settings.service.js';
+import { type CountryReach, countryReachLines } from './block-check.logic.js';
 import { IncidentMetricsService } from './incident-metrics.service.js';
 import { IncidentRunnerService } from './incident-runner.service.js';
 import { IncidentsRepository } from './incidents.repository.js';
+import { NodeBlockCheckService } from './node-block-check.service.js';
 
 /** Гистерезис порогов: инцидент закрывается, когда метрика ушла ниже порога на столько процентов. */
 export const INCIDENT_HYSTERESIS_PCT = 5;
@@ -49,6 +52,10 @@ export const STARTUP_GRACE_MS = process.env.NODE_ENV === 'test' ? 0 : 3 * 60_000
 export const AGENT_OFFLINE_FOR_MS = process.env.NODE_ENV === 'test' ? 0 : 2 * 60_000;
 /** Сколько держим ответ проверки порта SSH, пока агент молчит. */
 const HOST_PROBE_TTL_MS = 60_000;
+/** Проверка порта «из каждой страны» — раз в 3 минуты на сервер. */
+const REACH_TTL_MS = process.env.NODE_ENV === 'test' ? 0 : 3 * 60_000;
+/** Начало текста дела «Недоступен из части сетей» — по нему его узнаём среди «Похоже на блокировку». */
+export const PARTIAL_MARK = 'Недоступен из части сетей:';
 /** Статистика действий на вкладке «Автопочинка» — за последние N дней. */
 const STATS_DAYS = 30;
 
@@ -79,6 +86,8 @@ export class IncidentsService {
     private readonly notifications: NotificationsService,
     private readonly maintenance: MaintenanceService,
     private readonly billing: BillingService,
+    private readonly servers: ServersService,
+    private readonly blockCheck: NodeBlockCheckService,
   ) {}
 
   /**
@@ -453,8 +462,22 @@ export class IncidentsService {
   private async evalConnectivity(server: ServerRow, agentOff: boolean): Promise<void> {
     const sshDown = server.sshOk === false;
     const hostDown = agentOff ? !(await this.hostAnswers(server)) : false;
-    const serverDown = agentOff && (hostDown || sshDown);
+    const suspect = agentOff && (hostDown || sshDown);
+    // С панели не достучаться — это ещё не «сервер лёг»: панель смотрит из одной сети. Спрашиваем по
+    // серверу парка в каждой стране; открыт хоть откуда-то — сервер жив, закрыт путь из части сетей.
+    const reach = suspect ? await this.countryReachCached(server) : null;
+    const partial = Boolean(reach?.some((r) => r.open));
+    const serverDown = suspect && !partial;
     const open = await this.repo.findOpen(server.id, 'server_down');
+    await this.evalPartialReach(server, partial, reach ?? [], !hostDown);
+    if (partial) {
+      if (open && !open.attempts.some((a) => a.status === 'running'))
+        await this.autoResolve(
+          open,
+          'Сервер жив: порт SSH открыт из части стран — это не отключение, а недоступность из части сетей (отдельное дело).',
+        );
+      return;
+    }
     if (serverDown) {
       const why = hostDown
         ? `Сервер не отвечает: агент молчит, порт SSH ${server.host}:${server.port} не открывается.`
@@ -462,6 +485,14 @@ export class IncidentsService {
       const overdue = open ? [] : await this.overdueFor(server.id);
       const detail = [
         `${why} Обычно это значит, что сервер выключен, завис или отрезан у хостера — проверьте в панели хостера и оплату. Агент и SSH — следствие, переустанавливать агента бессмысленно.`,
+        ...(reach && reach.length > 0
+          ? ['', `Порт SSH ${server.port} — ни из одной страны:`, ...countryReachLines(reach, false)]
+          : reach
+            ? [
+                '',
+                'Проверить из других стран не с чего: нет серверов парка с известной страной и рабочим SSH.',
+              ]
+            : []),
         ...overdue.map((o) => `💳 Просрочена оплата: ${o}. Самая вероятная причина — отключили за неоплату.`),
       ].join('\n');
       let main = open;
@@ -509,6 +540,76 @@ export class IncidentsService {
       );
     await this.evalBinary(server, 'agent_offline', agentOff);
     await this.evalBinary(server, 'ssh_down', sshDown);
+  }
+
+  private readonly reachCache = new Map<string, { at: number; value: CountryReach[] }>();
+
+  /** Проверка «из каждой страны» — не чаще раза в 3 минуты на сервер (каждая — SSH на несколько машин). */
+  private async countryReachCached(server: ServerRow): Promise<CountryReach[]> {
+    const hit = this.reachCache.get(server.id);
+    if (hit && Date.now() - hit.at < REACH_TTL_MS) return hit.value;
+    const all = await this.servers.list().catch(() => []);
+    const value = await this.blockCheck
+      .countryReach(server.host, server.port, server.id, all)
+      .catch(() => [] as CountryReach[]);
+    this.reachCache.set(server.id, { at: Date.now(), value });
+    return value;
+  }
+
+  /**
+   * «Недоступен из части сетей»: агент и SSH с панели молчат, а порт SSH открыт из других стран. Сервер
+   * работает — отрезан путь из части сетей (часто это блокировка страны или сбой маршрута). Одно дело вида
+   * «Похоже на блокировку»; «Агент не в сети» и «SSH недоступен» — следствие, присоединяются.
+   */
+  private async evalPartialReach(
+    server: ServerRow,
+    partial: boolean,
+    reach: CountryReach[],
+    panelOpen: boolean,
+  ): Promise<void> {
+    const existing = await this.repo.findOpen(server.id, 'node_blocked');
+    const mine = existing?.detail.startsWith(PARTIAL_MARK) ? existing : undefined;
+    if (!partial) {
+      if (mine && !mine.attempts.some((a) => a.status === 'running'))
+        await this.autoResolve(
+          mine,
+          'Связь восстановилась: агент выходит на связь, панель снова видит сервер.',
+        );
+      return;
+    }
+    const closed = reach.filter((r) => !r.open).map((r) => r.from);
+    const opened = reach.filter((r) => r.open).map((r) => r.from);
+    const detail = [
+      `${PARTIAL_MARK} агент не выходит на связь и панель не заходит по SSH, но сам сервер работает: порт SSH ${server.port} открыт не отовсюду.`,
+      '',
+      `Порт SSH ${server.port}:`,
+      ...countryReachLines(reach, panelOpen),
+      '',
+      `Похоже: путь до сервера закрыт из части сетей — ${closed.length ? `не отвечает с ${closed.join(', ')}` : 'часть проверяющих не отвечает'}${panelOpen ? '' : ' и с сервера панели (поэтому молчат агент и SSH)'}, а с ${opened.join(', ')} открыт. Чаще всего это блокировка в этих странах (ТСПУ в России) или сбой маршрута у хостера. Сервер выключать и переустанавливать ничего не нужно: помогает смена IP или ожидание, пока починят сеть.`,
+    ].join('\n');
+    if (!existing) {
+      await this.openIncident(server, 'node_blocked', detail, 'Недоступен из части сетей');
+    } else if (mine && mine.detail !== detail) {
+      await this.repo.update(mine.id, { detail });
+    }
+    const main = existing ?? (await this.repo.findOpen(server.id, 'node_blocked'));
+    for (const kind of ['agent_offline', 'ssh_down'] as const) {
+      const other = await this.repo.findOpen(server.id, kind);
+      if (other && main) {
+        await this.autoResolve(
+          other,
+          'Объединено с делом «Недоступен из части сетей»: сервер жив, отрезан путь из части сетей.',
+        );
+        await this.repo.appendEvent(
+          main.id,
+          ev(
+            'auto',
+            `Присоединено: «${INCIDENT_KIND_META[kind].label}» — следствие недоступности из части сетей`,
+            'detect',
+          ),
+        );
+      }
+    }
   }
 
   /**

@@ -27,7 +27,8 @@ import { SetupService } from '../src/modules/auth/setup.service.js';
 import { IncidentMetricsService } from '../src/modules/incidents/incident-metrics.service.js';
 import { IncidentRunnerService } from '../src/modules/incidents/incident-runner.service.js';
 import { IncidentsRepository } from '../src/modules/incidents/incidents.repository.js';
-import { IncidentsService } from '../src/modules/incidents/incidents.service.js';
+import { IncidentsService, PARTIAL_MARK } from '../src/modules/incidents/incidents.service.js';
+import { NodeBlockCheckService } from '../src/modules/incidents/node-block-check.service.js';
 import { NotificationsService } from '../src/modules/notifications/notifications.service.js';
 import { FakeSsh, SSH_PASSWORD, SSH_USER } from './fake-ssh.js';
 
@@ -211,6 +212,80 @@ describe('incidents e2e', () => {
     } finally {
       svc.probeHost = probe;
       (svc as unknown as { hostCache: Map<string, unknown> }).hostCache.clear();
+    }
+  });
+
+  it('с панели сервер молчит, а из Германии порт SSH открыт → одно дело «Недоступен из части сетей», не «Сервер недоступен»', async () => {
+    const db = app.get<Db>(DB);
+    const svc = app.get(IncidentsService);
+    const repo = app.get(IncidentsRepository);
+    const bc = app.get(NodeBlockCheckService);
+    const probe = svc.probeHost;
+    const reach = bc.countryReach;
+    const clear = () => {
+      (svc as unknown as { hostCache: Map<string, unknown> }).hostCache.clear();
+      (svc as unknown as { reachCache: Map<string, unknown> }).reachCache.clear();
+    };
+    try {
+      await db.execute(
+        sql`update servers set agent_status = 'offline', ssh_ok = true where id = ${serverId}`,
+      );
+      await svc.evaluate(noMetrics);
+      expect(await repo.findOpen(serverId, 'agent_offline')).toBeDefined();
+
+      svc.probeHost = async () => false;
+      bc.countryReach = async () => [
+        { from: 'Мост', country: 'RU', open: false },
+        { from: 'Германия-1', country: 'DE', open: true },
+        { from: 'Нидерланды', country: 'NL', open: true },
+      ];
+      clear();
+      await svc.evaluate(noMetrics);
+      const open = incidentsListResponseSchema
+        .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
+        .items.filter((i) => i.serverName === 'inc-host');
+      expect(open.map((i) => i.kind)).toEqual(['node_blocked']);
+      const inc = open[0];
+      expect(inc?.title).toMatch(/^Недоступен из части сетей/);
+      expect(inc?.detail.startsWith(PARTIAL_MARK)).toBe(true);
+      expect(inc?.detail).toMatch(/• Мост — порт не отвечает/);
+      expect(inc?.detail).toMatch(/• Германия-1 — порт открыт/);
+      expect(inc?.detail).toMatch(/не отвечает с Мост/);
+      expect(inc?.timeline.map((e) => e.action).join('\n')).toMatch(/Присоединено: «Агент не в сети»/);
+
+      // Повторный тик — второго дела нет.
+      clear();
+      await svc.evaluate(noMetrics);
+      const again = incidentsListResponseSchema
+        .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
+        .items.filter((i) => i.serverName === 'inc-host');
+      expect(again.map((i) => i.kind)).toEqual(['node_blocked']);
+
+      // Закрыт отовсюду → дело становится «Сервер недоступен», частичное закрывается.
+      bc.countryReach = async () => [
+        { from: 'Мост', country: 'RU', open: false },
+        { from: 'Германия-1', country: 'DE', open: false },
+      ];
+      clear();
+      await svc.evaluate(noMetrics);
+      const down = incidentsListResponseSchema
+        .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
+        .items.filter((i) => i.serverName === 'inc-host');
+      expect(down.map((i) => i.kind)).toEqual(['server_down']);
+      expect(down[0]?.detail).toMatch(/ни из одной страны/);
+
+      // Агент вернулся — всё закрыто.
+      svc.probeHost = probe;
+      bc.countryReach = reach;
+      await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
+      clear();
+      await svc.evaluate(noMetrics);
+      expect(await repo.findOpen(serverId, 'server_down')).toBeUndefined();
+      expect(await repo.findOpen(serverId, 'node_blocked')).toBeUndefined();
+    } finally {
+      svc.probeHost = probe;
+      bc.countryReach = reach;
+      clear();
     }
   });
 

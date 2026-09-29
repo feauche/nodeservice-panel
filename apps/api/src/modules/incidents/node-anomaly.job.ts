@@ -7,7 +7,6 @@ import {
   NODE_ONLINE_DROP_WINDOW_MIN,
   type RemnawaveNode,
 } from '@nodeservice/shared';
-import { tcpOpen } from '../../common/net/tcp-open.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersService } from '../servers/servers.service.js';
@@ -139,10 +138,6 @@ export class NodeAnomalyJob {
         });
         return;
       }
-      if (matched.agentStatus === 'offline' && !(await tcpOpen(matched.host, matched.port))) {
-        this.log.log(`${note} (сервер не отвечает)`);
-        return;
-      }
     }
     const inbound = await this.remnawave.nodeInbound(node.uuid);
     const result = await this.blockCheck.check(
@@ -173,6 +168,19 @@ export class NodeAnomalyJob {
     // Агент на связи — сервер жив, порт закрыт у самой ноды или файрволом: это не «Сервер недоступен».
     const kind =
       described.kind === 'server_down' && matched?.agentStatus === 'online' ? 'node_blocked' : described.kind;
+    // По серверу уже открыто «Недоступен из части сетей» — дописываем результат проверки блокировки туда
+    // (иначе второе дело того же вида не откроется и находка потеряется).
+    const partial = matched ? await this.incidents.findOpen(matched.id, 'node_blocked') : undefined;
+    if (partial && kind === 'node_blocked') {
+      await this.incidents.update(partial.id, { detail: `${partial.detail}\n\nПадение онлайна:\n${detail}` });
+      await this.incidents.appendEvent(partial.id, {
+        at: new Date().toISOString(),
+        by: 'auto',
+        action: `Онлайн ноды «${node.name}» упал с ${before} до ${after} — проверка блокировки: ${title}`,
+        result: 'detect',
+      });
+      return;
+    }
     const row = await this.incidents.open({
       serverId: matched?.id ?? null,
       serverName: matched?.name ?? node.name,

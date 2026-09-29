@@ -10,9 +10,11 @@ import { ServersService } from '../servers/servers.service.js';
 import { SshService } from '../servers/ssh.service.js';
 import {
   buildBlockCheckCommand,
+  type CountryReach,
   combineVerdicts,
   isSafeBlockCheckTarget,
   parseBlockCheckOutput,
+  pickCountryProbes,
   pickForeignProbes,
   pickRuProbes,
   withForeign,
@@ -131,6 +133,26 @@ export class NodeBlockCheckService {
       verdict: withForeign(ruVerdict, foreign),
       entry: null,
     };
+  }
+
+  /**
+   * Жив ли сервер: стучимся в его порт (обычно SSH) с одного сервера парка в каждой стране. Открыт хоть
+   * откуда-то — сервер работает, закрыт путь из части сетей (блокировка или маршрут). Только TCP-порт.
+   */
+  async countryReach(
+    address: string,
+    port: number,
+    excludeServerId: string | null,
+    allServers: Server[],
+  ): Promise<CountryReach[]> {
+    if (!isSafeBlockCheckTarget(address, port, null)) return [];
+    const probers = pickCountryProbes(excludeServerId, allServers);
+    return Promise.all(
+      probers.map(async (p) => {
+        const r = await this.probeFrom(p, address, port, null);
+        return { from: p.name, country: p.country.code, open: r.verdict === 'ok' && r.error !== 'ssh' };
+      }),
+    );
   }
 
   /**
