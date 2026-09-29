@@ -298,7 +298,7 @@ export function OverviewPage() {
     .filter(
       (inc) =>
         !(
-          (inc.kind === 'agent_offline' || inc.kind === 'ssh_down') &&
+          (inc.kind === 'agent_offline' || inc.kind === 'ssh_down' || inc.kind === 'server_down') &&
           healthRows.some((h) => h.name === inc.serverName)
         ),
     )

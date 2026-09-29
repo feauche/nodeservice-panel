@@ -435,7 +435,10 @@ describe('J10: аномалия онлайна → проверка блокир
     );
     const inc = list.items.find((i) => i.serverName === 'exit-srv');
     expect(inc?.detail).toContain('Вход арендодателя (entry.example.com:9443), из России:');
-    expect(inc?.detail).toContain('Не отвечают ни вход, ни выход — напишите: Иван.');
+    expect(inc?.detail).toContain(
+      'Не отвечают ни выход, ни вход. Вход, скорее всего, пересылает трафик на этот сервер',
+    );
+    expect(inc?.detail).toContain('пишите арендодателю (Иван)');
 
     // И принимает, и выпускает — вход у сервера он сам: сохранённый вход убирается.
     const both = serverSchema.parse((await patch({ roles: ['entry', 'exit'] })).body);

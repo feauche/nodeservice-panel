@@ -4,7 +4,9 @@ import {
   computeDrift,
   DEFAULT_SERVER_PROFILE,
   normalizeProfilePatch,
+  normalizeUpstreamAddress,
   serverProfilePatchSchema,
+  serverUpstreamPatchSchema,
 } from './server-profile.js';
 
 const inv = (over: Partial<Parameters<typeof computeDrift>[1] & object> = {}) => ({
@@ -94,5 +96,21 @@ describe('профиль: проверка и приведение', () => {
       'ночью по Москве',
     );
     expect(normalizeProfilePatch({ roles: ['exit', 'entry', 'exit'] })).toEqual({ roles: ['entry', 'exit'] });
+  });
+});
+
+describe('адрес входа ссылкой', () => {
+  it('схема и путь отбрасываются; без порта — порт по схеме', () => {
+    expect(normalizeUpstreamAddress('https://Stream-CBFE.julsapart.com:30008')).toBe(
+      'stream-cbfe.julsapart.com:30008',
+    );
+    expect(normalizeUpstreamAddress('https://entry.example.com/')).toBe('entry.example.com:443');
+    expect(normalizeUpstreamAddress('http://1.2.3.4/path?x=1')).toBe('1.2.3.4:80');
+    expect(normalizeUpstreamAddress(' entry.example.com:8443 ')).toBe('entry.example.com:8443');
+    const r = serverUpstreamPatchSchema.safeParse({
+      kind: 'rent',
+      address: 'https://stream-cbfe.julsapart.com:30008',
+    });
+    expect(r.success && r.data.address).toBe('stream-cbfe.julsapart.com:30008');
   });
 });

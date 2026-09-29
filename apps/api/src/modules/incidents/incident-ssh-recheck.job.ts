@@ -40,7 +40,9 @@ export class IncidentSshRecheckJob {
     try {
       const open = await this.incidentsRepo.list('open');
       const serverIds = new Set(
-        open.filter((i) => i.kind === 'ssh_down' && i.serverId).map((i) => i.serverId as string),
+        open
+          .filter((i) => (i.kind === 'ssh_down' || i.kind === 'server_down') && i.serverId)
+          .map((i) => i.serverId as string),
       );
       if (serverIds.size === 0) return;
       const now = Date.now();

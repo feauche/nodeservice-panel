@@ -38,7 +38,7 @@ import {
 import { LLM_PROVIDER, type LlmBlock, type LlmMsg, type LlmProvider } from './llm.provider.js';
 
 /** Сбои «сервер недоступен»: к делу добавляем просроченную оплату — частая причина. */
-const BILLING_DOWN_KINDS = new Set(['agent_offline', 'ssh_down', 'node_down', 'node_blocked']);
+const BILLING_DOWN_KINDS = new Set(['server_down', 'agent_offline', 'ssh_down', 'node_down', 'node_blocked']);
 
 const MAX_ROUNDS = 6;
 const ASK_ROUNDS = 4;

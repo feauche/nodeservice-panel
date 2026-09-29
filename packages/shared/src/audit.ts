@@ -129,6 +129,8 @@ export const AUDIT_ACTIONS = {
   'server.country.changed': { category: 'server', label: 'Страна сервера сменилась по базам' },
   'server.deleted': { category: 'server', label: 'Сервер удалён' },
   'server.ssh.checked': { category: 'server', label: 'Проверка связи по SSH' },
+  'server.link.updated': { category: 'server', label: 'Скорость канала указана вручную' },
+  'server.link.measured': { category: 'server', label: 'Замер скорости канала' },
   'server.host_key.trusted': { category: 'server', label: 'Доверен новый отпечаток сервера' },
   'server.enrollment.issued': { category: 'server', label: 'Выпущен токен подключения агента' },
   'server.agent.install': { category: 'server', label: 'Установка агента по SSH' },

@@ -104,13 +104,14 @@ export const TELEGRAM_EVENTS_DEFAULT: TelegramEvents = {
 
 /** Виды инцидентов по группам для тумблеров «Какие инциденты» (витрина `telegram-messages-variants.html`, 2A). */
 export const TELEGRAM_KIND_GROUPS: ReadonlyArray<{ title: string; keys: readonly IncidentKind[] }> = [
-  { title: 'Связь', keys: ['agent_offline', 'ssh_down'] },
+  { title: 'Связь', keys: ['server_down', 'agent_offline', 'ssh_down'] },
   { title: 'Нода', keys: ['node_down', 'node_blocked'] },
   { title: 'Ресурсы', keys: ['cpu_high', 'mem_high', 'disk_high'] },
 ];
 export const TELEGRAM_KIND_LABELS: Record<IncidentKind, string> = {
   agent_offline: 'Агент не в сети',
   ssh_down: 'SSH недоступен',
+  server_down: 'Сервер недоступен',
   node_down: 'Контейнер ноды не запущен',
   node_blocked: 'Резкое падение онлайна и блокировки',
   cpu_high: 'Нагрузка на процессор',
@@ -118,7 +119,8 @@ export const TELEGRAM_KIND_LABELS: Record<IncidentKind, string> = {
   disk_high: 'Диск заполняется',
 };
 export const TELEGRAM_KIND_HINTS: Record<IncidentKind, string> = {
-  agent_offline: 'Агент перестал присылать сигнал. Часто вместе с «SSH недоступен», если сервер лёг целиком.',
+  agent_offline: 'Агент перестал присылать сигнал, а сам сервер отвечает — дело в агенте.',
+  server_down: 'Сервер не отвечает целиком: молчит агент и не открывается порт SSH. Одно дело вместо трёх.',
   ssh_down: 'Панель не может зайти на сервер по SSH.',
   node_down: 'Сервер жив, но нода остановлена.',
   node_blocked:

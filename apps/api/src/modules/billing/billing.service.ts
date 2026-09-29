@@ -54,7 +54,7 @@ import { BillingRatesService } from './billing-rates.service.js';
 const DEFAULT_TZ = 'Europe/Moscow';
 const DAY_MS = 86_400_000;
 /** Виды инцидентов, при которых сервер считается «лежит» — возможная причина: не оплачен. */
-const DOWN_KINDS = ['agent_offline', 'ssh_down', 'node_down', 'node_blocked'];
+const DOWN_KINDS = ['server_down', 'agent_offline', 'ssh_down', 'node_down', 'node_blocked'];
 
 const validTz = (tz: string | undefined): string => {
   if (!tz) return DEFAULT_TZ;

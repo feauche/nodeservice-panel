@@ -134,7 +134,7 @@ describe('incidents e2e', () => {
     expect(week.self).toBeGreaterThanOrEqual(1);
   });
 
-  it('агент офлайн и SSH тоже недоступен → «Переустановить агента» не предлагаем (шаг всё равно провалится)', async () => {
+  it('агент офлайн и SSH тоже недоступен → одно дело «Сервер недоступен», переустановку агента не предлагаем', async () => {
     const db = app.get<Db>(DB);
     const svc = app.get(IncidentsService);
     await db.execute(sql`update servers set agent_status = 'offline', ssh_ok = false where id = ${serverId}`);
@@ -143,20 +143,75 @@ describe('incidents e2e', () => {
     const list = incidentsListResponseSchema.parse(
       (await agent.get('/api/incidents?status=open').expect(200)).body,
     );
-    const inc = list.items.find((i) => i.kind === 'agent_offline');
-    expect(inc?.proposal).toBeNull();
+    const mine = list.items.filter((i) => i.serverName === 'inc-host');
+    expect(mine.map((i) => i.kind)).toEqual(['server_down']);
+    expect(mine[0]?.proposal).toBeNull();
+    expect(mine[0]?.detail).toMatch(/переустанавливать агента бессмысленно/);
 
-    // SSH снова работает — на следующем тике шаг предлагается как обычно
+    // SSH снова работает, агент молчит — сервер отвечает: дело закрыто, открыто «Агент не в сети» с шагом
     await db.execute(sql`update servers set ssh_ok = true where id = ${serverId}`);
     await svc.evaluate(noMetrics);
     const after = incidentsListResponseSchema.parse(
       (await agent.get('/api/incidents?status=open').expect(200)).body,
     );
+    expect(after.items.some((i) => i.kind === 'server_down')).toBe(false);
     const inc2 = after.items.find((i) => i.kind === 'agent_offline');
     expect(inc2?.proposal).toMatchObject({ action: 'agent_reinstall', level: 'T2' });
 
     await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
     await svc.evaluate(noMetrics);
+  });
+
+  it('сначала проверяем сервер: порт SSH не открывается → «Сервер недоступен»; открытое «Агент не в сети» уточняется, «Похоже на блокировку» присоединяется', async () => {
+    const db = app.get<Db>(DB);
+    const svc = app.get(IncidentsService);
+    const repo = app.get(IncidentsRepository);
+    const probe = svc.probeHost;
+    try {
+      // Агент замолчал, сервер отвечает — «Агент не в сети» с предложением переустановить.
+      await db.execute(
+        sql`update servers set agent_status = 'offline', ssh_ok = true where id = ${serverId}`,
+      );
+      await svc.evaluate(noMetrics);
+      const first = (await repo.findOpen(serverId, 'agent_offline')) as { id: string; proposal: unknown };
+      expect(first.proposal).not.toBeNull();
+      await repo.open({
+        serverId,
+        serverName: 'inc-host',
+        kind: 'node_blocked',
+        severity: 'warn',
+        title: 'Похоже на блокировку · inc-host',
+        detail: 'Онлайн упал.',
+        timeline: [],
+      });
+
+      // Через минуту порт SSH перестал открываться: то же дело становится «Сервер недоступен».
+      svc.probeHost = async () => false;
+      (svc as unknown as { hostCache: Map<string, unknown> }).hostCache.clear();
+      await svc.evaluate(noMetrics);
+      const open = incidentsListResponseSchema
+        .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
+        .items.filter((i) => i.serverName === 'inc-host');
+      expect(open.map((i) => i.kind)).toEqual(['server_down']);
+      const refined = open[0];
+      expect(refined?.id).toBe(first.id);
+      expect(refined?.proposal).toBeNull();
+      expect(refined?.detail).toMatch(/порт SSH 127\.0\.0\.1:\d+ не открывается/);
+      const texts = refined?.timeline.map((e) => e.action).join('\n') ?? '';
+      expect(texts).toMatch(
+        /Уточнено: сервер недоступен целиком — порт SSH тоже не отвечает\. Предложение «Переустановить агента» снято/,
+      );
+      expect(texts).toMatch(/Присоединено: «Похоже на блокировку»/);
+
+      // Агент вернулся — дело закрыто само.
+      svc.probeHost = probe;
+      await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
+      await svc.evaluate(noMetrics);
+      expect(await repo.findOpen(serverId, 'server_down')).toBeUndefined();
+    } finally {
+      svc.probeHost = probe;
+      (svc as unknown as { hostCache: Map<string, unknown> }).hostCache.clear();
+    }
   });
 
   /** Ждём, пока попытка по инциденту завершится (исполнитель работает в фоне). */

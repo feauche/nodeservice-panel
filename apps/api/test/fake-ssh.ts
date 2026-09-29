@@ -47,6 +47,9 @@ export class FakeSsh {
   blockCheckOutput = '{"stage":"data","ok":true,"stalledAtKb":null}';
   /** Проверка только порта (имя маскировки пустое, так идёт встречная проверка из-за рубежа); null — как blockCheckOutput. */
   blockCheckPortOnlyOutput: string | null = null;
+  /** Ёмкость: что печатает опрос сетевой карты и замер скорости. */
+  linkProbe = '@@dev=eth0\n@@speed=10000\n@@driver=virtio_net\n@@virt=kvm\n@@ctmax=262144\n';
+  speedTest = '@@down=900000000\n@@up=612000000\n@@downms=8000\n@@upms=8000\n';
   /** Реестр проверок (ns-check): вывод по ключу и код выхода (по умолчанию 0). */
   checks: { output: Record<string, string>; code: Record<string, number> } = { output: {}, code: {} };
 
@@ -86,6 +89,14 @@ export class FakeSsh {
                 // Узкие инструменты чтения (J2): по метке в первой строке команды отдаём типичный вывод.
                 const kind = /# ns-inspect:([a-z-]+(?::[a-z]+)?)/.exec(info.command)?.[1] ?? '';
                 stream.write(INSPECT_OUTPUT[kind] ?? `неизвестная метка ${kind}\n`);
+                stream.exit(0);
+              } else if (info.command.includes('@@ctmax')) {
+                // Ёмкость: сетевая карта маршрута по умолчанию.
+                stream.write(this.linkProbe);
+                stream.exit(0);
+              } else if (info.command.includes('speed.cloudflare.com')) {
+                // Замер скорости: 8 с по 4 потока в каждую сторону.
+                stream.write(this.speedTest);
                 stream.exit(0);
               } else if (info.command.includes('@@hostname')) {
                 stream.write(

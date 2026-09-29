@@ -1,5 +1,6 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import {
+  type ActionKey,
   AUTOFIX_GRACE_SECONDS,
   type AutofixPolicy,
   actionByKey,
@@ -23,6 +24,7 @@ import {
 } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
+import { tcpOpen } from '../../common/net/tcp-open.js';
 import type { IncidentRow, ServerRow } from '../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -44,6 +46,8 @@ export const INCIDENT_HYSTERESIS_PCT = 5;
 export const STARTUP_GRACE_MS = process.env.NODE_ENV === 'test' ? 0 : 3 * 60_000;
 /** «Агент не в сети» — только если молчит дольше этого (короткий обрыв при обновлении — не инцидент). */
 export const AGENT_OFFLINE_FOR_MS = process.env.NODE_ENV === 'test' ? 0 : 2 * 60_000;
+/** Сколько держим ответ проверки порта SSH, пока агент молчит. */
+const HOST_PROBE_TTL_MS = 60_000;
 /** Статистика действий на вкладке «Автопочинка» — за последние N дней. */
 const STATS_DAYS = 30;
 
@@ -332,8 +336,7 @@ export class IncidentsService {
         const offlineLongEnough =
           server.agentStatus === 'offline' &&
           (!server.agentLastSeenAt || Date.now() - server.agentLastSeenAt.getTime() >= AGENT_OFFLINE_FOR_MS);
-        await this.evalBinary(server, 'agent_offline', offlineLongEnough);
-        await this.evalBinary(server, 'ssh_down', server.sshOk === false);
+        await this.evalConnectivity(server, offlineLongEnough);
       }
       await this.evalNode(server);
       await this.evalThreshold(
@@ -410,6 +413,124 @@ export class IncidentsService {
     } else if (quiet) {
       await this.autoResolve(existing);
     }
+  }
+
+  /** Проверка порта SSH с панели; в e2e подменяется. Ответ держим минуту, чтобы не стучаться каждый тик. */
+  probeHost: (host: string, port: number) => Promise<boolean> = (host, port) => tcpOpen(host, port);
+  private readonly hostCache = new Map<string, { at: number; ok: boolean }>();
+
+  private async hostAnswers(server: ServerRow): Promise<boolean> {
+    const hit = this.hostCache.get(server.id);
+    if (hit && Date.now() - hit.at < HOST_PROBE_TTL_MS) return hit.ok;
+    const ok = await this.probeHost(server.host, server.port).catch(() => false);
+    this.hostCache.set(server.id, { at: Date.now(), ok });
+    return ok;
+  }
+
+  /**
+   * Связь с сервером — одним делом, а не тремя (решение владельца 29.09.2026). Агент замолчал — сначала
+   * проверяем сам сервер: порт SSH не открывается или SSH не пускает → «Сервер недоступен» (агент и SSH —
+   * следствия, переустанавливать агента бессмысленно). Сервер отвечает, а агент молчит → «Агент не в сети»
+   * с переустановкой. SSH не пускает при живом агенте → «SSH недоступен». Уже открытые «Агент не в сети»,
+   * «SSH недоступен» и «Похоже на блокировку» при недоступном сервере сливаются в одно дело.
+   */
+  private async evalConnectivity(server: ServerRow, agentOff: boolean): Promise<void> {
+    const sshDown = server.sshOk === false;
+    const hostDown = agentOff ? !(await this.hostAnswers(server)) : false;
+    const serverDown = agentOff && (hostDown || sshDown);
+    const open = await this.repo.findOpen(server.id, 'server_down');
+    if (serverDown) {
+      const why = hostDown
+        ? `Сервер не отвечает: агент молчит, порт SSH ${server.host}:${server.port} не открывается.`
+        : 'Сервер не отвечает: агент молчит, по SSH панель зайти не может.';
+      const detail = `${why} Обычно это значит, что сервер выключен, завис или отрезан у хостера — проверьте в панели хостера и оплату. Агент и SSH — следствие, переустанавливать агента бессмысленно.`;
+      let main = open;
+      if (!main) {
+        const earlier =
+          (await this.repo.findOpen(server.id, 'agent_offline')) ??
+          (await this.repo.findOpen(server.id, 'ssh_down'));
+        main = earlier ? await this.refineToServerDown(earlier, server, detail) : undefined;
+        if (!main) await this.openIncident(server, 'server_down', detail);
+        main ??= await this.repo.findOpen(server.id, 'server_down');
+      }
+      // Остальные дела по этому серверу с той же причиной — закрываем с пояснением, куда они делись.
+      for (const kind of ['agent_offline', 'ssh_down', 'node_blocked'] as const) {
+        const other = await this.repo.findOpen(server.id, kind);
+        if (other && other.id !== main?.id) {
+          await this.autoResolve(
+            other,
+            'Объединено с делом «Сервер недоступен»: причина одна — сервер не отвечает.',
+          );
+          if (main)
+            await this.repo.appendEvent(
+              main.id,
+              ev(
+                'auto',
+                `Присоединено: «${INCIDENT_KIND_META[kind].label}» — следствие недоступности сервера`,
+                'detect',
+              ),
+            );
+        }
+      }
+      return;
+    }
+    if (open && !open.attempts.some((a) => a.status === 'running'))
+      await this.autoResolve(
+        open,
+        agentOff
+          ? 'Сервер снова отвечает, но агент молчит — открыто отдельное дело «Агент не в сети».'
+          : 'Сервер снова на связи: агент и SSH отвечают.',
+      );
+    await this.evalBinary(server, 'agent_offline', agentOff);
+    await this.evalBinary(server, 'ssh_down', sshDown);
+  }
+
+  /**
+   * Уже открытое «Агент не в сети» или «SSH недоступен» оказалось частью большего: сервер не отвечает целиком.
+   * Дело уточняем на месте (та же история), предложение шага снимаем — на недоступном сервере его не выполнить.
+   */
+  private async refineToServerDown(
+    row: IncidentRow,
+    server: ServerRow,
+    detail: string,
+  ): Promise<IncidentRow | undefined> {
+    const meta = INCIDENT_KIND_META.server_down;
+    const dropped = row.proposal
+      ? ` Предложение «${actionByKey(row.proposal.action as ActionKey).title}» снято: на недоступном сервере его не выполнить.`
+      : '';
+    const updated = await this.repo.update(row.id, {
+      kind: 'server_down',
+      severity: meta.severity,
+      title: `${meta.label} · ${server.name}`,
+      detail,
+      proposal: null,
+      timeline: [
+        ...row.timeline,
+        ev(
+          'auto',
+          `Уточнено: сервер недоступен целиком — ${row.kind === 'agent_offline' ? 'порт SSH тоже не отвечает' : 'агент тоже молчит'}.${dropped}`,
+          'detect',
+        ),
+      ],
+    });
+    if (!updated) return undefined;
+    await this.notifications.push({
+      severity: 'crit',
+      title: incidentTitleToken(meta.label),
+      server: { id: server.id, name: server.name, host: server.host },
+      telegram: { event: 'incident_crit', incidentId: updated.id, kind: 'server_down' },
+      body: `Уточнено: ${detail}`,
+      link: { to: `/incidents/${updated.id}`, label: 'Открыть инцидент' },
+    });
+    await this.audit.record({
+      action: 'incident.opened',
+      actor: SYSTEM_ACTOR,
+      source: 'auto',
+      severity: 'crit',
+      target: { type: 'incident', id: updated.id, display: updated.title },
+      metadata: { server: server.name, kind: 'server_down', refinedFrom: row.kind },
+    });
+    return updated;
   }
 
   /** Мгновенное состояние (агент офлайн / SSH недоступен): без «времени реакции». */

@@ -6,6 +6,7 @@ import { auditHandlers, mockAudit, seedAudit } from './audit-mock';
 import { autochecksHandlers, seedAutochecks } from './autochecks-mock';
 import { backupsHandlers, seedBackups } from './backups-mock';
 import { billingHandlers, seedBilling } from './billing-mock';
+import { capacityHandlers, resetCapacity } from './capacity-mock';
 import { fleetStatsHandlers, resetFleetStats } from './fleet-stats-mock';
 import { incidentsHandlers, seedIncidents } from './incidents-mock';
 import { knowledgeHandlers, seedKnowledge } from './knowledge-mock';
@@ -79,6 +80,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
   seedProviders();
   seedBilling();
   seedBackups();
+  resetCapacity();
   resetFleetStats();
   seedRemnawave();
   seedMetrics();
@@ -177,6 +179,7 @@ export const handlers = [
   ...providersHandlers,
   ...billingHandlers,
   ...backupsHandlers,
+  ...capacityHandlers,
   ...fleetStatsHandlers,
   ...remnawaveHandlers,
   ...metricsHandlers,

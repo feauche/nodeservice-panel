@@ -2,6 +2,7 @@ import {
   isExitOnly,
   type NodeWatch,
   normalizeProfilePatch,
+  normalizeUpstreamAddress,
   type Server,
   type ServerProfile,
   type ServerUpstream,
@@ -52,7 +53,7 @@ export function canonUpstream(u: ServerUpstream | null): ServerUpstream | null {
   return {
     kind: 'rent',
     serverId: null,
-    address: u.address?.trim().toLowerCase() || null,
+    address: u.address ? normalizeUpstreamAddress(u.address) || null : null,
     owner: u.owner?.trim() || null,
   };
 }
@@ -62,9 +63,9 @@ export function upstreamError(u: ServerUpstream | null): string | null {
   if (!u) return null;
   if (u.kind === 'bridge') return u.serverId ? null : 'Выберите мост.';
   if (!u.address) return 'Укажите адрес входа или выберите «Не указывать».';
-  return UPSTREAM_ADDRESS_RE.test(u.address)
+  return UPSTREAM_ADDRESS_RE.test(normalizeUpstreamAddress(u.address))
     ? null
-    : 'Домен или IP, при необходимости с портом: entry.example.com:443';
+    : 'Домен или IP, при необходимости с портом: entry.example.com:443 (можно и ссылкой https://…)';
 }
 
 export interface ConnFields {

@@ -7,6 +7,7 @@ import {
   NODE_ONLINE_DROP_WINDOW_MIN,
   type RemnawaveNode,
 } from '@nodeservice/shared';
+import { tcpOpen } from '../../common/net/tcp-open.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersService } from '../servers/servers.service.js';
@@ -122,6 +123,25 @@ export class NodeAnomalyJob {
   private async investigate(node: RemnawaveNode, before: number, after: number): Promise<void> {
     const allServers = await this.servers.list();
     const matched = allServers.find((s) => s.host === node.address) ?? null;
+    // Сервер ноды лежит целиком — онлайн упал поэтому, а не из-за блокировки. Отдельное дело не заводим:
+    // пишем в «Сервер недоступен» (или его откроет детекция связи на ближайшем тике).
+    if (matched) {
+      const down = await this.incidents.findOpen(matched.id, 'server_down');
+      const note = `Онлайн ноды «${node.name}» упал с ${before} до ${after} — следствие недоступности сервера, проверку блокировки не запускаю.`;
+      if (down) {
+        await this.incidents.appendEvent(down.id, {
+          at: new Date().toISOString(),
+          by: 'auto',
+          action: note,
+          result: 'detect',
+        });
+        return;
+      }
+      if (matched.agentStatus === 'offline' && !(await tcpOpen(matched.host, matched.port))) {
+        this.log.log(`${note} (сервер не отвечает)`);
+        return;
+      }
+    }
     const inbound = await this.remnawave.nodeInbound(node.uuid);
     const result = await this.blockCheck.check(
       node.name,

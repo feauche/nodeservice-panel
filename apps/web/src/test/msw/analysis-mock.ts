@@ -71,6 +71,17 @@ const BODIES: Record<IncidentKind, Body> = {
     unknown: null,
     nextAction: 'agent_reinstall',
   },
+  server_down: {
+    verdict:
+      'Сервер недоступен целиком: агент молчит и порт SSH не открывается. Скорее всего, сервер выключен или отрезан у хостера — проверьте в панели хостера и оплату.',
+    confidence: 'medium',
+    evidence: [
+      { source: 'agent', text: 'Агент не выходил на связь дольше двух минут.' },
+      { source: 'other', text: 'Порт SSH не открывается ни с панели, ни с проверяющих серверов.' },
+    ],
+    unknown: 'Без доступа к панели хостера нельзя сказать, выключен сервер или отрезан сетью.',
+    nextAction: null,
+  },
   ssh_down: {
     verdict: 'Сервер не отвечает по SSH. Панель сама ничего сделать не может.',
     confidence: 'low',

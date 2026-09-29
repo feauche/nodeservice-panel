@@ -864,6 +864,24 @@ describe('страна сервера в инструментах', () => {
   });
 });
 
+describe('get_capacity', () => {
+  it('отдаёт ёмкость по нодам; без расчёта — честно «недоступна»', async () => {
+    const capacity = {
+      forAssistant: async () => ({
+        fleet: { left: 1350, bottleneck: 'net' },
+        servers: [{ name: 'Германия-1', left: 60 }],
+      }),
+    };
+    const { json } = await call('get_capacity', {}, deps({ capacity }));
+    expect(json()).toMatchObject({
+      fleet: { left: 1350, bottleneck: 'net' },
+      servers: [{ name: 'Германия-1', left: 60 }],
+    });
+    const { out } = await call('get_capacity', {}, deps({}));
+    expect(out.content).toMatch(/недоступна/);
+  });
+});
+
 describe('get_billing', () => {
   it('без биллинга — понятный ответ; с сервером — только его оплаты', async () => {
     const { out } = await call('get_billing', {});

@@ -53,7 +53,7 @@ export const PLAYBOOKS: Playbook[] = [
     id: 'server_unreachable',
     title: 'Сервер или агент не отвечает',
     when: 'Нет SSH или агент не в сети.',
-    kinds: ['ssh_down', 'agent_offline'],
+    kinds: ['server_down', 'ssh_down', 'agent_offline'],
     steps: [
       'get_incident и get_server_detail: что именно молчит, SSH или только агент, когда это началось.',
       'check_reachability для порта SSH этого сервера. Если у сервера в профиле указан вход («Откуда приходит трафик»), проверьте и его: check_reachability с entry: true — снаружи и с from, равным самому выходу (доходит ли выход до входа).',

@@ -64,6 +64,20 @@ export const SERVER_UPSTREAM_LABELS: Record<ServerUpstreamKind, string> = {
 export const UPSTREAM_ADDRESS_RE =
   /^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}|(?:\d{1,3}\.){3}\d{1,3})(?::\d{1,5})?$/i;
 export const UPSTREAM_OWNER_MAX = 80;
+
+/**
+ * Адрес входа, вставленный как ссылка: «https://stream.example.com:30008/» → «stream.example.com:30008».
+ * Проверка входа — подключение к порту, протокол ей не важен; схема подсказывает порт, если он не указан
+ * (https — 443, http — 80). Путь и завершающий «/» отбрасываются.
+ */
+export function normalizeUpstreamAddress(raw: string): string {
+  let s = raw.trim().toLowerCase();
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\//.exec(s)?.[1] ?? null;
+  if (scheme) s = s.slice(scheme.length + 3);
+  s = s.replace(/[/?#].*$/, '');
+  if (scheme && !/:\d{1,5}$/.test(s)) s += scheme === 'http' ? ':80' : ':443';
+  return s;
+}
 export const serverUpstreamSchema = z.object({
   kind: z.enum(SERVER_UPSTREAM_KINDS),
   /** Свой мост: сервер NodeService. */
@@ -79,10 +93,12 @@ export const serverUpstreamPatchSchema = z
     kind: z.enum(SERVER_UPSTREAM_KINDS),
     serverId: z.string().uuid().nullable().optional(),
     address: z
-      .string()
-      .trim()
-      .toLowerCase()
-      .regex(UPSTREAM_ADDRESS_RE, 'Домен или IP, при необходимости с портом: entry.example.com:443')
+      .preprocess(
+        (v) => (typeof v === 'string' ? normalizeUpstreamAddress(v) : v),
+        z
+          .string()
+          .regex(UPSTREAM_ADDRESS_RE, 'Домен или IP, при необходимости с портом: entry.example.com:443'),
+      )
       .nullable()
       .optional(),
     owner: z.string().trim().max(UPSTREAM_OWNER_MAX).nullable().optional(),

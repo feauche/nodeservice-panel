@@ -17,7 +17,7 @@ import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { avgOf, coveredSeconds, peakOf, round1 } from './fleet-stats.logic.js';
 
 /** Виды инцидентов, при которых сервер считается «не на связи». */
-const DOWN_KINDS = new Set(['agent_offline', 'ssh_down']);
+const DOWN_KINDS = new Set(['server_down', 'agent_offline', 'ssh_down']);
 /** Метрика онлайна нод, которую пишет панель при каждом чтении Remnawave. */
 export const NODE_ONLINE_METRIC = 'nodeservice_node_online';
 

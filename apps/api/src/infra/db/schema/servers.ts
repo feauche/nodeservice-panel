@@ -228,3 +228,20 @@ export const serverChecks = pgTable(
   ],
 );
 export type ServerCheckRow = typeof serverChecks.$inferSelect;
+
+/** Канал сервера для ёмкости (миграция 0045): сетевая карта по SSH, замер скорости, значение вручную. */
+export const serverLink = pgTable('server_link', {
+  serverId: uuid('server_id')
+    .primaryKey()
+    .references(() => servers.id, { onDelete: 'cascade' }),
+  nicName: text('nic_name'),
+  nicMbit: integer('nic_mbit'),
+  nicVirtual: boolean('nic_virtual'),
+  conntrackMax: integer('conntrack_max'),
+  probedAt: timestamp('probed_at', { withTimezone: true }),
+  measuredDownMbit: integer('measured_down_mbit'),
+  measuredUpMbit: integer('measured_up_mbit'),
+  measuredAt: timestamp('measured_at', { withTimezone: true }),
+  manualMbit: integer('manual_mbit'),
+});
+export type ServerLinkRow = typeof serverLink.$inferSelect;

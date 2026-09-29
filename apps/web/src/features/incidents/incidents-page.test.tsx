@@ -287,7 +287,7 @@ describe('AutofixPage', () => {
     const { AutofixPage } = await import('./autofix-page');
     renderPage(AutofixPage, '/incidents/autofix', ['/incidents']);
     const rows = await screen.findAllByTestId('policy-row');
-    expect(rows.length).toBe(7);
+    expect(rows.length).toBe(8);
     const node = rows.find((r) => within(r).queryByText('Контейнер ноды не запущен'));
     if (!node) throw new Error('нет строки ноды');
     expect(node).toHaveTextContent('Поднять контейнер ноды');

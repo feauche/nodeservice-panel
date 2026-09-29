@@ -27,6 +27,7 @@ import {
 } from '@nodeservice/shared';
 
 import type { BillingService } from '../billing/billing.service.js';
+import type { CapacityService } from '../capacity/capacity.service.js';
 import type { FleetStatsService } from '../fleet-stats/fleet-stats.service.js';
 import type { IncidentMetricsService } from '../incidents/incident-metrics.service.js';
 import type { IncidentsService } from '../incidents/incidents.service.js';
@@ -196,6 +197,12 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
     },
   },
   {
+    name: 'get_capacity',
+    description:
+      'Ёмкость парка: сколько ещё людей выдержит каждая нода и во что упрётся первой (процессор, память, канал, соединения), загрузка в час пик за 14 дней, скорость канала и откуда она известна (вручную, по замеру, по сетевой карте), рост онлайна за неделю и через сколько дней первая нода упрётся. Зови на «сколько ещё влезет на …», «во что упираемся», «хватит ли серверов», «какой сервер слабее». Мало данных или канал неизвестен — так и скажи и подскажи «Замерить канал» в «Обзор» → «Ёмкость».',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
     name: 'get_billing',
     description:
       'Биллинг: что и когда оплачивать — серверы, аренда у провайдеров, домены, сертификаты, прочее. По каждой активной оплате: тип, название, провайдер, серверы (у сертификата — где он развёрнут), сумма и примерно в рублях по курсу ЦБ, период, до какого момента оплачено, срок словами («через 2 дня», «просрочено на 1 день»), автоплатёж, заметка. Плюс итоги: оплачено за месяц и год в рублях по курсу на день оплаты, сколько ещё ожидается до конца месяца, и прогноз (forecast): сколько платить в ближайшие 7 и 30 дней, до конца года, в год, по месяцам и список ближайших оплат с датами. Зови и на вопросы «сколько мне платить в октябре», «что оплачивать на этой неделе». Зови, когда спрашивают про оплату, деньги, сроки, где развёрнут сертификат, и когда сервер недоступен: просроченная оплата — частая причина. serverId — только оплаты этого сервера (id или имя); archived — добавить архив.',
@@ -247,6 +254,7 @@ export interface ReadDeps {
   permissions: AssistantPermissions;
   /** Статистика парка за период (трафик, нагрузка, доступность, стоимость, онлайн нод). */
   fleetStats?: Pick<FleetStatsService, 'stats'>;
+  capacity?: Pick<CapacityService, 'forAssistant'>;
   /** Биллинг: оплаты, сроки, итоги. Нет — инструмент скажет, что раздел недоступен. */
   billing?: Pick<BillingService, 'forAssistant'>;
   /** Живая строка в чате о долгом действии (есть только в чате, не в разборе инцидентов). */
@@ -960,6 +968,11 @@ export async function runReadTool(
       proposals: [],
       activity: [finished],
     };
+  }
+
+  if (name === 'get_capacity') {
+    if (!deps.capacity) return none('Ёмкость парка сейчас недоступна.');
+    return none(JSON.stringify(await deps.capacity.forAssistant()));
   }
 
   if (name === 'get_fleet_stats') {

@@ -22,6 +22,7 @@ export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
 export const INCIDENT_KINDS = [
   'agent_offline',
   'ssh_down',
+  'server_down',
   'node_down',
   'cpu_high',
   'mem_high',
@@ -39,6 +40,7 @@ export const INCIDENT_KIND_META: Record<
 > = {
   agent_offline: { label: 'Агент не в сети', component: 'Связь', severity: 'crit' },
   ssh_down: { label: 'SSH недоступен', component: 'Связь', severity: 'crit' },
+  server_down: { label: 'Сервер недоступен', component: 'Связь', severity: 'crit' },
   node_down: { label: 'Контейнер ноды не запущен', component: 'Нода', severity: 'crit' },
   cpu_high: { label: 'Высокая нагрузка на CPU', component: 'CPU', severity: 'warn' },
   mem_high: { label: 'Память на пределе', component: 'Память', severity: 'warn' },
@@ -218,6 +220,8 @@ export const INCIDENT_CHAINS: Record<IncidentKind, ActionKey[]> = {
   mem_high: ['restart_node', 'reboot'],
   agent_offline: ['agent_reinstall', 'agent_logs'],
   ssh_down: [],
+  // Сервер не отвечает целиком (агент и порт SSH): панели нечего сделать — смотреть у хостера, это T3 вручную.
+  server_down: [],
   // Автопочинки для подозрения на блокировку нет: решение — сменить IP или сам сервер, это всегда T3 вручную.
   node_blocked: [],
 };

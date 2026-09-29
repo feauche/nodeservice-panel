@@ -173,7 +173,7 @@ export const ENTITY_DOCS: EntityDoc[] = [
       id: TECH_ID,
       serverId: 'Сервер инцидента; null если сервер потом удалили.',
       serverName: 'Название сервера на момент инцидента.',
-      kind: 'Вид инцидента (agent_offline, ssh_down, node_down, cpu_high, mem_high, disk_high). Ставит панель.',
+      kind: 'Вид инцидента (agent_offline — агент молчит, а сервер отвечает; ssh_down; server_down — сервер недоступен целиком: агент молчит и порт SSH закрыт, одно дело вместо трёх; node_down, cpu_high, mem_high, disk_high). Ставит панель.',
       severity: 'Важность: crit, warn или info. Определяется видом, вручную не меняется.',
       status:
         'open, acknowledged или resolved. Закрывается автоматически, когда проблема ушла, или вручную кнопкой «Закрыть».',
