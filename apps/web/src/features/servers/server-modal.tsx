@@ -878,7 +878,11 @@ function ConnectionTab({ server, edit }: { server: Server; edit: ServerEdit }) {
           )}
           {authTab === 'key' && (
             <div className="mt-3 flex max-w-[640px] flex-col gap-3.5">
-              <Field id="sm-key" label="Приватный ключ (OpenSSH/PEM)" error={errors.privateKey || undefined}>
+              <Field
+                id="sm-key"
+                label="Приватный ключ (OpenSSH, PEM или RSA)"
+                error={errors.privateKey || undefined}
+              >
                 <textarea
                   id="sm-key"
                   aria-invalid={errors.privateKey ? true : undefined}

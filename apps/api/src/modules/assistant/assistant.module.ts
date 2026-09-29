@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { AuditModule } from '../audit/audit.module.js';
+import { BackupsModule } from '../backups/backups.module.js';
 import { BillingModule } from '../billing/billing.module.js';
 import { FleetStatsModule } from '../fleet-stats/fleet-stats.module.js';
 import { IncidentsModule } from '../incidents/incidents.module.js';
@@ -44,6 +45,7 @@ import { ZvenoProvider } from './zveno.provider.js';
     ServerChecksModule,
     BillingModule,
     FleetStatsModule,
+    BackupsModule,
     ProvidersModule,
     RemnawaveModule,
     AuditModule,

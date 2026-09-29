@@ -46,6 +46,13 @@ export const envSchema = z.object({
     .optional()
     .transform((v) => (v === undefined ? undefined : v)),
 
+  /** Резервные копии: папка с архивами (в контейнере — том ../backups установки). */
+  BACKUPS_DIR: z.string().default('backups'),
+  /** Файл .env установки (ключи) — кладётся в копию; в контейнере смонтирован только на чтение. */
+  INSTALL_ENV_PATH: z.string().default(''),
+  /** Корень сервера панели для дополнительных путей копии (в контейнере — /host, смонтирован на чтение). */
+  HOST_ROOT: z.string().default(''),
+
   /** Доверяем X-Forwarded-For только от одного прокси (Caddy). */
   TRUST_PROXY: z.coerce.number().int().min(0).default(1),
   /** Сессия: сколько минут бездействия до выхода (скользящий TTL). */

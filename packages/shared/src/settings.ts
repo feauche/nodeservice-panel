@@ -57,21 +57,46 @@ export const brandNameSchema = z
   .refine((v) => brandNamePlain(v).trim().length > 0, 'Название не может быть пустым')
   .refine((v) => brandNamePlain(v).length <= BRAND_NAME_MAX, `Название — до ${BRAND_NAME_MAX} символов`);
 
+/** IANA-пояс вида «Asia/Omsk»: проверяется по Intl, неизвестный — отказ. */
+export const timeZoneSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine((tz) => {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: tz });
+      return true;
+    } catch {
+      return false;
+    }
+  }, 'Неизвестный часовой пояс');
+export const PANEL_TIME_ZONE_DEFAULT = 'Europe/Moscow';
+
 export const appearanceSettingsSchema = z.object({
   /** Свой логотип внутри панели (в шапке, на экранах входа). Иконка вкладки браузера не меняется. */
   logoUrl: logoUrlSchema,
   /** Название с цветовыми кодами, см. parseBrandName. */
   brandName: brandNameSchema.default(BRAND_NAME_DEFAULT),
+  /**
+   * Часовой пояс панели: время в сообщениях Telegram, расписание резервных копий, «сегодня» в отчётах.
+   * Экран сам по себе показывает время по браузеру.
+   */
+  timeZone: timeZoneSchema.default(PANEL_TIME_ZONE_DEFAULT),
 });
 export type AppearanceSettings = z.infer<typeof appearanceSettingsSchema>;
 
 export const appearanceSettingsUpdateSchema = z.object({
   logoUrl: logoUrlSchema.optional(),
   brandName: brandNameSchema.optional(),
+  timeZone: timeZoneSchema.optional(),
 });
 export type AppearanceSettingsUpdate = z.infer<typeof appearanceSettingsUpdateSchema>;
 
-export const APPEARANCE_DEFAULTS: AppearanceSettings = { logoUrl: null, brandName: BRAND_NAME_DEFAULT };
+export const APPEARANCE_DEFAULTS: AppearanceSettings = {
+  logoUrl: null,
+  brandName: BRAND_NAME_DEFAULT,
+  timeZone: PANEL_TIME_ZONE_DEFAULT,
+};
 
 /* ---------- сниппеты терминала ---------- */
 export const SNIPPET_NAME_MAX = 40;

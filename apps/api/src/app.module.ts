@@ -19,6 +19,7 @@ import { AssistantModule } from './modules/assistant/assistant.module.js';
 import { CLS_REQUEST, requestInfo } from './modules/audit/audit.context.js';
 import { AuditModule } from './modules/audit/audit.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
+import { BackupsModule } from './modules/backups/backups.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { EventsModule } from './modules/events/events.module.js';
 import { FleetStatsModule } from './modules/fleet-stats/fleet-stats.module.js';
@@ -101,6 +102,7 @@ import { TerminalModule } from './modules/terminal/terminal.module.js';
     ServerChecksModule,
     BillingModule,
     FleetStatsModule,
+    BackupsModule,
     IncidentsModule,
     HousekeepingModule,
     EventsModule,

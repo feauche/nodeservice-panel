@@ -13,6 +13,7 @@ import { problem } from '../../common/filters/problem-details.filter.js';
 import type { AssistantMessageRow } from '../../infra/db/schema/index.js';
 import { AuditRepository } from '../audit/audit.repository.js';
 import { AuditService } from '../audit/audit.service.js';
+import { BackupsService } from '../backups/backups.service.js';
 import { BillingService } from '../billing/billing.service.js';
 import { EventsService } from '../events/events.service.js';
 import { FleetStatsService } from '../fleet-stats/fleet-stats.service.js';
@@ -84,6 +85,7 @@ export class AssistantService {
     private readonly checks: ServerChecksService,
     private readonly billing: BillingService,
     private readonly fleetStats: FleetStatsService,
+    private readonly backups: BackupsService,
     private readonly probe: FleetProbeService,
     private readonly kb: KnowledgeRepository,
     private readonly knowledge: KnowledgeService,
@@ -236,6 +238,7 @@ export class AssistantService {
       incidentSettings: this.incidentSettings,
       assistant: { level },
       autoAnalysis: () => this.analysis.autoStatus(),
+      lastBackup: () => this.backups.lastBackup(),
       permissions,
       progress: (a) =>
         this.events.emit({ type: 'assistant', data: { conversationId: conv.id, activity: a } }),

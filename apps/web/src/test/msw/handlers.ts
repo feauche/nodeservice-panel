@@ -4,6 +4,7 @@ import { analysisHandlers, seedAnalysis } from './analysis-mock';
 import { assistantHandlers, seedAssistant } from './assistant-mock';
 import { auditHandlers, mockAudit, seedAudit } from './audit-mock';
 import { autochecksHandlers, seedAutochecks } from './autochecks-mock';
+import { backupsHandlers, seedBackups } from './backups-mock';
 import { billingHandlers, seedBilling } from './billing-mock';
 import { fleetStatsHandlers, resetFleetStats } from './fleet-stats-mock';
 import { incidentsHandlers, seedIncidents } from './incidents-mock';
@@ -49,9 +50,10 @@ export interface MockState {
 
 export const mockSnippets: { items: Array<{ id: string; name: string; command: string }> } = { items: [] };
 
-export const mockAppearance: { logoUrl: string | null; brandName: string } = {
+export const mockAppearance: { logoUrl: string | null; brandName: string; timeZone: string } = {
   logoUrl: null,
   brandName: BRAND_NAME_DEFAULT,
+  timeZone: 'Europe/Moscow',
 };
 
 export const mockState: MockState = {
@@ -76,6 +78,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
   seedServers();
   seedProviders();
   seedBilling();
+  seedBackups();
   resetFleetStats();
   seedRemnawave();
   seedMetrics();
@@ -173,6 +176,7 @@ export const handlers = [
   ...telegramHandlers,
   ...providersHandlers,
   ...billingHandlers,
+  ...backupsHandlers,
   ...fleetStatsHandlers,
   ...remnawaveHandlers,
   ...metricsHandlers,
@@ -194,7 +198,8 @@ export const handlers = [
   http.get('/api/settings/appearance', () => HttpResponse.json(mockAppearance)),
   http.put('/api/settings/appearance', async ({ request }) => {
     if (!mockState.authenticated) return problem(401, AUTH_PROBLEM.unauthenticated, 'Требуется вход');
-    const body = (await request.json()) as { logoUrl?: string | null; brandName?: string };
+    const body = (await request.json()) as { logoUrl?: string | null; brandName?: string; timeZone?: string };
+    if (body.timeZone !== undefined) mockAppearance.timeZone = body.timeZone;
     if (body.logoUrl !== undefined) mockAppearance.logoUrl = body.logoUrl;
     if (body.brandName !== undefined) mockAppearance.brandName = body.brandName;
     return HttpResponse.json(mockAppearance);

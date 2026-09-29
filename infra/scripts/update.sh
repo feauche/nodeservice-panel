@@ -65,8 +65,15 @@ else
 fi
 after=$(git rev-parse --short HEAD)
 
-# Бэкап перед обновлением — на случай неудачной миграции.
-bash "$APP_DIR/infra/scripts/backup.sh"
+# Бэкап перед обновлением — на случай неудачной миграции. Выключается в панели
+# («Резервные копии → Копия перед обновлением»): тогда панель кладёт метку .skip-before-update.
+mkdir -p -m 700 "$APP_DIR/backups"; chown 10001:10001 "$APP_DIR/backups" 2>/dev/null || true
+rm -f /etc/cron.d/nodeservice-backup
+if [[ -f "$APP_DIR/backups/.skip-before-update" ]]; then
+    echo -e "${Y}Копия перед обновлением выключена в панели — пропускаю.${N}"
+else
+    bash "$APP_DIR/infra/scripts/backup.sh"
+fi
 
 echo -e "${C}==> Сборка образа api ($after)${N}"
 sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$after/" "$ENV_FILE"

@@ -51,3 +51,7 @@ packages/shared/dist
 
 # Артефакты разработки (планы, требования, макет, скриншоты, dev-скрипты) — только локально
 /_dev/
+
+# Резервные копии панели в разработке (BACKUPS_DIR=backups)
+apps/api/backups/
+/backups/

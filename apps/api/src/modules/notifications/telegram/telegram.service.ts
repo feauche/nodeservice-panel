@@ -11,7 +11,7 @@ import {
   type TelegramTestResponse,
 } from '@nodeservice/shared';
 import { and, asc, desc, eq } from 'drizzle-orm';
-
+import { panelTimeZone } from '../../../common/panel-time-zone.js';
 import type { Env } from '../../../config/env.schema.js';
 import { DB, type Db } from '../../../infra/db/db.module.js';
 import { telegramMessages } from '../../../infra/db/schema/index.js';
@@ -308,9 +308,60 @@ export class TelegramService {
   }
 
   /** Когда по инциденту в последний раз писали в Telegram (отсчёт для напоминаний); null — не писали. */
-  /** Часовой пояс владельца (из настроек уведомлений, подставляется браузером) — для времени в сообщениях. */
+  /**
+   * Куда слать служебное (резервные копии): чат из «Уведомлений» по id или свой чат строкой tgram://.
+   * Прокси — общий из «Уведомлений». null — чат не найден или строка неверная.
+   */
+  async resolveTarget(
+    target: { destinationId: string | null } | { url: string },
+  ): Promise<LiveDestination | null> {
+    const s = await this.store.load();
+    const proxy = this.store.proxy(s);
+    if ('url' in target) {
+      const t = parseTelegramUrl(target.url);
+      return t
+        ? {
+            id: 'own',
+            chatId: t.chatId,
+            topic: t.topic,
+            token: t.token,
+            botName: null,
+            chatTitle: null,
+            lastTest: null,
+            proxy,
+          }
+        : null;
+    }
+    return this.store.live(s).find((d) => d.id === target.destinationId) ?? null;
+  }
+
+  /** Текст в указанный чат (без правил «что присылать»: это служебные сообщения о копиях). */
+  async sendTo(
+    d: LiveDestination,
+    html: string,
+    silent = false,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const res = await this.send(d, html, [], null, silent);
+    return res.ok ? { ok: true } : res;
+  }
+
+  /** Файл в указанный чат (до 50 МБ). */
+  async sendFileTo(
+    d: LiveDestination,
+    file: { path: string; name: string },
+    caption: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const fields: Record<string, string> = { chat_id: d.chatId, caption, parse_mode: 'HTML' };
+    if (d.topic !== null) fields.message_thread_id = String(d.topic);
+    const res = await this.client.sendFile(d.token, fields, file, d.proxy ?? null).catch(() => null);
+    if (!res) return { ok: false, error: describeTelegramError(0, 'network') };
+    return res.ok ? { ok: true } : { ok: false, error: describeTelegramError(res.status, res.description) };
+  }
+
+  /** Часовой пояс панели (из «Внешнего вида», иначе — из настроек уведомлений) — для времени в сообщениях. */
   async timeZone(): Promise<string> {
-    return (await this.store.load()).quiet.timeZone;
+    // Сначала общий пояс панели («Внешний вид»), иначе — пояс браузера, сохранённый с тихими часами.
+    return (await panelTimeZone(this.db)) ?? (await this.store.load()).quiet.timeZone;
   }
 
   async lastMessageAt(incidentId: string): Promise<Date | null> {

@@ -570,8 +570,24 @@ describe('get_panel_status', () => {
         },
       },
       autoAnalysis: () => ({ lastRunAt: null, startedLastHour: 0, limitPerHour: 5 }),
+      lastBackup: async () => ({
+        at: '2026-09-29T04:00:00.000Z',
+        kind: 'авто',
+        size: '42,3 МБ',
+        verified: true,
+      }),
     } as unknown as ToolDeps;
     const r = JSON.parse((await runTool('get_panel_status', {}, d)).content);
+    expect(r.lastBackup).toEqual({
+      at: '2026-09-29T04:00:00.000Z',
+      kind: 'авто',
+      size: '42,3 МБ',
+      verified: true,
+    });
+    const none = JSON.parse(
+      (await runTool('get_panel_status', {}, { ...d, lastBackup: async () => null } as ToolDeps)).content,
+    );
+    expect(none.lastBackup.note).toContain('Резервных копий');
     expect(r.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(r.uptimeMinutes).toBeGreaterThanOrEqual(0);
     expect(r.uptimeNote).toContain('после обновления');

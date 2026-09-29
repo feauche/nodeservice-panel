@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Полный бэкап панели одним файлом: nodeservice-backup-<время>.tar.gz = дамп БД (pg_dump -Fc)
 # + infra/.env (без него зашифрованные секреты не восстановить) + meta (версия, домен, дата).
-# Хранится 14 дней в $APP_DIR/backups. Метрики (VictoriaMetrics) не входят: графики заполнятся
-# заново, а том может весить сотни мегабайт.
+# Лежит в $APP_DIR/backups — той же папке, что видит панель («Настройки → Резервные копии»): там же
+# расписание, хранение последних N, Telegram и пароль. Метрики и дополнительные папки консольная копия
+# не берёт — это умеет копия из панели.
 #
 #   nodeservice backup                      → файл в $APP_DIR/backups
 #   nodeservice backup --to user@host:/dir  → плюс копия по scp (или в локальную папку)
@@ -12,6 +13,11 @@ set -euo pipefail
 APP_DIR="${NODESERVICE_DIR:-/opt/nodeservice}"
 COMPOSE=(docker compose -f "$APP_DIR/infra/compose.yaml" --env-file "$APP_DIR/infra/.env")
 OUT="$APP_DIR/backups"; mkdir -p -m 700 "$OUT"
+# Панель (пользователь 10001 в контейнере api) сама делает, удаляет и отправляет копии в этой папке.
+PANEL_UID=10001
+chown "$PANEL_UID:$PANEL_UID" "$OUT" 2>/dev/null || true
+# Расписание копий теперь в панели — прежний ежедневный cron больше не нужен.
+rm -f /etc/cron.d/nodeservice-backup
 KEEP_DAYS=14
 R='\033[1;31m'; G='\033[0;32m'; N='\033[0m'
 die() { echo -e "${R}[-] $1${N}" >&2; exit 1; }
@@ -51,9 +57,11 @@ META
 tar -C "$work" -czf "$archive.tmp" meta env db.dump
 mv "$archive.tmp" "$archive"
 chmod 600 "$archive"
+chown "$PANEL_UID:$PANEL_UID" "$archive" 2>/dev/null || true
 
-# Старые бэкапы (и файлы прежнего формата .dump / env-*) — старше KEEP_DAYS дней.
-find "$OUT" -maxdepth 1 -type f \( -name 'nodeservice-backup-*.tar.gz' -o -name 'nodeservice-*.dump' -o -name 'env-*' \) -mtime +$KEEP_DAYS -delete
+# Файлы прежнего формата (.dump / env-*) — старше KEEP_DAYS дней. Архивы nodeservice-backup-* не трогаем:
+# сколько их хранить, решает панель («Хранить последних»).
+find "$OUT" -maxdepth 1 -type f \( -name 'nodeservice-*.dump' -o -name 'env-*' \) -mtime +$KEEP_DAYS -delete
 echo -e "${G}Бэкап: $archive ($(du -h "$archive" | cut -f1))${N} — БД + .env, домен ${domain:-?}"
 
 if [[ -n "$TO" ]]; then

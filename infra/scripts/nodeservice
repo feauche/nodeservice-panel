@@ -28,7 +28,7 @@ nodeservice — обслуживание панели NodeService
   logs [сервис]     логи (по умолчанию api), Ctrl+C — выход
   update [ref]      бэкап → git fetch (ветка/тег/commit, по умолчанию main) → сборка → перезапуск
   rollback          вернуть предыдущий образ api (после неудачного update)
-  backup [--to X]   полный бэкап (БД + .env) одним архивом в $APP_DIR/backups (14 дней); --to user@host:/dir — копия по scp
+  backup [--to X]   копия из консоли (БД + .env) в $APP_DIR/backups — та же папка, что в панели; --to user@host:/dir — копия по scp
   restore <файл> [--yes]  восстановить из архива: секреты из бэкапа, БД заменяется (прежняя сохраняется), api перезапускается
                     на чистом сервере: install.sh --restore <файл>
   cli <команда>     rescue CLI: setup-token | list-users | reset-password | disable-2fa | revoke-sessions

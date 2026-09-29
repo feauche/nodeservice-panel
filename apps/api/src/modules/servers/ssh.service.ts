@@ -3,8 +3,8 @@ import { StringDecoder } from 'node:string_decoder';
 import { Injectable, Logger } from '@nestjs/common';
 import { EMPTY_FACTS, type ServerFacts } from '@nodeservice/shared';
 import { Client, type ConnectConfig } from 'ssh2';
-
 import { serverProblems } from './servers.problems.js';
+import { normalizePrivateKey, privateKeyProblem } from './ssh-key.js';
 
 export interface SshTarget {
   host: string;
@@ -48,6 +48,28 @@ const CONNECT_TIMEOUT_MS = 12_000;
 const EXEC_TIMEOUT_MS = 20_000;
 const OUTPUT_MAX = 256 * 1024;
 
+/** Ключ или пароль в настройки ssh2; ключ сначала выправляем и проверяем, что он читается. */
+function applyAuth(config: ConnectConfig, target: SshTarget): void {
+  if (target.privateKey) {
+    const key = normalizePrivateKey(target.privateKey);
+    const bad = privateKeyProblem(key, target.passphrase);
+    if (bad) throw serverProblems.sshAuth(bad);
+    config.privateKey = key;
+    if (target.passphrase) config.passphrase = target.passphrase;
+  } else if (target.password) {
+    config.password = target.password;
+  } else {
+    throw serverProblems.sshAuth('Не задан способ входа: ключ или пароль.');
+  }
+}
+
+/** Сервер отказал во входе: что проверить. */
+function authFailed(target: SshTarget): string {
+  return target.privateKey
+    ? `Сервер не принял ключ. Проверьте, что открытая часть этого ключа есть в ~/.ssh/authorized_keys пользователя «${target.user}» и что вход по ключу на сервере разрешён.`
+    : 'Сервер не принял пароль. Проверьте пароль и пользователя; на некоторых серверах вход по паролю выключен.';
+}
+
 /** Отпечаток в нотации OpenSSH. */
 export function fingerprintSha256(key: Buffer): string {
   return `SHA256:${createHash('sha256').update(key).digest('base64').replace(/=+$/, '')}`;
@@ -77,14 +99,7 @@ export class SshService {
         return !target.expectedHostKeyFp || hostKeyFp === target.expectedHostKeyFp;
       },
     };
-    if (target.privateKey) {
-      config.privateKey = target.privateKey;
-      if (target.passphrase) config.passphrase = target.passphrase;
-    } else if (target.password) {
-      config.password = target.password;
-    } else {
-      throw serverProblems.sshAuth('Не задан способ входа: ключ или пароль.');
-    }
+    applyAuth(config, target);
 
     await new Promise<void>((resolve, reject) => {
       const onError = (err: Error & { level?: string }) => {
@@ -94,7 +109,7 @@ export class SshService {
           return;
         }
         if (err.level === 'client-authentication') {
-          reject(serverProblems.sshAuth());
+          reject(serverProblems.sshAuth(authFailed(target)));
           return;
         }
         this.log.warn({ host: target.host, err: err.message }, 'SSH недоступен');
@@ -196,21 +211,14 @@ export class SshService {
         return !target.expectedHostKeyFp || hostKeyFp === target.expectedHostKeyFp;
       },
     };
-    if (target.privateKey) {
-      config.privateKey = target.privateKey;
-      if (target.passphrase) config.passphrase = target.passphrase;
-    } else if (target.password) {
-      config.password = target.password;
-    } else {
-      throw serverProblems.sshAuth('Не задан способ входа: ключ или пароль.');
-    }
+    applyAuth(config, target);
 
     return new Promise<SshShell>((resolve, reject) => {
       const onError = (err: Error & { level?: string }) => {
         client.end();
         if (target.expectedHostKeyFp && hostKeyFp && hostKeyFp !== target.expectedHostKeyFp)
           reject(serverProblems.hostKeyMismatch(target.expectedHostKeyFp, hostKeyFp));
-        else if (err.level === 'client-authentication') reject(serverProblems.sshAuth());
+        else if (err.level === 'client-authentication') reject(serverProblems.sshAuth(authFailed(target)));
         else reject(serverProblems.sshUnreachable(target.host, err.message));
       };
       client.once('error', onError);

@@ -35,6 +35,7 @@ import { ServerCountryService } from './server-country.service.js';
 import { serverProblems } from './servers.problems.js';
 import { ServersRepository } from './servers.repository.js';
 import { SshService, type SshSession, type SshTarget } from './ssh.service.js';
+import { normalizePrivateKey } from './ssh-key.js';
 
 /**
  * Инвентарь серверов. Принципы этапа 4:
@@ -176,7 +177,8 @@ export class ServersService {
         port: req.port,
         sshUser: req.sshUser,
         authMethod: req.auth.method,
-        sshPrivateKeyEnc: req.auth.method === 'key' ? this.crypto.encrypt(req.auth.privateKey) : null,
+        sshPrivateKeyEnc:
+          req.auth.method === 'key' ? this.crypto.encrypt(normalizePrivateKey(req.auth.privateKey)) : null,
         tags: req.tags,
         notes: req.notes?.trim() ? req.notes.trim() : null,
         providerId: await this.resolveProvider(req.providerId),
@@ -238,7 +240,9 @@ export class ServersService {
       sshUser: req.sshUser,
       authMethod: installPanelKey ? 'panel-key' : 'key',
       sshPrivateKeyEnc:
-        !installPanelKey && req.auth.method === 'key' ? this.crypto.encrypt(req.auth.privateKey) : null,
+        !installPanelKey && req.auth.method === 'key'
+          ? this.crypto.encrypt(normalizePrivateKey(req.auth.privateKey))
+          : null,
       tags: req.tags,
       notes: req.notes?.trim() ? req.notes.trim() : null,
       providerId: await this.resolveProvider(req.providerId),
@@ -374,7 +378,9 @@ export class ServersService {
       });
       const hostKeyFp = first.hostKeyFp;
       let facts: ServerFacts;
-      const installPanelKey = patch.auth.method === 'password';
+      // Пароль ключа панель не хранит: ключ с паролем используем один раз — чтобы поставить свой ключ панели.
+      const installPanelKey =
+        patch.auth.method === 'password' || (patch.auth.method === 'key' && Boolean(patch.auth.passphrase));
       try {
         facts = await this.ssh.gatherFacts(first);
         if (installPanelKey) await this.ssh.installAuthorizedKey(first, await this.panelKey.publicKeyLine());
@@ -393,8 +399,11 @@ export class ServersService {
       }
       const now = new Date();
       authUpdate = {
-        authMethod: patch.auth.method === 'key' ? 'key' : 'panel-key',
-        sshPrivateKeyEnc: patch.auth.method === 'key' ? this.crypto.encrypt(patch.auth.privateKey) : null,
+        authMethod: !installPanelKey && patch.auth.method === 'key' ? 'key' : 'panel-key',
+        sshPrivateKeyEnc:
+          !installPanelKey && patch.auth.method === 'key'
+            ? this.crypto.encrypt(normalizePrivateKey(patch.auth.privateKey))
+            : null,
         ...facts,
         hostKeyFp,
         sshOk: true,

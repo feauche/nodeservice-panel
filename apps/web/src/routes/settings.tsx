@@ -4,6 +4,7 @@ import {
   BellIcon,
   BookOpenTextIcon,
   BracesIcon,
+  DatabaseBackupIcon,
   ShieldIcon,
   SunIcon,
   TriangleAlertIcon,
@@ -32,6 +33,7 @@ const GROUPS = [
       { to: '/settings/appearance', label: 'Внешний вид', icon: SunIcon },
       { to: '/settings/security', label: 'Безопасность', icon: ShieldIcon },
       { to: '/settings/notifications', label: 'Уведомления', icon: BellIcon },
+      { to: '/settings/backups', label: 'Резервные копии', icon: DatabaseBackupIcon },
     ],
   },
   {

@@ -64,6 +64,19 @@ if [[ -n "$RESTORE_FILE" ]]; then
     RESTORE_FILE=$(readlink -f "$RESTORE_FILE")
     [[ -f "$ENV_FILE" ]] && die "Панель уже установлена в $APP_DIR. Восстановление поверх: nodeservice restore $RESTORE_FILE"
     RESTORE_WORK=$(mktemp -d /tmp/nodeservice-restore-env.XXXXXX); chmod 700 "$RESTORE_WORK"
+    if [[ "$(head -c 8 "$RESTORE_FILE")" == "Salted__" ]]; then
+        # Копия из панели с паролем: расшифровываем один раз, дальше работаем с обычным архивом.
+        command -v openssl >/dev/null || die "Для копии с паролем нужен openssl: apt-get install -y openssl"
+        # Расшифрованный архив живёт до конца восстановления (restore.sh), потом удаляется.
+        RESTORE_PLAIN=$(mktemp /tmp/nodeservice-restore-XXXXXX.tar.gz); chmod 600 "$RESTORE_PLAIN"
+        trap 'rm -f "$RESTORE_PLAIN"' EXIT
+        pw="${NODESERVICE_BACKUP_PASSWORD:-}"
+        [[ -n "$pw" ]] || read -rsp "Пароль архива: " pw </dev/tty; echo
+        PASS="$pw" openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -pass env:PASS \
+            -in "$RESTORE_FILE" -out "$RESTORE_PLAIN" 2>/dev/null || die "Пароль не подошёл (или файл повреждён)."
+        unset pw
+        RESTORE_FILE="$RESTORE_PLAIN"
+    fi
     tar -C "$RESTORE_WORK" -xzf "$RESTORE_FILE" env meta 2>/dev/null || die "Это не бэкап панели (ожидается nodeservice-backup-*.tar.gz от nodeservice backup)."
     RESTORE_ENV="$RESTORE_WORK/env"
     [[ -f "$RESTORE_WORK/meta" ]] && { info "Бэкап:"; sed 's/^/     /' "$RESTORE_WORK/meta"; }
@@ -210,6 +223,8 @@ step "Сборка образа api (первый раз 3–8 минут)"
 export APP_COMMIT="$(git -C "$APP_DIR" rev-parse --short HEAD)" APP_BUILT_AT="$(date -u +%Y-%m-%d)"
 "${COMPOSE[@]}" build api || die "Сборка образа не удалась — лог выше."
 step "Запуск стека"
+# Папка копий — до запуска: иначе Docker создаст её от root, и панель не сможет туда писать.
+mkdir -p -m 700 "$APP_DIR/backups"; chown 10001:10001 "$APP_DIR/backups"
 # caddy ждёт healthy у api через depends_on; при провале `up -d` сам вернёт ошибку без логов,
 # поэтому код возврата игнорируем и диагностируем сами в wait_api_healthy.
 "${COMPOSE[@]}" up -d --remove-orphans || true
@@ -220,12 +235,9 @@ ok "Стек запущен."
 # --- 6. Команда nodeservice + бэкапы --------------------------------------------------------
 step "Обслуживание"
 install -m 0755 "$APP_DIR/infra/scripts/nodeservice" /usr/local/bin/nodeservice
-mkdir -p -m 700 "$APP_DIR/backups"
-cat > /etc/cron.d/nodeservice-backup <<CRON
-# Ежедневный полный бэкап NodeService: БД + .env одним архивом (хранится 14 дней) — infra/scripts/backup.sh
-17 3 * * * root NODESERVICE_DIR="$APP_DIR" /usr/local/bin/nodeservice backup >> /var/log/nodeservice-backup.log 2>&1
-CRON
-ok "Команда nodeservice установлена; бэкап ежедневно в 03:17 → $APP_DIR/backups"
+# Расписание копий — в панели («Настройки → Резервные копии», по умолчанию каждый день в 04:00).
+rm -f /etc/cron.d/nodeservice-backup
+ok "Команда nodeservice установлена; резервные копии — «Настройки → Резервные копии» в панели"
 
 # --- 7. Восстановление из бэкапа ------------------------------------------------------------
 if [[ -n "$RESTORE_FILE" ]]; then

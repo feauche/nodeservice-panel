@@ -1,4 +1,5 @@
-import { type Dispatcher, ProxyAgent, Socks5ProxyAgent, fetch as undiciFetch } from 'undici';
+import { openAsBlob } from 'node:fs';
+import { type Dispatcher, FormData, ProxyAgent, Socks5ProxyAgent, fetch as undiciFetch } from 'undici';
 
 /**
  * Тонкий клиент Bot API: один вызов метода, ответ в понятной форме. В тестах подменяется
@@ -12,6 +13,13 @@ export interface TelegramClient {
     token: string,
     method: string,
     body: Record<string, unknown>,
+    proxy?: string | null,
+  ): Promise<TelegramCall<T>>;
+  /** Файл (sendDocument): поля формы и путь к файлу на диске. */
+  sendFile<T>(
+    token: string,
+    fields: Record<string, string>,
+    file: { path: string; name: string },
     proxy?: string | null,
   ): Promise<TelegramCall<T>>;
 }
@@ -57,6 +65,46 @@ export class HttpTelegramClient implements TelegramClient {
           : String(err);
       if (proxy && !/Timeout|Abort/i.test(m)) return { ok: false, status: 0, description: 'proxy' };
       return { ok: false, status: 0, description: /Timeout|Abort/i.test(m) ? 'timeout' : 'network' };
+    }
+    const json = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      result?: T;
+      description?: string;
+      error_code?: number;
+    } | null;
+    if (json?.ok && json.result !== undefined) return { ok: true, result: json.result };
+    return {
+      ok: false,
+      status: json?.error_code ?? res.status,
+      description: json?.description ?? res.statusText,
+    };
+  }
+
+  async sendFile<T>(
+    token: string,
+    fields: Record<string, string>,
+    file: { path: string; name: string },
+    proxy?: string | null,
+  ): Promise<TelegramCall<T>> {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(fields)) form.append(k, v);
+    form.append('document', await openAsBlob(file.path), file.name);
+    let res: Awaited<ReturnType<typeof undiciFetch>>;
+    try {
+      res = await undiciFetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+        method: 'POST',
+        body: form,
+        // Файл до 50 МБ через медленный канал — даём до 5 минут.
+        signal: AbortSignal.timeout(300_000),
+        ...(proxy ? { dispatcher: this.agent(proxy) } : {}),
+      });
+    } catch (err) {
+      const m = err instanceof Error ? `${err.name} ${err.message}` : String(err);
+      return {
+        ok: false,
+        status: 0,
+        description: /Timeout|Abort/i.test(m) ? 'timeout' : proxy ? 'proxy' : 'network',
+      };
     }
     const json = (await res.json().catch(() => null)) as {
       ok?: boolean;

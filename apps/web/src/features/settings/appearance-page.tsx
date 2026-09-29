@@ -6,6 +6,7 @@ import { useTheme } from '@/features/theme/use-theme';
 import { cn } from '@/lib/utils';
 import { BrandCard } from './brand-card';
 import { SectionHeader, SettingsCard } from './settings-ui';
+import { TimeZoneCard } from './time-zone-card';
 
 export function AppearancePage() {
   const theme = useTheme();
@@ -14,7 +15,7 @@ export function AppearancePage() {
       <SectionHeader
         icon={SunIcon}
         title="Внешний вид"
-        description="Тема применяется сразу и хранится в этом браузере. Логотип и название — для всех, по кнопке «Сохранить»."
+        description="Тема применяется сразу и хранится в этом браузере. Часовой пояс — сразу и для всех. Логотип и название — для всех, по кнопке «Сохранить»."
       />
       <SettingsCard title="Тема" hint="Три варианта, переключаются мгновенно.">
         <div className="grid gap-2.5 py-3 sm:grid-cols-3">
@@ -47,6 +48,7 @@ export function AppearancePage() {
           })}
         </div>
       </SettingsCard>
+      <TimeZoneCard />
       <BrandCard />
     </div>
   );

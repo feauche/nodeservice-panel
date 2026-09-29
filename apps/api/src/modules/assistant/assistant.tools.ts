@@ -169,6 +169,8 @@ export interface ToolDeps extends ReadDeps {
   assistant: { level: string };
   /** Что делал автоматический разбор инцидентов с момента запуска панели. */
   autoAnalysis?: () => { lastRunAt: string | null; startedLastHour: number; limitPerHour: number };
+  /** Последняя резервная копия панели («Настройки → Резервные копии»). */
+  lastBackup?: () => Promise<{ at: string; kind: string; size: string; verified: boolean | null } | null>;
   /** Создание статьи в БЗ (метка AI). Гейтится разрешением kbWrite в самом инструменте. */
   saveArticle: (a: {
     title: string;
@@ -264,6 +266,13 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
         incidents: { open: open.counts.open, critical: open.counts.crit, warning: open.counts.warn },
         auditLastHour: { failedOrDenied: failed.total, latest: failed.items.slice(0, 5).map(auditBrief) },
         ...(deps.autoAnalysis ? { autoAnalysis: deps.autoAnalysis() } : {}),
+        ...(deps.lastBackup
+          ? {
+              lastBackup: (await deps.lastBackup().catch(() => null)) ?? {
+                note: 'Резервных копий на сервере панели нет — предложите включить их в «Настройки → Резервные копии».',
+              },
+            }
+          : {}),
       }),
     };
   }

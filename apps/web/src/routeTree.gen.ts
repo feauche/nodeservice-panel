@@ -30,6 +30,7 @@ import { Route as SettingsIndexRouteImport } from './routes/settings.index';
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance';
 import { Route as SettingsAssistantRouteImport } from './routes/settings.assistant';
 import { Route as SettingsAutochecksRouteImport } from './routes/settings.autochecks';
+import { Route as SettingsBackupsRouteImport } from './routes/settings.backups';
 import { Route as SettingsIncidentsRouteImport } from './routes/settings.incidents';
 import { Route as SettingsNotificationsRouteImport } from './routes/settings.notifications';
 import { Route as SettingsSecurityRouteImport } from './routes/settings.security';
@@ -139,6 +140,11 @@ const SettingsAutochecksRoute = SettingsAutochecksRouteImport.update({
   path: '/autochecks',
   getParentRoute: () => SettingsRoute,
 } as any);
+const SettingsBackupsRoute = SettingsBackupsRouteImport.update({
+  id: '/backups',
+  path: '/backups',
+  getParentRoute: () => SettingsRoute,
+} as any);
 const SettingsIncidentsRoute = SettingsIncidentsRouteImport.update({
   id: '/incidents',
   path: '/incidents',
@@ -176,6 +182,7 @@ export interface FileRoutesByFullPath {
   '/settings/appearance': typeof SettingsAppearanceRoute;
   '/settings/assistant': typeof SettingsAssistantRoute;
   '/settings/autochecks': typeof SettingsAutochecksRoute;
+  '/settings/backups': typeof SettingsBackupsRoute;
   '/settings/incidents': typeof SettingsIncidentsRoute;
   '/settings/notifications': typeof SettingsNotificationsRoute;
   '/settings/security': typeof SettingsSecurityRoute;
@@ -201,6 +208,7 @@ export interface FileRoutesByTo {
   '/settings/appearance': typeof SettingsAppearanceRoute;
   '/settings/assistant': typeof SettingsAssistantRoute;
   '/settings/autochecks': typeof SettingsAutochecksRoute;
+  '/settings/backups': typeof SettingsBackupsRoute;
   '/settings/incidents': typeof SettingsIncidentsRoute;
   '/settings/notifications': typeof SettingsNotificationsRoute;
   '/settings/security': typeof SettingsSecurityRoute;
@@ -228,6 +236,7 @@ export interface FileRoutesById {
   '/settings/appearance': typeof SettingsAppearanceRoute;
   '/settings/assistant': typeof SettingsAssistantRoute;
   '/settings/autochecks': typeof SettingsAutochecksRoute;
+  '/settings/backups': typeof SettingsBackupsRoute;
   '/settings/incidents': typeof SettingsIncidentsRoute;
   '/settings/notifications': typeof SettingsNotificationsRoute;
   '/settings/security': typeof SettingsSecurityRoute;
@@ -256,6 +265,7 @@ export interface FileRouteTypes {
     | '/settings/appearance'
     | '/settings/assistant'
     | '/settings/autochecks'
+    | '/settings/backups'
     | '/settings/incidents'
     | '/settings/notifications'
     | '/settings/security'
@@ -281,6 +291,7 @@ export interface FileRouteTypes {
     | '/settings/appearance'
     | '/settings/assistant'
     | '/settings/autochecks'
+    | '/settings/backups'
     | '/settings/incidents'
     | '/settings/notifications'
     | '/settings/security'
@@ -307,6 +318,7 @@ export interface FileRouteTypes {
     | '/settings/appearance'
     | '/settings/assistant'
     | '/settings/autochecks'
+    | '/settings/backups'
     | '/settings/incidents'
     | '/settings/notifications'
     | '/settings/security'
@@ -482,6 +494,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAutochecksRouteImport;
       parentRoute: typeof SettingsRoute;
     };
+    '/settings/backups': {
+      id: '/settings/backups';
+      path: '/backups';
+      fullPath: '/settings/backups';
+      preLoaderRoute: typeof SettingsBackupsRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
     '/settings/incidents': {
       id: '/settings/incidents';
       path: '/incidents';
@@ -510,6 +529,7 @@ interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute;
   SettingsAssistantRoute: typeof SettingsAssistantRoute;
   SettingsAutochecksRoute: typeof SettingsAutochecksRoute;
+  SettingsBackupsRoute: typeof SettingsBackupsRoute;
   SettingsIncidentsRoute: typeof SettingsIncidentsRoute;
   SettingsNotificationsRoute: typeof SettingsNotificationsRoute;
   SettingsSecurityRoute: typeof SettingsSecurityRoute;
@@ -520,6 +540,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsAssistantRoute: SettingsAssistantRoute,
   SettingsAutochecksRoute: SettingsAutochecksRoute,
+  SettingsBackupsRoute: SettingsBackupsRoute,
   SettingsIncidentsRoute: SettingsIncidentsRoute,
   SettingsNotificationsRoute: SettingsNotificationsRoute,
   SettingsSecurityRoute: SettingsSecurityRoute,

@@ -449,7 +449,7 @@ export function AddServerDialog({ open, onOpenChange, initialName, initialHost }
               <>
                 <Field
                   id="srv-key"
-                  label={<Req>Приватный ключ (OpenSSH/PEM)</Req>}
+                  label={<Req>Приватный ключ (OpenSSH, PEM или RSA)</Req>}
                   error={errors.privateKey || undefined}
                 >
                   <textarea

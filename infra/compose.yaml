@@ -53,6 +53,18 @@ services:
       VM_URL: http://victoriametrics:8428
       VICTORIA_URL: http://victoriametrics:8428
       PUBLIC_URL: https://${PANEL_DOMAIN}
+      # Резервные копии из панели («Настройки → Резервные копии»): та же папка, что у nodeservice backup;
+      # .env установки — только на чтение (входит в копию); / — только на чтение, для «Дополнительных файлов».
+      BACKUPS_DIR: /app/backups
+      INSTALL_ENV_PATH: /app/install.env
+      HOST_ROOT: /host
+    volumes:
+      - ../backups:/app/backups
+      - ./.env:/app/install.env:ro
+      - /:/host:ro,rslave
+    # Только право читать любой файл — для упаковки дополнительных папок (например, /root/…).
+    cap_add:
+      - DAC_READ_SEARCH
     expose:
       - "3000"
     healthcheck:

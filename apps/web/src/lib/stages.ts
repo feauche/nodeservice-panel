@@ -27,6 +27,8 @@ export const OPEN_SECTIONS: ReadonlySet<string> = new Set<string>([
   '/settings/assistant',
   // R6: уведомления в Telegram; вместе с ними открыты остальные разделы настроек — все применяются сервером.
   '/settings/notifications',
+  // Резервные копии панели: расписание, хранение, Telegram, восстановление.
+  '/settings/backups',
   '/settings/appearance',
   '/settings/security',
   '/settings/autochecks',

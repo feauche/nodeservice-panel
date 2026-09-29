@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Восстановление панели из бэкапа backup.sh (nodeservice-backup-*.tar.gz; старый формат
-# nodeservice-*.dump тоже принимается). Что делает:
+# nodeservice-*.dump тоже принимается; копии из панели с паролем .tar.gz.enc — спросит пароль или возьмёт
+# его из NODESERVICE_BACKUP_PASSWORD). Метрики и дополнительные папки из копии панели здесь не
+# разворачиваются — это делает восстановление из панели. Что делает:
 #   1. Секреты из бэкапа (ENCRYPTION_KEY, APP_SECRET, PASSWORD_PEPPER) переносятся в infra/.env —
 #      без них TOTP, доступы к серверам и ключ панели не расшифровать. Домен и пароль БД
 #      остаются текущими: домен — этого сервера, пароль — того Postgres, что уже запущен.
@@ -21,7 +23,7 @@ f=""; YES=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --yes|-y) YES=1; shift ;;
-        -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) f="$1"; shift ;;
     esac
 done
@@ -34,6 +36,16 @@ trap 'rm -rf "$work"' EXIT
 
 # --- распаковка: архив нового формата или голый дамп (+ env-<время> рядом, если есть) ---------
 [[ -s "$f" ]] || die "Файл пустой: $f"
+if [[ "$(head -c 8 "$f")" == "Salted__" ]]; then
+    # Копия из панели с паролем (.tar.gz.enc): openssl, AES-256-CBC, PBKDF2-SHA256, 200000 итераций.
+    command -v openssl >/dev/null || die "Для копии с паролем нужен openssl: apt-get install -y openssl"
+    pw="${NODESERVICE_BACKUP_PASSWORD:-}"
+    [[ -n "$pw" ]] || read -rsp "Пароль архива: " pw </dev/tty; echo
+    PASS="$pw" openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -pass env:PASS \
+        -in "$f" -out "$work/backup.tar.gz" 2>/dev/null || die "Пароль не подошёл (или файл повреждён)."
+    unset pw
+    f="$work/backup.tar.gz"
+fi
 if [[ "$(head -c 5 "$f")" == "PGDMP" ]]; then
     # Старый формат: голый pg_dump -Fc, .env лежал рядом как env-<время>.
     cp "$f" "$work/db.dump"

@@ -34,6 +34,7 @@ export const AUDIT_PREFIX_CATEGORY: Readonly<Record<string, AuditCategory>> = {
   provider: 'server',
   remnawave: 'settings',
   billing: 'server',
+  backup: 'settings',
 };
 
 export function auditCategoryOfPrefix(action: string): AuditCategory | undefined {
@@ -155,6 +156,13 @@ export const AUDIT_ACTIONS = {
   'server.check.explain': { category: 'server', label: 'Джарвис объяснил проверку сервера' },
   'settings.telegram.updated': { category: 'settings', label: 'Уведомления в Telegram изменены' },
   'settings.telegram.test': { category: 'settings', label: 'Тестовое сообщение в Telegram' },
+  'backup.created': { category: 'settings', label: 'Резервная копия сделана' },
+  'backup.failed': { category: 'settings', label: 'Резервная копия не получилась' },
+  'backup.deleted': { category: 'settings', label: 'Резервная копия удалена' },
+  'backup.downloaded': { category: 'settings', label: 'Резервная копия скачана' },
+  'backup.uploaded': { category: 'settings', label: 'Резервная копия загружена с компьютера' },
+  'backup.restored': { category: 'settings', label: 'Панель восстановлена из копии' },
+  'settings.backups.updated': { category: 'settings', label: 'Настройки резервных копий изменены' },
   'billing.item.created': { category: 'server', label: 'Биллинг: оплата добавлена' },
   'billing.item.updated': { category: 'server', label: 'Биллинг: оплата изменена' },
   'billing.item.deleted': { category: 'server', label: 'Биллинг: оплата удалена' },
