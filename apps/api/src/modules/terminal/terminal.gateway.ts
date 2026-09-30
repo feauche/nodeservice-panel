@@ -12,6 +12,8 @@ import { UsersRepository } from '../auth/users.repository.js';
 import { TerminalService, type TerminalSession } from './terminal.service.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Предел одного сообщения: с запасом на вставку большого файла в терминал, но не 100 МБ по умолчанию. */
+const MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
 
 function readCookie(header: string | undefined, name: string): string | undefined {
   for (const part of (header ?? '').split(';')) {
@@ -40,9 +42,14 @@ export class TerminalGateway {
   ) {}
 
   register(): void {
-    this.wss = new WebSocketServer({ noServer: true });
+    this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
     this.wsUpgrade.register(TERMINAL_WS_PATH, (req, socket, head) => {
-      this.wss?.handleUpgrade(req, socket, head, (ws) => void this.handle(ws, req));
+      this.wss?.handleUpgrade(req, socket, head, (ws) => {
+        // Сразу, до проверки входа: битый или слишком большой кадр приходит событием 'error', и без
+        // слушателя это исключение мимо всех try/catch — панель падала от одного кадра без пароля.
+        ws.on('error', () => {});
+        void this.handle(ws, req);
+      });
     });
   }
 
@@ -90,6 +97,11 @@ export class TerminalGateway {
       ws.close(1011, 'open-failed');
       return;
     }
+    // Пока открывался терминал, браузер мог уйти: сессию на сервере закрываем, иначе она останется висеть.
+    if (ws.readyState !== WebSocket.OPEN) {
+      session.close();
+      return;
+    }
 
     this.send(ws, { t: 'y' });
     ws.on('message', (raw) => {
@@ -99,7 +111,6 @@ export class TerminalGateway {
       else session.resize(parsed.data.c, parsed.data.r);
     });
     ws.on('close', () => session.close());
-    ws.on('error', () => session.close());
   }
 
   private reject(

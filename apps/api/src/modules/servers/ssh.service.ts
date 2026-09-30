@@ -57,6 +57,9 @@ export interface SshShell {
 const CONNECT_TIMEOUT_MS = 12_000;
 const EXEC_TIMEOUT_MS = 20_000;
 const OUTPUT_MAX = 256 * 1024;
+/** Чем завершается команда, если соединение оборвалось, пока она шла. */
+const CONNECTION_LOST = 'соединение с сервером оборвалось';
+const CLOSED_BEFORE_LOGIN = 'сервер закрыл соединение до входа';
 
 /** Ключ или пароль в настройки ssh2; ключ сначала выправляем и проверяем, что он читается. */
 function applyAuth(config: ConnectConfig, target: SshTarget): void {
@@ -157,8 +160,25 @@ export class SshService {
     };
     applyAuth(config, target);
 
+    /** Команды, которые ждут ответа сервера: при обрыве соединения завершаются сразу, а не по таймауту. */
+    const pending = new Set<() => void>();
     await new Promise<void>((resolve, reject) => {
-      const onError = (err: Error & { level?: string }) => {
+      let connected = false;
+      let failed = false;
+      // Слушатель живёт столько же, сколько клиент. Обрыв (RST от хостера или ТСПУ, перезагрузка сервера)
+      // ssh2 сообщает событием 'error' в любой момент, и не одним: без слушателя это исключение мимо всех
+      // try/catch, от которого падал весь процесс панели.
+      client.on('error', (err: Error & { level?: string }) => {
+        if (connected) {
+          // Оборвалось посреди команды — это важно; после закрытия сессии — рядовой шум сети.
+          if (pending.size > 0)
+            this.log.warn({ host: target.host, err: err.message }, 'SSH-соединение оборвалось');
+          for (const lost of [...pending]) lost();
+          client.end();
+          return;
+        }
+        if (failed) return;
+        failed = true;
         client.end();
         if (target.expectedHostKeyFp && hostKeyFp && hostKeyFp !== target.expectedHostKeyFp) {
           reject(serverProblems.hostKeyMismatch(target.expectedHostKeyFp, hostKeyFp));
@@ -170,12 +190,18 @@ export class SshService {
         }
         this.log.warn({ host: target.host, err: err.message }, 'SSH недоступен');
         reject(serverProblems.sshUnreachable(target.host, err.message));
-      };
+      });
       client.once('ready', () => {
-        client.removeListener('error', onError);
+        connected = true;
         resolve();
       });
-      client.once('error', onError);
+      // Сервер может закрыть связь до входа и без ошибки (приветствие — и сразу конец). ssh2 тогда не сообщает
+      // ни «готово», ни ошибку и снимает свой таймаут: без этой проверки подключение ждало бы вечно.
+      client.once('close', () => {
+        if (connected || failed) return;
+        failed = true;
+        reject(serverProblems.sshUnreachable(target.host, CLOSED_BEFORE_LOGIN));
+      });
       client.connect(config);
     });
 
@@ -200,9 +226,12 @@ export class SshService {
             if (settled) return;
             settled = true;
             clearTimeout(timer);
+            pending.delete(lost);
             opts.signal?.removeEventListener('abort', onAbort);
             fn();
           };
+          const lost = () =>
+            finish(() => reject(serverProblems.sshCommand(command.slice(0, 60), CONNECTION_LOST)));
           const timer = setTimeout(() => {
             client.end();
             finish(() =>
@@ -220,6 +249,7 @@ export class SshService {
             return;
           }
           opts.signal?.addEventListener('abort', onAbort, { once: true });
+          pending.add(lost);
           client.exec(asRoot(command), (err, stream) => {
             if (err) {
               finish(() => reject(serverProblems.sshCommand(command.slice(0, 60), err.message)));
@@ -238,13 +268,23 @@ export class SshService {
     };
     function runPlain(command: string): Promise<{ code: number; stdout: string; stderr: string }> {
       return new Promise((resolve, reject) => {
+        const done = () => {
+          clearTimeout(timer);
+          pending.delete(lost);
+        };
+        const lost = () => {
+          done();
+          reject(serverProblems.sshCommand(command, CONNECTION_LOST));
+        };
         const timer = setTimeout(() => {
+          pending.delete(lost);
           client.end();
           reject(serverProblems.sshCommand(command, 'таймаут выполнения'));
         }, EXEC_TIMEOUT_MS);
+        pending.add(lost);
         client.exec(command, (err, stream) => {
           if (err) {
-            clearTimeout(timer);
+            done();
             reject(serverProblems.sshCommand(command, err.message));
             return;
           }
@@ -257,7 +297,7 @@ export class SshService {
             if (stderr.length < OUTPUT_MAX) stderr += d.toString('utf8');
           });
           stream.on('close', (code: number | null) => {
-            clearTimeout(timer);
+            done();
             resolve({ code: code ?? -1, stdout, stderr });
           });
         });
@@ -291,23 +331,33 @@ export class SshService {
     applyAuth(config, target);
 
     return new Promise<SshShell>((resolve, reject) => {
-      const onError = (err: Error & { level?: string }) => {
+      let settled = false;
+      // Один слушатель на всю жизнь клиента (см. connectDirect): до открытия терминала ошибка отклоняет
+      // подключение, после — об обрыве терминал узнаёт по закрытию потока.
+      client.on('error', (err: Error & { level?: string }) => {
+        if (settled) return;
+        settled = true;
         client.end();
         if (target.expectedHostKeyFp && hostKeyFp && hostKeyFp !== target.expectedHostKeyFp)
           reject(serverProblems.hostKeyMismatch(target.expectedHostKeyFp, hostKeyFp));
         else if (err.level === 'client-authentication') reject(serverProblems.sshAuth(authFailed(target)));
         else reject(serverProblems.sshUnreachable(target.host, err.message));
-      };
-      client.once('error', onError);
+      });
+      // Закрытие до открытия терминала без ошибки — тоже отказ, иначе ждали бы вечно (см. connectDirect).
+      client.once('close', () => {
+        if (settled) return;
+        settled = true;
+        reject(serverProblems.sshUnreachable(target.host, CLOSED_BEFORE_LOGIN));
+      });
       client.once('ready', () => {
-        client.removeListener('error', onError);
         client.shell({ term: 'xterm-256color', cols: size.cols, rows: size.rows }, (err, stream) => {
+          if (settled) return;
+          settled = true;
           if (err) {
             client.end();
             reject(serverProblems.sshCommand('shell', err.message));
             return;
           }
-          client.on('error', () => {});
           // UTF-8 может разрываться между чанками SSH — декодер копит «хвост» до полного символа.
           const decoder = new StringDecoder('utf8');
           const errDecoder = new StringDecoder('utf8');

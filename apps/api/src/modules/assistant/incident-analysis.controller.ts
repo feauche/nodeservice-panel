@@ -24,6 +24,14 @@ export class IncidentAnalysisController {
     return this.analysis.start(id);
   }
 
+  @Post(':id/analysis/cancel')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Остановить идущий разбор инцидента' })
+  @ApiOkResponse({ type: AnalysisIncidentDto })
+  cancel(@Param('id', ParseUUIDPipe) id: string): Promise<AnalysisIncidentDto> {
+    return this.analysis.cancel(id);
+  }
+
   @Post(':id/analysis/ask')
   @HttpCode(200)
   @ApiOperation({ summary: 'Уточняющий вопрос по готовому разбору инцидента' })

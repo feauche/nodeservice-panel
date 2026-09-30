@@ -18,6 +18,16 @@ import { HttpResponse, http } from 'msw';
 import { mockProviders } from './providers-mock';
 import { mockServers } from './servers-mock';
 
+/** Курс «получен только что» на сегодняшнюю московскую дату — как у панели, которой ЦБ ответил. */
+function freshRates(): BillingSummary['rates'] {
+  return {
+    USD: 81.5,
+    EUR: 95.2,
+    date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date()),
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
 /**
  * Мок биллинга: оплаты и продления в памяти, курс ЦБ постоянный ($ 81,50 ₽, € 95,20 ₽). Итоги считаются
  * по календарю браузера — как на сервере, только без часового пояса владельца.
@@ -25,18 +35,15 @@ import { mockServers } from './servers-mock';
 export const mockBilling = {
   items: [] as Array<BillingItem & { notified?: string | null }>,
   payments: [] as BillingPayment[],
-  rates: { USD: 81.5, EUR: 95.2, date: new Date().toISOString().slice(0, 10) } as {
-    USD: number;
-    EUR: number;
-    date: string;
-  },
+  rates: freshRates(),
 };
 
 const DAY = 86_400_000;
 let seq = 0;
 const uuid = (kind: string) => `0192c000-${kind}-7000-8000-${String(++seq).padStart(12, '0')}`;
-const rateOf = (c: BillingCurrency) =>
-  c === 'RUB' ? 1 : c === 'USD' ? mockBilling.rates.USD : mockBilling.rates.EUR;
+/** Рублей за единицу валюты; курса нет (тест «курс не получен») — 0, как непосчитанная сумма. */
+const rateOf = (c: BillingCurrency): number =>
+  c === 'RUB' ? 1 : ((c === 'USD' ? mockBilling.rates.USD : mockBilling.rates.EUR) ?? 0);
 
 function dueState(i: Pick<BillingItem, 'paidUntil' | 'archivedAt' | 'remindDays'>): BillingDueState {
   if (i.archivedAt) return 'archived';
@@ -101,6 +108,7 @@ export function seedBilling(): void {
   seq = 0;
   mockBilling.items = [];
   mockBilling.payments = [];
+  mockBilling.rates = freshRates();
   const [s1, s2] = mockServers.items;
   const prov = (name: string) => mockProviders.items.find((p) => p.name === name)?.id ?? null;
   const now = Date.now();

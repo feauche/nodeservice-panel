@@ -28,7 +28,7 @@ import {
   useDeleteBillingItem,
 } from './billing-api';
 import { BillingCard } from './billing-card';
-import { rub } from './billing-format';
+import { moscowDate, rateDay, ratesUpdatedLabel, rub } from './billing-format';
 import { ExtendDialog } from './extend-dialog';
 import { ForecastView } from './forecast-view';
 import { HistoryDialog } from './history-dialog';
@@ -36,6 +36,10 @@ import { ItemDialog } from './item-dialog';
 import { currencyLine, StatsView } from './stats-view';
 
 export type BillingView = 'items' | 'stats' | 'archive';
+
+/** Место курса ЦБ в шапке: в ряду на широком экране, отдельной строкой под рядом — на узком и на телефоне. */
+const RATES_SLOT =
+  'text-[11.5px] text-text-3 max-xl:order-last max-xl:basis-full max-xl:text-right max-sm:text-left xl:whitespace-nowrap';
 
 const DAY_FMT = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' });
 const SHORT_FMT = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short' });
@@ -168,6 +172,9 @@ export function BillingPage({
 
   const today = new Date(now);
   const s = summary.data;
+  // Курс не на московскую дату ответа — ЦБ не ответил панели, показан последний известный. Сверяем с моментом
+  // ответа, а не с тикающими часами: иначе в первую минуту после московской полуночи свежий курс выглядел бы старым.
+  const ratesStale = Boolean(s?.rates.date && s.rates.date < moscowDate(summary.dataUpdatedAt));
   const monday = s ? new Date(s.week.from) : null;
   const sunday = s ? new Date(Date.parse(s.week.to) - 1) : null;
   const kindItems = [
@@ -192,12 +199,46 @@ export function BillingPage({
           ]}
         />
         <span className="flex-1" />
-        {s?.rates.USD && (
-          <span className="text-[11.5px] text-text-3 max-sm:hidden" title="Курс ЦБ РФ сегодня">
+        {/* Курс: на широком экране в ряду, уже 1280 px — отдельной строкой под рядом, чтобы не выталкивать кнопку. */}
+        {summary.isPending ? (
+          <span className={RATES_SLOT} aria-hidden="true">
+            <Skeleton className="inline-block h-3 w-[236px] rounded-[5px] align-middle" />
+          </span>
+        ) : s?.rates.USD ? (
+          <span
+            data-testid="billing-rates"
+            className={RATES_SLOT}
+            title={
+              ratesStale
+                ? `ЦБ РФ не отвечает панели — показан последний известный курс${
+                    s.rates.date ? `, на ${rateDay(s.rates.date)}` : ''
+                  }. Панель повторяет запрос раз в полчаса.`
+                : `Курс ЦБ РФ${
+                    s.rates.date ? ` на ${rateDay(s.rates.date)}` : ''
+                  }. Панель получает его раз в сутки, после полуночи по Москве.`
+            }
+          >
             ЦБ: $ {s.rates.USD.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽ · €{' '}
             {s.rates.EUR?.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽
+            {s.rates.fetchedAt && (
+              <>
+                {' · '}
+                <span className={cn(ratesStale && 'text-warn')}>
+                  {ratesUpdatedLabel(s.rates.fetchedAt, now)}
+                  {ratesStale && ' · ЦБ не отвечает'}
+                </span>
+              </>
+            )}
           </span>
-        )}
+        ) : s ? (
+          <span
+            data-testid="billing-rates"
+            className={cn(RATES_SLOT, 'text-warn')}
+            title="Панель не смогла получить курс ЦБ РФ, а сохранённого свежее недели нет. Оплаты в $ и € пока не входят в итоги в рублях. Панель повторяет запрос раз в полчаса."
+          >
+            ЦБ: курс не получен
+          </span>
+        ) : null}
         <Button
           type="button"
           onClick={() => setAdding(true)}
@@ -364,6 +405,7 @@ export function BillingPage({
         onOpenChange={(o) => !o && setExtending(null)}
         item={extending}
         provider={providerOf(extending?.providerId ?? null)}
+        rateDate={s?.rates.date}
       />
       <HistoryDialog open={history !== null} onOpenChange={(o) => !o && setHistory(null)} item={history} />
       <ConfirmDialog

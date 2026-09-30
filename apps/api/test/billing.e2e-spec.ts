@@ -213,6 +213,8 @@ describe('billing e2e', () => {
     expect(s.year.payments).toBe(1);
     expect(s.byServer[0]?.serverId).toBe(serverId);
     expect(s.rates.EUR).toBe(100);
+    // Рядом с курсом — когда панель его получила («Обновлено 14:00» на странице биллинга).
+    expect(Date.parse(s.rates.fetchedAt ?? '')).toBeGreaterThan(Date.now() - 600_000);
     const st = billingStatsSchema.parse((await agent.get('/api/billing/stats?period=year').expect(200)).body);
     expect(st.byProvider[0]).toMatchObject({ name: 'Hetzner', rubMinor: 50_000 });
     expect(st.byKind).toEqual([{ kind: 'server', rubMinor: 50_000 }]);

@@ -283,6 +283,32 @@ describe('разбор инцидента Джарвисом e2e', () => {
     expect((await settled(id)).analysis?.status).toBe('done');
   });
 
+  it('отмена идущего разбора: «отменён» остаётся и после запоздавшего ответа модели; новый разбор идёт', async () => {
+    fake.script = 'gated';
+    let release!: () => void;
+    fake.gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const id = await openIncident();
+    await run(id).expect(202);
+    const cancel = () => agent.post(`/api/incidents/${id}/analysis/cancel`).set(CSRF_HEADER, csrf);
+    const cancelled = incidentSchema.parse((await cancel().expect(200)).body);
+    expect(cancelled.analysis).toMatchObject({ status: 'cancelled', error: null, verdict: null });
+    expect(cancelled.analysis?.finishedAt).not.toBeNull();
+    // Модель отвечает уже после отмены: вывод не должен появиться.
+    release();
+    await new Promise((r) => setTimeout(r, 300));
+    expect((await get(id)).analysis).toMatchObject({ status: 'cancelled', verdict: null });
+    // Отменять больше нечего.
+    expect(JSON.stringify((await cancel().expect(409)).body)).toContain('Разбор сейчас не идёт');
+    const audit = await agent.get('/api/audit?category=server').expect(200);
+    expect(JSON.stringify(audit.body)).toContain('incident.analysis.cancelled');
+    // Отменённый разбор не мешает запустить новый.
+    fake.script = 'ok';
+    await run(id).expect(202);
+    expect((await settled(id)).analysis?.status).toBe('done');
+  });
+
   it('шаг вне цепочки правил отбрасывается', async () => {
     fake.script = 'off-chain';
     const id = await openIncident();

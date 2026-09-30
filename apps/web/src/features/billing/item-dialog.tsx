@@ -26,7 +26,7 @@ import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useSaveBillingItem } from './billing-api';
 import { KIND_ICON } from './billing-card';
-import { fromLocalInput, rub, toLocalInput } from './billing-format';
+import { fromLocalInput, rateDayPhrase, rub, toLocalInput } from './billing-format';
 
 const LBL = 'mb-1.5 flex items-baseline gap-1.5 text-[12px] font-medium text-text-2';
 const HINT = 'mt-1.5 text-[11.5px] leading-snug text-text-3';
@@ -232,7 +232,7 @@ export function ItemDialog({
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
       <DialogContent
         showCloseButton={false}
-        className="flex max-h-[calc(100vh-48px)] flex-col gap-0 overflow-hidden rounded-2xl border-border-2 bg-surface p-0 sm:max-w-[620px]"
+        className="flex max-h-[calc(100vh-48px)] flex-col gap-0 overflow-hidden rounded-2xl border-border-2 bg-surface p-0 sm:max-w-[720px]"
       >
         <DialogHeader className="flex-none gap-1 border-b border-border px-6 py-4 text-left">
           <DialogTitle className="font-heading text-[18px]">
@@ -445,7 +445,7 @@ export function ItemDialog({
               ) : (
                 <p className={HINT}>
                   {rate && amount.trim() !== '' && Number.isFinite(amountNum)
-                    ? `≈ ${rub(Math.round(amountNum * 100 * rate))} по курсу ЦБ сегодня`
+                    ? `≈ ${rub(Math.round(amountNum * 100 * rate))} по курсу ЦБ ${rateDayPhrase(rates?.date)}`
                     : kind === 'cert'
                       ? 'Бесплатный сертификат — 0: напоминание всё равно придёт.'
                       : 'Сколько списывают за один период.'}
@@ -475,7 +475,7 @@ export function ItemDialog({
                 {currency === 'RUB'
                   ? 'Рубли — без пересчёта.'
                   : rate
-                    ? `Курс ЦБ сегодня: ${rate.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽`
+                    ? `Курс ЦБ ${rateDayPhrase(rates?.date)}: ${rate.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽`
                     : 'Курс ЦБ подставится в момент оплаты.'}
               </p>
             </div>

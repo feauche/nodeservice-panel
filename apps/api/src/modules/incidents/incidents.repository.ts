@@ -1,5 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { IncidentEvent, IncidentKind, IncidentSeverity, IncidentSnapshot } from '@nodeservice/shared';
+import type {
+  IncidentAnalysis,
+  IncidentEvent,
+  IncidentKind,
+  IncidentSeverity,
+  IncidentSnapshot,
+} from '@nodeservice/shared';
 import { and, desc, eq, gte, ne, type SQL, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
@@ -144,6 +150,26 @@ export class IncidentsRepository {
     const [row] = await this.db.update(incidents).set(patch).where(eq(incidents.id, id)).returning();
     if (row) this.events.emit({ type: 'incident', data: { id } });
     return row;
+  }
+
+  /**
+   * Записать ход разбора, только если в инциденте всё ещё этот же идущий разбор. Отменённый или запущенный
+   * заново разбор не трогаем: иначе запоздавший ответ модели затёр бы «отменён». false — писать некуда.
+   */
+  async updateRunningAnalysis(id: string, startedAt: string, analysis: IncidentAnalysis): Promise<boolean> {
+    const rows = await this.db
+      .update(incidents)
+      .set({ analysis })
+      .where(
+        and(
+          eq(incidents.id, id),
+          sql`${incidents.analysis}->>'status' = 'running'`,
+          sql`${incidents.analysis}->>'startedAt' = ${startedAt}`,
+        ),
+      )
+      .returning({ id: incidents.id });
+    if (rows.length > 0) this.events.emit({ type: 'incident', data: { id } });
+    return rows.length > 0;
   }
 
   async delete(id: string): Promise<boolean> {

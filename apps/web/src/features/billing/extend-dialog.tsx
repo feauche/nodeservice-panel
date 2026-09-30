@@ -20,7 +20,16 @@ import { plural } from '@/lib/plural';
 import { cn } from '@/lib/utils';
 import { useExtendBillingItem, useUndoBillingPayment } from './billing-api';
 import { BillingIcon } from './billing-card';
-import { DUE_TEXT, dueWords, formatDue, fromLocalInput, money, rub, toLocalInput } from './billing-format';
+import {
+  DUE_TEXT,
+  dueWords,
+  formatDue,
+  fromLocalInput,
+  money,
+  rateDayPhrase,
+  rub,
+  toLocalInput,
+} from './billing-format';
 
 interface LogRow {
   paymentId: string;
@@ -44,9 +53,12 @@ export function ExtendDialog({
   provider,
   open,
   onOpenChange,
+  rateDate,
 }: {
   item: BillingItem | null;
   provider: Provider | null;
+  /** Дата курса ЦБ (по Москве): не сегодняшняя — в подписи «по курсу ЦБ на …», а не «сегодня». */
+  rateDate?: string | null | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -295,7 +307,7 @@ export function ExtendDialog({
               </div>
               <span className="text-[12px] leading-snug text-text-3">
                 {rate !== null && amountOk && count
-                  ? `≈ ${rub(Math.round(amountNum * 100 * rate))} по курсу ЦБ сегодня (${rate.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽/${sign})`
+                  ? `≈ ${rub(Math.round(amountNum * 100 * rate))} по курсу ЦБ ${rateDayPhrase(rateDate)} (${rate.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽/${sign})`
                   : count
                     ? 'Сумма подставлена из карточки.'
                     : 'Без галочки меняется только дата.'}

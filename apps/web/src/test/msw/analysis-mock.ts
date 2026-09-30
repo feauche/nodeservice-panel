@@ -147,14 +147,14 @@ export const analysisHandlers = [
     list.slice(1).forEach((_, i) => {
       setTimeout(
         () => {
-          if (inc.analysis?.startedAt !== base.startedAt) return;
+          if (inc.analysis?.startedAt !== base.startedAt || inc.analysis.status !== 'running') return;
           inc.analysis = { ...inc.analysis, steps: list.slice(0, i + 2) };
         },
         mockAnalysis.stepMs * (i + 1),
       );
     });
     setTimeout(() => {
-      if (inc.analysis?.startedAt !== base.startedAt) return;
+      if (inc.analysis?.startedAt !== base.startedAt || inc.analysis.status !== 'running') return;
       inc.analysis = mockAnalysis.fail
         ? {
             ...inc.analysis,
@@ -174,6 +174,13 @@ export const analysisHandlers = [
           };
     }, mockAnalysis.stepMs * list.length);
     return HttpResponse.json(inc, { status: 202 });
+  }),
+  http.post('/api/incidents/:id/analysis/cancel', ({ params }) => {
+    const inc = find(params.id);
+    if (!inc) return problem(404, 'Инцидент не найден.');
+    if (inc.analysis?.status !== 'running') return problem(409, 'Разбор сейчас не идёт.');
+    inc.analysis = { ...inc.analysis, status: 'cancelled', finishedAt: iso(), error: null };
+    return HttpResponse.json(inc);
   }),
   http.post('/api/incidents/:id/analysis/ask', async ({ params, request }) => {
     const inc = find(params.id);

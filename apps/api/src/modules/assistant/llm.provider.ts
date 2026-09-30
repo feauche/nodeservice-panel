@@ -40,6 +40,8 @@ export interface LlmRunInput {
   system: string;
   messages: LlmMsg[];
   tools: LlmToolDef[];
+  /** Внешняя отмена (владелец остановил разбор): запрос к модели обрывается сразу. */
+  signal?: AbortSignal;
 }
 
 /** Абстракция вызова модели — один ход (может вернуть tool_use). В тестах подменяется фейком. */
@@ -69,21 +71,24 @@ export function describeLlmError(err: unknown, seconds = LLM_TIMEOUT_MS / 1000):
 export class AnthropicProvider implements LlmProvider {
   async run(input: LlmRunInput): Promise<LlmResp> {
     const client = new Anthropic({ apiKey: input.apiKey, timeout: LLM_TIMEOUT_MS });
-    const res = await client.messages.create({
-      model: input.model,
-      max_tokens: LLM_MAX_OUTPUT_TOKENS,
-      system: input.system,
-      ...(input.tools.length > 0
-        ? {
-            tools: input.tools.map((t) => ({
-              name: t.name,
-              description: t.description,
-              input_schema: t.input_schema as Anthropic.Tool.InputSchema,
-            })),
-          }
-        : {}),
-      messages: input.messages as Anthropic.MessageParam[],
-    });
+    const res = await client.messages.create(
+      {
+        model: input.model,
+        max_tokens: LLM_MAX_OUTPUT_TOKENS,
+        system: input.system,
+        ...(input.tools.length > 0
+          ? {
+              tools: input.tools.map((t) => ({
+                name: t.name,
+                description: t.description,
+                input_schema: t.input_schema as Anthropic.Tool.InputSchema,
+              })),
+            }
+          : {}),
+        messages: input.messages as Anthropic.MessageParam[],
+      },
+      input.signal ? { signal: input.signal } : undefined,
+    );
     const blocks: LlmBlock[] = res.content.map((b) => {
       if (b.type === 'text') return { type: 'text', text: b.text };
       if (b.type === 'tool_use')

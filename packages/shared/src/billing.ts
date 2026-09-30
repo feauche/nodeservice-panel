@@ -242,8 +242,16 @@ export const billingSummarySchema = z.object({
       currency: billingCurrencySchema,
     }),
   ),
-  /** Курс ЦБ сегодня и дата курса (если свежий получить не удалось — последний известный). */
-  rates: z.object({ USD: z.number().nullable(), EUR: z.number().nullable(), date: z.string().nullable() }),
+  /**
+   * Курс ЦБ сегодня и дата курса (если свежий получить не удалось — последний известный);
+   * fetchedAt — когда панель получила этот курс у ЦБ.
+   */
+  rates: z.object({
+    USD: z.number().nullable(),
+    EUR: z.number().nullable(),
+    date: z.string().nullable(),
+    fetchedAt: z.iso.datetime().nullable(),
+  }),
 });
 export type BillingSummary = z.infer<typeof billingSummarySchema>;
 

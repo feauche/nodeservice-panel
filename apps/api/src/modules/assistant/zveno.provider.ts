@@ -82,7 +82,9 @@ export class ZvenoProvider implements LlmProvider {
             }
           : {}),
       }),
-      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      signal: input.signal
+        ? AbortSignal.any([AbortSignal.timeout(LLM_TIMEOUT_MS), input.signal])
+        : AbortSignal.timeout(LLM_TIMEOUT_MS),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');

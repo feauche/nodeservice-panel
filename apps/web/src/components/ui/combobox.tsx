@@ -285,13 +285,13 @@ export function Combobox({
             )}
           </div>
           {(action || searchable) && (
+            // Подвал всегда в одну строку: в узком списке счётчик обрезается, а действие не переносится.
             <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface-2 px-3 py-1.5 text-[12px] text-text-3">
               {searchable && (
-                <span aria-live="polite">
+                <span aria-live="polite" className="min-w-0 truncate">
                   {q ? `Найдено ${filteredCount} из ${countable.length}` : `Всего: ${countable.length}`}
                 </span>
               )}
-              <span className="flex-1" />
               {action && (
                 // biome-ignore lint/a11y/useSemanticElements: пункт-действие входит в общую навигацию стрелками
                 <div
@@ -303,7 +303,7 @@ export function Combobox({
                   onMouseMove={() => setActive(entries.length - 1)}
                   onClick={() => choose(entries[entries.length - 1])}
                   className={cn(
-                    'flex cursor-pointer items-center gap-1.5 rounded-[7px] px-2 py-1 text-[12.5px] font-semibold text-brand',
+                    'ml-auto flex flex-none cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[7px] px-2 py-1 text-[12.5px] font-semibold text-brand',
                     active === entries.length - 1 && 'bg-brand-soft',
                   )}
                 >

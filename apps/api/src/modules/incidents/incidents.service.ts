@@ -195,6 +195,11 @@ export class IncidentsService {
     return (await this.repo.update(id, { analysis })) !== undefined;
   }
 
+  /** Ход идущего разбора; false — инцидента уже нет или этот разбор отменили (или запустили заново). */
+  async saveRunningAnalysis(id: string, startedAt: string, analysis: IncidentAnalysis): Promise<boolean> {
+    return this.repo.updateRunningAnalysis(id, startedAt, analysis);
+  }
+
   /** После перезапуска панели разбор «идёт» вечно: помечаем такие оборванными. */
   async failRunningAnalyses(reason: string): Promise<number> {
     const rows = (await this.repo.list('all')).filter((r) => r.analysis?.status === 'running');

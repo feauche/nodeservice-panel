@@ -326,7 +326,8 @@ export type IncidentSnapshot = z.infer<typeof incidentSnapshotSchema>;
 
 /* ---------- разбор Джарвисом (R4.2) ---------- */
 
-export const ANALYSIS_STATUSES = ['running', 'done', 'failed'] as const;
+/** cancelled — владелец остановил идущий разбор; сам он заново не запустится. */
+export const ANALYSIS_STATUSES = ['running', 'done', 'failed', 'cancelled'] as const;
 export type AnalysisStatus = (typeof ANALYSIS_STATUSES)[number];
 
 export const ANALYSIS_CONFIDENCE = ['high', 'medium', 'low'] as const;

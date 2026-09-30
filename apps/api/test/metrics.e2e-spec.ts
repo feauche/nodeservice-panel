@@ -111,14 +111,20 @@ describe('metrics e2e', () => {
     expect(cpuPoints).toBeGreaterThan(0);
   }, 20_000);
 
-  it('сводка обзора: последние значения по серверу', async (ctx) => {
+  it('сводка обзора: последние значения по серверу — только пока агент на связи', async (ctx) => {
     if (!vmUp) return ctx.skip();
-    const res = await agent.get('/api/metrics/overview').expect(200);
-    const parsed = overviewMetricsResponseSchema.parse(res.body);
-    expect(parsed.vmOk).toBe(true);
-    const mine = parsed.servers.find((s) => s.serverId === serverId);
-    expect(mine).toBeDefined();
-    expect(mine?.cpuPct).toBe(42.5);
+    const mine = async () => {
+      const res = await agent.get('/api/metrics/overview').expect(200);
+      const parsed = overviewMetricsResponseSchema.parse(res.body);
+      expect(parsed.vmOk).toBe(true);
+      const row = parsed.servers.find((s) => s.serverId === serverId);
+      expect(row).toBeDefined();
+      return row;
+    };
+    // Агент не на связи: прошлые значения устарели, панель их не показывает (решение владельца 29.09.2026).
+    expect((await mine())?.cpuPct).toBeNull();
+    await app.get<Db>(DB).execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
+    expect((await mine())?.cpuPct).toBe(42.5);
   });
 
   it('диапазон валидируется, чужой формат — 400', async () => {

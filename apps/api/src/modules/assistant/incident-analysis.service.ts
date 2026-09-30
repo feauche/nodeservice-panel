@@ -76,7 +76,7 @@ const text = (t: string): LlmBlock[] => [{ type: 'text', text: t }];
 
 /** Ошибка с текстом, который можно показать администратору как есть. */
 class AnalysisError extends Error {}
-/** Инцидент удалили, пока шёл разбор: писать некуда. */
+/** Инцидент удалили или разбор отменили, пока он шёл: писать некуда. */
 class Gone extends Error {}
 
 /** Что показать администратору вместо технической ошибки провайдера. */
@@ -97,7 +97,10 @@ function explain(err: unknown): string {
 @Injectable()
 export class IncidentAnalysisService implements OnModuleInit {
   private readonly log = new Logger(IncidentAnalysisService.name);
+  /** Занятые инциденты: идёт разбор или ответ на вопрос по нему. */
   private readonly running = new Set<string>();
+  /** Идущие разборы: отмена обрывает запрос к модели. */
+  private readonly runs = new Map<string, AbortController>();
   /** Проверка доступности, собранная уликами, — до сдачи разбора (покажется карточкой под выводом). */
   private readonly evidenceReach = new Map<string, NonNullable<IncidentAnalysis['reachability']>>();
 
@@ -203,6 +206,14 @@ export class IncidentAnalysisService implements OnModuleInit {
     const inc = await this.incidents.get(id);
     if (this.running.has(id)) throw problem(HttpStatus.CONFLICT, { detail: 'Разбор уже идёт.' });
     this.running.add(id);
+    const run = new AbortController();
+    this.runs.set(id, run);
+    // Освобождаем инцидент, только если это всё ещё наш разбор: после отмены мог начаться новый.
+    const release = () => {
+      if (this.runs.get(id) !== run) return;
+      this.runs.delete(id);
+      this.running.delete(id);
+    };
     try {
       const base: IncidentAnalysis = {
         status: 'running',
@@ -225,12 +236,44 @@ export class IncidentAnalysisService implements OnModuleInit {
         target: { type: 'incident', id, display: inc.title },
         metadata: { kind: inc.kind, server: inc.serverName, model: cfg.model, by },
       });
-      void this.execute(id, inc, cfg, base).finally(() => this.running.delete(id));
+      void this.execute(id, inc, cfg, base, run.signal).finally(release);
       return await this.incidents.get(id);
     } catch (err) {
-      this.running.delete(id);
+      release();
       throw err;
     }
+  }
+
+  /**
+   * Остановить идущий разбор (в том числе запущенный автоматически): запрос к модели обрывается, в инциденте
+   * остаётся «отменён» — сам разбор заново не начнётся, только кнопкой.
+   */
+  async cancel(id: string): Promise<Incident> {
+    const inc = await this.incidents.get(id);
+    const a = inc.analysis;
+    if (a?.status !== 'running') throw problem(HttpStatus.CONFLICT, { detail: 'Разбор сейчас не идёт.' });
+    const run = this.runs.get(id);
+    if (run) {
+      run.abort();
+      this.runs.delete(id);
+      this.running.delete(id);
+    }
+    const cancelled = await this.incidents.saveRunningAnalysis(id, a.startedAt, {
+      ...a,
+      status: 'cancelled',
+      finishedAt: now(),
+      error: null,
+    });
+    // Разбор успел закончиться сам — отменять уже нечего, показываем то, что получилось.
+    if (!cancelled) return this.incidents.get(id);
+    // Сообщение в Telegram ждало разбора — уходит как есть, без вывода.
+    this.notifications.releaseAfterAnalysis(id, null);
+    await this.audit.record({
+      action: 'incident.analysis.cancelled',
+      target: { type: 'incident', id, display: inc.title },
+      metadata: { kind: inc.kind, server: inc.serverName },
+    });
+    return this.incidents.get(id);
   }
 
   private async execute(
@@ -238,12 +281,15 @@ export class IncidentAnalysisService implements OnModuleInit {
     inc: Incident,
     cfg: NonNullable<Awaited<ReturnType<AssistantSettingsStore['config']>>>,
     base: IncidentAnalysis,
+    signal: AbortSignal,
   ): Promise<void> {
     const steps = [...base.steps];
     let cur = base;
     const save = async (next: IncidentAnalysis) => {
       cur = next;
-      if (!(await this.incidents.saveAnalysis(id, next))) throw new Gone();
+      // Пишем только в свой идущий разбор: запоздавший ответ не должен затереть «отменён» или новый разбор.
+      if (signal.aborted || !(await this.incidents.saveRunningAnalysis(id, base.startedAt, next)))
+        throw new Gone();
     };
     const step = async (label: string) => {
       if (steps.at(-1) === label) return;
@@ -289,6 +335,7 @@ export class IncidentAnalysisService implements OnModuleInit {
           system: analysisSystem(cfg.level, playbook, fleetRules),
           messages,
           tools: toolsFor(ANALYSIS_TOOLS, cfg.permissions),
+          signal,
         });
         const uses = res.blocks.filter(
           (b): b is Extract<LlmBlock, { type: 'tool_use' }> => b.type === 'tool_use',
@@ -342,11 +389,11 @@ export class IncidentAnalysisService implements OnModuleInit {
     } catch (err) {
       // Разбор не получился — отложенное сообщение уходит как есть, без вывода.
       this.notifications.releaseAfterAnalysis(id, null);
-      if (err instanceof Gone) return;
+      if (err instanceof Gone || signal.aborted) return;
       if (!(err instanceof AnalysisError))
         this.log.warn(`Разбор ${id}: ${err instanceof Error ? err.message : err}`);
       await this.incidents
-        .saveAnalysis(id, {
+        .saveRunningAnalysis(id, base.startedAt, {
           ...cur,
           status: 'failed',
           finishedAt: now(),

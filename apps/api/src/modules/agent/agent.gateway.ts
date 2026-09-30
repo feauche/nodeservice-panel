@@ -22,6 +22,7 @@ export const AGENT_WS_PATH = '/api/agent/v1/ws';
 /** Сколько ждём hello+auth, прежде чем разорвать неавторизованное соединение. */
 const AUTH_TIMEOUT_MS = 10_000;
 const PING_INTERVAL_MS = 30_000;
+const MAX_MESSAGE_BYTES = 64 * 1024;
 
 /** DER-префикс SPKI для ed25519: раскодированный base64-ключ агента (32 байта) собираем в KeyObject. */
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
@@ -53,7 +54,8 @@ export class AgentGateway implements OnModuleDestroy {
   ) {}
 
   register(): void {
-    this.wss = new WebSocketServer({ noServer: true });
+    // Сообщения агента — несколько сотен байт; без предела библиотека принимает до 100 МБ ещё до входа.
+    this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
     this.wsUpgrade.register(AGENT_WS_PATH, (req, socket, head) => {
       this.wss?.handleUpgrade(req, socket, head, (ws) => this.handle(ws, req));
     });

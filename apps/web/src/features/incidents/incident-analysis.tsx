@@ -16,6 +16,7 @@ import {
   Loader2Icon,
   RefreshCwIcon,
   SendIcon,
+  XIcon,
 } from 'lucide-react';
 import { type FormEvent, type ReactNode, useMemo, useState } from 'react';
 
@@ -31,7 +32,7 @@ import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
-import { useAskAnalysis, useRunAnalysis } from './analysis-api';
+import { useAskAnalysis, useCancelAnalysis, useRunAnalysis } from './analysis-api';
 import { AnalysisChart, hasAnalysisChart } from './analysis-chart';
 import { hhmm } from './incident-format';
 import { LevelChip } from './level-chip';
@@ -97,6 +98,7 @@ export function IncidentAnalysis({
 }) {
   const status = useAssistantStatus();
   const start = useRunAnalysis();
+  const cancel = useCancelAnalysis();
   const a = incident.analysis;
   const running = a?.status === 'running';
   const now = useNow(running);
@@ -104,6 +106,13 @@ export function IncidentAnalysis({
   const launch = async () => {
     try {
       await start.mutateAsync(incident.id);
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    }
+  };
+  const stop = async () => {
+    try {
+      await cancel.mutateAsync(incident.id);
     } catch (err) {
       toast.error(apiErrorMessage(err));
     }
@@ -180,7 +189,7 @@ export function IncidentAnalysis({
         <ul
           aria-live="polite"
           aria-label="Ход разбора"
-          className="m-0 flex list-none flex-col gap-[7px] px-4 pt-3 pb-4 text-[12.5px]"
+          className="m-0 flex list-none flex-col gap-[7px] px-4 pt-3 text-[12.5px]"
         >
           {a.steps.map((s, i) => {
             const current = i === a.steps.length - 1;
@@ -200,6 +209,35 @@ export function IncidentAnalysis({
             );
           })}
         </ul>
+        {/* Разбор мог начаться и сам (автоматический разбор) — остановить его можно в любой момент. */}
+        <div className="px-4 pt-3 pb-4">
+          <button type="button" onClick={() => void stop()} disabled={cancel.isPending} className={BTN}>
+            {cancel.isPending ? (
+              <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <XIcon className="size-3.5" aria-hidden="true" />
+            )}
+            Отменить разбор
+          </button>
+        </div>
+      </Shell>
+    );
+
+  if (a.status === 'cancelled')
+    return (
+      <Shell>
+        <Head />
+        <Note>Разбор отменён.</Note>
+        <div className="px-4 pt-3 pb-4">
+          <button type="button" onClick={() => void launch()} disabled={start.isPending} className={BTN}>
+            {start.isPending ? (
+              <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <RefreshCwIcon className="size-3.5" aria-hidden="true" />
+            )}
+            Разобрать инцидент
+          </button>
+        </div>
       </Shell>
     );
 

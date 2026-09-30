@@ -14,6 +14,14 @@ export const moscowDate = (at: Date): string =>
 const STALE_DAYS = 7;
 const RETRY_AFTER_FAIL_MS = 30 * 60_000;
 
+/** Курс на дату и момент, когда панель получила его у ЦБ. */
+export interface DayRates {
+  usd: number;
+  eur: number;
+  date: string;
+  fetchedAt: Date;
+}
+
 /**
  * Курсы ЦБ РФ. Кэш по дням в таблице billing_rates: один запрос к ЦБ на дату. Если ЦБ недоступен —
  * последний известный курс не старше недели; иначе null (оплата запишется, рубли досчитает фоновая задача).
@@ -21,7 +29,7 @@ const RETRY_AFTER_FAIL_MS = 30 * 60_000;
 @Injectable()
 export class BillingRatesService {
   private readonly log = new Logger(BillingRatesService.name);
-  private readonly inflight = new Map<string, Promise<{ usd: number; eur: number; date: string } | null>>();
+  private readonly inflight = new Map<string, Promise<DayRates | null>>();
   /**
    * Когда ЦБ последний раз не ответил за эту дату. cbr.ru часто не отвечает зарубежным серверам, а ждать его
    * при каждом расчёте — это десятки секунд на каждую оплату: повторяем не чаще раза в полчаса.
@@ -34,10 +42,7 @@ export class BillingRatesService {
   ) {}
 
   /** Курсы на дату; `fetch: false` — только из кэша (для списков, чтобы не ждать ЦБ). */
-  async ratesOn(
-    at: Date,
-    opts: { fetch?: boolean } = {},
-  ): Promise<{ usd: number; eur: number; date: string } | null> {
+  async ratesOn(at: Date, opts: { fetch?: boolean } = {}): Promise<DayRates | null> {
     const date = moscowDate(at);
     const [cached] = await this.db
       .select()
@@ -61,7 +66,7 @@ export class BillingRatesService {
     return null;
   }
 
-  private async load(date: string): Promise<{ usd: number; eur: number; date: string } | null> {
+  private async load(date: string): Promise<DayRates | null> {
     const r = await this.source.fetch(date).catch(() => null);
     if (!r) {
       this.failedAt.set(date, Date.now());
@@ -70,14 +75,15 @@ export class BillingRatesService {
     }
     this.failedAt.delete(date);
     // Кэшируем под запрошенной датой: на выходных ЦБ отдаёт курс пятницы/субботы — он и действует.
+    const fetchedAt = new Date();
     await this.db
       .insert(billingRates)
-      .values({ date, usd: r.usd, eur: r.eur })
+      .values({ date, usd: r.usd, eur: r.eur, fetchedAt })
       .onConflictDoUpdate({
         target: billingRates.date,
-        set: { usd: r.usd, eur: r.eur, fetchedAt: new Date() },
+        set: { usd: r.usd, eur: r.eur, fetchedAt },
       });
-    return { usd: r.usd, eur: r.eur, date };
+    return { usd: r.usd, eur: r.eur, date, fetchedAt };
   }
 
   /** Рублей за единицу валюты; для рублей 1; null — курса нет. */

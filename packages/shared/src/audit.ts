@@ -204,6 +204,7 @@ export const AUDIT_ACTIONS = {
   'incident.action.proposed': { category: 'server', label: 'Инцидент: предложен следующий шаг' },
   'incident.analysis.run': { category: 'server', label: 'Инцидент: разбор Джарвисом' },
   'incident.analysis.ask': { category: 'server', label: 'Инцидент: вопрос по разбору' },
+  'incident.analysis.cancelled': { category: 'server', label: 'Инцидент: разбор отменён' },
   'incident.deleted': { category: 'server', label: 'Инцидент удалён' },
   'incident.resolved.deleted': { category: 'server', label: 'Решённые инциденты удалены' },
   'system.started': { category: 'system', label: 'Сервис запущен' },

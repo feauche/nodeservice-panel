@@ -13,6 +13,18 @@ import { apiReference } from '@scalar/nestjs-api-reference';
 process.on('unhandledRejection', (reason) => {
   new NestLogger('process').error(`необработанный reject: ${(reason as Error)?.stack ?? String(reason)}`);
 });
+// Исключение мимо try/catch. Обрыв сети (событие 'error' без слушателя у ssh2, WebSocket, сокета) после
+// запуска переживаем: падение процесса обрывает терминалы, обслуживание и починки на всех серверах сразу.
+// Любая другая ошибка и любая ошибка до запуска — выходим, как раньше: Docker перезапустит панель.
+let started = false;
+process.on('uncaughtException', (err) => {
+  if (started && isNetworkNoise(err)) {
+    new NestLogger('process').error(`обрыв сети мимо обработчиков: ${err?.stack ?? String(err)}`);
+    return;
+  }
+  console.error(err);
+  process.exit(1);
+});
 
 import express from 'express';
 import { Logger } from 'nestjs-pino';
@@ -21,6 +33,7 @@ import { cleanupOpenApiDoc } from 'nestjs-zod';
 import { AppModule } from './app.module.js';
 import { CookiesService } from './common/http/cookies.service.js';
 import { setupHttp } from './common/http/setup-http.js';
+import { isNetworkNoise } from './common/net/network-noise.js';
 import type { Env } from './config/env.schema.js';
 import { DB, type Db } from './infra/db/db.module.js';
 import { runMigrations } from './infra/db/migrate.js';
@@ -86,6 +99,7 @@ async function bootstrap(): Promise<void> {
   app.get(AgentGateway).register();
   app.get(TerminalGateway).register();
   app.get(WsUpgradeService).attach(app.getHttpServer() as HttpServer);
+  started = true;
   new NestLogger('Bootstrap').log(`NodeService API слушает :${port} (${config.get('NODE_ENV')})`);
   await app.get(AuditService).record({
     action: 'system.started',

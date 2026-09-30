@@ -131,4 +131,48 @@ describe('BillingPage', () => {
     await waitFor(() => expect(cards().length).toBe(1));
     expect(within(cards()[0] as HTMLElement).queryByRole('button', { name: 'Продлить' })).toBeNull();
   });
+
+  it('курс ЦБ: рядом время, когда панель его получила', async () => {
+    const today = new Date();
+    today.setHours(14, 0, 0, 0);
+    mockBilling.rates.fetchedAt = today.toISOString();
+    renderPage(Page, '/servers/billing', ['/servers']);
+    const rates = await screen.findByTestId('billing-rates');
+    expect(rates).toHaveTextContent('ЦБ: $ 81,5 ₽ · € 95,2 ₽ · Обновлено 14:00');
+    // Подсказка называет дату курса, а не «сегодня»: дата курса считается по Москве.
+    expect(rates).toHaveAttribute(
+      'title',
+      expect.stringMatching(/^Курс ЦБ РФ на \d+ [а-я]+\. Панель получает/),
+    );
+    expect(within(rates).getByText('Обновлено 14:00')).not.toHaveClass('text-warn');
+    expect(rates).not.toHaveTextContent('ЦБ не отвечает');
+  });
+
+  it('курс ЦБ устарел (ЦБ не ответил панели): дата обновления выделена, в подсказке — почему', async () => {
+    mockBilling.rates.date = '2026-09-20';
+    mockBilling.rates.fetchedAt = new Date(2026, 8, 20, 9, 7).toISOString();
+    renderPage(Page, '/servers/billing', ['/servers']);
+    const rates = await screen.findByTestId('billing-rates');
+    // Устаревание написано словами, а не только цветом.
+    const updated = within(rates).getByText(/^Обновлено 20 сентября.* · ЦБ не отвечает$/);
+    expect(updated).toHaveClass('text-warn');
+    expect(rates).toHaveAttribute(
+      'title',
+      expect.stringMatching(/^ЦБ РФ не отвечает панели — показан последний известный курс, на 20 сентября/),
+    );
+    // В окне новой оплаты курс тоже не называется сегодняшним.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Добавить оплату/ }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('radio', { name: '$' }));
+    expect(within(dialog).getByText(/^Курс ЦБ на 20 сентября: 81,5 ₽$/)).toBeInTheDocument();
+  });
+
+  it('курса нет совсем: вместо пустоты — «курс не получен» с объяснением', async () => {
+    mockBilling.rates = { USD: null, EUR: null, date: null, fetchedAt: null };
+    renderPage(Page, '/servers/billing', ['/servers']);
+    const rates = await screen.findByTestId('billing-rates');
+    expect(rates).toHaveTextContent('ЦБ: курс не получен');
+    expect(rates).toHaveAttribute('title', expect.stringMatching(/Оплаты в \$ и € пока не входят в итоги/));
+  });
 });

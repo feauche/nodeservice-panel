@@ -535,7 +535,12 @@ export class BillingService {
           }
         : null,
       byServer: [...byServer.values()],
-      rates: { USD: r?.usd ?? null, EUR: r?.eur ?? null, date: r?.date ?? null },
+      rates: {
+        USD: r?.usd ?? null,
+        EUR: r?.eur ?? null,
+        date: r?.date ?? null,
+        fetchedAt: r?.fetchedAt.toISOString() ?? null,
+      },
     };
   }
 
@@ -1011,6 +1016,10 @@ export class BillingService {
     await step('автоплатёж', () => this.runAutoCharge());
     await step('напоминания', () => this.checkReminders());
     await step('курс ЦБ', () => this.fillMissingRates());
+    // Курс на сегодня панель получает сама, вскоре после полуночи по Москве, а не при первом открытии
+    // «Биллинга»: страница не ждёт ЦБ, а «Обновлено …» рядом с курсом значит именно это. ЦБ не ответил —
+    // следующая попытка не раньше чем через полчаса (см. BillingRatesService).
+    await step('курс ЦБ на сегодня', () => this.rates.ratesOn(new Date()));
   }
 
   /** Напоминания без наложения запусков. */

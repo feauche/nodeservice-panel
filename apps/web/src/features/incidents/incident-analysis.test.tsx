@@ -91,6 +91,26 @@ describe('IncidentAnalysis', () => {
     expect(await screen.findByText(/Процессор загружен без пауз/, {}, { timeout: 4000 })).toBeInTheDocument();
   });
 
+  it('идущий разбор можно отменить: «Разбор отменён», вывод не появляется, разбор запускается заново кнопкой', async () => {
+    mockAssistant.enabled = true;
+    mockAnalysis.stepMs = 300;
+    const inc = cpuIncident();
+    open(inc.id);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Разобрать инцидент' }));
+    await user.click(await screen.findByRole('button', { name: 'Отменить разбор' }));
+    expect(await screen.findByText('Разбор отменён.')).toBeInTheDocument();
+    expect(inc.analysis?.status).toBe('cancelled');
+    expect(screen.queryByRole('button', { name: 'Отменить разбор' })).not.toBeInTheDocument();
+    // Отменённый разбор не «оживает»: дольше, чем шёл бы весь разбор, вывода нет.
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(screen.queryByText(/Процессор загружен без пауз/)).not.toBeInTheDocument();
+    expect(screen.getByText('Разбор отменён.')).toBeInTheDocument();
+    mockAnalysis.stepMs = 20;
+    await user.click(screen.getByRole('button', { name: 'Разобрать инцидент' }));
+    expect(await screen.findByText(/Процессор загружен без пауз/, {}, { timeout: 4000 })).toBeInTheDocument();
+  });
+
   it('вопросы: готовый вопрос и свой, история остаётся в блоке', async () => {
     mockAssistant.enabled = true;
     open(cpuIncident().id);

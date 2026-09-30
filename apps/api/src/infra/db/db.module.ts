@@ -10,20 +10,31 @@ export type Db = NodePgDatabase<typeof schema>;
 export const DB = Symbol('DB');
 export const PG_POOL = Symbol('PG_POOL');
 
+/**
+ * Пул соединений. Слушатель 'error' обязателен: обрыв простаивающего соединения (базу перезапустили или
+ * подменили при восстановлении из копии) пул сообщает событием, и без слушателя оно роняет весь процесс —
+ * при восстановлении это случалось посреди подмены базы. Оборванное соединение пул выбросит и откроет новое.
+ */
+export function createPool(connectionString: string): Pool {
+  const pool = new Pool({
+    connectionString,
+    max: 10,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+    application_name: 'nodeservice-api',
+  });
+  const log = new Logger('Postgres');
+  pool.on('error', (err) => log.warn(`Соединение с базой оборвалось: ${err.message}`));
+  return pool;
+}
+
 @Global()
 @Module({
   providers: [
     {
       provide: PG_POOL,
       inject: [ConfigService],
-      useFactory: (config: ConfigService<Env, true>) =>
-        new Pool({
-          connectionString: config.get('DATABASE_URL'),
-          max: 10,
-          idleTimeoutMillis: 30_000,
-          connectionTimeoutMillis: 5_000,
-          application_name: 'nodeservice-api',
-        }),
+      useFactory: (config: ConfigService<Env, true>) => createPool(config.get('DATABASE_URL')),
     },
     {
       provide: DB,
