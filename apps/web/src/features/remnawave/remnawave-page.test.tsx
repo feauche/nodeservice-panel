@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { Toaster } from '@/components/ui/sonner';
+import { useServerModalStore } from '@/features/servers/server-modal-store';
 import { resetMockState } from '@/test/msw/handlers';
 import { mockRemnawave } from '@/test/msw/remnawave-mock';
 import { renderPage } from '@/test/render';
@@ -75,7 +76,12 @@ describe('RemnawavePage', () => {
     await user.click(screen.getByRole('button', { name: 'Проверить и сохранить' }));
     // «bridge» стоит на сервере de-fra-01 (адреса совпали), «exit-nl» в панели нет.
     const linked = (await screen.findByText('bridge')).closest('li') as HTMLElement;
-    expect(within(linked).getByText('Сервер: de-fra-01')).toBeInTheDocument();
+    // Имя сервера открывает его профиль: там выбирается, какая это нода.
+    const toServer = within(linked).getByRole('button', { name: 'Сервер: de-fra-01' });
+    await user.click(toServer);
+    expect(useServerModalStore.getState()).toMatchObject({ tab: 'profile' });
+    expect(useServerModalStore.getState().serverId).not.toBeNull();
+    useServerModalStore.getState().close();
     expect(within(linked).queryByRole('button', { name: 'Добавить в NodeService' })).toBeNull();
     const lone = screen.getByText('exit-nl').closest('li') as HTMLElement;
     expect(within(lone).getByRole('button', { name: 'Добавить в NodeService' })).toBeInTheDocument();

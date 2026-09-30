@@ -19,6 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { PasswordField } from '@/features/auth/components/password-field';
 import { formatDate } from '@/features/security/security-format';
 import { AddServerDialog } from '@/features/servers/add-server-dialog';
+import { openServer } from '@/features/servers/server-modal-store';
 import { useServers } from '@/features/servers/servers-api';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
@@ -115,12 +116,12 @@ function hasTrafficLimit(node: RemnawaveNode): boolean {
  */
 function NodeRow({
   node,
-  serverName,
+  server,
   onAdd,
 }: {
   node: RemnawaveNode;
   /** Сервер панели, на котором работает нода; null — в панели его нет (или он не связался с нодой). */
-  serverName: string | null;
+  server: { id: string; name: string } | null;
   onAdd: () => void;
 }) {
   const status = NODE_STATUS[nodeStatusKey(node)];
@@ -152,7 +153,7 @@ function NodeRow({
           </>
         )}
       </span>
-      {serverName === null ? (
+      {server === null ? (
         <Button
           type="button"
           variant="outline"
@@ -163,12 +164,16 @@ function NodeRow({
           Добавить в NodeService
         </Button>
       ) : (
-        <span
-          className="min-w-0 truncate text-[12.5px] text-text-3 sm:justify-self-end"
-          title={`Нода работает на сервере «${serverName}». Связь меняется в его профиле: «Нода Remnawave на сервере».`}
+        // Во всю ширину своей колонки и с многоточием: длинное имя сервера («Финляндия - 2 (Hysteria2)»)
+        // иначе вылезало влево и прилипало к трафику. По нажатию — профиль сервера, где выбирается нода.
+        <button
+          type="button"
+          onClick={() => openServer(server.id, 'profile')}
+          className="min-w-0 cursor-pointer truncate text-[12.5px] text-text-3 underline-offset-2 transition-colors hover:text-foreground hover:underline sm:w-full sm:text-right"
+          title={`Нода работает на сервере «${server.name}». Нажмите, чтобы открыть его профиль: там, в блоке «Нода Remnawave на сервере», выбирается, какая это нода.`}
         >
-          Сервер: {serverName}
-        </span>
+          Сервер: {server.name}
+        </button>
       )}
       {node.lastStatusMessage && !node.isConnected && !node.isDisabled && (
         <span className="w-full text-[11.5px] text-crit sm:col-span-full">{node.lastStatusMessage}</span>
@@ -318,9 +323,9 @@ export function RemnawavePage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [addNode, setAddNode] = useState<RemnawaveNode | null>(null);
 
-  /** Названия серверов панели: у связанной ноды показываем её сервер, у остальных — «Добавить в NodeService». */
-  const serverNames = useMemo(
-    () => new Map((servers.data?.items ?? []).map((s) => [s.id, s.name])),
+  /** Серверы панели: у связанной ноды показываем её сервер, у остальных — «Добавить в NodeService». */
+  const serverById = useMemo(
+    () => new Map((servers.data?.items ?? []).map((s) => [s.id, { id: s.id, name: s.name }])),
     [servers.data],
   );
 
@@ -437,7 +442,7 @@ export function RemnawavePage() {
               <NodeRow
                 key={n.uuid}
                 node={n}
-                serverName={serverNames.get(n.serverIds?.[0] ?? '') ?? null}
+                server={serverById.get(n.serverIds?.[0] ?? '') ?? null}
                 onAdd={() => setAddNode(n)}
               />
             ))}
