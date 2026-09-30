@@ -66,7 +66,8 @@ export class RemnawaveService {
       return await this.client.findNodeInbound(creds.domain, creds.apiKey, nodeUuid);
     } catch (err) {
       this.log.warn(`Инбаунд ноды ${nodeUuid}: ${err instanceof Error ? err.message : err}`);
-      return null;
+      // Запрос не прошёл — порт неизвестен. Причина «в Remnawave не нашёлся порт» здесь была бы неправдой.
+      return { sni: null, port: null, failed: true };
     }
   }
 

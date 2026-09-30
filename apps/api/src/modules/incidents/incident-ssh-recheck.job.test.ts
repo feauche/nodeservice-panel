@@ -6,11 +6,17 @@ describe('IncidentSshRecheckJob', () => {
   const prevEnv = process.env.NODE_ENV;
 
   function make() {
-    const openIncidents: Array<{ kind: string; serverId: string | null }> = [];
-    const servers = new Map<string, { id: string; name: string; lastSshCheckAt: Date | null }>();
+    const openIncidents: Array<{ kind: string; serverId: string | null; detail?: string }> = [];
+    const servers = new Map<
+      string,
+      { id: string; name: string; lastSshCheckAt: Date | null; sshOk?: boolean | null }
+    >();
     const checked: string[] = [];
     const incidentsRepo = { list: async () => openIncidents };
-    const serversRepo = { findById: async (id: string) => servers.get(id) };
+    const serversRepo = {
+      findById: async (id: string) => servers.get(id),
+      list: async () => [...servers.values()],
+    };
     const serversSvc = {
       autocheck: async (row: { id: string }) => {
         checked.push(row.id);
@@ -100,6 +106,43 @@ describe('IncidentSshRecheckJob', () => {
       return realAutocheck(row);
     };
     await expect(ctx.job.run()).resolves.toBeUndefined();
+    expect(ctx.checked).toEqual(['s2']);
+  });
+
+  it('SSH не ответил, а дела ещё нет: перепроверяем сразу — неудачу нужно подтвердить или снять', async () => {
+    const ctx = make();
+    ctx.servers.set('s1', {
+      id: 's1',
+      name: 'a',
+      lastSshCheckAt: new Date(Date.now() - 20_000),
+      sshOk: false,
+    });
+    // SSH в порядке или ещё не проверялся — ускоренная проверка не нужна.
+    ctx.servers.set('s2', { id: 's2', name: 'b', lastSshCheckAt: null, sshOk: true });
+    ctx.servers.set('s3', { id: 's3', name: 'c', lastSshCheckAt: null, sshOk: null });
+    await ctx.job.run();
+    expect(ctx.checked).toEqual(['s1']);
+  });
+
+  it('неподтверждённую неудачу тоже не перепроверяем чаще минимального промежутка', async () => {
+    const ctx = make();
+    ctx.servers.set('s1', { id: 's1', name: 'a', lastSshCheckAt: new Date(), sshOk: false });
+    await ctx.job.run();
+    expect(ctx.checked).toEqual([]);
+  });
+
+  it('открыто «Недоступен из части сетей» — молчание SSH уже объяснено, ускоренной проверки нет', async () => {
+    const ctx = make();
+    ctx.openIncidents.push({
+      kind: 'node_blocked',
+      serverId: 's1',
+      detail: 'Недоступен из части сетей: агент не выходит на связь…',
+    });
+    // «Похоже на блокировку» по падению онлайна SSH не объясняет — такой сервер перепроверяется.
+    ctx.openIncidents.push({ kind: 'node_blocked', serverId: 's2', detail: 'Онлайн: 396 → 0 за 10 минут.' });
+    ctx.servers.set('s1', { id: 's1', name: 'a', lastSshCheckAt: null, sshOk: false });
+    ctx.servers.set('s2', { id: 's2', name: 'b', lastSshCheckAt: null, sshOk: false });
+    await ctx.job.run();
     expect(ctx.checked).toEqual(['s2']);
   });
 

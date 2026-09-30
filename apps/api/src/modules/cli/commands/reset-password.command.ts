@@ -6,6 +6,7 @@ import { CryptoService } from '../../../common/crypto/crypto.service.js';
 import type { AuditActor } from '../../audit/audit.context.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { SessionStore } from '../../auth/session.store.js';
+import { ThrottleService } from '../../auth/throttle.service.js';
 import { UsersRepository } from '../../auth/users.repository.js';
 import { promptHidden } from '../prompt.js';
 
@@ -23,13 +24,14 @@ interface Options {
 @Command({
   name: 'reset-password',
   arguments: '<login>',
-  description: 'Сменить пароль администратора (все его сессии завершаются)',
+  description: 'Сменить пароль администратора (все его сессии завершаются, паузы входа снимаются)',
 })
 export class ResetPasswordCommand extends CommandRunner {
   constructor(
     private readonly users: UsersRepository,
     private readonly crypto: CryptoService,
     private readonly sessions: SessionStore,
+    private readonly throttle: ThrottleService,
     private readonly audit: AuditService,
   ) {
     super();
@@ -63,15 +65,18 @@ export class ResetPasswordCommand extends CommandRunner {
 
     await this.users.setPassword(user.id, await this.crypto.hashPassword(parsed.data));
     const revoked = await this.sessions.destroyAllForUser(user.id);
+    // Пароль меняют из консоли, когда войти не получается, — обычно после серии своих же неудачных
+    // попыток. Без снятия пауз новый пароль пришлось бы ещё и ждать (до 15 минут, код — до суток).
+    await this.throttle.clearAll();
     await this.audit.record({
       action: 'security.cli.password_reset',
       actor: CLI_ACTOR,
       source: 'manual',
       severity: 'warn',
       target: { type: 'user', id: user.id, display: user.login },
-      metadata: { sessionsRevoked: revoked },
+      metadata: { sessionsRevoked: revoked, note: 'Паузы входа сняты' },
     });
-    console.log(`Пароль для «${user.login}» обновлён. Сессий завершено: ${revoked}.`);
+    console.log(`Пароль для «${user.login}» обновлён. Сессий завершено: ${revoked}. Паузы входа сняты.`);
   }
 }
 

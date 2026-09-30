@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AnonAuditLimiter } from './anon-audit.limiter.js';
 import { AuthService } from './auth.service.js';
 import { AuthEventsService } from './auth-events.service.js';
 import { PendingStore } from './pending.store.js';
@@ -20,6 +21,7 @@ import { UsersRepository } from './users.repository.js';
     SessionStore,
     PendingStore,
     ThrottleService,
+    AnonAuditLimiter,
     TotpService,
     SetupService,
     AuthEventsService,
@@ -31,6 +33,7 @@ import { UsersRepository } from './users.repository.js';
     SessionStore,
     PendingStore,
     ThrottleService,
+    AnonAuditLimiter,
     TotpService,
     SetupService,
     AuthService,

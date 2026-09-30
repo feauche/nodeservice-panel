@@ -950,6 +950,9 @@ export class BillingService {
           ne(incidents.status, 'resolved'),
           eq(incidents.kind, 'server_down'),
           sql`${incidents.title} like ${'%оплат%'}`,
+          // Оплата в заголовке — ещё не уверенность: при неполной проверке дело пишет «Проверьте оплату: …
+          // возможно…». «Вероятно, из-за неоплаты» напоминание говорит, только когда так говорит само дело.
+          sql`${incidents.detail} like ${'%Вероятнее всего%'}`,
         ),
       );
     return new Set(rows.map((r) => r.serverId).filter((x): x is string => Boolean(x)));

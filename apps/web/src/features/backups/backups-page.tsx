@@ -6,6 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SectionHeader } from '@/features/settings/settings-ui';
 import { useTelegramSettings } from '@/features/settings/telegram-api';
 import { timeZoneLabel } from '@/features/settings/time-zones';
+import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useBackupSettings, useBackups } from './backups-api';
 import { DeleteDialog, FileDialog, RestoreDialog, RunDialog } from './backups-dialogs';
@@ -28,6 +29,14 @@ export function BackupsPage() {
 
   const data = list.data;
   const s = settings.data;
+  // Не загрузилось совсем (показать нечего) — говорим об этом и даём «Повторить», а не «Копий пока нет» и
+  // вечную заглушку. Сбой при перечитывании уже показанного сюда не попадает: на экране остаётся прежнее.
+  const listError = !data && list.isError ? list.error : null;
+  const settingsError = !s && settings.isError ? settings.error : null;
+  const retry = () => {
+    if (listError) void list.refetch();
+    if (settingsError) void settings.refetch();
+  };
   const tz = data?.timeZone ?? 'Europe/Moscow';
   const items = data?.items ?? [];
   const busy = Boolean(data?.run.stage);
@@ -57,7 +66,7 @@ export function BackupsPage() {
       )}
 
       <StatusTiles
-        loading={list.isPending || settings.isPending}
+        loading={!listError && !settingsError && (list.isPending || settings.isPending)}
         tiles={
           data && s
             ? [
@@ -143,6 +152,8 @@ export function BackupsPage() {
         keep={s?.keep ?? null}
         timeZone={tz}
         loading={list.isPending}
+        error={listError}
+        onRetry={retry}
         busy={busy}
         onRestore={setRestoreItem}
         onDelete={setDeleteItem}
@@ -150,6 +161,16 @@ export function BackupsPage() {
 
       {s && data ? (
         <BackupSettingsForm saved={s} timeZone={tz} totalSize={data.totalSize} count={regular.length} />
+      ) : listError || settingsError ? (
+        <p className="rounded-[12px] border border-crit/30 bg-crit-soft px-4 py-3 text-[13px]">
+          {/* Форме нужен и список (сколько копий и сколько они занимают): без него она не строится. */}
+          {settingsError
+            ? `Не удалось загрузить настройки копий. ${apiErrorMessage(settingsError)}`
+            : 'Настройки копий откроются, когда загрузится список копий.'}{' '}
+          <button type="button" className="cursor-pointer underline" onClick={retry}>
+            Повторить
+          </button>
+        </p>
       ) : (
         <Skeleton className="h-[320px] rounded-[14px]" />
       )}
@@ -158,6 +179,7 @@ export function BackupsPage() {
         open={runOpen}
         onOpenChange={setRunOpen}
         data={data}
+        updatedAt={list.dataUpdatedAt}
         telegramReady={telegramReady}
         telegramDefault={Boolean(tg?.enabled)}
         telegramWhere={telegramWhere}
@@ -184,6 +206,8 @@ function StatusTiles({
         ))}
       </div>
     );
+  // Страница не загрузилась — считать плитки не из чего; об ошибке сказано в списке и в настройках.
+  if (tiles.length === 0) return null;
   return (
     <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
       {tiles.map((t) => (

@@ -31,7 +31,7 @@ nodeservice — обслуживание панели NodeService
   backup [--to X]   копия из консоли (БД + .env) в $APP_DIR/backups — та же папка, что в панели; --to user@host:/dir — копия по scp
   restore <файл> [--yes]  восстановить из архива: секреты из бэкапа, БД заменяется (прежняя сохраняется), api перезапускается
                     на чистом сервере: install.sh --restore <файл>
-  cli <команда>     rescue CLI: setup-token | list-users | reset-password | disable-2fa | revoke-sessions
+  cli <команда>     rescue CLI: setup-token | list-users | reset-password | disable-2fa | revoke-sessions | unblock-login
   restart | stop | start
   uninstall         снять панель: контейнеры, образы, тома с БД, код, cron, эта команда (бэкап делается перед удалением)
 U

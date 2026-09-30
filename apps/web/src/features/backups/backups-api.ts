@@ -117,10 +117,18 @@ export function useUpdateBackupSettings() {
   });
 }
 
+/**
+ * Запуск копии. Ответ — отметка списка копий, который лежал в кэше, когда сервер принял запуск: список,
+ * перечитанный после неё, уже знает об этой копии. По прежнему окно не судит, чем кончилось, — он ещё про
+ * «до». Перечитывание ниже отменяет запрос списка, который был в пути: опоздавший ответ за свежий не сойдёт.
+ */
 export function useRunBackup() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (sendTelegram: boolean) => backupsApi.run(sendTelegram),
+    mutationFn: async (sendTelegram: boolean) => {
+      await backupsApi.run(sendTelegram);
+      return qc.getQueryState(backupsKeys.list)?.dataUpdatedAt ?? 0;
+    },
     onSettled: () => void qc.invalidateQueries({ queryKey: backupsKeys.list }),
   });
 }

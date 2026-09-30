@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { NodeLinkService } from '../remnawave/node-link.service.js';
 import { baselineFromDetail, NodeBlockRecheckJob, recoverThreshold } from './node-block-recheck.job.js';
 
 describe('перепроверка падения онлайна', () => {
@@ -48,14 +49,17 @@ describe('перепроверка падения онлайна', () => {
           verdict,
         }),
       } as never,
+      new NodeLinkService({ resolve: async () => [] }),
     );
-    const snap = async (online: number, error: string | null = null) => {
+    const snap = async (online: number | null, error: string | null = null, isDisabled = false) => {
       seq += 1;
       status = {
         connected: true,
         checkedAt: `2026-09-30T09:${String(seq).padStart(2, '0')}:00.000Z`,
         error,
-        nodes: [{ uuid: 'u-1', name: 'guardora (Аренда)', address: '1.2.3.4', usersOnline: online }],
+        nodes: [
+          { uuid: 'u-1', name: 'guardora (Аренда)', address: '1.2.3.4', usersOnline: online, isDisabled },
+        ],
       };
       await job.run();
     };
@@ -80,6 +84,18 @@ describe('перепроверка падения онлайна', () => {
     expect(closed).toEqual([]);
     await snap(190);
     expect(closed).toHaveLength(1);
+  });
+
+  it('ноду выключили в Remnawave вручную — дело закрывается с пояснением, а не висит вечно', async () => {
+    const { snap, closed, notes } = setup();
+    await snap(0);
+    expect(closed).toEqual([]);
+    // Выключенная нода онлайн не вернёт никогда: ждать «три проверки в норме» бессмысленно.
+    await snap(null, null, true);
+    expect(closed).toEqual([
+      'Ноду выключили в Remnawave вручную — следить за её онлайном больше не нужно. Если выключили из-за этого сбоя, причина осталась неразобранной: дело можно открыть в списке решённых.',
+    ]);
+    expect(notes.at(-1)).toContain('Слежу за онлайном ноды');
   });
 
   it('порт отвечает с перебоями — закрывает по онлайну и говорит об этом прямо', async () => {

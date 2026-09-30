@@ -1,9 +1,12 @@
 import { constants, createWriteStream, openAsBlob } from 'node:fs';
 import {
   access,
+  chmod,
   copyFile,
+  type FileHandle,
   mkdir,
   mkdtemp,
+  open,
   readdir,
   readFile,
   rename,
@@ -50,17 +53,25 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 import { esc } from '../notifications/telegram/telegram.format.js';
 import { TelegramService } from '../notifications/telegram/telegram.service.js';
 import { decryptFile, encryptFile, isEncrypted } from './backup-crypto.js';
+import { BackupError, BackupToolError, explainBackupError, rawErrorText } from './backup-errors.js';
 import { BackupSettingsStore, type StoredBackupSettings } from './backup-settings.store.js';
-import { BACKUP_TOOLS, type BackupTools, run } from './backup-tools.js';
+import { BACKUP_TOOLS, type BackupTools, failureText, run } from './backup-tools.js';
 import {
   backupName,
   envValues,
+  type InstallEnv,
+  type InstallEnvKey,
+  installEnv,
+  installEnvText,
   isBackupDue,
+  keyFingerprint,
+  lastScheduledAt,
   nextBackupAt,
   parseMeta,
   SECRET_KEYS,
   timeFromName,
   versionLess,
+  willRetryBackup,
 } from './backups.logic.js';
 
 /** Описание копии рядом с архивом: <имя>.json. */
@@ -75,6 +86,23 @@ interface Sidecar {
 
 const mb = (b: number) => `${(b / 1024 / 1024).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} МБ`;
 
+/** Копия по расписанию: к какому моменту расписания относится попытка и когда она началась. */
+interface Scheduled {
+  slot: Date;
+  at: Date;
+}
+
+/** Обязательные ключи установки — как их назвать владельцу, если какого-то не оказалось. */
+const INSTALL_KEY_NAMES: Partial<Record<InstallEnvKey, string>> = {
+  POSTGRES_PASSWORD: 'пароль базы данных',
+  APP_SECRET: 'секрет панели',
+  ENCRYPTION_KEY: 'ключ шифрования',
+};
+
+/** Дополнительные пути для Журнала: сами пути (они не секретны), а не их число. */
+const extraText = (e: BackupSettings['extra']) =>
+  `${e.enabled ? '' : 'выключено: '}${e.paths.join(', ') || 'путей нет'}`;
+
 /**
  * Резервные копии панели (0.39.0). Архив совместим с консольными `nodeservice backup` / `restore`.
  * Одна операция за раз: копия или восстановление. Восстановление разворачивает дамп во временную базу и
@@ -84,11 +112,17 @@ const mb = (b: number) => `${(b / 1024 / 1024).toLocaleString('ru-RU', { maximum
 export class BackupsService implements OnModuleInit {
   private readonly log = new Logger(BackupsService.name);
   private readonly dir: string;
-  private readonly envPath: string;
   private readonly hostRoot: string;
   private readonly vmUrl: string;
   /** Ключи этой установки — чтобы понять, от неё ли копия (из настроек, а не из окружения процесса). */
   private readonly keys: Record<string, string>;
+  /**
+   * Строки файла «env» архива — ключи, домен, пароль базы. Из настроек самой панели: файл .env установки
+   * на сервере закрыт от пользователя, под которым она работает, и раньше копия молча выходила без ключей.
+   */
+  private readonly installEnv: InstallEnv;
+  /** Отпечаток ключа шифрования: в meta архива и для сверки при проверке копии. */
+  private readonly keyPrint: string;
   private runState: BackupRun = { stage: null, startedAt: null, mode: null, lastError: null };
   private toolsState: { ok: boolean; reason: string | null } = { ok: false, reason: 'Проверяю инструменты…' };
 
@@ -103,10 +137,17 @@ export class BackupsService implements OnModuleInit {
     private readonly cls: ClsService,
   ) {
     this.dir = resolve(config.get('BACKUPS_DIR'));
-    this.envPath = config.get('INSTALL_ENV_PATH');
     this.hostRoot = config.get('HOST_ROOT');
     this.vmUrl = config.get('VM_URL');
     this.keys = Object.fromEntries(SECRET_KEYS.map((k) => [k, String(config.get(k) ?? '')]));
+    this.installEnv = installEnv({
+      keys: this.keys,
+      publicUrl: config.get('PUBLIC_URL'),
+      databaseUrl: config.get('DATABASE_URL'),
+      // Домен, почта для сертификата и пароль базы — не настройки панели: они приходят из .env установки.
+      env: process.env,
+    });
+    this.keyPrint = keyFingerprint(this.keys.ENCRYPTION_KEY ?? '');
   }
 
   async onModuleInit(): Promise<void> {
@@ -132,7 +173,7 @@ export class BackupsService implements OnModuleInit {
       : {
           ok: false,
           reason:
-            'Панели не хватает прав на папку копий на сервере. Выполните на сервере панели «nodeservice update» — команда выдаст права.',
+            'Панели не хватает прав на папку копий на сервере. Обновите панель с сервера — обновление выдаёт права заново.',
         };
   }
 
@@ -242,7 +283,9 @@ export class BackupsService implements OnModuleInit {
       const t = patch.telegram;
       let ownUrlEnc = cur.telegram.ownUrlEnc;
       if (t.ownUrl === null || t.ownUrl === '') ownUrlEnc = null;
-      else if (!t.ownUrl.includes('•••')) {
+      // Не передан или вернулась маска, которую отдал сам сервер, — чат не меняли. Любая другая строка —
+      // новый чат: маска с другим номером тоже не подойдёт, токена в ней нет.
+      else if (t.ownUrl !== undefined && t.ownUrl !== this.store.toPublic(cur).telegram.ownUrl) {
         if (!parseTelegramUrl(t.ownUrl))
           throw problem(HttpStatus.BAD_REQUEST, {
             detail: 'Свой чат — строкой вида tgram://токен_бота/id_чата (для темы — :номер_темы в конце).',
@@ -278,7 +321,7 @@ export class BackupsService implements OnModuleInit {
     if (JSON.stringify(before.telegram) !== JSON.stringify(after.telegram))
       changes.telegram = { before: before.telegram.enabled, after: after.telegram.enabled };
     if (JSON.stringify(before.extra) !== JSON.stringify(after.extra))
-      changes.extra = { before: before.extra.paths.length, after: after.extra.paths.length };
+      changes.extra = { before: extraText(before.extra), after: extraText(after.extra) };
     this.audit.extend({ ...(Object.keys(changes).length ? { changes } : {}) });
     return after;
   }
@@ -299,7 +342,7 @@ export class BackupsService implements OnModuleInit {
   /* ─────────── создание копии ─────────── */
 
   /** Запустить копию в фоне; ответ — сразу (ход виден в списке). */
-  start(kind: BackupKind, opts: { sendTelegram?: boolean } = {}): void {
+  start(kind: BackupKind, opts: { sendTelegram?: boolean; scheduled?: Scheduled } = {}): void {
     if (!this.toolsState.ok)
       throw problem(HttpStatus.SERVICE_UNAVAILABLE, {
         type: BACKUP_PROBLEM.unavailable,
@@ -309,7 +352,7 @@ export class BackupsService implements OnModuleInit {
     this.runState = { stage: 'db', startedAt: new Date().toISOString(), mode: 'backup', lastError: null };
     const actor = this.actor();
     void this.create(kind, opts, actor)
-      .catch((err) => this.fail(kind, err, actor))
+      .catch((err) => this.fail(kind, err, actor, opts.scheduled ?? null))
       .finally(() => {
         this.runState = { ...this.runState, stage: null, mode: null, startedAt: null };
       });
@@ -337,15 +380,27 @@ export class BackupsService implements OnModuleInit {
     }
   }
 
-  /** Сделать копию и дождаться (для «перед восстановлением» и тестов). */
+  /**
+   * Сделать копию и дождаться (для «перед восстановлением» и тестов). protect — имя копии, которую чистка
+   * старых не трогает: из неё сейчас восстанавливают.
+   */
   async create(
     kind: BackupKind,
-    opts: { sendTelegram?: boolean } = {},
+    opts: { sendTelegram?: boolean; protect?: string } = {},
     actor: string | null = null,
   ): Promise<BackupItem> {
     const s = await this.store.load();
     const password = this.store.password(s);
     const now = new Date();
+    // Без ключей копия бесполезна на новом сервере: консольное восстановление её не примет, а из панели
+    // после неё не войти. Такая копия — не удача: честная ошибка вместо тихого успеха. Ключи известны
+    // заранее (это настройки самой панели), поэтому базу ради обречённой копии не выгружаем.
+    const env = installEnvText(this.installEnv, now);
+    if (env.missing.length > 0)
+      throw new BackupError(
+        `В копию не попали ключи установки (${env.missing.map((k) => INSTALL_KEY_NAMES[k] ?? k).join(', ')}), поэтому она не сохранена: без них панель не восстановить на новом сервере. Пока это не исправлено, делайте копии из консоли сервера панели — там ключи берутся прямо из файла настроек установки.`,
+        `в настройках панели нет ${env.missing.join(', ')}`,
+      );
     const work = await mkdtemp(join(tmpdir(), 'ns-backup-'));
     const plainName = backupName(now, false);
     const name = backupName(now, Boolean(password));
@@ -355,16 +410,8 @@ export class BackupsService implements OnModuleInit {
       await this.tools.dump(join(work, 'db.dump'));
       const files = ['meta', 'db.dump'];
       this.stage('env');
-      let hasEnv = false;
-      if (this.envPath) {
-        await copyFile(this.envPath, join(work, 'env')).then(
-          () => {
-            hasEnv = true;
-            files.push('env');
-          },
-          () => undefined,
-        );
-      }
+      await writeFile(join(work, 'env'), env.text, { mode: 0o600 });
+      files.push('env');
       let hasMetrics = false;
       if (s.includeMetrics) {
         this.stage('metrics');
@@ -378,34 +425,39 @@ export class BackupsService implements OnModuleInit {
         files.push('files.tar.gz');
         pathsCount = s.extra.paths.length;
       }
-      const env = hasEnv ? envValues(await readFile(join(work, 'env'), 'utf8')) : {};
       await writeFile(
         join(work, 'meta'),
         [
           'format=2',
           `created=${now.toISOString()}`,
-          `domain=${env.PANEL_DOMAIN ?? '?'}`,
+          `domain=${this.installEnv.PANEL_DOMAIN ?? '?'}`,
           `panel=${SHARED_VERSION}`,
           `kind=${kind}`,
           `metrics=${hasMetrics ? 1 : 0}`,
           `paths=${pathsCount}`,
           `encrypted=${password ? 1 : 0}`,
+          // Отпечаток ключа шифрования, не сам ключ: по нему проверка видит, от этой ли установки копия.
+          `keys_sha256=${this.keyPrint}`,
+          // Пустая строка в конце: консоль печатает meta как есть, и следующий её вопрос не прилипает.
+          '',
         ].join('\n'),
       );
       this.stage('pack');
       const packed = join(work, plainName);
       const tar = await run('tar', ['-czf', packed, '-C', work, ...files]);
-      if (tar.code !== 0)
-        throw new Error(`Архив не собрался: ${tar.stderr.trim().split('\n').at(-1) ?? tar.code}`);
+      if (tar.code !== 0) throw new BackupToolError('pack', failureText(tar));
       this.stage('verify');
       const verified = await this.tools.verify(join(work, 'db.dump'));
-      if (!verified) throw new Error('Дамп базы не читается — копия не сохранена.');
+      if (!verified) throw new BackupError('Дамп базы не читается — копия не сохранена.');
       if (password) {
         this.stage('encrypt');
         await encryptFile(packed, `${target}.part`, password);
       } else await copyFile(packed, `${target}.part`);
+      // В архиве ключи установки: без пароля — в открытом виде. Читать его может только пользователь
+      // панели, как и консольную копию. Диск, где права не меняются, — не повод остаться без копии.
+      await chmod(`${target}.part`, 0o600).catch(() => undefined);
       await rename(`${target}.part`, target);
-      const contents = { db: true, env: hasEnv, metrics: hasMetrics, paths: pathsCount };
+      const contents = { db: true, env: true, metrics: hasMetrics, paths: pathsCount };
       const side: Sidecar = {
         createdAt: now.toISOString(),
         kind,
@@ -422,7 +474,7 @@ export class BackupsService implements OnModuleInit {
         await writeFile(`${target}.json`, JSON.stringify(side), { mode: 0o600 });
       }
       this.stage('cleanup');
-      await this.retain(s.keep);
+      await this.retain(s.keep, opts.protect ?? null);
       await this.audit.record({
         action: 'backup.created',
         ...(actor ? { actor: { type: 'admin', id: null, display: actor } } : { actor: SYSTEM_ACTOR }),
@@ -453,10 +505,16 @@ export class BackupsService implements OnModuleInit {
     }
   }
 
-  private async fail(kind: BackupKind, err: unknown, actor: string | null): Promise<void> {
-    const reason = err instanceof Error ? err.message : String(err);
+  private async fail(
+    kind: BackupKind,
+    err: unknown,
+    actor: string | null,
+    scheduled: Scheduled | null = null,
+  ): Promise<void> {
+    const reason = explainBackupError(err);
     this.runState = { ...this.runState, lastError: reason };
-    this.log.warn(`Копия не получилась: ${reason}`);
+    // Что написала программа или система — только в лог: владельцу этот текст ничего не скажет.
+    this.log.warn(`Копия не получилась: ${rawErrorText(err)}`);
     await this.audit.record({
       action: 'backup.failed',
       result: 'failed',
@@ -464,10 +522,16 @@ export class BackupsService implements OnModuleInit {
       ...(actor ? { actor: { type: 'admin', id: null, display: actor } } : { actor: SYSTEM_ACTOR }),
       metadata: { kind: BACKUP_KIND_LABELS[kind], error: reason.slice(0, 300) },
     });
+    // Копия по расписанию повторяется раз в час — о сбое сообщаем один раз на момент расписания,
+    // а не после каждой попытки. Не удалось узнать, сообщали ли, — лучше сообщить.
+    if (scheduled && !(await this.firstNotice(scheduled.slot).catch(() => true))) return;
+    const retry = scheduled !== null && willRetryBackup(scheduled.at, scheduled.slot);
     await this.notifications.push({
       severity: 'crit',
       title: 'Резервная копия не получилась',
-      body: reason.slice(0, 500),
+      body: `${reason.slice(0, 500)}${
+        retry ? ' Панель попробует ещё раз через час; о повторных неудачах этой копии сообщать не будет.' : ''
+      }`,
       link: { to: '/settings/backups', label: 'Открыть копии' },
     });
     const s = await this.store.load();
@@ -476,9 +540,21 @@ export class BackupsService implements OnModuleInit {
       if (d)
         await this.telegram.sendTo(
           d,
-          `🔴 <b>Резервная копия не получилась</b>\n${esc(reason.slice(0, 500))}\n\n<i>Следующая — по расписанию. Сделать вручную: «Настройки → Резервные копии».</i>`,
+          `🔴 <b>Резервная копия не получилась</b>\n${esc(reason.slice(0, 500))}\n\n<i>${
+            retry
+              ? 'Панель попробует ещё раз через час. О повторных неудачах этой копии сообщать не будет — загляните в «Настройки → Резервные копии».'
+              : 'Следующая — по расписанию. Сделать вручную: «Настройки → Резервные копии».'
+          }</i>`,
         );
     }
+  }
+
+  /** Первое ли это сообщение о сбое для момента расписания (отметка — в базе: переживает перезапуск). */
+  private async firstNotice(slot: Date): Promise<boolean> {
+    const state = await this.store.schedule();
+    if (state.noticeSlot === slot.toISOString()) return false;
+    await this.store.saveSchedule({ ...state, noticeSlot: slot.toISOString() });
+    return true;
   }
 
   private async targetOf(s: StoredBackupSettings) {
@@ -554,11 +630,14 @@ export class BackupsService implements OnModuleInit {
    * Копии «перед восстановлением» — своя очередь из двух, загруженные с компьютера — пока не удалят:
    * иначе при N = 1 копия перед восстановлением вытеснила бы ту, из которой восстанавливаем.
    */
-  private async retain(keep: number): Promise<void> {
+  private async retain(keep: number, protect: string | null = null): Promise<void> {
     const items = await this.items();
     const regular = items.filter((i) => i.kind !== 'pre_restore' && i.kind !== 'uploaded');
     const preRestore = items.filter((i) => i.kind === 'pre_restore');
     for (const it of [...regular.slice(keep), ...preRestore.slice(2)]) {
+      // Копию, из которой сейчас восстанавливают, не удаляем ни при каких условиях: иначе её стёрла бы
+      // копия «перед восстановлением», сделанная за секунду до распаковки.
+      if (it.name === protect) continue;
       await rm(join(this.dir, it.name), { force: true }).catch(() => undefined);
       await rm(join(this.dir, `${it.name}.json`), { force: true }).catch(() => undefined);
     }
@@ -574,17 +653,41 @@ export class BackupsService implements OnModuleInit {
     this.audit.extend({ target: { type: 'backup', id: name, display: name } });
   }
 
-  /** Путь к файлу для скачивания. */
-  async downloadPath(name: string): Promise<{ path: string; size: number }> {
+  /**
+   * Открыть архив для скачивания. Файл открывается здесь же: после этого его можно удалить (чистка старых
+   * копий) — отдача не сорвётся; а если открыть нельзя, это ответ с причиной, а не сбой посреди отдачи.
+   */
+  async download(name: string): Promise<{ stream: Readable; size: number }> {
     const path = this.file(name);
-    const st = await stat(path).catch(() => null);
-    if (!st)
-      throw problem(HttpStatus.NOT_FOUND, { type: BACKUP_PROBLEM.notFound, detail: 'Такой копии нет.' });
-    await this.audit.record({
-      action: 'backup.downloaded',
-      target: { type: 'backup', id: name, display: name },
-    });
-    return { path, size: st.size };
+    let fh: FileHandle;
+    try {
+      fh = await open(path, 'r');
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT')
+        throw problem(HttpStatus.NOT_FOUND, { type: BACKUP_PROBLEM.notFound, detail: 'Такой копии нет.' });
+      this.log.warn(`Копия ${name} не открывается: ${rawErrorText(err)}`);
+      throw problem(HttpStatus.INTERNAL_SERVER_ERROR, {
+        type: BACKUP_PROBLEM.unreadable,
+        detail:
+          code === 'EACCES' || code === 'EPERM'
+            ? 'Панель не может прочитать файл этой копии: у неё нет прав на него. Так бывает, если файл положили в папку копий вручную. Скачать его можно с самого сервера панели.'
+            : 'Панель не может прочитать файл этой копии. Подробности — в логах панели.',
+      });
+    }
+    try {
+      const st = await fh.stat();
+      if (!st.isFile())
+        throw problem(HttpStatus.NOT_FOUND, { type: BACKUP_PROBLEM.notFound, detail: 'Такой копии нет.' });
+      await this.audit.record({
+        action: 'backup.downloaded',
+        target: { type: 'backup', id: name, display: name },
+      });
+      return { stream: fh.createReadStream(), size: st.size };
+    } catch (err) {
+      await fh.close().catch(() => undefined);
+      throw err;
+    }
   }
 
   /** Загрузка архива с компьютера: сохраняем как копию «загружена», потом — проверка и восстановление. */
@@ -600,13 +703,13 @@ export class BackupsService implements OnModuleInit {
         async function* (src: AsyncIterable<Buffer>) {
           for await (const chunk of src) {
             bytes += chunk.length;
-            if (bytes > limit) throw new Error('Файл больше 2 ГБ.');
+            if (bytes > limit) throw new BackupError('Файл больше 2 ГБ.');
             yield chunk;
           }
         },
         createWriteStream(tmp, { mode: 0o600 }),
       );
-      if (bytes === 0) throw new Error('Файл пустой.');
+      if (bytes === 0) throw new BackupError('Файл пустой.');
       const encrypted = await isEncrypted(tmp);
       const name = backupName(now, encrypted, '-upload');
       await rename(tmp, join(this.dir, name));
@@ -637,9 +740,8 @@ export class BackupsService implements OnModuleInit {
       };
     } catch (err) {
       await rm(tmp, { force: true }).catch(() => undefined);
-      throw problem(HttpStatus.BAD_REQUEST, {
-        detail: err instanceof Error ? err.message : 'Файл не загрузился.',
-      });
+      this.log.warn(`Файл копии не загрузился: ${rawErrorText(err)}`);
+      throw problem(HttpStatus.BAD_REQUEST, { detail: explainBackupError(err, 'Файл не загрузился.') });
     }
   }
 
@@ -690,6 +792,7 @@ export class BackupsService implements OnModuleInit {
           sameKeys: null,
           compatible: false,
           problem: password ? 'Пароль не подошёл.' : 'Копия защищена паролем — введите его.',
+          warning: null,
         };
       const dump = await stat(join(work, 'db.dump')).catch(() => null);
       if (!dump)
@@ -704,6 +807,7 @@ export class BackupsService implements OnModuleInit {
           sameKeys: null,
           compatible: false,
           problem: 'В архиве нет базы данных — это не копия панели.',
+          warning: null,
         };
       const meta = parseMeta(await readFile(join(work, 'meta'), 'utf8').catch(() => ''));
       const hasEnv = await stat(join(work, 'env')).then(
@@ -722,6 +826,9 @@ export class BackupsService implements OnModuleInit {
           k === 'ENCRYPTION_KEY_VERSION' ? v || '1' : (v ?? '');
         sameKeys = SECRET_KEYS.every((k) => norm(k, env[k]) === norm(k, this.keys[k]));
       }
+      // Самих ключей в архиве нет — сверяем отпечаток, если копия его несёт. Нет и его (копии прежних
+      // версий панели) — сверить не с чем: sameKeys остаётся null.
+      else if (meta.keys_sha256) sameKeys = meta.keys_sha256 === this.keyPrint;
       const version = meta.panel ?? null;
       const newer = version ? versionLess(SHARED_VERSION, version) : false;
       const readable = await this.tools.verify(join(work, 'db.dump'));
@@ -730,7 +837,9 @@ export class BackupsService implements OnModuleInit {
         : newer
           ? `Копия от более новой версии панели (${version}) — сначала обновите панель.`
           : sameKeys === false
-            ? 'Копия от другой установки (другие ключи шифрования). Её восстанавливают через консоль: nodeservice restore <файл> — там ключи переносятся вместе с базой.'
+            ? hasEnv
+              ? 'Копия от другой установки (другие ключи шифрования). Её восстанавливают через консоль: nodeservice restore <файл> — там ключи переносятся вместе с базой.'
+              : 'Копия от другой установки (другие ключи шифрования), а самих ключей в ней нет. Без ключей той установки её не восстановить — ни из панели, ни из консоли сервера.'
             : null;
       return {
         name,
@@ -743,6 +852,12 @@ export class BackupsService implements OnModuleInit {
         sameKeys,
         compatible: problemText === null,
         problem: problemText,
+        // Совместимой вслепую копию не объявляем: на этой установке она подойдёт, на другой — нет,
+        // а какая перед нами, по такой копии не узнать.
+        warning:
+          problemText === null && sameKeys === null
+            ? 'Ключей шифрования в этой копии нет — панель не может проверить, от этой ли она установки. Восстановить её можно только на установке с теми же ключами: на заново установленной панели после восстановления не подойдёт пароль и не расшифруются доступы к серверам.'
+            : null,
       };
     } finally {
       await rm(work, { recursive: true, force: true }).catch(() => undefined);
@@ -766,8 +881,9 @@ export class BackupsService implements OnModuleInit {
     const actor = this.actor();
     this.runState = { stage: 'db', startedAt: new Date().toISOString(), mode: 'restore', lastError: null };
     try {
-      // Сначала — копия того, что есть сейчас: передумаете — вернётесь к ней.
-      await this.create('pre_restore', { sendTelegram: false }, actor);
+      // Сначала — копия того, что есть сейчас: передумаете — вернётесь к ней. Чистка старых копий после
+      // неё не трогает ту, из которой восстанавливаем.
+      await this.create('pre_restore', { sendTelegram: false, protect: name }, actor);
       this.runState = { stage: 'db', startedAt: this.runState.startedAt, mode: 'restore', lastError: null };
       const { work } = await this.unpack(name, password);
       try {
@@ -777,14 +893,20 @@ export class BackupsService implements OnModuleInit {
         await rm(work, { recursive: true, force: true }).catch(() => undefined);
       }
     } catch (err) {
-      this.runState = {
-        stage: null,
-        startedAt: null,
-        mode: null,
-        lastError: err instanceof Error ? err.message : String(err),
-      };
+      this.log.warn(`Восстановление из ${name} не удалось: ${rawErrorText(err)}`);
+      // «База не тронута» — только когда это известно: связь могла оборваться на самом подтверждении
+      // подмены, и тогда панель не знает, какая база сейчас рабочая.
+      const unknown = err instanceof BackupToolError && err.outcomeUnknown;
+      const reason = unknown
+        ? 'Связь с базой данных оборвалась в самый момент подмены, и панель не смогла проверить, какая база сейчас рабочая — прежняя или восстановленная. Перезапустите панель с сервера и посмотрите, на месте ли свежие данные.'
+        : explainBackupError(err);
+      this.runState = { stage: null, startedAt: null, mode: null, lastError: reason };
+      // Свой тип ошибки: без него ответ 500 подменяется общим «Что-то пошло не так на сервере».
       throw problem(HttpStatus.INTERNAL_SERVER_ERROR, {
-        detail: `Восстановление не удалось, текущая база не тронута: ${err instanceof Error ? err.message : err}`,
+        type: BACKUP_PROBLEM.restoreFailed,
+        detail: unknown
+          ? `Восстановление не завершено. ${reason}`
+          : `Восстановление не удалось, текущая база не тронута: ${reason}`,
       });
     }
     // Запись — уже в восстановленную базу: пусть в Журнале будет видно, что панель откатывали.
@@ -817,12 +939,36 @@ export class BackupsService implements OnModuleInit {
   /* ─────────── расписание ─────────── */
 
   async tick(now = new Date()): Promise<boolean> {
-    if (this.runState.stage || !this.toolsState.ok) return false;
+    if (this.runState.stage) return false;
     const s = await this.store.load();
     const tz = await this.timeZone();
     const lastAuto = (await this.items()).find((i) => i.kind === 'auto');
-    if (!isBackupDue(now, s, tz, lastAuto ? new Date(lastAuto.createdAt) : null)) return false;
-    this.start('auto');
+    const lastAutoAt = lastAuto ? new Date(lastAuto.createdAt) : null;
+    if (!isBackupDue(now, s, tz, lastAutoAt)) return false;
+    // Момент расписания наступил, копии после него нет. Была ли уже попытка — в базе: неудачная файла
+    // не оставляет, и без этой отметки копия запускалась бы заново каждую минуту все шесть часов.
+    const state = await this.store.schedule();
+    if (!isBackupDue(now, s, tz, lastAutoAt, state.attemptAt ? new Date(state.attemptAt) : null))
+      return false;
+    const slot = lastScheduledAt(now, s, tz);
+    if (!slot) return false;
+    await this.store.saveSchedule({ ...state, attemptAt: now.toISOString() });
+    const scheduled: Scheduled = { slot, at: now };
+    // Копии могли быть недоступны с самого запуска панели (папка копий досталась другому пользователю):
+    // состояние перепроверялось, только когда открывали страницу копий, и расписание молчало неделями.
+    if (!this.toolsState.ok) await this.refreshState();
+    if (!this.toolsState.ok) {
+      await this.fail(
+        'auto',
+        new BackupError(
+          `Копия по расписанию не сделана. ${this.toolsState.reason ?? 'Копии сейчас недоступны.'}`,
+        ),
+        null,
+        scheduled,
+      );
+      return false;
+    }
+    this.start('auto', { scheduled });
     return true;
   }
 
@@ -842,7 +988,8 @@ export class BackupsService implements OnModuleInit {
   /** Проверить свой чат для копий строкой (кнопка «Отправить тест»). */
   async testOwnChat(url: string | null): Promise<{ ok: boolean; detail: string }> {
     const s = await this.store.load();
-    const raw = url && !url.includes('•••') ? url : this.store.ownUrl(s);
+    // Пусто или маска сохранённого чата — проверяем сохранённый; иначе — строку из поля, как она есть.
+    const raw = url && url !== this.store.toPublic(s).telegram.ownUrl ? url : this.store.ownUrl(s);
     if (!raw) return { ok: false, detail: 'Укажите чат строкой tgram://…' };
     const d = await this.telegram.resolveTarget({ url: raw });
     if (!d) return { ok: false, detail: 'Строка не похожа на tgram://токен/чат.' };

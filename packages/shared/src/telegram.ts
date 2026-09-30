@@ -6,7 +6,7 @@ import { INCIDENT_KINDS, type IncidentKind } from './incidents.js';
  * Уведомления в Telegram (R6). Назначение задаётся одной строкой-ссылкой `tgram://токен/чат[:тема]` —
  * формат как у Apprise: токен бота от @BotFather, id чата (личный — положительный, группа — `-100…`),
  * номер темы для групп с темами. Назначений сколько угодно, у каждого свой бот. Токен после сохранения
- * не отдаётся наружу никогда: только маска `tgram://•••/чат:тема`.
+ * не отдаётся наружу никогда: только маска — вместо токена три звёздочки (maskTelegramUrl).
  */
 
 export const TELEGRAM_EVENTS = [
@@ -45,8 +45,10 @@ export const TELEGRAM_EVENT_LABELS: Record<TelegramEvent, string> = {
 export const TELEGRAM_EVENT_HINTS: Record<TelegramEvent, string> = {
   incident_crit: 'Сервер или агент недоступен, нода упала, похоже на блокировку.',
   incident_warn: 'Высокая нагрузка, диск заполняется, онлайн упал без подтверждённой блокировки.',
-  needs_confirm: 'Автопочинка предлагает шаг и ждёт подтверждения — или нужно вмешаться вручную.',
-  resolved: 'Инцидент закрыт — сам или после шага. Приходит ответом на исходное сообщение.',
+  needs_confirm:
+    'Автопочинка предлагает шаг и ждёт подтверждения — или нужно вмешаться вручную. Первое сообщение о новом инциденте приходит, даже если этот тумблер выключен: за него отвечают «Критичный инцидент» и «Предупреждение».',
+  resolved:
+    'Инцидент закрыт — сам или после шага. Приходит ответом на исходное сообщение. Короткий сбой, который закончился раньше, чем о нём сообщили, приходит одним тихим сообщением.',
   autofix_started: '«Чиню автоматически»: какой шаг панель запустила сама.',
   fix_failed: 'Что пробовали и что предлагаем дальше.',
   reminder: 'Критичный инцидент всё ещё открыт — напоминание ответом на исходное сообщение.',
@@ -137,7 +139,10 @@ export const TELEGRAM_KINDS_DEFAULT: TelegramKinds = Object.fromEntries(
 /** Через сколько часов напоминать о нерешённом критичном. */
 export const TELEGRAM_REMIND_HOURS = [1, 2, 4, 8, 12, 24] as const;
 export const telegramDeliverySchema = z.object({
-  /** Второй сбой того же сервера за 10 минут — ответом на первое сообщение и без звука. */
+  /**
+   * Второй сбой того же сервера за 10 минут — ответом на первое сообщение и без звука. Критичный сбой
+   * после предупреждения всё равно приходит со звуком: о сбое такой важности телефон ещё не пищал.
+   */
   groupPerServer: z.boolean(),
   /** Звук только у критичных, «ждёт "Да"», входа и напоминаний; остальное приходит тихо. */
   silentWarnings: z.boolean(),
@@ -148,12 +153,19 @@ export const telegramDeliverySchema = z.object({
     .refine((v) => (TELEGRAM_REMIND_HOURS as readonly number[]).includes(v), {
       message: 'Часы из списка',
     }),
+  /**
+   * Расширенное оформление: заголовки и настоящие таблицы (метод Bot API sendRichMessage, с версии 10.1).
+   * Такие сообщения показывают только свежие приложения Telegram, поэтому по умолчанию выключено. Не принял
+   * Telegram оформление — то же сообщение сразу уходит по-старому, тревога не теряется.
+   */
+  rich: z.boolean().default(false),
 });
 export type TelegramDelivery = z.infer<typeof telegramDeliverySchema>;
 export const TELEGRAM_DELIVERY_DEFAULT: TelegramDelivery = {
   groupPerServer: true,
   silentWarnings: true,
   remindHours: 2,
+  rich: false,
 };
 
 /**
@@ -190,6 +202,10 @@ export function parseTelegramUrl(raw: string): TelegramTarget | null {
   return { token, chatId, topic: topic ? Number(topic) : null };
 }
 
+/**
+ * Маска для показа: вместо токена — три звёздочки. Это не ссылка: parseTelegramUrl её не разберёт, поэтому
+ * обратно на сервер маску не отправляют (поле не менялось — его не передают вовсе).
+ */
 export function maskTelegramUrl(chatId: string, topic: number | null): string {
   return `tgram://***/${chatId}${topic !== null ? `:${topic}` : ''}`;
 }
@@ -204,7 +220,7 @@ export type TelegramTestResult = z.infer<typeof telegramTestResultSchema>;
 
 export const telegramDestinationSchema = z.object({
   id: z.string(),
-  /** Маска вместо токена: `tgram://•••/-1002946167407:8`. */
+  /** Маска вместо токена (maskTelegramUrl): три звёздочки, чат и тема — как есть. */
   masked: z.string(),
   chatId: z.string(),
   topic: z.number().int().nullable(),
@@ -212,6 +228,11 @@ export const telegramDestinationSchema = z.object({
   botName: z.string().nullable(),
   chatTitle: z.string().nullable(),
   lastTest: telegramTestResultSchema.nullable(),
+  /**
+   * Последняя настоящая отправка в этот чат (не ручной тест): когда, дошло ли, и если нет — почему.
+   * null — настоящих сообщений в чат ещё не было.
+   */
+  lastDelivery: telegramTestResultSchema.nullable(),
 });
 export type TelegramDestination = z.infer<typeof telegramDestinationSchema>;
 
@@ -221,7 +242,10 @@ export const telegramQuietSchema = z.object({
   enabled: z.boolean(),
   from: hhmm,
   to: hhmm,
-  /** Часовой пояс браузера владельца (IANA), чтобы «23:00» значило его 23:00, а не время сервера. */
+  /**
+   * Часовой пояс браузера владельца (IANA) на момент сохранения — запасной: тихие часы считаются по поясу
+   * панели из «Внешнего вида», а по этому — только пока пояс панели не выбран.
+   */
   timeZone: z.string().min(1).max(64),
 });
 export type TelegramQuiet = z.infer<typeof telegramQuietSchema>;
@@ -244,6 +268,13 @@ export const telegramSettingsSchema = z.object({
   delivery: telegramDeliverySchema,
   /** Прокси маской (пароль скрыт); null — отправка напрямую. */
   proxy: z.string().nullable(),
+  /**
+   * По какому поясу панель считает тихие часы и подписывает время в сообщениях (только чтение): пояс
+   * панели из «Внешнего вида», а пока он не выбран — пояс браузера, сохранённый с тихими часами.
+   */
+  timeZone: z.string(),
+  /** Пояс панели выбран во «Внешнем виде»; false — работает запасной пояс браузера. */
+  timeZoneChosen: z.boolean(),
 });
 export type TelegramSettings = z.infer<typeof telegramSettingsSchema>;
 
@@ -317,6 +348,11 @@ export const telegramTestRequestSchema = z
 
       .refine((v) => v === '' || isValidTelegramProxy(v), { message: 'Неверный формат прокси' })
       .optional(),
+    /**
+     * Прислать образец в расширенном оформлении (как в переключателе сейчас, даже несохранённом): по нему
+     * видно, показывает ли приложение Telegram такие сообщения. Не передано — как в сохранённых настройках.
+     */
+    rich: z.boolean().optional(),
   })
   .refine((v) => Boolean(v.id) !== Boolean(v.url), { message: 'Укажите либо сохранённый чат, либо ссылку.' });
 export type TelegramTestRequest = z.infer<typeof telegramTestRequestSchema>;

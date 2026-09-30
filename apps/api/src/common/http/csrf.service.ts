@@ -6,6 +6,7 @@ import type { NextFunction, Request, Response } from 'express';
 
 import type { Env } from '../../config/env.schema.js';
 import { AuditService } from '../../modules/audit/audit.service.js';
+import { type AnonAuditLimiter, clipPath } from '../../modules/auth/anon-audit.limiter.js';
 import { CookiesService } from './cookies.service.js';
 
 /**
@@ -41,24 +42,18 @@ export class CsrfService {
     return this.utils.generateCsrfToken(req, res, { overwrite: false, validateOnReuse: false });
   }
 
-  /** Express-middleware: на ошибке отвечает problem+json 403 (фильтры Nest сюда не достают). */
-  middleware(): (req: Request, res: Response, next: NextFunction) => void {
+  /**
+   * Express-middleware: на ошибке отвечает problem+json 403 (фильтры Nest сюда не достают).
+   * limiter — предел записей в Журнал от запросов без входа (подключает setupHttp): такой запрос может
+   * прислать кто угодно, и без предела ими заполняется Журнал.
+   */
+  middleware(limiter?: AnonAuditLimiter): (req: Request, res: Response, next: NextFunction) => void {
     return (req, res, next) => {
       this.utils.doubleCsrfProtection(req, res, (err?: unknown) => {
         if (!err) return next();
         const requestId = (req as { id?: string }).id;
         // Middleware живёт до guard-ов и интерсепторов — в Журнал пишем сами (без ожидания).
-        void this.audit
-          ?.record({
-            action: 'auth.csrf.denied',
-            result: 'denied',
-            severity: 'warn',
-            ip: req.ip ?? '',
-            userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '',
-            ...(requestId ? { requestId } : {}),
-            metadata: { method: req.method, path: req.originalUrl },
-          })
-          .catch(() => undefined);
+        void this.recordDenied(req, requestId, limiter).catch(() => undefined);
         res
           .status(403)
           .type('application/problem+json')
@@ -72,6 +67,26 @@ export class CsrfService {
           });
       });
     };
+  }
+
+  /** Путь в записи обрезается: адрес запроса бывает в тысячи символов, а Журнал не очищается. */
+  private async recordDenied(
+    req: Request,
+    requestId: string | undefined,
+    limiter: AnonAuditLimiter | undefined,
+  ): Promise<void> {
+    const ip = req.ip ?? '';
+    const entry = {
+      action: 'auth.csrf.denied',
+      result: 'denied' as const,
+      severity: 'warn' as const,
+      ip,
+      userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '',
+      ...(requestId ? { requestId } : {}),
+      metadata: { method: req.method, path: clipPath(req.originalUrl) },
+    };
+    if (limiter) await limiter.record('request', ip, entry);
+    else await this.audit?.record(entry);
   }
 
   /** Для тестов и отладки: имя cookie. */

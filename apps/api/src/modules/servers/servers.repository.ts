@@ -137,6 +137,16 @@ export class ServersRepository {
     return rows.length;
   }
 
+  /** Отозвать один токен (установка, для которой его выпускали, не удалась); использованный не трогаем. */
+  async revokeToken(id: string): Promise<void> {
+    await this.db
+      .update(enrollmentTokens)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(eq(enrollmentTokens.id, id), isNull(enrollmentTokens.revokedAt), isNull(enrollmentTokens.usedAt)),
+      );
+  }
+
   /** Токен одноразовый: пометить использованным. */
   async markEnrollmentUsed(id: string): Promise<void> {
     await this.db.update(enrollmentTokens).set({ usedAt: new Date() }).where(eq(enrollmentTokens.id, id));

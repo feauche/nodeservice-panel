@@ -7,7 +7,8 @@ import { AgentService } from './agent.service.js';
 
 /**
  * Автопроверка «агент не в сети»: heartbeat молчит дольше порога из настроек → offline (+ Журнал).
- * Тик каждые 10 с; тумблер и порог — Настройки → Автопроверки.
+ * Тик каждые 10 с; тумблер и порог — Настройки → Автопроверки. Обратно «в сети» сервер возвращает
+ * следующий же сигнал агента (AgentService.touch), переподключения для этого не нужно.
  */
 @Injectable()
 export class AgentOfflineJob {
@@ -32,7 +33,11 @@ export class AgentOfflineJob {
       for (const row of await this.servers.list()) {
         if (row.agentStatus !== 'online') continue;
         if (!row.agentLastSeenAt || row.agentLastSeenAt.getTime() < deadline)
-          await this.agents.markOffline(row, `heartbeat молчит дольше ${cfg.agentOfflineAfterSeconds} с`);
+          await this.agents.markOffline(
+            row,
+            `сигнала от агента нет дольше ${cfg.agentOfflineAfterSeconds} с`,
+            new Date(deadline),
+          );
       }
     } finally {
       this.busy = false;

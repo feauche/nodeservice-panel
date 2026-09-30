@@ -27,6 +27,7 @@ import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { SaveBar, SectionHeader, SettingsCard, SettingsRow, Toggle } from './settings-ui';
 import { useTelegramSettings, useTestTelegram, useUpdateTelegram } from './telegram-api';
+import { timeZoneLabel } from './time-zones';
 
 /** Строка чата: сохранённая (по id, токен только маской) или новая (ссылка целиком, пока не сохранили). */
 type Row = { key: string; saved: TelegramDestination } | { key: string; url: string };
@@ -153,6 +154,8 @@ export function NotificationsPage() {
       const res = await test.mutateAsync({
         ...('saved' in r ? { id: r.saved.id } : { url: r.url.trim() }),
         ...(proxyChanged && !badProxy ? { proxy: draft.proxy.trim() } : {}),
+        // Как в переключателе сейчас, даже несохранённом: так образец можно посмотреть до включения.
+        rich: draft.delivery.rich,
       });
       setResults((m) => ({
         ...m,
@@ -208,7 +211,13 @@ export function NotificationsPage() {
             const res = results[r.key];
             const saved = 'saved' in r ? r.saved : null;
             const last = saved?.lastTest ?? null;
-            const statusOk = res ? res.ok : last ? last.ok : null;
+            // Настоящая доставка — из свежего ответа сервера: она меняется сама, без сохранения страницы.
+            const delivery =
+              (saved && q.data?.destinations.find((d) => d.id === saved.id)?.lastDelivery) || null;
+            // Точка — по самому свежему из двух: давний удачный тест не должен гореть зелёным, когда
+            // сегодняшнее сообщение не дошло.
+            const latest = delivery && (!last || delivery.at > last.at) ? delivery : last;
+            const statusOk = res ? res.ok : latest ? latest.ok : null;
             return (
               <div key={r.key} data-testid="tg-row">
                 <div className="flex items-center gap-2">
@@ -300,6 +309,16 @@ export function NotificationsPage() {
                         ' · тест ещё не отправляли'
                       ) : (
                         'Новый чат — сохраните, чтобы начать отправку. Проверить можно сразу.'
+                      )}
+                      {delivery && (
+                        <>
+                          {' · '}
+                          <span className={delivery.ok ? 'text-ok' : 'text-crit'}>
+                            {delivery.ok
+                              ? `последнее сообщение доставлено ${formatAgo(delivery.at)}`
+                              : `последнее сообщение не дошло ${formatAgo(delivery.at)}: ${delivery.detail}`}
+                          </span>
+                        </>
                       )}
                     </>
                   )}
@@ -466,7 +485,7 @@ export function NotificationsPage() {
         <SettingsRow
           label="Один сбой сервера — одно уведомление со звуком"
           htmlFor="tg-group"
-          hint="Второй сбой того же сервера за 10 минут («агент» + «SSH») приходит ответом на первый и без звука."
+          hint="Второй сбой того же сервера за 10 минут («агент» + «SSH») приходит ответом на первый и без звука. Критичный сбой после предупреждения всё равно приходит со звуком."
         >
           <Toggle
             id="tg-group"
@@ -485,6 +504,17 @@ export function NotificationsPage() {
             id="tg-silent"
             checked={draft.delivery.silentWarnings}
             onChange={(v) => setDraft({ ...draft, delivery: { ...draft.delivery, silentWarnings: v } })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label="Расширенное оформление"
+          htmlFor="tg-rich"
+          hint="Необязательно. Сообщения с заголовками и таблицами — например, итоги проверки порта ноды с разных серверов. Их показывают только свежие приложения Telegram: в старом вместо сообщения будет надпись «не поддерживается». Перед включением нажмите «Отправить тестовое сообщение» у чата — придёт образец. Если Telegram такое оформление не примет, сообщение сразу уйдёт в обычном виде."
+        >
+          <Toggle
+            id="tg-rich"
+            checked={draft.delivery.rich}
+            onChange={(v) => setDraft({ ...draft, delivery: { ...draft.delivery, rich: v } })}
           />
         </SettingsRow>
         <SettingsRow
@@ -520,12 +550,16 @@ export function NotificationsPage() {
 
       <SettingsCard
         title="Тихие часы"
-        hint="Ночью приходят только критичные, остальное — утренней сводкой одним сообщением."
+        hint="Ночью сразу приходят только критичные инциденты и события входа в панель, остальное — утренней сводкой одним сообщением."
       >
         <SettingsRow
           label="Тихие часы"
           htmlFor="tg-quiet"
-          hint={`С ${draft.quiet.from} до ${draft.quiet.to} по вашему времени.`}
+          hint={
+            q.data.timeZoneChosen
+              ? `С ${draft.quiet.from} до ${draft.quiet.to} по часовому поясу панели (${timeZoneLabel(q.data.timeZone)}). Пояс выбирается в «Настройки → Внешний вид».`
+              : `С ${draft.quiet.from} до ${draft.quiet.to} по поясу браузера, из которого в последний раз сохраняли эту страницу (${timeZoneLabel(q.data.timeZone)}). Чтобы тихие часы не зависели от браузера, выберите часовой пояс панели в «Настройки → Внешний вид».`
+          }
         >
           <span className={cn('flex items-center gap-2', !draft.quiet.enabled && 'opacity-50')}>
             <select

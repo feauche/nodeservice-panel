@@ -65,6 +65,8 @@ export const servers = pgTable('servers', {
   nodeWatch: text('node_watch').notNull().default('auto'),
   /** Последнее состояние контейнера по зонду: running / stopped / none. */
   nodeState: text('node_state'),
+  /** Какая нода Remnawave работает на сервере: auto / none / идентификатор ноды (миграция 0046). */
+  nodeLink: text('node_link').notNull().default('auto'),
   /* факты (обновляются при каждой успешной проверке SSH) */
   hostname: text('hostname'),
   os: text('os'),
@@ -73,6 +75,8 @@ export const servers = pgTable('servers', {
   kernel: text('kernel'),
   cpuCores: integer('cpu_cores'),
   memoryMb: integer('memory_mb'),
+  /** Внешние IP-адреса на интерфейсах сервера (миграция 0046): по ним нода находит свой сервер. */
+  addresses: jsonb('addresses').$type<string[]>().notNull().default([]),
   /** SHA256-отпечаток host key (TOFU): смена → 409, доверить можно только явно. */
   hostKeyFp: text('host_key_fp'),
   agentStatus: text('agent_status').notNull().default('not_installed'),

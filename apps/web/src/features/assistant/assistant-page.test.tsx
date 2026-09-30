@@ -117,6 +117,27 @@ describe('AssistantPage', () => {
       expect(dotOf('nl-ams-02')).toBe('crit');
     });
 
+    it('точка у имени: SSH не пустил при живом агенте — «внимание»; остановленная нода — «сбой», не «офлайн»', async () => {
+      const [first, second] = mockServers.items;
+      if (!first || !second) throw new Error('нет мок-серверов');
+      mockServers.items = [
+        { ...first, sshOk: false },
+        { ...second, sshOk: true, agentStatus: 'online', node: 'stopped' },
+      ];
+      const { list } = await ask('а по каким серверам больше инцидентов');
+      const linkOf = (name: string) =>
+        within(list)
+          .getAllByRole('button', { name })
+          .find((b) => b.querySelector('[data-health]'));
+      await waitFor(() =>
+        expect(linkOf('de-fra-01')?.querySelector('[data-health]')?.getAttribute('data-health')).toBe('warn'),
+      );
+      expect(linkOf('de-fra-01')).toHaveAttribute('title', 'Требует внимания');
+      expect(linkOf('nl-ams-02')?.querySelector('[data-health]')?.getAttribute('data-health')).toBe('crit');
+      expect(linkOf('nl-ams-02')).toHaveAttribute('title', 'Сбой');
+      expect(within(list).queryByTitle(/офлайн/i)).not.toBeInTheDocument();
+    });
+
     it('клик по имени с точкой открывает карточку сервера', async () => {
       const { user, list } = await ask('а по каким серверам больше инцидентов');
       await user.click(await within(list).findByRole('button', { name: 'nl-ams-02' }));

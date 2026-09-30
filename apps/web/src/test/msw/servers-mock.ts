@@ -78,6 +78,7 @@ function makeServer(patch: Partial<Server>): Server {
     notes: null,
     providerId: null,
     nodeWatch: 'auto',
+    nodeLink: 'auto',
     country: { ...DEFAULT_SERVER_COUNTRY },
     profile: { ...DEFAULT_SERVER_PROFILE },
     inventory: null,

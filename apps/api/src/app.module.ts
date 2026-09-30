@@ -19,6 +19,7 @@ import { AssistantModule } from './modules/assistant/assistant.module.js';
 import { CLS_REQUEST, requestInfo } from './modules/audit/audit.context.js';
 import { AuditModule } from './modules/audit/audit.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
+import { incomingRequestId } from './modules/auth/request-context.js';
 import { BackupsModule } from './modules/backups/backups.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { CapacityModule } from './modules/capacity/capacity.module.js';
@@ -45,8 +46,8 @@ import { TerminalModule } from './modules/terminal/terminal.module.js';
     LoggerModule.forRoot({
       pinoHttp: {
         level: process.env.LOG_LEVEL ?? 'info',
-        // requestId сквозной: заголовок от Caddy/клиента или новый uuid
-        genReqId: (req) => (req.headers['x-request-id'] as string | undefined) ?? randomUUID(),
+        // requestId сквозной: заголовок от Caddy/клиента (только в формате uuid) или новый uuid
+        genReqId: (req) => incomingRequestId(req.headers['x-request-id']) ?? randomUUID(),
         // секреты никогда не попадают в логи
         redact: {
           paths: [

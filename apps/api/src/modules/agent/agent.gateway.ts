@@ -1,6 +1,6 @@
 import { createPublicKey, verify as edVerify, randomBytes, randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
-import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import {
   AGENT_MSG,
   AGENT_PROTOCOL_VERSION,
@@ -16,6 +16,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import type { ServerRow } from '../../infra/db/schema/index.js';
 import { WsUpgradeService } from '../../infra/ws/ws-upgrade.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { ServersService } from '../servers/servers.service.js';
 import { AgentService } from './agent.service.js';
 
 export const AGENT_WS_PATH = '/api/agent/v1/ws';
@@ -23,6 +24,19 @@ export const AGENT_WS_PATH = '/api/agent/v1/ws';
 const AUTH_TIMEOUT_MS = 10_000;
 const PING_INTERVAL_MS = 30_000;
 const MAX_MESSAGE_BYTES = 64 * 1024;
+/**
+ * Код закрытия «сервер удалён из панели». Отдельный от отказа входа (4403): агенту здесь больше нечего
+ * делать, и переподключаться не нужно — следующая версия агента по этому коду сможет остановиться совсем.
+ */
+export const CLOSE_SERVER_DELETED = 4410;
+/**
+ * Отвергнутый агент (сервер удалён, старая копия после перепривязки) перезапускается и стучится каждые
+ * ~5 секунд. «Подключение агента отклонено» пишем в Журнал не чаще раза в час на сервер, с числом попыток.
+ */
+const AUTH_FAILED_LOG_EVERY_MS = 60 * 60_000;
+/** Сколько серверов помним по отдельности. Шлюз открыт всему интернету: сверх этого отказы считаем вместе. */
+const AUTH_FAILED_TRACK_MAX = 500;
+const AUTH_FAILED_OTHERS = '*';
 
 /** DER-префикс SPKI для ed25519: раскодированный base64-ключ агента (32 байта) собираем в KeyObject. */
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
@@ -40,18 +54,25 @@ interface ConnState {
  * Аутентификация — challenge-response подписью ed25519 (ключ запиннен при энроллменте).
  */
 @Injectable()
-export class AgentGateway implements OnModuleDestroy {
+export class AgentGateway implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(AgentGateway.name);
   private wss: WebSocketServer | null = null;
   private ping: NodeJS.Timeout | null = null;
   /** Актуальное соединение каждого сервера: переподключение вытесняет старое без ложного offline. */
   private readonly active = new Map<string, WebSocket>();
+  /** Когда по серверу последний раз писали отказ в Журнал и сколько отказов с тех пор промолчали. */
+  private readonly authFailures = new Map<string, { loggedAt: number; skipped: number }>();
 
   constructor(
     private readonly agents: AgentService,
     private readonly wsUpgrade: WsUpgradeService,
     private readonly audit: AuditService,
+    private readonly servers: ServersService,
   ) {}
+
+  onModuleInit(): void {
+    this.servers.onDeleted((id) => this.dropServer(id));
+  }
 
   register(): void {
     // Сообщения агента — несколько сотен байт; без предела библиотека принимает до 100 МБ ещё до входа.
@@ -155,17 +176,24 @@ export class AgentGateway implements OnModuleDestroy {
       const prev = this.active.get(server.id);
       this.active.set(server.id, ws);
       if (prev && prev !== ws) prev.terminate();
+      // Агент вошёл — прежние отказы этому серверу закончились, счёт начинается заново.
+      this.authFailures.delete(server.id);
       await this.agents.markOnline(server, version);
       this.send(ws, AGENT_MSG.welcome, await this.agents.welcomeFor(server));
       return;
     }
 
-    if (state.stage === 'ready' && state.server) {
-      if (env.type === AGENT_MSG.heartbeat) return void (await this.agents.touch(state.server.id));
+    if (state.stage === 'ready' && state.server && state.version) {
+      if (env.type === AGENT_MSG.heartbeat) {
+        if (!(await this.agents.touch(state.server.id, state.version)))
+          this.closeDeleted(ws, state.server.id);
+        return;
+      }
       if (env.type === AGENT_MSG.metrics) {
         const metrics = agentMetricsSchema.safeParse(env.payload);
         if (!metrics.success) return this.sendError(ws, 'bad-envelope', 'Неверный payload metrics');
-        await this.agents.handleMetrics(state.server, metrics.data);
+        if (!(await this.agents.handleMetrics(state.server, state.version, metrics.data)))
+          this.closeDeleted(ws, state.server.id);
         return;
       }
     }
@@ -173,8 +201,39 @@ export class AgentGateway implements OnModuleDestroy {
     this.sendError(ws, 'protocol', `Сообщение «${env.type}» не ожидается на этой стадии`);
   }
 
-  /** Кто-то представился агентом, но не прошёл: чужой serverId или другой ключ — это важно видеть в Журнале. */
+  /** Сервер удалили из панели: соединение его агента закрываем сразу, а не ждём, пока оно оборвётся само. */
+  dropServer(serverId: string): void {
+    const ws = this.active.get(serverId);
+    if (ws) this.closeDeleted(ws, serverId);
+  }
+
+  /** Агенту говорим причину (её видно в его журнале на сервере) и закрываем соединение особым кодом. */
+  private closeDeleted(ws: WebSocket, serverId: string): void {
+    // Из списка убираем заранее: обработчик закрытия не должен писать «пропал со связи» про удалённый сервер.
+    if (this.active.get(serverId) === ws) this.active.delete(serverId);
+    this.sendError(ws, 'unknown-server', 'Сервер удалён из панели');
+    ws.close(CLOSE_SERVER_DELETED, 'server deleted');
+  }
+
+  /**
+   * Кто-то представился агентом, но не прошёл: чужой serverId или другой ключ — это важно видеть в Журнале.
+   * Но не каждую попытку: запись — раз в час на сервер, `attempts` — сколько отказов было с прошлой записи
+   * (вместе с этим).
+   */
   private async authFailed(code: string, serverId: string, serverName: string | null): Promise<void> {
+    const now = Date.now();
+    let key = serverId;
+    if (!this.authFailures.has(key) && this.authFailures.size >= AUTH_FAILED_TRACK_MAX) {
+      for (const [k, v] of this.authFailures)
+        if (now - v.loggedAt >= AUTH_FAILED_LOG_EVERY_MS) this.authFailures.delete(k);
+      if (this.authFailures.size >= AUTH_FAILED_TRACK_MAX) key = AUTH_FAILED_OTHERS;
+    }
+    const last = this.authFailures.get(key);
+    if (last && now - last.loggedAt < AUTH_FAILED_LOG_EVERY_MS) {
+      last.skipped += 1;
+      return;
+    }
+    this.authFailures.set(key, { loggedAt: now, skipped: 0 });
     await this.audit
       .record({
         action: 'server.agent.auth_failed',
@@ -183,7 +242,7 @@ export class AgentGateway implements OnModuleDestroy {
         source: 'auto',
         actor: { type: 'anonymous', id: null, display: 'агент' },
         target: { type: 'server', id: serverId, display: serverName ?? serverId },
-        metadata: { code },
+        metadata: { code, attempts: (last?.skipped ?? 0) + 1 },
       })
       .catch(() => undefined);
   }

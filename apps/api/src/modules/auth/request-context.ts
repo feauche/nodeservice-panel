@@ -19,6 +19,17 @@ export function requestContext(req: Request): RequestContext {
   };
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Идентификатор запроса из входящего заголовка: только UUID. Заголовок присылает кто угодно, а значение
+ * попадает в Журнал и в его поиск — произвольную строку (хоть в тысячи символов) туда не пускаем.
+ * undefined — панель выдаст свой идентификатор.
+ */
+export function incomingRequestId(header: unknown): string | undefined {
+  return typeof header === 'string' && UUID_RE.test(header) ? header.toLowerCase() : undefined;
+}
+
 /** Префикс IP для записи доверенного устройства: /24 для IPv4, /64 для IPv6. */
 export function ipPrefix(ip: string): string {
   const v4 = ip.match(/^(?:::ffff:)?(\d+\.\d+\.\d+)\.\d+$/);

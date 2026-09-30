@@ -21,7 +21,10 @@ describe('OverviewPage (по демо)', () => {
   it('полоса здоровья: счётчики и процент из состояния серверов', async () => {
     renderPage(OverviewPage, '/');
     expect(await screen.findByText('1 в норме')).toBeInTheDocument();
-    expect(screen.getByText('1 офлайн')).toBeInTheDocument();
+    // nl-ams-02: агента нет и SSH не пустил. «Офлайн» панель не пишет — выключен ли сервер, она не знает.
+    expect(screen.getByText('1 со сбоем')).toBeInTheDocument();
+    expect(screen.getByText('Есть сбой')).toBeInTheDocument();
+    expect(screen.queryByText(/офлайн/i)).not.toBeInTheDocument();
     expect(screen.getByText('50%')).toBeInTheDocument();
   });
 
@@ -68,12 +71,106 @@ describe('OverviewPage (по демо)', () => {
     expect(screen.getByText('Трафик появится, когда агент выйдет на связь.')).toBeInTheDocument();
   });
 
-  it('«Требует внимания»: сервер с недоступным SSH в списке с причиной и пилюлей', async () => {
+  it('«Требует внимания»: сервер без агента, до которого не дойти по SSH, — «Недоступен» с причиной', async () => {
     renderPage(OverviewPage, '/');
     const panel = (await screen.findByText('Требует внимания')).closest('section') as HTMLElement;
     expect(within(panel).getByText('nl-ams-02')).toBeInTheDocument();
-    expect(within(panel).getByText('SSH недоступен')).toBeInTheDocument();
-    expect(within(panel).getByText('Офлайн')).toBeInTheDocument();
+    expect(within(panel).getByText('Недоступен: SSH не пускает, агента нет')).toBeInTheDocument();
+    expect(within(panel).getByText('Сбой')).toBeInTheDocument();
+    // Дела уже загружены (дело о CPU на месте), а открытое «SSH недоступен» о том же сервере второй
+    // строкой не показано: о связи уже говорит строка сервера.
+    expect(await within(panel).findByText(/Высокая нагрузка на CPU/)).toBeInTheDocument();
+    expect(within(panel).queryByText('SSH недоступен')).not.toBeInTheDocument();
+    expect(within(panel).getAllByText('nl-ams-02')).toHaveLength(1);
+  });
+
+  it('один признак связи из двух — «Внимание» с причиной: сервер работает, в «сбой» он не попадает', async () => {
+    const [first, second] = mockServers.items;
+    if (!first || !second) throw new Error('нет мок-серверов');
+    mockIncidents.items = [];
+    mockServers.items = [
+      // SSH не пустил, агент на связи.
+      { ...first, sshOk: false },
+      // Агент молчит, по SSH панель заходит.
+      { ...second, sshOk: true, agentStatus: 'offline' },
+    ];
+    renderPage(OverviewPage, '/');
+    expect(await screen.findByText('2 внимание')).toBeInTheDocument();
+    expect(screen.getByText('0 со сбоем')).toBeInTheDocument();
+    expect(screen.getByText('Стабильно')).toBeInTheDocument();
+    const panel = screen.getByText('Требует внимания').closest('section') as HTMLElement;
+    expect(within(panel).getByText('SSH не пускает')).toBeInTheDocument();
+    expect(within(panel).getByText('Агент не на связи')).toBeInTheDocument();
+    expect(within(panel).getAllByText('Внимание')).toHaveLength(2);
+    expect(within(panel).queryByText('Сбой')).not.toBeInTheDocument();
+  });
+
+  it('остановленная нода — причина в «Требует внимания» и сервер «со сбоем», а не «в норме»', async () => {
+    const [first, second] = mockServers.items;
+    if (!first || !second) throw new Error('нет мок-серверов');
+    mockIncidents.items = [];
+    mockServers.items = [
+      { ...first, node: 'stopped' },
+      { ...second, sshOk: true, agentStatus: 'online' },
+    ];
+    renderPage(OverviewPage, '/');
+    expect(await screen.findByText('1 со сбоем')).toBeInTheDocument();
+    expect(screen.getByText('1 в норме')).toBeInTheDocument();
+    const panel = screen.getByText('Требует внимания').closest('section') as HTMLElement;
+    expect(within(panel).getByText('de-fra-01')).toBeInTheDocument();
+    expect(within(panel).getByText('Нода остановлена')).toBeInTheDocument();
+    expect(within(panel).getByText('Сбой')).toBeInTheDocument();
+  });
+
+  it('остановленная нода с открытым делом: одна строка — дело с починкой, без второй о том же', async () => {
+    const [first, second] = mockServers.items;
+    const tpl = mockIncidents.items.find((i) => i.kind === 'ssh_down');
+    if (!first || !second || !tpl) throw new Error('нет мок-данных');
+    mockServers.items = [
+      { ...first, node: 'stopped' },
+      { ...second, sshOk: true, agentStatus: 'online' },
+    ];
+    mockIncidents.items = [
+      {
+        ...tpl,
+        serverId: first.id,
+        serverName: first.name,
+        kind: 'node_down',
+        title: `Контейнер ноды не запущен · ${first.name}`,
+        detail: 'Контейнер ноды остановлен или упал — нода не работает.',
+      },
+    ];
+    renderPage(OverviewPage, '/');
+    // В счётчиках сервер всё равно «со сбоем»: дело не отменяет состояния.
+    expect(await screen.findByText('1 со сбоем')).toBeInTheDocument();
+    const panel = screen.getByText('Требует внимания').closest('section') as HTMLElement;
+    expect(await within(panel).findByText('Контейнер ноды не запущен')).toBeInTheDocument();
+    expect(within(panel).getAllByText('de-fra-01')).toHaveLength(1);
+    expect(within(panel).queryByText('Нода остановлена')).not.toBeInTheDocument();
+  });
+
+  it('нода остановлена и молчит агент: дело о связи не прячется за строкой о ноде', async () => {
+    const [first, second] = mockServers.items;
+    const tpl = mockIncidents.items.find((i) => i.kind === 'ssh_down');
+    if (!first || !second || !tpl) throw new Error('нет мок-данных');
+    mockServers.items = [
+      { ...first, node: 'stopped', agentStatus: 'offline' },
+      { ...second, sshOk: true, agentStatus: 'online' },
+    ];
+    mockIncidents.items = [
+      {
+        ...tpl,
+        serverId: first.id,
+        serverName: first.name,
+        kind: 'agent_offline',
+        title: `Агент не в сети · ${first.name}`,
+        detail: 'Агент не выходит на связь — панель не получает метрики.',
+      },
+    ];
+    renderPage(OverviewPage, '/');
+    const panel = (await screen.findByText('Требует внимания')).closest('section') as HTMLElement;
+    expect(await within(panel).findByText('Агент не в сети')).toBeInTheDocument();
+    expect(within(panel).getByText('Нода остановлена')).toBeInTheDocument();
   });
 
   it('последние события Журнала с ссылкой', async () => {

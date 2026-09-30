@@ -2,7 +2,7 @@ import type { ConfigService } from '@nestjs/config';
 import { describe, expect, it } from 'vitest';
 
 import type { Env } from '../../config/env.schema.js';
-import { CryptoService, derivePepper } from './crypto.service.js';
+import { CryptoService, derivePepper, PASSWORD_HASH_CONCURRENCY } from './crypto.service.js';
 
 function make(version = 1, key = 'ab'.repeat(32), extra: Partial<Env> = {}): CryptoService {
   const values: Partial<Env> = {
@@ -37,6 +37,31 @@ describe('CryptoService', () => {
     expect(derivePepper('cd'.repeat(32), 'x')).toEqual(Buffer.from('cd'.repeat(32), 'hex'));
     expect(derivePepper(undefined, 'x')).toHaveLength(32);
     expect(derivePepper(undefined, 'x')).not.toEqual(derivePepper(undefined, 'y'));
+  });
+
+  it('проверок пароля одновременно не больше двух: остальные ждут в очереди (по 128 МиБ на каждую)', async () => {
+    expect(PASSWORD_HASH_CONCURRENCY).toBe(2);
+    const hash = await svc.hashPassword('correct horse battery staple');
+    expect(svc.passwordChecksWaiting).toBe(0);
+    // Пять операций разом, в том числе с другого экземпляра сервиса: предел общий на процесс.
+    const other = make();
+    const all = [
+      svc.verifyPassword(hash, 'correct horse battery staple'),
+      svc.verifyPassword(hash, 'wrong'),
+      other.verifyPassword(hash, 'correct horse battery staple'),
+      svc.verifyPassword('garbage', 'wrong'),
+      svc.hashPassword('another long passphrase'),
+    ];
+    expect(svc.passwordChecksWaiting).toBe(3);
+    expect(other.passwordChecksWaiting).toBe(3);
+    const [a, b, c, d, e] = await Promise.all(all);
+    expect([a, b, c, d]).toEqual([true, false, true, false]);
+    expect(e).toMatch(/^\$argon2id\$/);
+    // очередь разобрана, места свободны — в том числе после проверки, которая закончилась ошибкой
+    expect(svc.passwordChecksWaiting).toBe(0);
+    expect(await svc.verifyPassword(hash, 'correct horse battery staple')).toBe(true);
+    expect(await svc.verifyAgainstDummy('anything')).toBe(false);
+    expect(svc.passwordChecksWaiting).toBe(0);
   });
 
   it('verifyAgainstDummy всегда false', async () => {

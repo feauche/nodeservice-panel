@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetMockState } from '@/test/msw/handlers';
+import { mockRemnawave } from '@/test/msw/remnawave-mock';
 import { mockServers, seedServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
 import { ServerModalHost } from './server-modal-host';
@@ -21,6 +22,22 @@ async function openProfile() {
 }
 
 const server = () => mockServers.items[0] as (typeof mockServers.items)[number];
+
+const NODES = [
+  {
+    uuid: '0192f200-0000-7000-8000-000000000001',
+    name: 'bridge',
+    address: '203.0.113.7',
+    countryCode: 'DE',
+    isConnected: true,
+    isDisabled: false,
+    isConnecting: false,
+    lastStatusMessage: null,
+    usersOnline: 42,
+    trafficUsedBytes: null,
+    trafficLimitBytes: null,
+  },
+];
 
 describe('вкладка «Профиль» (J3, A5 + R2 + C3)', () => {
   beforeEach(() => {
@@ -119,6 +136,76 @@ describe('вкладка «Профиль» (J3, A5 + R2 + C3)', () => {
       'true',
     );
     expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeDisabled();
+  });
+
+  describe('какая это нода в Remnawave', () => {
+    const connect = (nodes = NODES) => {
+      mockRemnawave.connected = true;
+      mockRemnawave.domain = 'vpn-panel.example.com';
+      mockRemnawave.nodes = nodes;
+    };
+    const field = (dialog: HTMLElement) =>
+      within(dialog).getByRole('combobox', { name: 'Какая это нода в Remnawave' });
+
+    it('по умолчанию панель ищет ноду сама и говорит, какую нашла и как', async () => {
+      // Адрес сервера de-fra-01 (203.0.113.7) совпадает с адресом ноды «bridge».
+      connect();
+      const { dialog } = await openProfile();
+      expect(field(dialog)).toHaveTextContent('Определять автоматически');
+      expect(
+        await within(dialog).findByText(/Сейчас: «bridge» — найдена по адресу сервера\./),
+      ).toBeInTheDocument();
+      expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeDisabled();
+    });
+
+    it('нода не нашлась — подсказка говорит, что делать и чем это грозит', async () => {
+      connect([{ ...NODES[0], address: '201.34.145.175' } as (typeof NODES)[number]]);
+      const { dialog } = await openProfile();
+      expect(
+        await within(dialog).findByText(
+          /Сейчас нода не найдена: адрес этого сервера не совпал ни с одной нодой Remnawave\. Выберите её в списке/,
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('ноду можно выбрать вручную; выбор сохраняется вместе с профилем', async () => {
+      connect([{ ...NODES[0], address: '201.34.145.175' } as (typeof NODES)[number]]);
+      const { dialog } = await openProfile();
+      const user = userEvent.setup();
+      await user.click(field(dialog));
+      const list = await screen.findByRole('listbox');
+      // Два постоянных пункта и ноды Remnawave: название и адрес.
+      expect(within(list).getByRole('option', { name: 'Определять автоматически' })).toBeInTheDocument();
+      expect(within(list).getByRole('option', { name: 'Нет ноды' })).toBeInTheDocument();
+      await user.click(within(list).getByRole('option', { name: 'bridge' }));
+      expect(field(dialog)).toHaveTextContent('bridge');
+      expect(within(dialog).getByText(/Выбрана вручную\./)).toBeInTheDocument();
+      await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
+      await waitFor(() => expect(server().nodeLink).toBe(NODES[0]?.uuid));
+      await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeDisabled());
+    });
+
+    it('«Нет ноды» и отсутствие Remnawave объяснены', async () => {
+      const { dialog } = await openProfile();
+      const user = userEvent.setup();
+      // Remnawave не подключена: выбирать не из чего, и панель говорит об этом.
+      expect(
+        await within(dialog).findByText(/Remnawave не подключена — выбирать пока не из чего/),
+      ).toBeInTheDocument();
+      await user.click(field(dialog));
+      await user.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'Нет ноды' }));
+      expect(
+        within(dialog).getByText(/Ноды Remnawave на этом сервере нет: онлайн на карточке не показывается/),
+      ).toBeInTheDocument();
+      expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeEnabled();
+    });
+
+    it('выбранной вручную ноды больше нет в Remnawave — панель говорит об этом, а не молчит', async () => {
+      connect();
+      (server() as { nodeLink: string }).nodeLink = 'deleted-node';
+      const { dialog } = await openProfile();
+      expect(await within(dialog).findByText(/Выбранной ноды больше нет в Remnawave/)).toBeInTheDocument();
+    });
   });
 
   it('слежение за нодой сохраняется вместе с профилем одним запросом', async () => {

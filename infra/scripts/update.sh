@@ -1,6 +1,68 @@
 #!/usr/bin/env bash
 # Обновление панели: бэкап → git fetch → сборка нового образа api → замена с сохранением
 # предыдущего образа для отката (nodeservice rollback). Миграции применяет сам api при старте.
+# После удачного обновления прежние образы панели, кроме текущего и отката, удаляются с диска.
+
+# Образ api получает тег по коммиту, поэтому каждое обновление оставляло на диске прежний образ (сотни МБ):
+# `docker image prune` убирает только образы без тега, и диск сервера панели постепенно заполнялся.
+# После удачного обновления оставляем два образа — текущий и точку отката (nodeservice-api:prev).
+#
+# stale_api_images — какие образы удалить. stdin: строки «ID репозиторий:тег», как их печатает
+# `docker images --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}}'`; $1 — ID текущего образа,
+# $2 — ID образа отката (пусто, если его нет). stdout: теги на удаление, по одному в строке.
+# Сравнение по ID: у образа отката остаётся и прежний тег по коммиту — он указывает на тот же образ.
+# Текущий образ неизвестен или его нет в списке (значит, список читается не так, как мы думаем) — не
+# удаляем ничего: лучше лишние гигабайты, чем панель без образа или без точки отката.
+stale_api_images() {
+    local cur_id="${1:-}" prev_id="${2:-}" list id ref seen=""
+    [[ -n "$cur_id" ]] || return 0
+    list=$(cat)
+    while read -r id ref; do
+        if [[ "$id" == "$cur_id" ]]; then seen=1; fi
+    done <<<"$list"
+    [[ -n "$seen" ]] || return 0
+    while read -r id ref; do
+        [[ -n "$id" && -n "$ref" ]] || continue
+        # Образ без тега по имени не удалить — такие убирает `docker image prune`.
+        [[ "$ref" == *"<none>"* ]] && continue
+        [[ "$id" == "$cur_id" || "$id" == "$prev_id" ]] && continue
+        printf '%s\n' "$ref"
+    done <<<"$list"
+    return 0
+}
+
+# Чистка после удачного обновления: прежние образы панели (кроме текущего и отката), образы без тега и кэш
+# сборки старше недели — свежий кэш остаётся, чтобы следующая сборка шла быстро. Ошибка чистки обновление
+# неудачным не делает: всё под `|| true`. Берёт COMPOSE и цвета сообщений из основной части скрипта.
+cleanup_old_images() {
+    local cur repo cur_id="" prev_id list="" stale="" ref removed=0
+    cur=$("${COMPOSE[@]}" config --images 2>/dev/null | grep nodeservice-api || true)
+    repo="${cur%:*}"
+    if [[ -n "$cur" ]]; then
+        cur_id=$(docker image inspect -f '{{.Id}}' "$cur" 2>/dev/null || true)
+        list=$(docker images --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}}' "$repo" 2>/dev/null || true)
+    fi
+    prev_id=$(docker image inspect -f '{{.Id}}' nodeservice-api:prev 2>/dev/null || true)
+    if [[ -z "$cur_id" || $'\n'"$list" != *$'\n'"$cur_id "* ]]; then
+        # Молча пропускать нельзя: иначе диск снова начнёт заполняться, и этого никто не заметит.
+        echo -e "${Y:-}Прежние версии панели не удаляю: не удалось определить текущий образ.${N:-}"
+    else
+        stale=$(stale_api_images "$cur_id" "$prev_id" <<<"$list" || true)
+        while IFS= read -r ref; do
+            [[ -n "$ref" ]] || continue
+            if docker rmi "$ref" >/dev/null 2>&1; then removed=$((removed + 1)); fi
+        done <<<"$stale"
+    fi
+    docker image prune -f >/dev/null 2>&1 || true
+    docker builder prune -f --filter until=168h >/dev/null 2>&1 || true
+    if (( removed > 0 )); then echo -e "${G:-}Удалено прежних версий панели с диска: $removed.${N:-}"; fi
+    return 0
+}
+
+# Проверка функций без обновления: `NODESERVICE_UPDATE_LIB=1 source update.sh` — только определения выше,
+# без настроек оболочки и переменных (COMPOSE для cleanup_old_images тогда задаёт сам проверяющий).
+if [[ -n "${NODESERVICE_UPDATE_LIB:-}" ]]; then return 0 2>/dev/null || exit 0; fi
+
 set -euo pipefail
 APP_DIR="${NODESERVICE_DIR:-/opt/nodeservice}"
 export NODESERVICE_DIR="$APP_DIR"
@@ -119,5 +181,5 @@ if [[ "$st" != "healthy" ]]; then
     echo -e "${Y}api не поднялся после обновления (статус: $st).${N}"
     die "Откат на предыдущий образ: nodeservice rollback"
 fi
-docker image prune -f >/dev/null 2>&1 || true
+cleanup_old_images || true
 echo -e "${G}Обновлено: $before → $after.${N} Откат при необходимости: nodeservice rollback"

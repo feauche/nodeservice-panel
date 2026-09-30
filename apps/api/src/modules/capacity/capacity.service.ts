@@ -16,6 +16,7 @@ import { AuditService } from '../audit/audit.service.js';
 import { NODE_ONLINE_METRIC } from '../fleet-stats/fleet-stats.service.js';
 import type { VmMatrixSeries } from '../metrics/vm-reader.service.js';
 import { VmReaderService } from '../metrics/vm-reader.service.js';
+import { NodeLinkService } from '../remnawave/node-link.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersRepository } from '../servers/servers.repository.js';
 import { ServersService } from '../servers/servers.service.js';
@@ -71,6 +72,7 @@ export class CapacityService {
     private readonly servers: ServersService,
     private readonly ssh: SshService,
     private readonly audit: AuditService,
+    private readonly nodeLinks: NodeLinkService,
   ) {}
 
   async get(): Promise<Capacity> {
@@ -234,9 +236,13 @@ export class CapacityService {
     const t: number[] = [];
     for (let x = start; x <= end; x += STEP) t.push(x);
 
-    // Онлайн ноды → сервер: по адресу ноды в Remnawave; мосту — сумма выходов, что за ним.
+    // Онлайн ноды → сервер: по общей связи «сервер ↔ нода» (адрес, IP, выбор в профиле); мосту — сумма
+    // выходов, что за ним. У ноды с несколькими записями одной машины онлайн идёт основной, чтобы не удвоить.
     const onlineByNode = grid(online, 'node_uuid');
-    const hostOf = new Map(rows.map((r) => [r.host.toLowerCase(), r.id]));
+    const nodeLinks = await this.nodeLinks.resolve(
+      rows.map((r) => this.servers.toDto(r)),
+      nodes,
+    );
     const serverOnline = new Map<string, Map<number, number>>();
     const add = (id: string, m: Map<number, number>) => {
       const cur = serverOnline.get(id) ?? new Map<number, number>();
@@ -245,7 +251,7 @@ export class CapacityService {
     };
     const nodeServers = new Set<string>();
     for (const n of nodes) {
-      const id = hostOf.get(n.address.toLowerCase());
+      const id = nodeLinks.serverIdsOf(n.uuid)[0];
       const m = onlineByNode.get(n.uuid);
       if (id) nodeServers.add(id);
       if (id && m) add(id, m);

@@ -80,6 +80,8 @@ export interface ConnFields {
 interface ProfileFields {
   profile: ServerProfile;
   nodeWatch: NodeWatch;
+  /** Какая нода Remnawave на сервере: «auto», «none» или идентификатор выбранной ноды. */
+  nodeLink: string;
 }
 
 const splitTags = (raw: string) =>
@@ -107,8 +109,12 @@ const connKey = (c: ConnFields) =>
     c.notes.trim(),
     c.providerId,
   ]);
-const profileOf = (s: Server): ProfileFields => ({ profile: canon(s.profile), nodeWatch: s.nodeWatch });
-const profileKey = (p: ProfileFields) => JSON.stringify([canon(p.profile), p.nodeWatch]);
+const profileOf = (s: Server): ProfileFields => ({
+  profile: canon(s.profile),
+  nodeWatch: s.nodeWatch,
+  nodeLink: s.nodeLink,
+});
+const profileKey = (p: ProfileFields) => JSON.stringify([canon(p.profile), p.nodeWatch, p.nodeLink]);
 
 /**
  * Черновик поверх сохранённого. Если сохранённое поменялось со стороны (Джарвис, другая вкладка браузера),
@@ -235,6 +241,7 @@ export function useServerEdit(server: Server, onConnectionInvalid: () => void) {
           : null,
       };
       patch.nodeWatch = prof.value.nodeWatch;
+      patch.nodeLink = prof.value.nodeLink;
     }
     try {
       const next = await update.mutateAsync({ id: server.id, patch });
@@ -295,6 +302,8 @@ export function useServerEdit(server: Server, onConnectionInvalid: () => void) {
       upstreamError: errors.upstream ?? null,
       nodeWatch: prof.value.nodeWatch,
       setNodeWatch: (nodeWatch: NodeWatch) => prof.update((p) => ({ ...p, nodeWatch })),
+      nodeLink: prof.value.nodeLink,
+      setNodeLink: (nodeLink: string) => prof.update((p) => ({ ...p, nodeLink })),
     },
   };
 }

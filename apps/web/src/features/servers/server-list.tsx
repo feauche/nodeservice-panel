@@ -1,4 +1,4 @@
-import { AGENT_STATUS_LABELS, type OverviewServerMetrics, type Server } from '@nodeservice/shared';
+import type { OverviewServerMetrics, Server } from '@nodeservice/shared';
 import { ChevronRightIcon } from 'lucide-react';
 import { useState } from 'react';
 import { formatPct } from '@/features/overview/overview-format';
@@ -6,7 +6,7 @@ import { ProviderIcon } from '@/features/providers/provider-icon';
 import { useProviders } from '@/features/providers/providers-api';
 import { cn } from '@/lib/utils';
 import { HealthDot } from './server-card';
-import { CPU_WARN_PCT, DISK_WARN_PCT, MEM_WARN_PCT, type ServerHealth, serverHealth } from './server-health';
+import { CPU_WARN_PCT, DISK_WARN_PCT, MEM_WARN_PCT, type ServerHealth, serverState } from './server-health';
 import { CountryMark, RoleMark } from './server-marks';
 
 export type ServersView = 'cards' | 'list';
@@ -33,19 +33,6 @@ export function useServersView(): [ServersView, (v: ServersView) => void] {
     }
   };
   return [view, set];
-}
-
-/** Что не так с сервером — одной короткой фразой; для здорового — прочерк. */
-function problemText(s: Server, m: OverviewServerMetrics | null): string | null {
-  if (s.sshOk === false) return 'SSH недоступен';
-  if (s.agentStatus !== 'online') return `Агент: ${AGENT_STATUS_LABELS[s.agentStatus].toLowerCase()}`;
-  if (s.sshOk === null) return 'SSH не проверен';
-  if (m) {
-    if ((m.cpuPct ?? 0) >= CPU_WARN_PCT) return `CPU ${formatPct(m.cpuPct)}%`;
-    if ((m.memPct ?? 0) >= MEM_WARN_PCT) return `Память ${formatPct(m.memPct)}%`;
-    if ((m.diskPct ?? 0) >= DISK_WARN_PCT) return `Диск ${formatPct(m.diskPct)}%`;
-  }
-  return null;
 }
 
 const COLS =
@@ -106,9 +93,11 @@ export function ServerList({
       <ul className="m-0 list-none p-0">
         {servers.map((s) => {
           const m = metricsById.get(s.id) ?? null;
-          const health = serverHealth(s, m);
-          const offline = health === 'crit';
-          const problem = problemText(s, m);
+          // Что не так — из того же правила, что цвет точки: колонка «Состояние» не спорит с точкой,
+          // и остановленная нода видна здесь так же, как пилюлей на карточке.
+          const { health, reason: problem } = serverState(s, m);
+          // Метрики шлёт агент: нет его на связи — цифр нет. SSH и нода их не гасят.
+          const offline = s.agentStatus !== 'online';
           const provider = providerOf(s);
           return (
             <li key={s.id} className="border-t border-border first:border-t-0">
@@ -135,7 +124,9 @@ export function ServerList({
                     </span>
                   )}
                 </span>
-                <span className={cn('truncate max-md:hidden', TONE[health])}>{problem ?? '—'}</span>
+                <span className={cn('truncate max-md:hidden', TONE[health])} title={problem ?? undefined}>
+                  {problem ?? '—'}
+                </span>
                 <Pct value={m?.cpuPct} warn={CPU_WARN_PCT} offline={offline} />
                 <Pct value={m?.memPct} warn={MEM_WARN_PCT} offline={offline} />
                 <Pct value={m?.diskPct} warn={DISK_WARN_PCT} offline={offline} />

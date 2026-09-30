@@ -941,4 +941,65 @@ describe('check_reachability: вход и любой адрес', () => {
     const noEntry = await call('check_reachability', { serverId: 'de-2', entry: true }, d);
     expect(noEntry.out.content).toContain('не указано, откуда приходит трафик');
   });
+
+  it('вход — свой мост: стучимся в порт его ноды, а не в SSH, и не с самого моста и не с выхода', async () => {
+    const seen: unknown[] = [];
+    const bridge = server({ id: ID_B, name: 'Мост', host: '10.0.0.2', port: 22 });
+    const exit = server({
+      profile: {
+        ...server({}).profile,
+        roles: ['exit'],
+        upstream: { kind: 'bridge', serverId: ID_B, address: null, owner: null },
+      },
+    });
+    const probe = {
+      reachability: async () => ({}),
+      reachabilityAddress: async (
+        t: unknown,
+        _all: unknown,
+        _p: unknown,
+        from: unknown,
+        exclude: unknown,
+      ) => {
+        seen.push(t, from, exclude);
+        return {
+          target: { name: 'x', address: 'x' },
+          probes: [],
+          ports: [],
+          dns: { answers: [], consistent: true },
+          notes: [],
+        };
+      },
+      processes: async () => ({ cpu: [], mem: [], load: null, empty: true }),
+    };
+    const known = deps({
+      servers: { list: async () => [exit, bridge] },
+      probe,
+      // Порт ноды моста панель знает из Remnawave.
+      upstreamTarget: async () => ({
+        label: 'Мост «Мост»',
+        host: '10.0.0.2',
+        port: 8443,
+        owner: null,
+        serverId: ID_B,
+        rented: false,
+      }),
+    });
+    await call('check_reachability', { serverId: 'de-1', entry: true }, known);
+    expect(seen[0]).toMatchObject({ host: '10.0.0.2', port: 8443 });
+    expect(seen[1]).toBeNull();
+    expect((seen[2] as string[]).sort()).toEqual([ID_A, ID_B].sort());
+
+    // Порт ноды моста неизвестен — честный ответ, а не проверка порта SSH под видом входа.
+    seen.length = 0;
+    const blind = deps({
+      servers: { list: async () => [exit, bridge] },
+      probe,
+      upstreamTarget: async () => null,
+    });
+    const r = await call('check_reachability', { serverId: 'de-1', entry: true }, blind);
+    expect(seen).toEqual([]);
+    expect(r.out.content).toContain('Порт входа у моста «Мост» панель не знает');
+    expect(r.out.content).toContain('порт SSH');
+  });
 });

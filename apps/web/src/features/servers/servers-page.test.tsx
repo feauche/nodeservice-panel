@@ -56,7 +56,10 @@ describe('ServersPage', () => {
     const rows = screen.getAllByTestId('server-row');
     expect(rows).toHaveLength(2);
     expect(screen.queryAllByRole('article')).toHaveLength(0);
-    expect(within(rows[1] as HTMLElement).getAllByText('SSH недоступен').length).toBeGreaterThan(0);
+    // nl-ams-02: агента нет, SSH не пустил — связаться с сервером панели нечем.
+    expect(
+      within(rows[1] as HTMLElement).getAllByText('Недоступен: SSH не пускает, агента нет').length,
+    ).toBeGreaterThan(0);
     await user.click(rows[0] as HTMLElement);
     expect(await screen.findByRole('dialog', { name: 'de-fra-01' })).toBeInTheDocument();
     useServerModalStore.getState().close();
@@ -66,6 +69,67 @@ describe('ServersPage', () => {
     await screen.findByText('de-fra-01');
     expect(screen.getByRole('button', { name: 'Список' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getAllByTestId('server-row')).toHaveLength(2);
+  });
+
+  it('SSH не пустил, а агент на связи: сервер не «Офлайн» — «Внимание» с причиной, метрики на месте', async () => {
+    const first = mockServers.items[0] as Server;
+    mockServers.items[0] = { ...first, sshOk: false };
+    renderPage(Harness, '/servers');
+    const card = (await screen.findByText('de-fra-01')).closest('article') as HTMLElement;
+    // Слова «Офлайн» на странице нет вовсе: выключен ли сервер, панель не знает.
+    expect(screen.queryByText(/офлайн/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Внимание\s*1$/ })).toBeInTheDocument();
+    // nl-ams-02: агента нет и SSH не пустил — он один в «Сбой».
+    expect(screen.getByRole('button', { name: /^Сбой\s*1$/ })).toBeInTheDocument();
+    expect(within(card).getByRole('img', { name: 'SSH не пускает' })).toBeInTheDocument();
+    // Агент жив и шлёт метрики — прочерков вместо них быть не должно.
+    await waitFor(() => expect(within(card).getByText('CPU').parentElement).toHaveTextContent(/CPU\d+%/));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /^Внимание/ }));
+    expect(cards()).toHaveLength(1);
+    expect(screen.getByText('de-fra-01')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Список' }));
+    const row = screen.getByTestId('server-row');
+    expect(within(row).getAllByText('SSH не пускает').length).toBeGreaterThan(0);
+    await waitFor(() => expect(row).toHaveTextContent(/\d+%/));
+  });
+
+  it('агент молчит, а по SSH сервер отвечает — «Внимание»; молчат оба — «Недоступен» в «Сбой»', async () => {
+    const [first, second] = mockServers.items as [Server, Server];
+    mockServers.items = [
+      { ...first, agentStatus: 'offline' },
+      { ...second, agentStatus: 'offline' },
+    ];
+    renderPage(Harness, '/servers');
+    const alive = (await screen.findByText('de-fra-01')).closest('article') as HTMLElement;
+    const lost = screen.getByText('nl-ams-02').closest('article') as HTMLElement;
+    expect(within(alive).getByRole('img', { name: 'Агент не на связи' })).toBeInTheDocument();
+    expect(
+      within(lost).getByRole('img', { name: 'Недоступен: SSH не пускает, агент молчит' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Внимание\s*1$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Сбой\s*1$/ })).toBeInTheDocument();
+  });
+
+  it('остановленная нода: сервер в «Сбой», в «Списке» причина названа, метрики остаются', async () => {
+    const [first, second] = mockServers.items as [Server, Server];
+    mockServers.items = [
+      { ...first, node: 'stopped' },
+      { ...second, sshOk: true, agentStatus: 'online', node: 'none', nodeWatch: 'on' },
+    ];
+    renderPage(Harness, '/servers');
+    const card = (await screen.findByText('de-fra-01')).closest('article') as HTMLElement;
+    expect(screen.getByRole('button', { name: /^В норме\s*0$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Сбой\s*2$/ })).toBeInTheDocument();
+    expect(within(card).getByRole('img', { name: 'Нода остановлена' })).toBeInTheDocument();
+    // Сервер жив, агент шлёт метрики: остановленная нода их не гасит.
+    await waitFor(() => expect(within(card).getByText('CPU').parentElement).toHaveTextContent(/CPU\d+%/));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Список' }));
+    const rows = screen.getAllByTestId('server-row');
+    expect(within(rows[0] as HTMLElement).getAllByText('Нода остановлена').length).toBeGreaterThan(0);
+    expect(within(rows[1] as HTMLElement).getAllByText('Нода не найдена').length).toBeGreaterThan(0);
+    await waitFor(() => expect(rows[0]).toHaveTextContent(/\d+%/));
   });
 
   it('агент молчит: метрик нет, «Выяснить почему» → «Нет связи с панелью», причина и «Что проверено»', async () => {

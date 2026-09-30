@@ -42,7 +42,7 @@ export const backupSettingsSchema = z.object({
     /** Чат из «Уведомлений» (id назначения) или свой чат строкой tgram://. */
     target: z.enum(['notifications', 'own']),
     destinationId: z.string().nullable(),
-    /** Свой чат маской `tgram://•••/чат:тема`; null — не задан. */
+    /** Свой чат маской (maskTelegramUrl: вместо токена — три звёздочки); null — не задан. */
     ownUrl: z.string().nullable(),
     notifyFailure: z.boolean(),
   }),
@@ -78,7 +78,9 @@ const pathSchema = z
   .min(2)
   .max(300)
   .regex(/^\/[^\0\n]*$/, 'Полный путь от корня, например /etc/nginx')
-  .refine((p) => !p.split('/').includes('..'), 'Без «..» в пути');
+  .refine((p) => !p.split('/').includes('..'), 'Без «..» в пути')
+  // Часть пути с «-» в начале программа упаковки приняла бы за свой параметр и выполнила.
+  .refine((p) => !p.split('/').some((part) => part.startsWith('-')), 'Часть пути не может начинаться с «-»');
 
 export const backupSettingsUpdateSchema = z.object({
   auto: z.boolean().optional(),
@@ -92,8 +94,11 @@ export const backupSettingsUpdateSchema = z.object({
       enabled: z.boolean(),
       target: z.enum(['notifications', 'own']),
       destinationId: z.string().nullable(),
-      /** Новый свой чат строкой tgram://; маска — не менять; null — убрать. */
-      ownUrl: z.string().trim().max(300).nullable(),
+      /**
+       * Новый свой чат строкой tgram://; null — убрать; не передан — не менять. Маску сервер отдаёт только
+       * для показа: сохранить её нельзя, поэтому неизменённое поле интерфейс не отправляет.
+       */
+      ownUrl: z.string().trim().max(300).nullable().optional(),
       notifyFailure: z.boolean(),
     })
     .optional(),
@@ -192,10 +197,16 @@ export const backupInspectSchema = z.object({
   contents: z
     .object({ dbBytes: z.number().int(), env: z.boolean(), metrics: z.boolean(), paths: z.number().int() })
     .nullable(),
-  /** Ключи из архива совпадают с ключами этой установки — можно восстановить из панели. */
+  /**
+   * Ключи из архива (или их отпечаток) совпадают с ключами этой установки — можно восстановить из панели.
+   * null — в архиве нет ни ключей, ни отпечатка: сверить не с чем.
+   */
   sameKeys: z.boolean().nullable(),
   compatible: z.boolean(),
+  /** Почему восстановить нельзя (или нужен пароль). */
   problem: z.string().nullable(),
+  /** Восстановить можно, но есть оговорка — например, в копии нет ключей и сверить её не с чем. */
+  warning: z.string().nullable().optional(),
 });
 export type BackupInspect = z.infer<typeof backupInspectSchema>;
 
@@ -218,4 +229,8 @@ export const BACKUP_PROBLEM = {
   notFound: 'urn:nodeservice:problem:backup-not-found',
   password: 'urn:nodeservice:problem:backup-password',
   unavailable: 'urn:nodeservice:problem:backup-unavailable',
+  /** Восстановление сорвалось: в detail — что с текущей базой и причина по-русски. */
+  restoreFailed: 'urn:nodeservice:problem:backup-restore-failed',
+  /** Файл копии есть, но панель не может его прочитать. */
+  unreadable: 'urn:nodeservice:problem:backup-unreadable',
 } as const;

@@ -58,9 +58,19 @@ export const BLOCK_VERDICT_LABELS: Record<BlockVerdict, string> = {
  * - bad_address — адрес, порт или имя маскировки записаны с недопустимыми знаками;
  * - no_probers — в парке нет подходящего российского сервера с рабочим SSH;
  * - ssh — проверяющие есть, но панель не зашла ни на один из них;
- * - no_answer — панель зашла, но команда проверки на проверяющих не вернула результата.
+ * - no_answer — панель зашла, но команда проверки на проверяющих не вернула результата;
+ * - remnawave — порт узнать не удалось: Remnawave не ответила на запрос (это не «порта нет»);
+ * - gone — проверять нечего: мост, указанный в профиле как вход, удалён из панели.
  */
-export const BLOCK_UNCHECKED_REASONS = ['no_port', 'bad_address', 'no_probers', 'ssh', 'no_answer'] as const;
+export const BLOCK_UNCHECKED_REASONS = [
+  'no_port',
+  'bad_address',
+  'no_probers',
+  'ssh',
+  'no_answer',
+  'remnawave',
+  'gone',
+] as const;
 export type BlockUncheckedReason = (typeof BLOCK_UNCHECKED_REASONS)[number];
 
 /** Один прогон проверки с одного пробующего сервера. */

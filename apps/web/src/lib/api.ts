@@ -344,7 +344,7 @@ export function apiErrorMessage(e: unknown): string {
         ? `Слишком много неудачных попыток — пауза ${formatSeconds(e.retryAfterSeconds)}. Она растёт с каждой серией, постоянной блокировки нет.`
         : 'Слишком много неудачных попыток — подождите немного и попробуйте снова.';
     case AUTH_PROBLEM.totpRequired:
-      return 'Сначала подтверди вход кодом из приложения.';
+      return 'Сначала подтвердите вход кодом из приложения.';
     case AUTH_PROBLEM.invalidTotp:
       return 'Неверный код. Проверьте время на телефоне: коды живут 30 секунд.';
     case AUTH_PROBLEM.invalidRecovery:

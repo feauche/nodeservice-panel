@@ -10,7 +10,7 @@ interface PendingBase {
   ip: string;
   ua: string;
   createdAt: string;
-  /** Неудачные попытки TOTP/recovery на этом шаге (свой лимит, отдельно от throttle по паролю). */
+  /** Неудачные попытки TOTP/recovery на этом шаге (свой лимит; те же неудачи идут и в общие паузы входа). */
   attempts: number;
 }
 
@@ -19,6 +19,11 @@ export interface PendingLogin extends PendingBase {
   kind: 'login';
   userId: string;
   login: string;
+  /**
+   * Пароль принят с запомненного устройства (область пауз deviceScope): на шаге кода его тоже не держит
+   * пауза по логину. Хранится на сервере — клиент подставить это не может.
+   */
+  known?: string;
 }
 
 /**

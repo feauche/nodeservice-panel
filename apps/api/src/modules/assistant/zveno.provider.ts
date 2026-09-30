@@ -100,7 +100,7 @@ export class ZvenoProvider implements LlmProvider {
     for (const call of msg?.tool_calls ?? []) {
       let parsed: unknown = {};
       try {
-        parsed = repairToolInput(JSON.parse(call.function.arguments || '{}'));
+        parsed = repairToolInput(JSON.parse(call.function.arguments || '{}'), call.function.name);
       } catch {
         // Аргументы не разобрались — почти всегда ответ оборвался на пределе длины (finish_reason length).
         parsed = TRUNCATED_TOOL_INPUT;

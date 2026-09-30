@@ -55,6 +55,27 @@ describe('AutochecksPage', () => {
     expect(mockAutochecks.value.sshIntervalMinutes).toBe(15);
   });
 
+  it('«Агент не в сети»: подсказка говорит, как часто агент подаёт сигнал; порог меньше 30 секунд не принимается', async () => {
+    renderPage(AutochecksPage, '/settings/autochecks');
+    const user = userEvent.setup();
+    const input = await screen.findByRole('textbox', { name: 'Агент не в сети' });
+    expect(
+      screen.getByText(/Агент подаёт сигнал раз в 10 секунд\..*Порог — не меньше 30 секунд/),
+    ).toBeInTheDocument();
+    // Диапазон рядом с полем — с новым минимумом.
+    expect(screen.getByText('30–600')).toBeInTheDocument();
+    await user.clear(input);
+    await user.type(input, '10');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Не меньше 30');
+    expect(mockAutochecks.value.agentOfflineAfterSeconds).toBe(30);
+    // Порог не меньше минимума — сохраняется.
+    await user.clear(input);
+    await user.type(input, '45');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(mockAutochecks.value.agentOfflineAfterSeconds).toBe(45));
+  });
+
   it('«По умолчанию» возвращает раздел целиком и дизейблится', async () => {
     mockAutochecks.value = { ...AUTOCHECKS_DEFAULTS, sshIntervalMinutes: 45, metricsEnabled: false };
     renderPage(AutochecksPage, '/settings/autochecks');

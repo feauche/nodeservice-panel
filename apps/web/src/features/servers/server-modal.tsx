@@ -52,7 +52,7 @@ import { MetricsTab } from './server-detail/metrics-tab';
 import { ProfileTab } from './server-detail/profile-tab';
 import { TerminalHistoryTab } from './server-detail/terminal-history-tab';
 import { AUTH_TABS, type ServerEdit, useServerEdit } from './server-detail/use-server-edit';
-import { serverHealth } from './server-health';
+import { serverState } from './server-health';
 import { useCheckServer, useDeleteServer, useDuplicateServer, useServers } from './servers-api';
 import { splitTagList, TagInput, useTagCounts } from './tag-input';
 
@@ -143,7 +143,8 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
     setTab(initialTab);
   }, [initialTab]);
   const metrics = overview.data?.servers.find((m) => m.serverId === s.id) ?? null;
-  const health = serverHealth(s, metrics);
+  // Точка со своей причиной: красная у остановленной ноды не должна оставаться без объяснения.
+  const { health, reason } = serverState(s, metrics);
   const resources = [
     s.facts.cpuCores ? `${s.facts.cpuCores} CPU` : null,
     s.facts.memoryMb ? `${Math.round(s.facts.memoryMb / 1024)} ГБ RAM` : null,
@@ -409,7 +410,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
             {/* Шапка: имя и закрыть, статусы, вкладки — всё, что нужно, сразу на экране */}
             <div className="flex flex-col border-b border-border bg-bg-2">
               <DialogHeader className="flex flex-row items-center gap-2.5 space-y-0 px-4 pt-3 pb-2">
-                <HealthDot health={health} />
+                <HealthDot health={health} label={reason} />
                 <DialogTitle className="min-w-0 flex-1 truncate text-left font-heading text-[17px] font-bold tracking-[-0.01em]">
                   {s.name}
                 </DialogTitle>
@@ -510,7 +511,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
             <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-r border-border bg-bg-2 p-5">
               <DialogHeader className="gap-1.5">
                 <div className="flex items-center gap-2.5">
-                  <HealthDot health={health} />
+                  <HealthDot health={health} label={reason} />
                   <DialogTitle className="min-w-0 truncate font-heading text-[18px] font-bold tracking-[-0.01em]">
                     {s.name}
                   </DialogTitle>

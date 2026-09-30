@@ -9,11 +9,15 @@ import {
 } from '@nodeservice/shared';
 
 import { lowerFirst } from '../../common/text.js';
+import { NodeLinkService } from '../remnawave/node-link.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import { IncidentsRepository } from './incidents.repository.js';
 import { IncidentsService } from './incidents.service.js';
+import { baselineFromDetail } from './node-anomaly.logic.js';
 import { NodeBlockCheckService } from './node-block-check.service.js';
+
+export { baselineFromDetail };
 
 const TICK_MS = 60_000;
 /** Тяжёлая проверка (SSH-подключения с нескольких серверов парка) — не чаще, чем раз во столько на инцидент. */
@@ -29,12 +33,6 @@ interface Watch {
   /** Что уже записано в хронологию: чтобы не писать каждую минуту одно и то же. */
   said: 'watching' | 'up' | 'down' | 'blocked' | null;
   probedAt: number;
-}
-
-/** Онлайн до падения из текста дела: «Онлайн: 396 → 0 (−100 %) …». */
-export function baselineFromDetail(detail: string): number | null {
-  const m = /Онлайн:\s*(\d+)\s*→/.exec(detail);
-  return m ? Number(m[1]) : null;
 }
 
 /** Порог «онлайн снова в норме»: половина прежнего, но не меньше минимальной базы. */
@@ -64,6 +62,7 @@ export class NodeBlockRecheckJob {
     private readonly remnawave: RemnawaveService,
     private readonly servers: ServersService,
     private readonly blockCheck: NodeBlockCheckService,
+    private readonly links: NodeLinkService,
   ) {}
 
   @Interval(TICK_MS)
@@ -98,18 +97,29 @@ export class NodeBlockRecheckJob {
       // Опрос Remnawave не удался: числа в снимке прежние — «три проверки в норме» на них набирать нельзя.
       if (status.error) return;
       const allServers = await this.servers.list();
+      const links = await this.links.resolve(allServers, status.nodes);
       for (const row of open) {
         const w = this.watch.get(row.id) ?? { checkedAt: null, up: 0, said: null, probedAt: 0 };
         this.watch.set(row.id, w);
         // Тот же снимок, что в прошлый раз, — новой проверки ещё не было.
         if (w.checkedAt === status.checkedAt) continue;
         w.checkedAt = status.checkedAt;
-        // У сопоставленной с сервером ноды ищем по адресу, у несопоставленной — по имени ноды.
+        // Нода дела с сервером — по общей связи «сервер ↔ нода», у дела без сервера — по имени ноды.
         const server = row.serverId ? (allServers.find((s) => s.id === row.serverId) ?? null) : null;
         const node =
-          (server ? status.nodes.find((n) => n.address === server.host) : undefined) ??
+          (server ? links.nodeOf(server.id) : undefined) ??
           status.nodes.find((n) => n.name === row.serverName);
         if (!node) continue;
+        // Ноду выключили в Remnawave вручную: онлайн она уже не вернёт, «три проверки в норме» не наберутся
+        // никогда. Следить больше не за чем — закрываем и честно говорим, что причина сбоя не разобрана.
+        if (node.isDisabled) {
+          await this.incidents.autoResolveById(
+            row.id,
+            'Ноду выключили в Remnawave вручную — следить за её онлайном больше не нужно. Если выключили из-за этого сбоя, причина осталась неразобранной: дело можно открыть в списке решённых.',
+          );
+          this.watch.delete(row.id);
+          continue;
+        }
         const online = node.usersOnline ?? 0;
         const baseline = baselineFromDetail(row.detail);
         const need = recoverThreshold(baseline);
@@ -149,8 +159,10 @@ export class NodeBlockRecheckJob {
             node.address,
             inbound?.port ?? null,
             inbound?.sni ?? null,
-            server?.id ?? null,
+            // Все записи этой машины: сервер не проверяет сам себя.
+            [...new Set([...(server ? [server.id] : []), ...links.machineIds(node)])],
             allServers,
+            Boolean(inbound?.failed),
           )
           .catch((err) => {
             this.log.warn(

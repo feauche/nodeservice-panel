@@ -29,16 +29,15 @@ import {
   parseReach,
   pickProbes,
   prepareNodeLogs,
+  probesForAddress,
+  REACH_NOTES,
   type ReachProbe,
+  reachDnsNote,
   summarizeReach,
 } from './fleet-probe.logic.js';
 
 /** Проверка одного и того же адреса чаще, чем раз в это время, отдаёт прежний результат. */
 const CACHE_MS = process.env.NODE_ENV === 'test' ? 0 : 30_000;
-
-/** Что проверяющие видят снаружи парка; ограничение честно называется в самом результате. */
-const NOT_USER_VIEW =
-  'Проверка идёт с других серверов парка, а не из сети пользователей. Если у части пользователей не работает, а отсюда всё открыто, причина может быть в блокировке для их провайдера или региона: отсюда это не видно.';
 
 /**
  * Чтение с серверов парка по SSH (только чтение, уровень T0): доступность адреса снаружи с
@@ -76,14 +75,17 @@ export class FleetProbeService {
   /**
    * Любой адрес — домен или IP, не обязательно сервер NodeService (например, вход арендодателя). Проверяющие —
    * указанные серверы (например, сам выход: «доходит ли выход до входа») или независимые серверы парка.
+   * `exclude` — кого в независимые не брать (мост и выход, чей вход проверяем); сама проверяемая машина
+   * отпадает всегда.
    */
   async reachabilityAddress(
     target: { name: string; host: string; port: number },
     all: Server[],
     portsRaw: unknown,
     from: Server[] | null,
+    exclude: readonly string[] = [],
   ): Promise<ReachabilityResult> {
-    const probers = from ?? pickProbes({ id: '' }, all);
+    const probers = from ?? probesForAddress(target.host, all, exclude);
     return this.reachabilityOf(
       {
         key: `addr:${target.host}:${probers.map((p) => p.id).join(',')}`,
@@ -107,7 +109,7 @@ export class FleetProbeService {
     const hit = this.cache.get(key);
     if (hit && Date.now() - hit.at < CACHE_MS) return hit.result;
 
-    const notes: string[] = [NOT_USER_VIEW];
+    const notes: string[] = [REACH_NOTES.notUserView];
     if (!isProbeHost(target.host))
       return {
         target: { name: target.name, address },
@@ -122,13 +124,14 @@ export class FleetProbeService {
         probes: [],
         ports: [],
         dns: { answers: [], consistent: true },
-        notes: ['Нет других серверов парка с рабочим SSH: проверить снаружи не с чего.', NOT_USER_VIEW],
+        notes: [
+          'Нет других серверов парка с рабочим SSH: проверить снаружи не с чего.',
+          REACH_NOTES.notUserView,
+        ],
       };
     if (chosen.length < 2)
       notes.unshift(
-        target.key.startsWith('addr:') && chosen.length === 1
-          ? 'Проверяющий один: вывод касается только пути с этого сервера.'
-          : 'Независимых проверяющих меньше двух: вывод слабый.',
+        target.key.startsWith('addr:') && chosen.length === 1 ? REACH_NOTES.single : REACH_NOTES.weak,
       );
 
     const command = buildReachCommand(target.host, ports);
@@ -156,7 +159,7 @@ export class FleetProbeService {
         }
       }),
     );
-    if (probes.some((p) => !p.ok)) notes.unshift('Часть проверяющих не ответила: учтены только ответившие.');
+    if (probes.some((p) => !p.ok)) notes.unshift(REACH_NOTES.silent);
     const result: ReachabilityResult = {
       target: { name: target.name, address },
       probes,
@@ -164,10 +167,7 @@ export class FleetProbeService {
       dns: dnsSummary(probes),
       notes,
     };
-    if (!result.dns.consistent)
-      result.notes.unshift(
-        `DNS отвечает по-разному у разных проверяющих (${result.dns.answers.join(', ')}): возможна подмена или сбой резолвера.`,
-      );
+    if (!result.dns.consistent) result.notes.unshift(reachDnsNote(result.dns.answers));
     this.cache.set(key, { at: Date.now(), result });
     return result;
   }

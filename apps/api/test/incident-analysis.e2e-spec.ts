@@ -14,6 +14,7 @@ import { setupHttp } from '../src/common/http/setup-http.js';
 import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
+import { IncidentAnalysisService } from '../src/modules/assistant/incident-analysis.service.js';
 import {
   LLM_PROVIDER,
   type LlmProvider,
@@ -23,6 +24,8 @@ import {
 import { SetupService } from '../src/modules/auth/setup.service.js';
 import { IncidentsRepository } from '../src/modules/incidents/incidents.repository.js';
 import { IncidentsService } from '../src/modules/incidents/incidents.service.js';
+import { NotificationsService } from '../src/modules/notifications/notifications.service.js';
+import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications/telegram/telegram.client.js';
 import { FakeSsh, SSH_PASSWORD, SSH_USER } from './fake-ssh.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -86,12 +89,24 @@ class FakeLlm implements LlmProvider {
   }
 }
 
+/** Поддельный Bot API: только записывает отправленные сообщения. */
+class FakeTelegram {
+  sent: Array<Record<string, unknown>> = [];
+  async call<T>(_token: string, method: string, body: Record<string, unknown>): Promise<TelegramCall<T>> {
+    if (method === 'getMe') return { ok: true, result: { username: 'ns_test_bot' } as T };
+    if (method === 'getChat') return { ok: true, result: { title: 'VPN-алерты', type: 'supergroup' } as T };
+    this.sent.push(body);
+    return { ok: true, result: { message_id: 100 + this.sent.length } as T };
+  }
+}
+
 describe('разбор инцидента Джарвисом e2e', () => {
   let app: INestApplication;
   let agent: InstanceType<typeof TestAgent>;
   let csrf: string;
   const ssh = new FakeSsh();
   const fake = new FakeLlm();
+  const tg = new FakeTelegram();
   let serverId = '';
 
   // На (сервер, вид) допускается один открытый инцидент, поэтому перед каждым тестом чистим таблицу.
@@ -125,6 +140,8 @@ describe('разбор инцидента Джарвисом e2e', () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(LLM_PROVIDER)
       .useValue(fake)
+      .overrideProvider(TELEGRAM_CLIENT)
+      .useValue(tg)
       .compile();
     app = moduleRef.createNestApplication<NestExpressApplication>({ bufferLogs: false, logger: false });
     setupHttp(app as NestExpressApplication);
@@ -133,7 +150,9 @@ describe('разбор инцидента Джарвисом e2e', () => {
     await db.execute(
       sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents, billing_items cascade`,
     );
-    await db.execute(sql`delete from app_meta where key like 'settings.%' or key = 'panel.ssh-key'`);
+    await db.execute(
+      sql`delete from app_meta where key like 'settings.%' or key like 'telegram.%' or key = 'panel.ssh-key'`,
+    );
     await app.get<Redis>(VALKEY).flushdb();
     await app.init();
     agent = request.agent(app.getHttpServer());
@@ -413,5 +432,66 @@ describe('разбор инцидента Джарвисом e2e', () => {
     const a = (await get(id)).analysis;
     expect(a?.status).toBe('failed');
     expect(a?.error).toContain('перезапуском');
+  });
+
+  it('автоматический разбор: сообщение в Telegram ждёт разбора и уходит с выводом Джарвиса; оборванный разбор отпускает его как есть', async () => {
+    fake.script = 'ok';
+    const db = app.get<Db>(DB);
+    const notes = app.get(NotificationsService);
+    const analysis = app.get(IncidentAnalysisService);
+    // Время ожидания разбора в тестах — 50 мс; здесь разбор должен успеть раньше.
+    notes.analysisWaitMs = 60_000;
+    await agent
+      .put('/api/settings/telegram')
+      .set(CSRF_HEADER, csrf)
+      .send({
+        destinations: [{ url: 'tgram://123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/-1002946167407' }],
+      })
+      .expect(200);
+    await agent
+      .put('/api/settings/assistant')
+      .set(CSRF_HEADER, csrf)
+      .send({ permissions: { analysis: true, autoAnalysis: true } })
+      .expect(200);
+    expect(await app.get(IncidentsService).analysisWillFollow()).toBe(true);
+    /** Дело открыто полторы минуты назад, тревога о нём ждёт разбора — как после openIncident. */
+    const waiting = async (detail: string) => {
+      const id = await openIncident(detail);
+      await db.execute(sql`update incidents set opened_at = now() - interval '90 seconds' where id = ${id}`);
+      await notes.push({
+        severity: 'warn',
+        title: 'Диск заполняется · {server}',
+        body: detail,
+        server: { id: serverId, name: 'ana-host', host: '127.0.0.1' },
+        telegram: { event: 'incident_warn', incidentId: id, kind: 'disk_high', awaitAnalysis: true },
+      });
+      return id;
+    };
+
+    const id = await waiting('Диск держится на 93% дольше 5 мин (порог 90%).');
+    await notes.settle();
+    expect(tg.sent).toHaveLength(0);
+    // Минутный проход автоматического разбора берёт дело сам; по готовности сообщение уходит с выводом.
+    expect(await analysis.autoRun()).toEqual([id]);
+    expect((await settled(id)).analysis?.status).toBe('done');
+    await notes.settle();
+    expect(tg.sent).toHaveLength(1);
+    const text = String(tg.sent[0]?.text);
+    expect(text).toContain('🤖 Разбор Джарвиса (уверенность высокая):');
+    expect(text).toContain('Диск занят временными файлами: 27 ГБ в /tmp.');
+    expect(text).toContain('Диск держится на 93% дольше 5 мин (порог 90%).');
+    // Вывод стоит первым блоком, перед текстом дела.
+    expect(text.indexOf('Разбор Джарвиса')).toBeLessThan(text.indexOf('Диск держится'));
+
+    // Разбор не получился (модель не сдала вывод) — сообщение не теряется и не ждёт до конца: уходит как есть.
+    fake.script = 'no-submit';
+    const failed = await waiting('Диск держится на 95% дольше 5 мин (порог 90%).');
+    expect(await analysis.autoRun()).toEqual([failed]);
+    expect((await settled(failed)).analysis?.status).toBe('failed');
+    await notes.settle();
+    expect(tg.sent).toHaveLength(2);
+    expect(String(tg.sent[1]?.text)).toContain('Диск держится на 95%');
+    expect(String(tg.sent[1]?.text)).not.toContain('Разбор Джарвиса');
+    fake.script = 'ok';
   });
 });

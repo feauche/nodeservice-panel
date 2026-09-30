@@ -6,6 +6,7 @@ import {
   type RemnawaveCert,
   type RemnawaveStatus,
   remnawaveStatusSchema,
+  serverSchema,
 } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import type { Redis } from 'ioredis';
@@ -20,6 +21,7 @@ import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
+import { HOST_RESOLVER } from '../src/modules/remnawave/node-link.service.js';
 import { RemnawaveService } from '../src/modules/remnawave/remnawave.service.js';
 import {
   REMNAWAVE_CLIENT,
@@ -107,12 +109,17 @@ describe('Remnawave e2e (J4)', () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(REMNAWAVE_CLIENT)
       .useValue(fake)
+      // Вместо настоящего DNS: домен сервера указывает на адрес ноды.
+      .overrideProvider(HOST_RESOLVER)
+      .useValue({
+        resolve: async (host: string) => (host === 'bridge.example.com' ? ['104.171.133.254'] : []),
+      })
       .compile();
     app = moduleRef.createNestApplication<NestExpressApplication>({ bufferLogs: false, logger: false });
     setupHttp(app as NestExpressApplication);
     const db = app.get<Db>(DB);
     await runMigrations(db);
-    await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens cascade`);
+    await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers cascade`);
     await db.execute(sql`delete from app_meta where key like 'settings.%'`);
     await app.get<Redis>(VALKEY).flushdb();
     await app.init();
@@ -194,10 +201,61 @@ describe('Remnawave e2e (J4)', () => {
         usersOnline: 42,
         trafficUsedBytes: 1000,
         trafficLimitBytes: null,
+        // Серверов в панели ещё нет — ноде не с чем связаться.
+        serverIds: [],
+        linkedBy: null,
       },
     ]);
     expect(s.cert).toEqual(CERT_OK);
     expect(await auditActions()).toContain('remnawave.connected');
+  });
+
+  it('нода находит свой сервер: по IP за доменом, по адресу, по выбору в профиле; «Нет ноды» связь снимает', async () => {
+    const add = async (name: string, host: string) =>
+      serverSchema.parse(
+        (
+          await agent
+            .post('/api/servers')
+            .set(CSRF_HEADER, csrf)
+            .send({ name, host, port: 22, sshUser: 'root', auth: { method: 'panel-key' }, verify: false })
+            .expect(201)
+        ).body,
+      );
+    const setLink = (id: string, nodeLink: string) =>
+      agent.patch(`/api/servers/${id}`).set(CSRF_HEADER, csrf).send({ nodeLink }).expect(200);
+    const link = async () => {
+      const n = (await status()).nodes[0];
+      return [n?.serverIds, n?.linkedBy];
+    };
+
+    // Сервер добавлен по домену, нода в Remnawave записана по IP — раньше связи не было.
+    const byDomain = await add('rw-link-domain', 'bridge.example.com');
+    expect(byDomain.nodeLink).toBe('auto');
+    expect(await link()).toEqual([[byDomain.id], 'ip']);
+
+    // Вторая запись той же машины, по IP: нода у обеих, основная — первая в списке серверов.
+    const byIp = await add('rw-link-ip', '104.171.133.254');
+    expect(await link()).toEqual([[byDomain.id, byIp.id], 'ip']);
+
+    // «Нет ноды» у первой записи — основной становится вторая, связь по адресу.
+    expect(serverSchema.parse((await setLink(byDomain.id, 'none')).body).nodeLink).toBe('none');
+    expect(await link()).toEqual([[byIp.id], 'address']);
+
+    // Нода выбрана вручную у сервера с чужим адресом — автоматически она больше никому не достаётся.
+    const manual = await add('rw-link-manual', '198.51.100.77');
+    await setLink(manual.id, 'n1');
+    expect(await link()).toEqual([[manual.id], 'manual']);
+    expect(await auditActions()).toContain('nodeLink');
+
+    // Мусор в поле связи не принимается.
+    await agent
+      .patch(`/api/servers/${manual.id}`)
+      .set(CSRF_HEADER, csrf)
+      .send({ nodeLink: 'не нода; rm -rf' })
+      .expect(400);
+
+    await setLink(manual.id, 'auto');
+    expect(await link()).toEqual([[byIp.id], 'address']);
   });
 
   it('обновить: свежие цифры без повторной отправки токена', async () => {

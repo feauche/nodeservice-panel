@@ -27,10 +27,13 @@ export function pageItems(page: number, totalPages: number): Array<number | '…
   return out;
 }
 
+/** Кнопка строки страниц (32px). Её же берёт строка страниц реестра «Инциденты» — чтобы выглядели одинаково. */
+export const pageButtonClass =
+  'inline-flex h-8 min-w-8 cursor-pointer items-center justify-center rounded-[8px] px-2 text-[12.5px] font-medium tabular-nums text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent';
+
 export function Pagination({ page, totalPages, onChange, label }: Props) {
   if (totalPages <= 1) return null;
-  const btn =
-    'inline-flex h-8 min-w-8 cursor-pointer items-center justify-center rounded-[8px] px-2 text-[12.5px] font-medium tabular-nums text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent';
+  const btn = pageButtonClass;
   return (
     <nav aria-label={label} className="flex items-center gap-1">
       <button

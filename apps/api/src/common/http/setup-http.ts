@@ -5,6 +5,7 @@ import type { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 
 import type { Env } from '../../config/env.schema.js';
+import { AnonAuditLimiter } from '../../modules/auth/anon-audit.limiter.js';
 import { CsrfService } from './csrf.service.js';
 
 /**
@@ -25,7 +26,8 @@ export function setupHttp(app: NestExpressApplication): void {
   );
   app.use(cookieParser());
   // Все мутирующие запросы к API — только с CSRF-токеном (GET/HEAD/OPTIONS пропускаются).
-  const csrf = app.get(CsrfService).middleware();
+  // Отказы пишутся в Журнал через общий предел записей от запросов без входа.
+  const csrf = app.get(CsrfService).middleware(app.get(AnonAuditLimiter, { strict: false }));
   // /api/agent/* — API для агентов, не браузеров: cookie-сессий нет, аутентификация токеном
   // и подписью ed25519, CSRF неприменим. /api/internal/* — служебные запросы изнутри контейнера api
   // (nodeservice update): только с 127.0.0.1 и с подписью из APP_SECRET, браузер их не делает.

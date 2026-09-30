@@ -3,6 +3,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import {
   CSRF_HEADER,
+  fleetStatsSchema,
   overviewMetricsResponseSchema,
   serverMetricsResponseSchema,
   serverSchema,
@@ -25,6 +26,25 @@ if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: DATABASE_URL должен указывать на nodeservice_test');
 
 const VM = process.env.VM_URL ?? 'http://127.0.0.1:8428';
+
+/**
+ * Известный ряд, как его пишет шлюз агента: скорость сети в БАЙТАХ в секунду. Десять минут ровно 12,5 МБ/с
+ * на приём (это 100 Мбит/с) и 2,5 МБ/с на отдачу (20 Мбит/с), точка раз в 10 секунд; точки старше
+ * latencyOffset хранилища.
+ */
+const netSeries = (serverId: string): string => {
+  const now = Date.now();
+  // Сервер переименовали посреди окна: первая половина точек — под старым именем, вторая — под новым. Объём и
+  // скорость от этого меняться не должны.
+  const label = (back: number) =>
+    `{server_id="${serverId}",server_name="${back > 360 ? 'metrics-host-old' : 'metrics-host'}"}`;
+  const lines: string[] = [];
+  for (let back = 660; back >= 60; back -= 10) {
+    lines.push(`nodeservice_net_rx_bps${label(back)} 12500000 ${now - back * 1000}`);
+    lines.push(`nodeservice_net_tx_bps${label(back)} 2500000 ${now - back * 1000}`);
+  }
+  return `${lines.join('\n')}\n`;
+};
 
 describe('metrics e2e', () => {
   let app: INestApplication;
@@ -75,6 +95,8 @@ describe('metrics e2e', () => {
       })
       .expect(201);
     serverId = serverSchema.parse(created.body).id;
+    // Ряд для статистики парка пишем заранее: новый ряд VM показывает не сразу, а через несколько секунд.
+    if (vmUp) await fetch(`${VM}/api/v1/import/prometheus`, { method: 'POST', body: netSeries(serverId) });
   }, 60_000);
 
   afterAll(async () => {
@@ -130,4 +152,42 @@ describe('metrics e2e', () => {
   it('диапазон валидируется, чужой формат — 400', async () => {
     await agent.get(`/api/metrics/servers/${serverId}?range=5m`).expect(400);
   });
+
+  it('статистика парка: скорость сети агент пишет в байтах в секунду — объём в байтах, скорость в бит/с', async (ctx) => {
+    if (!vmUp) return ctx.skip();
+    // Ряд записан в beforeAll (netSeries). VM отдаёт его не мгновенно — ждём, пока появятся и объём, и
+    // точки скорости.
+    const read = async () =>
+      fleetStatsSchema.parse((await agent.get('/api/fleet/stats?period=day').expect(200)).body);
+    const deadline = Date.now() + 15_000;
+    let st = await read();
+    // Рядов два (сервер переименовали посреди окна): ждём, пока хранилище покажет оба, — иначе объём был бы
+    // только за половину окна.
+    const visible = () =>
+      (st.traffic.rxBytes ?? 0) > 7.5e9 * 0.9 &&
+      (st.traffic.txBytes ?? 0) > 1.5e9 * 0.9 &&
+      st.traffic.speed.length > 0;
+    while (!visible() && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 400));
+      st = await read();
+    }
+    expect(st.vmOk).toBe(true);
+    const near = (v: number | null | undefined, want: number) => {
+      expect(v ?? 0).toBeGreaterThan(want * 0.9);
+      expect(v ?? 0).toBeLessThan(want * 1.1);
+    };
+    // За 600 секунд при 12,5 МБ/с принято 7,5 ГБ, при 2,5 МБ/с отдано 1,5 ГБ — байты, без деления на 8.
+    near(st.traffic.rxBytes, 7.5e9);
+    near(st.traffic.txBytes, 1.5e9);
+    near(
+      st.traffic.buckets.reduce((a, b) => a + b.bytes, 0),
+      9e9,
+    );
+    near(st.servers.find((x) => x.id === serverId)?.trafficBytes, 9e9);
+    // Скорость — в бит/с: 15 МБ/с в сумме — это 120 Мбит/с; по направлениям 100 и 20.
+    expect(st.traffic.peakBps).toBe(120e6);
+    expect(st.traffic.avgBps).toBe(120e6);
+    expect(st.traffic.speed.length).toBeGreaterThan(0);
+    for (const p of st.traffic.speed) expect(p).toMatchObject({ rx: 100e6, tx: 20e6 });
+  }, 20_000);
 });

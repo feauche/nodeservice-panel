@@ -1,4 +1,10 @@
-import { AUTOCHECKS_DEFAULTS, type AutochecksSettings, autochecksSettingsSchema } from '@nodeservice/shared';
+import {
+  AGENT_HEARTBEAT_SECONDS,
+  AGENT_OFFLINE_MIN_SECONDS,
+  AUTOCHECKS_DEFAULTS,
+  type AutochecksSettings,
+  autochecksSettingsSchema,
+} from '@nodeservice/shared';
 import { ActivityIcon, RotateCcwIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -69,9 +75,9 @@ const CHECKS: ReadonlyArray<{
     on: 'agentOfflineEnabled',
     val: 'agentOfflineAfterSeconds',
     label: 'Агент не в сети',
-    hint: 'Если агент не подаёт сигнал дольше порога, сервер помечается «агент не в сети» (попадает в Журнал).',
+    hint: `Агент подаёт сигнал раз в ${AGENT_HEARTBEAT_SECONDS} секунд. Если сигнала нет дольше порога, сервер помечается «агент не в сети» (попадает в Журнал). Порог — не меньше ${AGENT_OFFLINE_MIN_SECONDS} секунд.`,
     unit: 'сек',
-    min: 10,
+    min: AGENT_OFFLINE_MIN_SECONDS,
     max: 600,
   },
   {

@@ -12,6 +12,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
+  blindAttempt,
   blindReason,
   buildBlockCheckCommand,
   combineVerdicts,
@@ -463,20 +464,52 @@ describe('вход сервера-выхода', () => {
     );
     expect(r.detail).not.toContain('лёг вход');
     expect(r.detail).not.toContain('вход отключили');
-    // Вход арендодателя: молчит он или отвечает, при аренде в окне вывод один — оплата.
-    expect(r.detail).toContain('другой причины панель не нашла');
+    // Вход арендодателя не проверен — возможная причина не проверена: «вероятнее всего» и «другой причины
+    // панель не нашла» сказать нельзя (находка четвёртой проверки), только просьба проверить оплату.
+    expect(r.title).toBe('Резко упал онлайн — проверьте оплату · guardora (Аренда)');
+    expect(r.detail).toContain(
+      'Вывод: у выхода блокировка не подтвердилась, а вход проверить не удалось — причина может быть в нём.',
+    );
+    expect(r.detail).toContain(
+      'Проверьте оплату: вход арендодателя проверить не удалось, а срок оплаты аренды близко — возможно, оплата закончилась чуть раньше срока.',
+    );
+    for (const s of ['Вероятнее всего', 'другой причины панель не нашла', 'сбой у провайдеров пользователей'])
+      expect(r.detail, s).not.toContain(s);
     // Единственный российский сервер парка — сам мост: на него панель зашла, проверять мост просто не с чего.
     const lone = drop({ ...alive, entry: unchecked('no_probers', bridge('unreachable')) }, { payment: soon });
     expect(lone.detail).toContain(
       'Мост «Мост» (entry.example.com:443): проверить не с чего — других российских серверов парка с рабочим SSH нет.',
     );
     expect(lone.detail).not.toContain('не зашла');
-    // Свой мост не проверен — возможная причина осталась непроверенной: «другой причины не нашла» сказать нельзя.
-    expect(lone.title).toBe('Резко упал онлайн — проверьте оплату · guardora (Аренда)');
+    // Свой мост не проверен — начинать надо с него: арендодатель свой мост не выключит, а сам сервер отвечает.
+    // Оплата аренды тут не первая причина: в заголовок не идёт, в тексте — «заодно».
+    expect(lone.title).toBe('Резко упал онлайн, вход проверить не удалось · guardora (Аренда)');
     expect(lone.detail).toContain(
-      'Проверьте оплату: вход проверить не удалось, а срок оплаты аренды близко — возможно, оплата закончилась чуть раньше срока.',
+      'Заодно проверьте оплату: срок аренды близко. Сервер отвечает, а свой мост проверить не удалось — начните с моста: арендодатель его выключить не может.',
     );
-    expect(lone.detail).not.toContain('Вероятнее всего');
+    for (const s of ['Вероятнее всего', 'Проверьте оплату:', 'другой причины панель не нашла'])
+      expect(lone.detail, s).not.toContain(s);
+    // Мост указан в профиле, а порт входа узнать негде (у моста нет ноды в Remnawave): раньше о входе в деле
+    // не было ни слова, а вывод был «другой причины панель не нашла».
+    const blind = drop(
+      {
+        ...alive,
+        entry: { ...unchecked('no_probers', bridge('unreachable')), address: '', unchecked: 'no_port' },
+      },
+      { payment: soon },
+    );
+    expect(blind.detail).toContain(
+      'Мост «Мост»: проверить нечем — у моста не найдена нода в Remnawave, и порт входа панель не знает.',
+    );
+    expect(blind.detail).not.toContain('другой причины панель не нашла');
+    // Мост удалён из панели; Remnawave не ответила на запрос порта.
+    const gone = { ...unchecked('no_probers', bridge('unreachable')), label: 'Мост', address: '' };
+    expect(drop({ ...alive, entry: { ...gone, unchecked: 'gone' } }).detail).toContain(
+      'Мост: проверить нечем — мост, указанный в профиле как вход, удалён из панели.',
+    );
+    expect(drop({ ...alive, entry: { ...gone, unchecked: 'remnawave' } }).detail).toContain(
+      'проверить не удалось — Remnawave не ответила на запрос порта входа.',
+    );
     // Адрес входа записан не как адрес.
     expect(drop({ ...alive, entry: unchecked('bad_address') }).detail).toContain(
       'проверить нельзя — адрес входа в профиле сервера записан не как домен или IP-адрес с портом.',
@@ -609,9 +642,26 @@ describe('вход сервера-выхода', () => {
     );
     expect(r.kind).toBe('node_blocked');
     expect(r.title).toBe('Резко упал онлайн, порт отвечает с перебоями · guardora (Аренда)');
+    // Панель называет, что видела: с кого порт отвечает, а с кого нет, — без «или не каждый раз», которого в
+    // данных нет (замечание «панели оценки»: «ничего не перебивается, картина одна и та же»).
     expect(r.detail).toContain(
-      'Похоже: порт ноды отвечает с перебоями — не со всех российских проверяющих серверов или не каждый раз. Сервер работает, но из части сетей до него не достучаться',
+      'Похоже: порт ноды отвечает не со всех российских проверяющих серверов: отвечает с Мост, не отвечает с Россия - 1, Россия - 2. Сервер работает, но из части сетей до него не достучаться',
     );
+    // Один и тот же проверяющий подключается через раз — сказано именно это.
+    const flaky = drop({
+      ...alive,
+      probes: [
+        {
+          ...probe('ok'),
+          verdict: 'partial' as const,
+          detail: 'Порт отвечает не каждый раз: подключение прошло в 1 из 3 попыток.',
+        },
+      ],
+      verdict: 'partial' as const,
+      entry: null,
+    });
+    expect(flaky.detail).toContain('Похоже: порт ноды отвечает не каждый раз: Мост подключается через раз.');
+    expect(flaky.detail).not.toContain('не со всех');
     for (const s of [
       'Вероятнее всего',
       'сервер выключен',
@@ -718,6 +768,20 @@ describe('вход сервера-выхода', () => {
     );
   });
 
+  it('в то же время пропала связь с другими серверами, а онлайн у них не падал — так и сказано', () => {
+    const r = drop({ ...alive, entry: null }, { payment: soon, othersLost: 1 });
+    expect(r.title).toBe('Резко упал онлайн, блокировка не подтвердилась · guardora (Аренда)');
+    expect(r.detail).toContain(
+      'Заодно проверьте оплату: срок аренды близко. В это же время пропала связь с другими серверами — это больше похоже на общую причину.',
+    );
+    expect(r.detail).not.toContain('Онлайн упал сразу у нескольких нод');
+    expect(r.detail).not.toContain('Вероятнее всего');
+    // И онлайн упал у другой ноды, и связь пропала с сервером — называем онлайн: это то же, что случилось здесь.
+    expect(drop({ ...alive, entry: null }, { payment: soon, othersDown: 1, othersLost: 2 }).detail).toContain(
+      'Онлайн упал сразу у нескольких нод',
+    );
+  });
+
   it('итог «в норме», но соединение обрывается на небольшом объёме — «другой причины панель не нашла» не пишем', () => {
     const cut = {
       ...probe('ok', 'Россия - 1'),
@@ -725,7 +789,8 @@ describe('вход сервера-выхода', () => {
       stalledAtKb: 8,
     };
     const r = drop({ ...alive, probes: [probe('ok'), cut], entry: null }, { payment: late });
-    expect(r.title).toBe('Резко упал онлайн, блокировка не подтвердилась · guardora (Аренда)');
+    // Обрыв — находка: заголовок «блокировка не подтвердилась» её прятал.
+    expect(r.title).toBe('Резко упал онлайн, соединение с нодой обрывается · guardora (Аренда)');
     expect(r.detail).toContain(
       'Вывод: признаков блокировки ТСПУ и «16–20 КБ» нет, но соединение с нодой обрывается на небольшом объёме данных — возможны помехи на пути.',
     );
@@ -805,6 +870,46 @@ describe('команда проверки на самом деле доходи�
     });
   };
 
+  /** Настоящая команда с урезанным набором программ: в PATH только то, что перечислено. */
+  const runWith = (tools: string[], port: number, sni: string | null): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'ns-bc-tools-'));
+    for (const t of tools) {
+      const file = join(dir, t);
+      if (t === 'timeout') writeFileSync(file, '#!/bin/sh\nshift\nexec "$@"\n');
+      else
+        writeFileSync(
+          file,
+          `#!/bin/sh\nexec ${execFileSync('sh', ['-c', `command -v ${t}`], { encoding: 'utf8' }).trim()} "$@"\n`,
+        );
+      chmodSync(file, 0o755);
+    }
+    return execFileSync('/bin/sh', ['-c', buildBlockCheckCommand('127.0.0.1', port, sni)], {
+      env: { PATH: dir },
+      encoding: 'utf8',
+    });
+  };
+
+  it('на проверяющем нет нужной программы — команда так и говорит, а не «порт закрыт» и не «ТСПУ»', async () => {
+    const srv = createServer((s) => s.end());
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const port = (srv.address() as { port: number }).port;
+    try {
+      // Нет timeout: раньше для ОТКРЫТОГО порта выходило «порт не отвечает совсем».
+      const noTimeout = parseBlockCheckOutput('тест', runWith(['sh', 'bash'], port, null));
+      expect(noTimeout.error).toBe('tools');
+      expect(noTimeout.detail).toContain('нет нужной программы (timeout)');
+      // Нет openssl: раньше выходило «похоже на блокировку ТСПУ».
+      const noOpenssl = parseBlockCheckOutput(
+        'тест',
+        runWith(['sh', 'bash', 'timeout'], port, 'www.example.com'),
+      );
+      expect(noOpenssl).toMatchObject({ verdict: 'ok', error: null });
+      expect(noOpenssl.detail).toContain('нет нужной программы (openssl)');
+    } finally {
+      await new Promise((r) => srv.close(r));
+    }
+  });
+
   it('открытый порт — «порт отвечает», закрытый — «не отвечает»', async () => {
     const srv = createServer((s) => s.end());
     await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
@@ -839,19 +944,88 @@ describe('итог попыток с одного сервера — без ло
     expect(settleAttempts([at('ok'), at('unreachable'), at('unreachable')], false)).toEqual({
       from: 'Мост',
       verdict: 'partial',
-      detail: 'Порт отвечает не каждый раз: удачных попыток 1 из 3.',
+      detail: 'Порт отвечает не каждый раз: подключение прошло в 1 из 3 попыток.',
       stalledAtKb: null,
       error: null,
     });
     // Ничья после сбоя входа на проверяющий — то же.
     expect(settleAttempts([at('ok'), at('unreachable'), at('unreachable', 'ssh')], false)?.detail).toBe(
-      'Порт отвечает не каждый раз: удачных попыток 1 из 2.',
+      'Порт отвечает не каждый раз: подключение прошло в 1 из 2 попыток.',
     );
     // Большинство удачных — в норме; ни одной удачной — не отвечает.
     expect(settleAttempts([at('ok'), at('ok'), at('unreachable')], false)?.verdict).toBe('ok');
     expect(settleAttempts([at('unreachable'), at('unreachable'), at('unreachable')], false)?.verdict).toBe(
       'unreachable',
     );
+  });
+  it('порт открылся, а оборвался TLS или поток данных — порт всё равно ответил: это не «порт не отвечает совсем»', () => {
+    // Находка четвёртой проверки: [TLS оборвался, закрыт, закрыт] давало «порт не отвечает совсем», а с
+    // открытым из-за рубежа портом — «блокировку IP из России».
+    const tls = parseBlockCheckOutput('Мост', '{"stage":"tls","ok":false,"stalledAtKb":null}');
+    const stall16 = parseBlockCheckOutput('Мост', '{"stage":"data","ok":false,"stalledAtKb":16}');
+    const dead = parseBlockCheckOutput('Мост', '{"stage":"tcp","ok":false,"stalledAtKb":null}');
+    for (const first of [tls, stall16])
+      expect(settleAttempts([first, dead, dead], false)).toMatchObject({
+        verdict: 'partial',
+        detail: 'Порт отвечает не каждый раз: подключение прошло в 1 из 3 попыток.',
+      });
+    // Блокировку по протоколу большинство попыток по-прежнему называет само.
+    expect(settleAttempts([tls, tls, dead], false)?.verdict).toBe('tspu');
+  });
+  it('обрыв на небольшом объёме не прячется за чистой первой попыткой — и не раздувается из одной', () => {
+    const clean = parseBlockCheckOutput('Мост', '{"stage":"data","ok":true,"stalledAtKb":null}');
+    const stall8 = parseBlockCheckOutput('Мост', '{"stage":"data","ok":false,"stalledAtKb":8}');
+    expect(stall8.verdict).toBe('ok');
+    // Раньше итогом бралась первая попытка «в норме» — порядок попыток менял вывод.
+    expect(settleAttempts([clean, stall8, stall8], false)).toMatchObject({ verdict: 'ok', stalledAtKb: 8 });
+    expect(settleAttempts([stall8, stall8, clean], false)).toMatchObject({ verdict: 'ok', stalledAtKb: 8 });
+    expect(settleAttempts([stall8, clean, clean], false)).toMatchObject({ verdict: 'ok', stalledAtKb: null });
+    expect(settleAttempts([clean, clean, stall8], false)).toMatchObject({ verdict: 'ok', stalledAtKb: null });
+    // Поровну — находку не прячем.
+    expect(settleAttempts([clean, stall8], false)).toMatchObject({ stalledAtKb: 8 });
+  });
+  it('на проверяющем нет нужной программы — это не результат проверки цели', () => {
+    // Без timeout или bash порт не проверить вовсе: проба о цели ничего не говорит.
+    const none = parseBlockCheckOutput(
+      'Мост',
+      '{"stage":"tools","ok":false,"stalledAtKb":null,"missing":"timeout"}',
+    );
+    expect(probeSaw(none)).toBe(false);
+    expect(none.detail).toBe(
+      'Проверка не состоялась: на проверяющем сервере нет нужной программы (timeout).',
+    );
+    expect(settleAttempts([none, none, none], false)).toBeNull();
+    // Порт ответил, а TLS проверить нечем: «порт отвечает», а не «обрыв TLS» и не ТСПУ.
+    const noTls = parseBlockCheckOutput(
+      'Мост',
+      '{"stage":"port","ok":true,"stalledAtKb":null,"missing":"openssl"}',
+    );
+    expect(noTls).toMatchObject({
+      verdict: 'ok',
+      error: null,
+      detail:
+        'Порт отвечает. Блокировку ТСПУ и «16–20 КБ» проверить не удалось: на проверяющем сервере нет нужной программы (openssl).',
+    });
+    // TLS прошёл, а передачу данных проверить нечем: «прошло без обрывов» сказать нельзя.
+    const noData = parseBlockCheckOutput(
+      'Мост',
+      '{"stage":"tls","ok":true,"stalledAtKb":null,"missing":"curl"}',
+    );
+    expect(noData.verdict).toBe('ok');
+    expect(noData.detail).toContain('Блок «16–20 КБ» проверить не удалось');
+    expect(noData.detail).not.toContain('без обрывов');
+    // Мусор в названии программы в текст не попадает.
+    expect(
+      parseBlockCheckOutput('Мост', '{"stage":"tools","ok":false,"stalledAtKb":null,"missing":"x; rm -rf /"}')
+        .error,
+    ).toBe('Пустой или неразобранный ответ.');
+  });
+  it('панель хоть раз зашла на проверяющий — причина «команда не вернула результата», а не «панель не зашла»', () => {
+    const empty = parseBlockCheckOutput('Мост', '');
+    const ssh = at('unreachable', 'ssh');
+    expect(blindAttempt([ssh, empty, empty]).error).not.toBe('ssh');
+    expect(blindReason([blindAttempt([ssh, empty, empty])])).toBe('no_answer');
+    expect(blindReason([blindAttempt([ssh, ssh, ssh])])).toBe('ssh');
   });
   it('не зашли на проверяющий сервер — попытка не считается; ни одной — «проверить не удалось»', () => {
     expect(settleAttempts([at('unreachable', 'ssh'), at('ok')], false)?.verdict).toBe('ok');

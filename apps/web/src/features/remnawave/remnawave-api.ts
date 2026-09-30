@@ -1,4 +1,5 @@
 import {
+  REMNAWAVE_SYNC_INTERVAL_MIN,
   type RemnawaveConnectRequest,
   type RemnawaveStatus,
   remnawaveStatusSchema,
@@ -24,6 +25,9 @@ export const remnawaveStatusQuery = queryOptions({
   queryKey: remnawaveKeys.status,
   queryFn: ({ signal }) => remnawaveApi.status(signal),
   staleTime: 15_000,
+  // Панель перечитывает Remnawave раз в минуту, а события о ней в живом потоке нет: без своего опроса
+  // пилюли на карточках показывали бы то, что было при открытии страницы, пока не переключишь вкладку.
+  refetchInterval: REMNAWAVE_SYNC_INTERVAL_MIN * 60_000,
 });
 
 /** Статус подключения — читают и страница подключения, и плитка на «Обзоре», и пилюля на карточке сервера. */

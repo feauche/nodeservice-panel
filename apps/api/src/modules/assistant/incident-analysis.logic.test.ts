@@ -1,3 +1,4 @@
+import type { BlockCheckResult } from '@nodeservice/shared';
 import { isAnalysisStale } from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
 
@@ -9,7 +10,9 @@ import {
   dataBlock,
   entryAbsentText,
   freshCheckText,
+  nodeAbsentWhy,
   nodeNowText,
+  nodeOfIncident,
   PAYMENT_RULES,
   parseSubmission,
   paymentText,
@@ -217,40 +220,111 @@ describe('nodeNowText', () => {
     trafficLimitBytes: null,
   };
   const status = { connected: true, checkedAt: '2026-09-28T15:10:00.000Z', nodes: [node] };
-  it('находит ноду по адресу сервера или по имени и пишет текущий онлайн', () => {
-    const byHost = nodeNowText({ serverId: 's1', serverName: 'другое имя' }, status as never, '203.0.113.9');
-    expect(byHost).toContain('онлайн 470');
-    const byName = nodeNowText({ serverId: null, serverName: 'vk (Аренда)' }, status as never, null);
-    expect(byName).toContain('на связи с Remnawave');
+  it('нода дела: связанная с сервером, а у дела без сервера — по названию', () => {
+    // Связь «сервер ↔ нода» считает панель (адрес, IP, выбор в профиле); название — запасной путь.
+    expect(nodeOfIncident({ serverName: 'другое имя' }, [node], node)).toBe(node);
+    expect(nodeOfIncident({ serverName: 'vk (Аренда)' }, [node], undefined)).toBe(node);
+    expect(nodeOfIncident({ serverName: 'нет такой' }, [node], undefined)).toBeUndefined();
+  });
+  it('пишет текущий онлайн и состояние ноды', () => {
+    const t = nodeNowText(status, node);
+    expect(t).toContain('онлайн 470');
+    expect(t).toContain('на связи с Remnawave');
   });
   it('время снимка — в поясе панели, а не в поясе сервера панели', () => {
-    const at = { serverId: 's1', serverName: 'x' };
-    expect(nodeNowText(at, status as never, '203.0.113.9', 'Asia/Omsk')).toContain('снимок Remnawave, 21:10');
-    expect(nodeNowText(at, status as never, '203.0.113.9', 'Europe/Moscow')).toContain(
-      'снимок Remnawave, 18:10',
-    );
+    expect(nodeNowText(status, node, 'Asia/Omsk')).toContain('снимок Remnawave, 21:10');
+    expect(nodeNowText(status, node, 'Europe/Moscow')).toContain('снимок Remnawave, 18:10');
   });
   it('Remnawave не ответила на последний опрос — снимок не выдаётся за свежий', () => {
-    const t = nodeNowText(
-      { serverId: 's1', serverName: 'x' },
-      { ...status, error: 'таймаут' } as never,
-      '203.0.113.9',
-      'Asia/Omsk',
-    );
+    const t = nodeNowText({ ...status, error: 'таймаут' }, node, 'Asia/Omsk');
     expect(t).toContain('Remnawave сейчас не отвечает панели (попытка в 21:10) — текущий онлайн неизвестен');
     expect(t).toContain('Последнее, что панель видела: онлайн 470; считать это свежим нельзя');
     expect(t).not.toContain('на связи с Remnawave');
     expect(t).not.toContain('проблема прошла сама');
   });
   it('нода не нашлась или Remnawave не подключена — null', () => {
-    expect(nodeNowText({ serverId: null, serverName: 'нет такой' }, status as never, null)).toBeNull();
-    expect(
-      nodeNowText(
-        { serverId: null, serverName: 'vk (Аренда)' },
-        { ...status, connected: false } as never,
-        null,
-      ),
-    ).toBeNull();
+    expect(nodeNowText(status, undefined)).toBeNull();
+    expect(nodeNowText({ ...status, connected: false }, node)).toBeNull();
+  });
+  it('почему у дела нет ноды: панель называет то, что знает, а не «сервер не нода»', () => {
+    expect(nodeAbsentWhy({ nodeLink: 'none' })).toBe('в профиле сервера указано, что ноды на нём нет');
+    expect(nodeAbsentWhy({ nodeLink: 'auto' })).toContain('адреса не совпали — её можно выбрать в профиле');
+    expect(nodeAbsentWhy(null)).toBe('нода не найдена в Remnawave');
+  });
+});
+
+describe('свежая проверка порта ноды: находки четвёртой проверки 0.44.0', () => {
+  const okProbe = {
+    from: 'ru1',
+    verdict: 'ok' as const,
+    detail: 'TLS-подключение и передача данных прошли без обрывов.',
+    stalledAtKb: null,
+    error: null,
+  };
+  const check = (over: Partial<BlockCheckResult>): BlockCheckResult => ({
+    nodeName: 'n',
+    address: '1.2.3.4',
+    sniUsed: 'site.ru',
+    probes: [okProbe],
+    foreign: [],
+    verdict: 'ok',
+    unchecked: null,
+    foreignUnchecked: null,
+    entry: null,
+    ...over,
+  });
+  const at = { timeZone: 'Asia/Omsk', now: new Date('2026-09-30T09:58:30Z') };
+
+  it('соединение обрывается на небольшом объёме — «проблем не обнаружено» рядом с этим не пишем', () => {
+    const cut = {
+      ...okProbe,
+      detail: 'Соединение тихо обрывается на объёме около 8 КБ без явного отказа.',
+      stalledAtKb: 8,
+    };
+    const t = freshCheckText(check({ probes: [cut] }), at);
+    expect(t).toContain(
+      'признаков блокировки ТСПУ и «16–20 КБ» нет, но соединение с нодой обрывается на небольшом объёме данных',
+    );
+    expect(t).not.toContain('проблем не обнаружено');
+    expect(freshCheckText(check({}), at)).toContain('проблем не обнаружено');
+  });
+
+  it('Remnawave не ответила: причина названа, и «опирайтесь на онлайн» не советуем — онлайн тоже неизвестен', () => {
+    const blind = check({ probes: [], verdict: 'unreachable', unchecked: 'remnawave' });
+    const t = freshCheckText(blind, { ...at, onlineKnown: false });
+    expect(t).toContain('не удалась: Remnawave не ответила на запрос порта этой ноды.');
+    expect(t).toContain('Онлайн сейчас тоже неизвестен');
+    expect(t).not.toContain('Опирайтесь на онлайн');
+    expect(freshCheckText(blind, at)).toContain('Опирайтесь на онлайн.');
+  });
+
+  it('порт ноды молчит, а порт SSH с панели открывается — «сам сервер работает», и сказано почему', () => {
+    const dead = { ...okProbe, verdict: 'unreachable' as const, detail: 'Порт не отвечает совсем.' };
+    const t = freshCheckText(
+      check({ probes: [dead], foreign: [{ ...dead, from: 'de2' }], verdict: 'unreachable' }),
+      { ...at, serverAlive: 'ssh' },
+    );
+    expect(t).toContain(
+      'порт ноды не отвечает ни из России, ни из-за рубежа; сам сервер работает (порт SSH с панели открывается)',
+    );
+  });
+
+  it('вход указан в профиле, а проверить его нечем — об этом сказано строкой, а не молчанием', () => {
+    const t = freshCheckText(
+      check({
+        entry: {
+          label: 'Мост «Мост»',
+          address: '',
+          owner: null,
+          rented: false,
+          probes: [],
+          verdict: 'unreachable',
+          unchecked: 'no_port',
+        },
+      }),
+      at,
+    );
+    expect(t).toContain('Мост «Мост»: проверить нечем — у моста не найдена нода в Remnawave');
   });
 });
 

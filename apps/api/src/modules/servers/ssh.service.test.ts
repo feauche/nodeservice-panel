@@ -111,6 +111,43 @@ describe('SshService: обрыв соединения не роняет пане
     expect(uncaught).toEqual([]);
   });
 
+  it('в тексте ошибки — только начало команды: секрет из её хвоста наружу не попадает', async () => {
+    const secret = 'nse_SECRET-token-0123456789';
+    const session = await new SshService().connect(await silentSshd());
+    const run = session.exec(`echo ${'x'.repeat(80)}; sh /tmp/install --token ${secret}`);
+    await sleep(100);
+    reset();
+    const text = errorText(await run.catch((e: unknown) => e));
+    expect(text).toMatch(/соединение с сервером оборвалось/);
+    expect(text).not.toContain(secret);
+    // Причина не тонет в длинной команде: текст целиком короткий.
+    expect(text.length).toBeLessThan(160);
+  });
+
+  it('у долгой команды своё имя: в ошибке «установка агента», а не текст команды с токеном', async () => {
+    const secret = 'nse_SECRET-token-0123456789';
+    const command = `sh /tmp/install --token ${secret}`;
+    const lost = (await new SshService().connect(await silentSshd())).execStream(command, {
+      timeoutMs: 60_000,
+      label: 'установка агента',
+    });
+    await sleep(100);
+    reset();
+    expect(errorText(await lost.catch((e: unknown) => e))).toBe(
+      'Команда на сервере не выполнилась (установка агента): соединение с сервером оборвалось',
+    );
+    // Таймаут: сервер молчит дольше отведённого — тот же короткий текст, без команды.
+    const slow = (await new SshService().connect(await silentSshd())).execStream(command, {
+      timeoutMs: 1_000,
+      label: 'установка агента',
+    });
+    expect(errorText(await slow.catch((e: unknown) => e))).toBe(
+      'Команда на сервере не выполнилась (установка агента): таймаут 1 с',
+    );
+    await sleep(100);
+    expect(uncaught).toEqual([]);
+  }, 15_000);
+
   it('обрыв на простаивающей сессии и закрытие после него', async () => {
     const session = await new SshService().connect(await silentSshd());
     reset();

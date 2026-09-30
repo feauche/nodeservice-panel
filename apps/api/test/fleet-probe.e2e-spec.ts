@@ -141,6 +141,18 @@ class FakeLlm implements LlmProvider {
         blocks: [{ type: 'text', text: `РЕЗУЛЬТАТЫ:\n${results.join('\n---\n')}` }],
       };
     }
+    if (text.includes('ПО-ОЧЕРЕДИ')) {
+      if (done) return { stopReason: 'end', blocks: [{ type: 'text', text: 'Проверил с трёх серверов.' }] };
+      return {
+        stopReason: 'tool_use',
+        blocks: ['проверка-а', 'проверка-б', 'проверка-в'].map((from, i) => ({
+          type: 'tool_use' as const,
+          id: `q${i}`,
+          name: 'check_reachability',
+          input: { serverId: 'цель', from, ports: [443] },
+        })),
+      };
+    }
     if (text.includes('ДОСТУПНОСТЬ')) {
       if (done) return { stopReason: 'end', blocks: [{ type: 'text', text: 'Проверил.' }] };
       return {
@@ -381,6 +393,28 @@ describe('проверка доступности, процессы и пред�
     const history = await agent.get(`/api/assistant/conversations/${res.conversationId}`).expect(200);
     expect(JSON.stringify(history.body)).toContain('"reachability"');
     expect(JSON.stringify(history.body)).toContain('reachable');
+  });
+
+  it('чат: проверки одной цели с разных серверов складываются в одну таблицу', async () => {
+    // Джарвис сам выбирает проверяющего (from) и стучится три раза: раньше под ответом оставалась
+    // только последняя проверка — «с 1 сервера, открыт со всех», хотя с первого порт не отвечал.
+    ssh.reachQueue = ['closed', 'open', 'open'];
+    const res = assistantChatResponseSchema.parse(
+      (
+        await agent
+          .post('/api/assistant/chat')
+          .set(CSRF_HEADER, csrf)
+          .send({ message: 'Проверьте цель ПО-ОЧЕРЕДИ с трёх серверов' })
+          .expect(200)
+      ).body,
+    );
+    expect(res.message.reachability).toHaveLength(1);
+    const r = res.message.reachability[0];
+    expect(r?.target.name).toBe('цель');
+    expect(r?.probes.map((p) => p.from)).toEqual(['проверка-а', 'проверка-б', 'проверка-в']);
+    expect(r?.ports).toHaveLength(1);
+    expect(r?.ports[0]).toMatchObject({ port: 443, open: 2, closed: 1, verdict: 'partial' });
+    expect(r?.notes.join(' ')).not.toContain('Проверяющий один');
   });
 
   it('разбор инцидента сохраняет проверку доступности вместе с выводом', async () => {

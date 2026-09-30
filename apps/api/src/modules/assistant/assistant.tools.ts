@@ -11,6 +11,7 @@ import {
   type Incident,
   KB_SOURCE_LABELS,
   type KbSource,
+  NODE_LINK_BY_LABELS,
   type ReachabilityResult,
   SHARED_VERSION,
 } from '@nodeservice/shared';
@@ -46,7 +47,7 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   {
     name: 'get_remnawave_status',
     description:
-      'Подключение к панели Remnawave (только чтение, если владелец её подключил): домен, сводка (пользователи по статусам, сколько онлайн сейчас/за сутки/за неделю, сколько нод на связи, суммарный трафик, версия и аптайм самой панели Remnawave), список её нод (адрес, подключена ли, страна, сколько пользователей сейчас на ней онлайн, лимит и использованный трафик), срок TLS-сертификата домена панели. Без параметров. Если не подключена — скажи прямо и не выдумывай цифры; подключается в «Серверы → Remnawave».',
+      'Подключение к панели Remnawave (только чтение, если владелец её подключил): домен, сводка (пользователи по статусам, сколько онлайн сейчас/за сутки/за неделю, сколько нод на связи, суммарный трафик, версия и аптайм самой панели Remnawave), список её нод (адрес, подключена ли, страна, сколько пользователей сейчас на ней онлайн, лимит и использованный трафик, на каком сервере NodeService она работает — server), срок TLS-сертификата домена панели. Без параметров. Если не подключена — скажи прямо и не выдумывай цифры; подключается в «Серверы → Remnawave».',
     input_schema: { type: 'object', properties: {} },
   },
   {
@@ -242,7 +243,23 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
     const st = await deps.remnawave.status();
     if (!st.connected)
       return { ...empty, content: 'Remnawave не подключена. Подключить можно в «Серверы → Remnawave».' };
-    return { ...empty, content: JSON.stringify(st) };
+    // К каждой ноде — её сервер в панели: иначе модель сама сверяет адреса и пишет «сервер не добавлен»
+    // там, где он добавлен под другим адресом.
+    const names = new Map((await deps.servers.list()).map((x) => [x.id, x.name]));
+    const nodes = st.nodes.map(({ serverIds, linkedBy, ...n }) => ({
+      ...n,
+      server: serverIds?.[0] ? (names.get(serverIds[0]) ?? null) : null,
+      serverFoundBy: linkedBy ? NODE_LINK_BY_LABELS[linkedBy] : null,
+    }));
+    return {
+      ...empty,
+      content: JSON.stringify({
+        ...st,
+        nodes,
+        nodesNote:
+          'server — сервер NodeService, на котором работает нода: панель связывает их по адресу, по IP (в том числе когда одно записано доменом, а другое — IP) или по выбору в профиле сервера. server: null — сервер этой ноды в панели не найден: он не добавлен либо добавлен под адресом, который не совпал. Не утверждайте, что сервер «не добавлен»: скажите, что связь не найдена, и что её можно выбрать вручную — окно сервера → «Профиль» → «Нода Remnawave на сервере» → «Какая это нода в Remnawave».',
+      }),
+    };
   }
 
   if (name === 'get_panel_status') {

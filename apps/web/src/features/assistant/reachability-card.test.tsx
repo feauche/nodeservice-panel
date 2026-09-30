@@ -41,6 +41,16 @@ describe('ReachabilityCard (B1)', () => {
     expect(screen.getByText(/с 2 независимых серверов парка/)).toBeInTheDocument();
   });
 
+  it('несколько проверок в одной таблице: порт, который проверяющий не проверял, так и подписан', () => {
+    const r = sampleReach('de-1', 'open');
+    // Второй проверяющий стучался только в 22-й порт: про 443-й от него ничего не известно.
+    r.probes[1] = { ...(r.probes[1] as (typeof r.probes)[number]), ports: [{ port: 22, open: true, ms: 9 }] };
+    render(<ReachabilityCard result={r} />);
+    const row = within(screen.getByRole('table')).getByRole('rowheader', { name: 'fi-hel-01' }).closest('tr');
+    expect(within(row as HTMLElement).getByText('Не проверялся')).toBeInTheDocument();
+    expect(within(row as HTMLElement).queryByText('Закрыт')).not.toBeInTheDocument();
+  });
+
   it('расхождение DNS подсвечивается', () => {
     const r = sampleReach('de-1', 'open');
     r.dns = { answers: ['1.1.1.1', '2.2.2.2'], consistent: false };

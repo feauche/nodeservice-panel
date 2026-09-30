@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { BackupSettings } from '@nodeservice/shared';
 
 import { localDate, localMidnight } from '../billing/billing.logic.js';
@@ -39,20 +41,38 @@ export const lastScheduledAt = (
   tz: string,
 ) => slots(now, s, tz, -1);
 
+/** Сколько после момента расписания панель ещё берётся за копию (дальше — уже следующий момент). */
+export const BACKUP_CATCH_UP_MS = 6 * 3_600_000;
+/** Как часто повторяется копия по расписанию, которая не получилась. */
+export const BACKUP_RETRY_MS = 3_600_000;
+
 /**
  * Пора ли делать копию: наступил момент по расписанию, после него автокопии ещё не было, и прошло не больше
  * 6 часов (панель перезапускалась в 04:00 — сделает, как поднимется; но не догоняет старое).
+ * lastAttemptAt — когда панель последний раз бралась за копию по расписанию: неудачная попытка файла не
+ * оставляет, и без этой отметки копия запускалась бы заново каждую минуту. Повтор — не чаще раза в час.
  */
 export function isBackupDue(
   now: Date,
   s: Pick<BackupSettings, 'auto' | 'frequency' | 'weekday' | 'time'>,
   tz: string,
   lastAutoAt: Date | null,
+  lastAttemptAt: Date | null = null,
 ): boolean {
   if (!s.auto) return false;
   const slot = lastScheduledAt(now, s, tz);
-  if (!slot || now.getTime() - slot.getTime() > 6 * 3_600_000) return false;
-  return !lastAutoAt || lastAutoAt < slot;
+  if (!slot || now.getTime() - slot.getTime() > BACKUP_CATCH_UP_MS) return false;
+  if (lastAutoAt && lastAutoAt >= slot) return false;
+  const triedForSlot = lastAttemptAt !== null && lastAttemptAt >= slot;
+  return !triedForSlot || now.getTime() - lastAttemptAt.getTime() >= BACKUP_RETRY_MS;
+}
+
+/**
+ * Будет ли ещё одна попытка для этого момента расписания, если нынешняя (в now) не получится. С запасом в
+ * минуту: расписание проверяется раз в минуту, и обещать повтор на самой границе шести часов нельзя.
+ */
+export function willRetryBackup(now: Date, slot: Date): boolean {
+  return now.getTime() + BACKUP_RETRY_MS + 60_000 - slot.getTime() <= BACKUP_CATCH_UP_MS;
 }
 
 /** Имя архива как у консольного бэкапа: nodeservice-backup-ГГГГММДД-ЧЧММСС.tar.gz (UTC). */
@@ -105,4 +125,89 @@ export function envValues(text: string): Record<string, string> {
     if (m) out[m[1] as string] = (m[2] as string).replace(/^["']|["']$/g, '');
   }
   return out;
+}
+
+/**
+ * Строки файла «env» в архиве — те же, что install.sh пишет в .env установки и что читает консольное
+ * восстановление (install.sh --restore, nodeservice restore): домен и почта для сертификата, пароль базы,
+ * ключи шифрования.
+ */
+export const INSTALL_ENV_KEYS = [
+  'PANEL_DOMAIN',
+  'ACME_EMAIL',
+  'NODESERVICE_VERSION',
+  'POSTGRES_PASSWORD',
+  'APP_SECRET',
+  'ENCRYPTION_KEY',
+  'ENCRYPTION_KEY_VERSION',
+  'PASSWORD_PEPPER',
+] as const;
+export type InstallEnvKey = (typeof INSTALL_ENV_KEYS)[number];
+export type InstallEnv = Partial<Record<InstallEnvKey, string>>;
+/** Без них install.sh --restore архив не примет (та же проверка, что в нём). */
+export const INSTALL_ENV_REQUIRED = ['POSTGRES_PASSWORD', 'APP_SECRET', 'ENCRYPTION_KEY'] as const;
+
+/**
+ * Ключи установки — из настроек работающей панели. Сам файл .env на сервере закрыт от пользователя, под
+ * которым работает панель (0600, root), поэтому читать его нельзя; но всё его содержимое панель получила
+ * при запуске. Домен и пароль базы, если их не передали отдельными переменными, видны в адресах панели
+ * и базы.
+ */
+export function installEnv(input: {
+  keys: Partial<Record<(typeof SECRET_KEYS)[number], string>>;
+  publicUrl: string;
+  databaseUrl: string;
+  env: Record<string, string | undefined>;
+}): InstallEnv {
+  const part = (url: string, pick: (u: URL) => string): string => {
+    try {
+      return pick(new URL(url));
+    } catch {
+      return '';
+    }
+  };
+  const all: Record<InstallEnvKey, string | undefined> = {
+    PANEL_DOMAIN: input.env.PANEL_DOMAIN || part(input.publicUrl, (u) => u.hostname),
+    ACME_EMAIL: input.env.ACME_EMAIL,
+    NODESERVICE_VERSION: input.env.NODESERVICE_VERSION,
+    POSTGRES_PASSWORD:
+      input.env.POSTGRES_PASSWORD || part(input.databaseUrl, (u) => decodeURIComponent(u.password)),
+    APP_SECRET: input.keys.APP_SECRET,
+    ENCRYPTION_KEY: input.keys.ENCRYPTION_KEY,
+    // Версия ключа по умолчанию — 1: в старых .env её нет, а пустая строка не дала бы панели запуститься.
+    ENCRYPTION_KEY_VERSION: input.keys.ENCRYPTION_KEY_VERSION || '1',
+    PASSWORD_PEPPER: input.keys.PASSWORD_PEPPER,
+  };
+  const out: InstallEnv = {};
+  for (const k of INSTALL_ENV_KEYS) if (all[k]) out[k] = all[k];
+  return out;
+}
+
+/**
+ * Текст файла «env» и список обязательных ключей, которых в нём не оказалось. Значения — без кавычек:
+ * консоль читает строку как есть (grep '^КЛЮЧ=' | cut -d= -f2-). Значение с переводом строки сломало бы
+ * файл — оно не пишется и считается отсутствующим.
+ */
+export function installEnvText(values: InstallEnv, at: Date): { text: string; missing: InstallEnvKey[] } {
+  const usable = (k: InstallEnvKey) => {
+    const v = values[k];
+    return v && !/[\r\n]/.test(v) ? v : null;
+  };
+  const lines = [
+    `# Ключи установки NodeService: собраны панелью ${at.toISOString()} из её рабочих настроек. Не публиковать.`,
+    '# Без ENCRYPTION_KEY зашифрованные секреты (TOTP, доступы к серверам) не восстановить.',
+  ];
+  for (const k of INSTALL_ENV_KEYS) {
+    const v = usable(k);
+    if (v) lines.push(`${k}=${v}`);
+  }
+  return { text: `${lines.join('\n')}\n`, missing: INSTALL_ENV_REQUIRED.filter((k) => !usable(k)) };
+}
+
+/**
+ * Отпечаток ключа шифрования (sha256, не сам ключ) — в meta архива: по нему видно, от этой ли установки
+ * копия, даже если самих ключей в архиве нет. Регистр hex-записи ключа на отпечаток не влияет.
+ */
+export function keyFingerprint(encryptionKey: string): string {
+  return encryptionKey ? createHash('sha256').update(encryptionKey.toLowerCase(), 'utf8').digest('hex') : '';
 }

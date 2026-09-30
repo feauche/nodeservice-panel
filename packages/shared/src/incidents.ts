@@ -288,6 +288,11 @@ export const incidentProposalSchema = z.object({
   level: z.enum(ACTION_LEVELS),
   reason: z.string(),
   proposedAt: z.iso.datetime(),
+  /**
+   * Шаг отложен паузой между автопочинками: панель запустит его сама, когда пауза пройдёт, а запустить его
+   * вручную можно и раньше. Поля нет — шаг ждёт только подтверждения.
+   */
+  autoAfterPause: z.boolean().optional(),
 });
 export type IncidentProposal = z.infer<typeof incidentProposalSchema>;
 
@@ -518,7 +523,8 @@ export type IncidentPolicyUpdate = z.infer<typeof incidentPolicyUpdateSchema>;
 
 const pct = (min: number, max: number) => z.coerce.number().int().min(min).max(max);
 
-export const incidentsSettingsSchema = z.object({
+/** Поля самого раздела «Настройки → Инциденты» — то, что страница показывает и сохраняет. */
+const incidentsSettingsFields = {
   /** Порог «времени реакции»: проблема должна держаться дольше, чтобы стать инцидентом. */
   forDurationMinutes: z.coerce.number().int().min(1).max(60),
   cpuPct: pct(50, 100),
@@ -526,8 +532,16 @@ export const incidentsSettingsSchema = z.object({
   diskPct: pct(50, 100),
   /** Автопочинка сама применяет безопасный пресет (иначе — только заводит инцидент). */
   autofixEnabled: z.boolean(),
-  /** Не повторять автопочинку одного инцидента чаще, чем раз в N минут. */
+  /**
+   * Пауза между автопочинками: если панель уже чинила этот сигнал на сервере, новое дело того же вида она сама
+   * не чинит, пока не пройдёт N минут, — шаг предлагается, а после паузы запускается сам. Шаги одной цепочки и
+   * шаги, подтверждённые вручную, пауза не задерживает.
+   */
   autofixCooldownMinutes: z.coerce.number().int().min(1).max(240),
+};
+
+export const incidentsSettingsSchema = z.object({
+  ...incidentsSettingsFields,
   /** Политика по сигналам: само / спросить / наблюдать. Нет записи — «спросить». */
   policy: z.record(z.string(), autofixPolicySchema).default({}),
   /** Автопочинка на паузе до этого момента (UTC ISO); null — нет паузы. */
@@ -546,7 +560,13 @@ export const INCIDENTS_SETTINGS_DEFAULTS: IncidentsSettings = {
   pausedUntil: null,
 };
 
-export const incidentsSettingsUpdateSchema = incidentsSettingsSchema.partial();
+/**
+ * Update-схема раздела — только его собственные поля. `.partial()` поверх полной схемы подставлял значения
+ * по умолчанию (`policy: {}`, `pausedUntil: null`), и любое сохранение раздела стирало режимы по сигналам и
+ * снимало паузу автопочинки. Режимы и пауза меняются только на странице «Автопочинка» (PATCH /incidents/policy);
+ * присланные сюда, они отбрасываются.
+ */
+export const incidentsSettingsUpdateSchema = z.object(incidentsSettingsFields).partial();
 export type IncidentsSettingsUpdate = z.infer<typeof incidentsSettingsUpdateSchema>;
 
 /** Ручное закрытие: для «Контейнер ноды не запущен» можно заодно выключить слежение за нодой на сервере. */

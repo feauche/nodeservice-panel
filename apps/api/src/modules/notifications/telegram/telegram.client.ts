@@ -5,7 +5,38 @@ import { type Dispatcher, FormData, ProxyAgent, Socks5ProxyAgent, fetch as undic
  * Тонкий клиент Bot API: один вызов метода, ответ в понятной форме. В тестах подменяется
  * (TELEGRAM_CLIENT), поэтому наружу ходит только настоящий.
  */
-export type TelegramCall<T> = { ok: true; result: T } | { ok: false; status: number; description: string };
+export type TelegramCall<T> =
+  | { ok: true; result: T }
+  | {
+      ok: false;
+      status: number;
+      description: string;
+      /** Группа стала супергруппой: Telegram называет новый номер чата, по старому писать больше нельзя. */
+      migrateToChatId?: string;
+    };
+
+/** Тело ответа Bot API: при отказе — код, описание и подсказки (`parameters`). */
+interface TelegramReply<T> {
+  ok?: boolean;
+  result?: T;
+  description?: string;
+  error_code?: number;
+  parameters?: { migrate_to_chat_id?: number | string };
+}
+
+/** Отказ Telegram в общей форме; новый номер чата — только если Telegram его назвал. */
+function refusal<T>(
+  json: TelegramReply<T> | null,
+  res: { status: number; statusText: string },
+): TelegramCall<T> {
+  const moved = json?.parameters?.migrate_to_chat_id;
+  return {
+    ok: false,
+    status: json?.error_code ?? res.status,
+    description: json?.description ?? res.statusText,
+    ...(moved !== undefined && moved !== null ? { migrateToChatId: String(moved) } : {}),
+  };
+}
 
 export interface TelegramClient {
   /** `proxy` — `socks5://…` или `http://…`; null — напрямую. */
@@ -66,18 +97,9 @@ export class HttpTelegramClient implements TelegramClient {
       if (proxy && !/Timeout|Abort/i.test(m)) return { ok: false, status: 0, description: 'proxy' };
       return { ok: false, status: 0, description: /Timeout|Abort/i.test(m) ? 'timeout' : 'network' };
     }
-    const json = (await res.json().catch(() => null)) as {
-      ok?: boolean;
-      result?: T;
-      description?: string;
-      error_code?: number;
-    } | null;
+    const json = (await res.json().catch(() => null)) as TelegramReply<T> | null;
     if (json?.ok && json.result !== undefined) return { ok: true, result: json.result };
-    return {
-      ok: false,
-      status: json?.error_code ?? res.status,
-      description: json?.description ?? res.statusText,
-    };
+    return refusal(json, res);
   }
 
   async sendFile<T>(
@@ -106,18 +128,9 @@ export class HttpTelegramClient implements TelegramClient {
         description: /Timeout|Abort/i.test(m) ? 'timeout' : proxy ? 'proxy' : 'network',
       };
     }
-    const json = (await res.json().catch(() => null)) as {
-      ok?: boolean;
-      result?: T;
-      description?: string;
-      error_code?: number;
-    } | null;
+    const json = (await res.json().catch(() => null)) as TelegramReply<T> | null;
     if (json?.ok && json.result !== undefined) return { ok: true, result: json.result };
-    return {
-      ok: false,
-      status: json?.error_code ?? res.status,
-      description: json?.description ?? res.statusText,
-    };
+    return refusal(json, res);
   }
 }
 
@@ -136,8 +149,13 @@ export function describeTelegramError(status: number, description: string): stri
   if (d.includes('message thread not found') || d.includes('topic'))
     return 'Тема не найдена: проверьте номер темы после двоеточия или уберите его.';
   if (d.includes('chat not found')) return 'Чат не найден: добавьте бота в группу или проверьте id чата.';
+  if (d.includes('upgraded to a supergroup'))
+    return 'Группа стала супергруппой, и номер чата сменился: удалите этот чат из списка и добавьте заново с новым номером.';
+  if (d.includes('not a member'))
+    return 'Бота нет в этом чате: добавьте его в группу и разрешите отправку сообщений.';
   if (d.includes('not enough rights') || d.includes('have no rights') || d.includes('kicked'))
     return 'У бота нет права писать в этот чат: добавьте его в группу и разрешите отправку сообщений.';
   if (status === 429) return 'Telegram просит подождать: слишком много сообщений. Повторите через минуту.';
-  return `Telegram отказал (${status}): ${description}`;
+  // Английский ответ Telegram владельцу не показываем — он остаётся в логе панели (пишет TelegramService).
+  return `Telegram отказал в отправке (код ${status}). Точный ответ Telegram записан в лог панели.`;
 }

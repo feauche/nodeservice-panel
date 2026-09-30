@@ -23,16 +23,18 @@ import { egressText } from '../incidents/egress-check.logic.js';
 import { EgressCheckService } from '../incidents/egress-check.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
 import { NodeBlockCheckService } from '../incidents/node-block-check.service.js';
-import { resolveUpstreamTarget } from '../incidents/upstream-target.js';
+import { resolveUpstream, unknownEntry } from '../incidents/upstream-target.js';
 import { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
 import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { NodeLinkService } from '../remnawave/node-link.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { playbookForKind, renderPlaybook } from './assistant.playbooks.js';
 import { incidentCase, type ReadDeps, runReadTool, toolsFor } from './assistant.read-tools.js';
 import { runTool, type ToolDeps } from './assistant.tools.js';
 import { ReadDepsService } from './assistant-read-deps.service.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
+import { mergeReach, sameReachTarget } from './fleet-probe.logic.js';
 import {
   ANALYSIS_EXTRA,
   ANALYSIS_TOOLS,
@@ -44,7 +46,9 @@ import {
   dataBlock,
   entryAbsentText,
   freshCheckText,
+  nodeAbsentWhy,
   nodeNowText,
+  nodeOfIncident,
   parseSubmission,
   pickAutoAnalysis,
   type Submission,
@@ -122,9 +126,12 @@ export class IncidentAnalysisService implements OnModuleInit {
     private readonly kbRepo: KnowledgeRepository,
     private readonly auditRepo: AuditRepository,
     private readonly egress: EgressCheckService,
+    private readonly links: NodeLinkService,
   ) {}
 
   async onModuleInit(): Promise<void> {
+    // «Инциденты» решают, ждать ли сообщению в Telegram разбора: лимит разборов в час знаем только мы.
+    this.incidents.autoAnalysisRoom = () => this.autoRoom();
     const n = await this.incidents.failRunningAnalyses(
       'Разбор прерван перезапуском панели. Запустите его заново.',
     );
@@ -138,6 +145,12 @@ export class IncidentAnalysisService implements OnModuleInit {
   /** Когда запускали разборы сами: почасовой лимит считаем по этим меткам. */
   private readonly autoStarts: number[] = [];
   private lastAutoRunAt: number | null = null;
+
+  /** Сколько автоматических разборов ещё можно начать в этот час (по запускам за последние 60 минут). */
+  private autoRoom(): number {
+    const nowMs = Date.now();
+    return AUTO_ANALYSIS_PER_HOUR - this.autoStarts.filter((t) => nowMs - t <= 3_600_000).length;
+  }
 
   /** Состояние автоматического разбора для настроек и Джарвиса; данные с момента запуска панели. */
   autoStatus(): { lastRunAt: string | null; startedLastHour: number; limitPerHour: number } {
@@ -168,12 +181,8 @@ export class IncidentAnalysisService implements OnModuleInit {
     while (this.autoStarts.length > 0 && nowMs - (this.autoStarts[0] as number) > 3_600_000)
       this.autoStarts.shift();
     const { items } = await this.incidents.list('open');
-    const ids = pickAutoAnalysis(
-      items.filter((i) => !this.running.has(i.id)),
-      nowMs,
-      this.autoStarts.length,
-      AUTOFIX_GRACE_SECONDS * 1000,
-    );
+    const free = items.filter((i) => !this.running.has(i.id));
+    const ids = pickAutoAnalysis(free, nowMs, this.autoStarts.length, AUTOFIX_GRACE_SECONDS * 1000);
     const started: string[] = [];
     for (const id of ids) {
       try {
@@ -185,8 +194,15 @@ export class IncidentAnalysisService implements OnModuleInit {
         this.log.warn(
           `Автоматический разбор ${id} не запущен: ${err instanceof Error ? err.message : String(err)}`,
         );
+        // Разбора по этому делу не будет — сообщение в Telegram, которое его ждало, уходит как есть.
+        await this.notifications.releaseAfterAnalysis(id, null);
       }
     }
+    // Лимит разборов в час исчерпан: остальным делам без разбора в этот час он не достанется — их сообщения
+    // в Telegram не ждут зря до конца срока, а уходят как есть.
+    if (this.autoRoom() <= 0)
+      for (const i of free)
+        if (!i.analysis && !started.includes(i.id)) await this.notifications.releaseAfterAnalysis(i.id, null);
     return started;
   }
 
@@ -283,7 +299,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     // Разбор успел закончиться сам — отменять уже нечего, показываем то, что получилось.
     if (!cancelled) return this.incidents.get(id);
     // Сообщение в Telegram ждало разбора — уходит как есть, без вывода.
-    this.notifications.releaseAfterAnalysis(id, null);
+    await this.notifications.releaseAfterAnalysis(id, null);
     await this.audit.record({
       action: 'incident.analysis.cancelled',
       target: { type: 'incident', id, display: inc.title },
@@ -379,7 +395,9 @@ export class IncidentAnalysisService implements OnModuleInit {
             try {
               const out = await this.runAnalysisTool(use.name, use.input, deps);
               content = out?.content ? localizeIsoTimes(out.content, timeZone) : 'Нет данных.';
-              if (out?.reachability?.[0]) reach = out.reachability[0];
+              // Та же цель, что уже в разборе, — складываем в одну таблицу; другая цель — показываем её.
+              const r = out?.reachability?.[0];
+              if (r) reach = reach && sameReachTarget(reach, r) ? mergeReach(reach, r) : r;
             } catch (err) {
               this.log.warn(
                 `Инструмент «${use.name}» в разборе: ${err instanceof Error ? err.message : err}`,
@@ -402,11 +420,13 @@ export class IncidentAnalysisService implements OnModuleInit {
         steps: [...steps],
       });
       // Сообщение в Telegram ждало разбора — теперь уходит с выводом Джарвиса.
-      this.notifications.releaseAfterAnalysis(id, submission.verdict, submission.confidence ?? null);
+      await this.notifications.releaseAfterAnalysis(id, submission.verdict, submission.confidence ?? null);
     } catch (err) {
-      // Разбор не получился — отложенное сообщение уходит как есть, без вывода.
-      this.notifications.releaseAfterAnalysis(id, null);
+      // Писать некуда: дело удалили (и ждать отправки нечему), разбор отменили (сообщение отпустила отмена)
+      // или дело уточнили и разбор сбросили — тогда новое сообщение ждёт нового разбора, а не уходит без вывода.
       if (err instanceof Gone || signal.aborted) return;
+      // Разбор не получился — отложенное сообщение уходит как есть, без вывода.
+      await this.notifications.releaseAfterAnalysis(id, null);
       if (!(err instanceof AnalysisError))
         this.log.warn(`Разбор ${id}: ${err instanceof Error ? err.message : err}`);
       await this.incidents
@@ -436,37 +456,60 @@ export class IncidentAnalysisService implements OnModuleInit {
     let blockChecked = false;
     if (CONNECTIVITY_KINDS.has(inc.kind)) {
       await step('Смотрю онлайн ноды сейчас');
-      const host = inc.serverId
-        ? ((await deps.servers.list()).find((s) => s.id === inc.serverId)?.host ?? null)
-        : null;
+      const all = await deps.servers.list();
+      const me = inc.serverId ? (all.find((x) => x.id === inc.serverId) ?? null) : null;
       const st = await this.remnawave.status().catch(() => null);
-      nowText = st ? nodeNowText(inc, st, host, timeZone) : null;
+      // Нода дела — по общей связи «сервер ↔ нода» (адрес, IP, выбор в профиле), а не по совпадению строк.
+      const links = st?.connected ? await this.links.resolve(all, st.nodes) : null;
+      const node =
+        st && links ? nodeOfIncident(inc, st.nodes, me ? links.nodeOf(me.id) : undefined) : undefined;
+      nowText = st ? nodeNowText(st, node, timeZone) : null;
       // Свежая проверка порта: при «Разобрать заново» Джарвис должен видеть, что сейчас, а не только
       // то, что было при открытии. Нода может и не быть сервером NodeService — адрес берём из Remnawave.
-      const node = st?.connected
-        ? ((host ? st.nodes.find((n) => n.address === host) : undefined) ??
-          st.nodes.find((n) => n.name === inc.serverName))
-        : undefined;
       if (node) nodeRef = { uuid: node.uuid, name: node.name };
-      if (node) {
+      if (node && links) {
         await step('Проверяю порт ноды сейчас');
         const inbound = await this.remnawave.nodeInbound(node.uuid);
-        const all = await deps.servers.list();
-        const me = inc.serverId ? (all.find((x) => x.id === inc.serverId) ?? null) : null;
+        // Все записи этой машины в панели: с них ноду не проверяем — сервер не проверяет сам себя.
+        const machine = [...new Set([...(me ? [me.id] : []), ...links.machineIds(node)])];
         const result = await this.blockCheck
-          .check(node.name, node.address, inbound?.port ?? null, inbound?.sni ?? null, inc.serverId, all)
+          .check(
+            node.name,
+            node.address,
+            inbound?.port ?? null,
+            inbound?.sni ?? null,
+            machine,
+            all,
+            Boolean(inbound?.failed),
+          )
           .catch(() => null);
         if (result) {
-          const target = await resolveUpstreamTarget(me, all, this.remnawave).catch(() => null);
-          if (target) {
+          const up = await resolveUpstream(me, all, this.remnawave, this.links).catch(
+            () => ({ kind: 'none' }) as const,
+          );
+          if (up.kind === 'target') {
             await step('Проверяю вход этого выхода');
-            result.entry = await this.blockCheck.checkEntry(target, me?.id ?? null, all).catch(() => null);
-          }
+            result.entry = await this.blockCheck.checkEntry(up.target, machine, all).catch(() => null);
+          } else if (up.kind === 'unknown') result.entry = unknownEntry(up);
         }
         blockChecked = Boolean(result && result.probes.length > 0);
-        // Агент на связи — сервер работает: молчащий порт ноды тогда не «сервер лежит», как и в тексте дела.
+        // Сервер работает (агент на связи или порт SSH с панели открывается): молчащий порт ноды тогда не
+        // «сервер лежит» — так же, как в тексте дела.
+        const alive: 'agent' | 'ssh' | false =
+          me?.agentStatus === 'online'
+            ? 'agent'
+            : me &&
+                result?.verdict === 'unreachable' &&
+                (await this.incidents.probeHost(me.host, me.port).catch(() => false))
+              ? 'ssh'
+              : false;
         const check = result
-          ? freshCheckText(result, { timeZone, serverAlive: me?.agentStatus === 'online' })
+          ? freshCheckText(result, {
+              timeZone,
+              serverAlive: alive,
+              // Remnawave не отвечает — текущий онлайн неизвестен: «опирайтесь на онлайн» советовать нельзя.
+              onlineKnown: !st?.error,
+            })
           : null;
         // Проверка состоялась, а строк о входе в ней нет — говорим почему: входа нет в профиле или его нечем проверить.
         const fresh =
@@ -534,7 +577,7 @@ export class IncidentAnalysisService implements OnModuleInit {
       checked['онлайн ноды'] = points.length > 0;
       if (points.length > 0)
         out.push(onlineText(node.name, summarizeOnline(points, Date.parse(inc.openedAt))));
-    } else checked['онлайн ноды (сервер не нода Remnawave)'] = false;
+    } else checked[`онлайн ноды (${nodeAbsentWhy(me)})`] = false;
 
     if (me) {
       await step('Проверяю порт SSH из разных стран');
@@ -556,7 +599,12 @@ export class IncidentAnalysisService implements OnModuleInit {
         }));
       checked['порт из разных стран'] = reach.length > 0;
       if (result) this.evidenceReach.set(inc.id, result);
-      out.push(reachText(me.port, reach, panelOpen, me.agentStatus === 'online' && me.sshOk === true));
+      out.push(
+        reachText(me.port, reach, panelOpen, me.agentStatus === 'online' && me.sshOk === true, {
+          agentOnline: me.agentStatus === 'online',
+          chosen: result?.probes.length ?? 0,
+        }),
+      );
 
       // Куда может выйти сам сервер (Россия, панель, зарубеж) — заходим напрямую или через сервер, откуда
       // он доступен. Это отличает «фильтрация у хостера» от «сервер лежит» и от «сломан агент».
@@ -633,7 +681,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     checked[
       node
         ? 'проверка порта ноды из России (блокировка)'
-        : 'проверка порта ноды из России (сервер не найден среди нод Remnawave)'
+        : `проверка порта ноды из России (${nodeAbsentWhy(me)})`
     ] = blockChecked;
     out.push(coverageText(checked));
     return out;

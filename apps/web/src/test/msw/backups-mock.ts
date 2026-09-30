@@ -8,6 +8,8 @@ import {
   type BackupRun,
   type BackupSettings,
   type BackupSettingsUpdate,
+  maskTelegramUrl,
+  parseTelegramUrl,
 } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
 
@@ -23,12 +25,21 @@ const MB = 1024 * 1024;
 export const mockBackups = {
   items: [] as BackupItem[],
   settings: structuredClone(BACKUP_SETTINGS_DEFAULT) as BackupSettings,
+  /** Тело последнего сохранения настроек: что именно отправил интерфейс. */
+  lastUpdate: null as BackupSettingsUpdate | null,
   run: { stage: null, startedAt: null, mode: null, lastError: null } as BackupRun,
   speedMs: 700,
   failNext: false,
   restored: [] as string[],
   timers: [] as ReturnType<typeof setTimeout>[],
+  /** Часы «сервера» относительно часов браузера, мс: итог копии не должен зависеть от сбитых часов. */
+  clockSkewMs: 0,
+  /** Восстановление не удаётся: сервер отвечает своей ошибкой со словами «текущая база не тронута». */
+  restoreFails: false,
 };
+// Режим VITE_MOCK=1: управление из скриншот-сценариев.
+if (typeof window !== 'undefined')
+  (window as unknown as { __nsMockBackups: typeof mockBackups }).__nsMockBackups = mockBackups;
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -57,6 +68,7 @@ function item(at: Date, kind: BackupItem['kind'], size: number, extra: Partial<B
 export function seedBackups(): void {
   for (const t of mockBackups.timers) clearTimeout(t);
   mockBackups.timers = [];
+  mockBackups.lastUpdate = null;
   const today4 = new Date();
   today4.setHours(4, 0, 0, 0);
   const base = today4.getTime() > Date.now() ? today4.getTime() - DAY : today4.getTime();
@@ -79,7 +91,8 @@ export function seedBackups(): void {
       enabled: true,
       target: 'own',
       destinationId: null,
-      ownUrl: 'tgram://•••/-1002233445566:12',
+      // Маска — та же, что отдаёт сервер: вместо токена три звёздочки.
+      ownUrl: maskTelegramUrl('-1002233445566', 12),
       notifyFailure: true,
     },
     extra: { enabled: true, paths: ['/etc/nginx/sites-enabled', '/root/scripts/remnanode-installer'] },
@@ -87,6 +100,8 @@ export function seedBackups(): void {
   mockBackups.run = { stage: null, startedAt: null, mode: null, lastError: null };
   mockBackups.failNext = false;
   mockBackups.restored = [];
+  mockBackups.clockSkewMs = 0;
+  mockBackups.restoreFails = false;
 }
 
 const problem = (status: number, type: string, detail: string) =>
@@ -130,7 +145,7 @@ function startRun(sendTelegram: boolean): void {
   mockBackups.failNext = false;
   mockBackups.run = {
     stage: stages[0] ?? 'db',
-    startedAt: new Date().toISOString(),
+    startedAt: new Date(Date.now() + mockBackups.clockSkewMs).toISOString(),
     mode: 'backup',
     lastError: null,
   };
@@ -152,7 +167,7 @@ function startRun(sendTelegram: boolean): void {
         };
         return;
       }
-      const it = item(new Date(), 'manual', 42.6 * MB, {
+      const it = item(new Date(Date.now() + mockBackups.clockSkewMs), 'manual', 42.6 * MB, {
         encrypted: mockBackups.settings.passwordSet,
         telegram: sendTelegram ? { ok: true, note: null } : null,
         contents: {
@@ -214,20 +229,30 @@ export const backupsHandlers = [
   http.get('/api/backups/settings', () => HttpResponse.json(mockBackups.settings)),
   http.put('/api/backups/settings', async ({ request }) => {
     const b = (await request.json()) as BackupSettingsUpdate;
+    mockBackups.lastUpdate = b;
     const { password, telegram, ...rest } = b;
     const s = {
       ...mockBackups.settings,
       ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)),
     };
-    if (telegram)
-      s.telegram = {
-        ...telegram,
-        ownUrl: telegram.ownUrl
-          ? telegram.ownUrl.includes('•••')
-            ? telegram.ownUrl
-            : telegram.ownUrl.replace(/^tgram:\/\/[^/]+/, 'tgram://•••')
-          : null,
-      };
+    if (telegram) {
+      // Как на сервере: не передан или вернулась текущая маска — чат не меняли; null — убрать; иначе это
+      // новая ссылка, и маска (в ней нет токена) за ссылку не сойдёт.
+      const { ownUrl, ...tg } = telegram;
+      let own = mockBackups.settings.telegram.ownUrl;
+      if (ownUrl === null || ownUrl === '') own = null;
+      else if (ownUrl !== undefined && ownUrl !== own) {
+        const t = parseTelegramUrl(ownUrl);
+        if (!t)
+          return problem(
+            400,
+            'about:blank',
+            'Свой чат — строкой вида tgram://токен_бота/id_чата (для темы — :номер_темы в конце).',
+          );
+        own = maskTelegramUrl(t.chatId, t.topic);
+      }
+      s.telegram = { ...tg, ownUrl: own };
+    }
     if (password !== undefined) s.passwordSet = Boolean(password);
     mockBackups.settings = s as BackupSettings;
     return HttpResponse.json(mockBackups.settings);
@@ -283,6 +308,12 @@ export const backupsHandlers = [
       return problem(400, 'about:blank', `Для подтверждения введите «${BACKUP_RESTORE_CONFIRM}»`);
     if (inspect(it, b.password).needsPassword)
       return problem(400, 'urn:nodeservice:problem:backup-password', 'Пароль не подошёл.');
+    if (mockBackups.restoreFails)
+      return problem(
+        500,
+        'urn:nodeservice:problem:backup-restore-failed',
+        'Восстановление не удалось, текущая база не тронута: pg_restore: неожиданный конец архива',
+      );
     mockBackups.restored.push(it.name);
     return HttpResponse.json({ ok: true }, { status: 202 });
   }),

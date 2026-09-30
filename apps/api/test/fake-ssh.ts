@@ -57,6 +57,8 @@ export class FakeSsh {
   egressPing = true;
   /** Сколько раз через этот сервер открывали соединение к другому («ступенька»). */
   forwards = 0;
+  /** Установка агента панелью (ns-agent:install): что «печатает» скрипт и с каким кодом завершается. */
+  agentInstall = { code: 0, output: '' };
 
   async start(port = 0): Promise<void> {
     this.hostKey ??= toOpenSshPrivate(generateKeyPairSync('ed25519').privateKey, 'fake-host');
@@ -125,7 +127,7 @@ export class FakeSsh {
                 stream.exit(0);
               } else if (info.command.includes('@@hostname')) {
                 stream.write(
-                  '@@hostname=test-node\n@@arch=x86_64\n@@kernel=6.8.0\n@@cores=4\n@@memkb=8192000\n@@os=Ubuntu\n@@osver=24.04\n',
+                  '@@hostname=test-node\n@@arch=x86_64\n@@kernel=6.8.0\n@@cores=4\n@@memkb=8192000\n@@ips=198.51.100.7 10.0.0.2 172.17.0.1 198.51.100.8 \n@@os=Ubuntu\n@@osver=24.04\n',
                 );
                 stream.exit(0);
               } else if (info.command.startsWith('# ns-maint:check')) {
@@ -170,6 +172,9 @@ export class FakeSsh {
                   this.checks.output[key] ?? `\u001b[32mпроверка ${key}\u001b[0m\n10%\r100%\nготово\n`,
                 );
                 stream.exit(this.checks.code[key] ?? 0);
+              } else if (info.command.includes('# ns-agent:install')) {
+                if (this.agentInstall.output) stream.write(this.agentInstall.output);
+                stream.exit(this.agentInstall.code);
               } else if (info.command.includes('# ns-blockcheck')) {
                 const portOnly = info.command.replaceAll("'\\''", "'").includes("sni=''\n");
                 stream.write(

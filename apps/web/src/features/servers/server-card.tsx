@@ -33,6 +33,7 @@ import { formatMbps, formatPct } from '@/features/overview/overview-format';
 import { Sparkline } from '@/features/overview/primitives';
 import { ProviderIcon } from '@/features/providers/provider-icon';
 import { useProviders } from '@/features/providers/providers-api';
+import { nodeOfServer } from '@/features/remnawave/node-link';
 import { useRemnawaveStatus } from '@/features/remnawave/remnawave-api';
 import { formatAgo } from '@/features/security/security-format';
 import { StepUpCancelledError } from '@/features/security/step-up';
@@ -41,7 +42,7 @@ import { apiErrorMessage, isApiError } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { AgentInstallDialog } from './agent-install-dialog';
-import { HEALTH_COLORS, HEALTH_LABELS, type ServerHealth, serverHealth } from './server-health';
+import { HEALTH_COLORS, HEALTH_LABELS, nodeProblem, type ServerHealth, serverState } from './server-health';
 import { CountryMark, DriftDot, RoleMark } from './server-marks';
 import { useCheckServer, useDeleteServer, useDuplicateServer, useTrustHostKey } from './servers-api';
 
@@ -63,13 +64,27 @@ export function SshPill({ server }: { server: Server }) {
   );
 }
 
-/** Точка состояния сервера: цвет = здоровье, подпись — в подсказке и для скринридера. */
-export function HealthDot({ health, className }: { health: ServerHealth; className?: string }) {
+/**
+ * Точка состояния сервера: цвет = здоровье, подпись — в подсказке и для скринридера. На карточке в подписи
+ * сама причина («SSH не пускает», «Нода остановлена») — больше её там назвать негде; в строке списка
+ * причина написана рядом, поэтому у точки остаётся уровень.
+ */
+export function HealthDot({
+  health,
+  label,
+  className,
+}: {
+  health: ServerHealth;
+  /** Что не так с сервером, словами; нет — подпись уровня. */
+  label?: string | null;
+  className?: string;
+}) {
+  const text = label ?? HEALTH_LABELS[health];
   return (
     <span
       role="img"
-      aria-label={HEALTH_LABELS[health]}
-      title={HEALTH_LABELS[health]}
+      aria-label={text}
+      title={text}
       className={cn('inline-block size-2 flex-none rounded-full', className)}
       style={{
         background: HEALTH_COLORS[health],
@@ -87,6 +102,7 @@ function Gauges({
   offline,
 }: {
   metrics: OverviewServerMetrics | null | undefined;
+  /** Агент не на связи: метрики прислать некому. SSH и нода тут ни при чём — цифры у живого агента свежие. */
   offline: boolean;
 }) {
   // Порт дуплексный: в лимит упирается более загруженное направление, его и показываем крупно.
@@ -187,9 +203,9 @@ function StatusPills({ server }: { server: Server }) {
 function NodePill({ server }: { server: Server }) {
   if (server.nodeWatch === 'off') return null;
   if (server.node === 'running') return <Pill tone="ok">Нода</Pill>;
-  if (server.node === 'stopped') return <Pill tone="crit">Нода остановлена</Pill>;
-  if (server.node === 'none' && server.nodeWatch === 'on') return <Pill tone="crit">Нода не найдена</Pill>;
-  return null;
+  // То же правило и те же слова, что у точки состояния: пилюля и точка не расходятся.
+  const problem = nodeProblem(server);
+  return problem ? <Pill tone="crit">{problem}</Pill> : null;
 }
 
 /**
@@ -198,26 +214,50 @@ function NodePill({ server }: { server: Server }) {
  */
 function RemnawavePill({ server }: { server: Server }) {
   const status = useRemnawaveStatus();
-  const node = status.data?.nodes.find((n) => n.address === server.host);
+  const node = nodeOfServer(status.data?.nodes, server);
   if (!node) return null;
   // Своя, не зависящая от «Слежение за нодой»: та настройка — про наш собственный осмотр контейнера
   // по SSH, а эта пилюля — про то, видит ли САМА Remnawave ноду с этим адресом подключённой к себе.
   const title = 'Подключена ли к Remnawave нода с этим адресом. Не связано со слежением за контейнером ноды.';
+  // Последнее чтение Remnawave не удалось: список нод — снимок прошлой удачной проверки. Выдавать его
+  // за текущее состояние нельзя — нода могла отвалиться уже после него. Почему не удалось (не ответила,
+  // отказала в доступе, вернула ошибку), панель здесь не пересказывает: причина — на странице Remnawave.
+  // Время в статусе при сбое — время самой неудачной попытки, поэтому так оно и названо.
+  if (status.data?.error)
+    return (
+      <Pill
+        tone="muted"
+        title={`Панель не смогла получить данные Remnawave — подключена ли нода, сейчас неизвестно. Причина — на странице «Remnawave».${
+          status.data.checkedAt ? ` Последняя попытка: ${formatAgo(status.data.checkedAt)}.` : ''
+        }`}
+      >
+        Remnawave: нет данных
+      </Pill>
+    );
+  // Порядок тот же, что у статуса на странице Remnawave: карточка и страница говорят об одной ноде одно.
   if (node.isDisabled)
     return (
       <Pill tone="muted" title={title}>
+        Remnawave: отключена вручную
+      </Pill>
+    );
+  if (node.isConnecting)
+    return (
+      <Pill tone="warn" title={title}>
+        Remnawave: подключается
+      </Pill>
+    );
+  // Онлайн у ноды без связи Remnawave отдаёт нулём, а не пустым значением: число показываем только у
+  // подключённой, иначе упавшая нода выглядела бы зелёной «0 онлайн».
+  if (!node.isConnected)
+    return (
+      <Pill tone="crit" title={title}>
         Remnawave: не на связи
       </Pill>
     );
-  if (node.usersOnline !== null)
-    return (
-      <Pill tone="ok" title={title}>
-        Remnawave: {node.usersOnline} онлайн
-      </Pill>
-    );
   return (
-    <Pill tone={node.isConnected ? 'ok' : 'crit'} title={title}>
-      {node.isConnected ? 'Remnawave: на связи' : 'Remnawave: не на связи'}
+    <Pill tone="ok" title={title}>
+      {node.usersOnline !== null ? `Remnawave: ${node.usersOnline} онлайн` : 'Remnawave: на связи'}
     </Pill>
   );
 }
@@ -306,12 +346,12 @@ export function ServerCardGhost({
   server: Server;
   metrics?: OverviewServerMetrics | null;
 }) {
-  const health = serverHealth(server, metrics);
+  const { health, reason } = serverState(server, metrics);
   const provider = useServerProvider(server);
   return (
     <div className="relative flex h-full cursor-grabbing flex-col gap-3 rounded-2xl border border-border-2 bg-surface p-4 shadow-float">
       <div className="flex items-start gap-2.5">
-        <HealthDot health={health} className="mt-[7px]" />
+        <HealthDot health={health} label={reason} className="mt-[7px]" />
         <div className="min-w-0 flex-1">
           <NameRow server={server} />
           <AddressLine server={server} />
@@ -319,7 +359,7 @@ export function ServerCardGhost({
         <DriftDot server={server} />
       </div>
       <StatusPills server={server} />
-      <Gauges metrics={metrics} offline={health === 'crit'} />
+      <Gauges metrics={metrics} offline={server.agentStatus !== 'online'} />
       <CardSpark
         metrics={metrics}
         health={health}
@@ -362,7 +402,7 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [mismatch, setMismatch] = useState<{ offered: string } | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
-  const health = serverHealth(server, metrics);
+  const { health, reason } = serverState(server, metrics);
 
   const doCheck = async () => {
     try {
@@ -433,7 +473,7 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
     >
       {/* Шапка: состояние, имя, адрес, действия */}
       <div className="flex items-start gap-2.5">
-        <HealthDot health={health} className="mt-[7px]" />
+        <HealthDot health={health} label={reason} className="mt-[7px]" />
         <div className="min-w-0 flex-1">
           <NameRow server={server} />
           <AddressLine server={server} />
@@ -483,7 +523,7 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
       </div>
 
       <StatusPills server={server} />
-      <Gauges metrics={metrics} offline={health === 'crit'} />
+      <Gauges metrics={metrics} offline={server.agentStatus !== 'online'} />
       <CardSpark
         metrics={metrics}
         health={health}

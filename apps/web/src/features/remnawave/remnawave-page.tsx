@@ -113,7 +113,16 @@ function hasTrafficLimit(node: RemnawaveNode): boolean {
  * онлайн и трафик у каждой ноды по-разному — на широком экране это выглядело рябью без выравнивания.
  * На телефоне колонки не нужны — там всё и так в одну ленту переносится.
  */
-function NodeRow({ node, matched, onAdd }: { node: RemnawaveNode; matched: boolean; onAdd: () => void }) {
+function NodeRow({
+  node,
+  serverName,
+  onAdd,
+}: {
+  node: RemnawaveNode;
+  /** Сервер панели, на котором работает нода; null — в панели его нет (или он не связался с нодой). */
+  serverName: string | null;
+  onAdd: () => void;
+}) {
   const status = NODE_STATUS[nodeStatusKey(node)];
   return (
     <li className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 border-t border-border px-4 py-3.5 first:border-t-0 sm:grid sm:grid-cols-[20px_minmax(140px,1.6fr)_140px_120px_92px_150px_190px] sm:items-center sm:gap-y-0">
@@ -143,7 +152,7 @@ function NodeRow({ node, matched, onAdd }: { node: RemnawaveNode; matched: boole
           </>
         )}
       </span>
-      {!matched && (
+      {serverName === null ? (
         <Button
           type="button"
           variant="outline"
@@ -153,6 +162,13 @@ function NodeRow({ node, matched, onAdd }: { node: RemnawaveNode; matched: boole
           <PlusIcon className="size-3.5" aria-hidden="true" />
           Добавить в NodeService
         </Button>
+      ) : (
+        <span
+          className="min-w-0 truncate text-[12.5px] text-text-3 sm:justify-self-end"
+          title={`Нода работает на сервере «${serverName}». Связь меняется в его профиле: «Нода Remnawave на сервере».`}
+        >
+          Сервер: {serverName}
+        </span>
       )}
       {node.lastStatusMessage && !node.isConnected && !node.isDisabled && (
         <span className="w-full text-[11.5px] text-crit sm:col-span-full">{node.lastStatusMessage}</span>
@@ -302,8 +318,11 @@ export function RemnawavePage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [addNode, setAddNode] = useState<RemnawaveNode | null>(null);
 
-  /** Адреса уже добавленных серверов — по ним решаем, у какой ноды есть кнопка «Добавить в NodeService». */
-  const knownHosts = useMemo(() => new Set((servers.data?.items ?? []).map((s) => s.host)), [servers.data]);
+  /** Названия серверов панели: у связанной ноды показываем её сервер, у остальных — «Добавить в NodeService». */
+  const serverNames = useMemo(
+    () => new Map((servers.data?.items ?? []).map((s) => [s.id, s.name])),
+    [servers.data],
+  );
 
   const doRefresh = async () => {
     try {
@@ -418,7 +437,7 @@ export function RemnawavePage() {
               <NodeRow
                 key={n.uuid}
                 node={n}
-                matched={knownHosts.has(n.address)}
+                serverName={serverNames.get(n.serverIds?.[0] ?? '') ?? null}
                 onAdd={() => setAddNode(n)}
               />
             ))}

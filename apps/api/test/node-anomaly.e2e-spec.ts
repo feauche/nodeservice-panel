@@ -16,10 +16,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module.js';
 import { setupHttp } from '../src/common/http/setup-http.js';
+import { tcpOpen } from '../src/common/net/tcp-open.js';
 import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
+import { IncidentsService } from '../src/modules/incidents/incidents.service.js';
 import { NodeAnomalyJob } from '../src/modules/incidents/node-anomaly.job.js';
 import { NodeBlockRecheckJob } from '../src/modules/incidents/node-block-recheck.job.js';
 import { RemnawaveService } from '../src/modules/remnawave/remnawave.service.js';
@@ -118,6 +120,10 @@ describe('J10: аномалия онлайна → проверка блокир
     await db.execute(sql`delete from app_meta where key like 'settings.%' or key = 'panel.ssh-key'`);
     await app.get<Redis>(VALKEY).flushdb();
     await app.init();
+    // Порт SSH с панели проверяется настоящим подключением. На машине с прозрачным прокси (VPN-клиент в режиме
+    // TUN) подключение к любому адресу «проходит», и сервер с тестовым адресом из документации считался бы
+    // работающим. По задумке тестов такие серверы недоступны — отвечает только 127.0.0.1 (тестовый SSH).
+    app.get(IncidentsService).probeHost = async (host, port) => host === '127.0.0.1' && tcpOpen(host, port);
     agent = request.agent(app.getHttpServer());
     csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token as string;
     const setupToken = await app.get(SetupService).issueToken();

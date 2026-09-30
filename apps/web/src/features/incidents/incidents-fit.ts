@@ -6,6 +6,10 @@
  * страницы получаются разной длины, зато реестр всегда кончается у нижнего поля — без прокрутки и пустоты.
  * Остаток меньше одной строки раздаётся строкам по пикселю.
  * Работает на широком экране; на телефоне строки разной высоты и страница просто листается.
+ *
+ * Страницы разной длины номером не адресуются — любой «номер» врал бы. Поэтому листание идёт от строки:
+ * «Следующая» начинается там, где кончилась показанная, «Предыдущая» возвращает ровно ту страницу, с которой
+ * ушли (или кончается у начала показанной), «В начало» и «В конец» — края списка. Сверху — диапазон строк.
  */
 
 /** Обычная высота строки реестра на широком экране (её задаёт min-height строки). */
@@ -17,7 +21,7 @@ export const ROW_MAX = 72;
 /**
  * Предел растяжения на полной странице — когда дальше есть ещё строки, но следующая уже не помещается даже
  * сжатой. Это бывает при трёх-четырёх строках на странице (низкое окно, редкие сбои): лучше строки повыше,
- * чем пустота под реестром. Больше 82 при трёх и более строках не нужно никогда.
+ * чем пустота под реестром. Больше 82 при трёх и более строках не нужно никогда (одна-две — см. fullRowMax).
  */
 export const ROW_MAX_FULL = 84;
 /** Заголовок группы («Сейчас», «Сегодня · 10 сбоев») — фиксированной высоты. */
@@ -100,6 +104,15 @@ export function visibleCount(
 }
 
 /**
+ * Предел растяжения полной страницы из `rows` строк. Страница полная, когда следующая строка не помещается
+ * даже сжатой, а это так, пока на строку приходится меньше 52 + 88 / rows пикселей (88 — сжатая строка со
+ * своим заголовком дня). При трёх строках и больше это не выше ROW_MAX_FULL, при двух — 96, при одной — 140:
+ * на низком окне (ноутбук) страница из одной-двух строк тоже должна дойти до нижнего поля.
+ */
+const fullRowMax = (rows: number): number =>
+  Math.max(ROW_MAX_FULL, ROW_MIN + Math.ceil((ROW_MIN + GROUP_HEIGHT) / rows));
+
+/**
  * Высота каждой строки, чтобы реестр занял `available` ровно: целые пиксели, первые строки на пиксель выше
  * остальных. `full` — страница полная: дальше есть ещё строки, они просто не поместились. null — подгонять
  * не нужно: высота неизвестна, строк мало (растягивать пришлось бы слишком сильно — конец списка) или они
@@ -115,7 +128,7 @@ export function fitRows(
   const space = Math.floor(available) - LIST_BORDER - groups * GROUP_HEIGHT;
   const base = Math.floor(space / rows);
   const extra = space - base * rows;
-  if (base < ROW_MIN || base + (extra > 0 ? 1 : 0) > (full ? ROW_MAX_FULL : ROW_MAX)) return null;
+  if (base < ROW_MIN || base + (extra > 0 ? 1 : 0) > (full ? fullRowMax(rows) : ROW_MAX)) return null;
   return Array.from({ length: rows }, (_, i) => base + (i < extra ? 1 : 0));
 }
 
@@ -129,41 +142,133 @@ export interface ListView {
   row: number;
 }
 
-/** Что запросить у сервера для такого вида: смещение и число строк. */
-export function requestWindow(view: ListView, size: number): { offset: number; limit: number } {
-  if (view.mode === 'start') return { offset: Math.max(0, view.row), limit: size };
-  const offset = Math.max(0, view.row - size);
-  return { offset, limit: clamp(view.row - offset, MIN_REQUEST, MAX_REQUEST) };
-}
-
-/** Положение страницы среди остальных: номер, сколько всего и куда ведёт нажатие на номер. */
-export interface Paging {
-  page: number;
-  totalPages: number;
-  /** Куда перейти по номеру страницы (или «Следующая»/«Предыдущая» — это соседние номера). */
-  go: (page: number) => ListView;
+/** Место страницы в списке: с какой строки начинается и перед какой кончается (с нуля). */
+export interface PageSpan {
+  start: number;
+  end: number;
 }
 
 /**
- * Номера страниц для реестра, где страницы разной длины. Единица счёта — длина показанной страницы: при
- * плотных сбоях она постоянна, и всё выглядит как обычное листание. «Следующая» начинает ровно с конца
- * показанного, «Предыдущая» кончается ровно у его начала — без пропусков и повторов.
+ * Что запросить у сервера для такого вида: смещение и число строк. Кроме самих строк — по соседней с каждой
+ * стороны: по ним подпись дня узнаёт, продолжается ли крайний день на соседней странице. В счёт строк
+ * страницы соседние не идут (см. pageOf).
  */
-export function paging(start: number, shown: number, total: number, fallback: number): Paging {
-  const per = Math.max(1, shown || fallback);
-  const end = start + shown;
-  const page = Math.ceil(start / per) + 1;
-  const totalPages = page + Math.ceil(Math.max(0, total - end) / per);
-  return {
-    page,
-    totalPages,
-    go: (next) => {
-      if (next <= 1) return { mode: 'start', row: 0 };
-      // Соседние страницы — встык с показанной; дальние — по расчёту; последняя — так, чтобы кончилась последней строкой.
-      if (next === page + 1) return { mode: 'start', row: end };
-      if (next === page - 1) return { mode: 'end', row: start };
-      if (next >= totalPages) return { mode: 'end', row: total };
-      return { mode: 'start', row: clamp(start + (next - page) * per, 0, Math.max(0, total - 1)) };
-    },
-  };
+export function requestWindow(view: ListView, size: number): { offset: number; limit: number } {
+  const first = view.mode === 'start' ? Math.max(0, view.row) : Math.max(0, view.row - size);
+  const end = view.mode === 'start' ? first + size : Math.max(0, view.row);
+  const offset = Math.max(0, first - 1);
+  return { offset, limit: clamp(end + 1 - offset, MIN_REQUEST, MAX_REQUEST) };
+}
+
+/**
+ * Какие строки полученного окна показать. `offset` — с какой строки списка окно начинается, `days` — день
+ * закрытия каждой его строки. Вперёд — первые строки с нужной, назад — последние перед нужной (страница
+ * кончается там, где начиналась следующая); не больше `size` — остальное соседние строки и запас.
+ */
+export function pageOf(
+  view: ListView,
+  offset: number,
+  days: readonly string[],
+  size: number,
+  available: number | null,
+  openRows: number,
+): { start: number; count: number } {
+  if (view.mode === 'start') {
+    const from = Math.max(0, view.row - offset);
+    return {
+      start: offset + from,
+      count: visibleCount(available, openRows, days.slice(from, from + size), 'start'),
+    };
+  }
+  const to = clamp(view.row - offset, 0, days.length);
+  const count = visibleCount(available, openRows, days.slice(Math.max(0, to - size), to), 'end');
+  return { start: offset + to - count, count };
+}
+
+/**
+ * Листание реестра: какая страница нужна и откуда сюда пришли. `back` — страницы, с которых ушли
+ * «Следующей», от давней к недавней: «Предыдущая» открывает ровно их и тем же видом. Счёт строк с начала и
+ * с конца у границы дня расходится на строку, поэтому страница, открытая «с конца», видом «с начала» уже не
+ * та же. Запомненные страницы верны, пока место под реестр и число решённых прежние: иначе они забываются.
+ */
+export interface ListNav {
+  view: ListView;
+  back: ListView[];
+}
+
+/** Начало списка: «В начало», смена вкладки, после «Удалить решённые». */
+export const LIST_START: ListNav = { view: { mode: 'start', row: 0 }, back: [] };
+
+/** «В конец»: страница кончается последней строкой списка. */
+export const toLast = (total: number): ListNav => ({ view: { mode: 'end', row: total }, back: [] });
+
+/**
+ * «Следующая» — ровно с конца показанной. `shown` — страница уже на экране: тогда она запоминается для
+ * «Предыдущей». Пока она не пришла, её конец — оценка по длине прежней, и цепочку дальше не ведём: «Предыдущая»
+ * по такой истории могла бы пропустить строки.
+ */
+export function toNext(nav: ListNav, span: PageSpan, shown: boolean): ListNav {
+  return { view: { mode: 'start', row: span.end }, back: shown ? [...nav.back, nav.view] : [] };
+}
+
+/**
+ * «Предыдущая» — страница, с которой ушли «Следующей»; истории нет (пришли «В конец» или она кончилась) —
+ * страница, которая кончается ровно у начала показанной.
+ */
+export function toPrev(nav: ListNav, span: PageSpan): ListNav {
+  const back = nav.back.at(-1);
+  if (back) return { view: back, back: nav.back.slice(0, -1) };
+  return span.start > 0 ? { view: { mode: 'end', row: span.start }, back: [] } : LIST_START;
+}
+
+/**
+ * Где окажется страница, которая ещё не пришла: один край задан видом точно, другой — по длине показанной
+ * (`per`). По ней считаются подпись и кнопки, чтобы быстрые нажатия шли от запрошенного места, а не от того,
+ * что ещё на экране.
+ */
+export function expectedSpan(view: ListView, per: number, total: number): PageSpan {
+  if (view.mode === 'start') {
+    const start = clamp(view.row, 0, total);
+    return { start, end: Math.min(start + per, total) };
+  }
+  const end = clamp(view.row, 0, total);
+  return { start: Math.max(0, end - per), end };
+}
+
+/**
+ * Место под реестр изменилось (высота окна, число открытых). Страница «кончается у строки» становится
+ * страницей «с первой показанной строки» (`shownStart`; null — нужная страница ещё не на экране): иначе с
+ * экрана ушли бы верхние строки. Запомненные страницы были другой длины — они забываются. Изменилось число
+ * решённых — вызывается без `shownStart`: вид прежний, забывается только история (строки сдвинулись).
+ */
+export function reanchored(nav: ListNav, shownStart: number | null): ListNav {
+  if (nav.view.mode === 'end' && shownStart !== null)
+    return { view: { mode: 'start', row: shownStart }, back: [] };
+  return nav.back.length > 0 ? { view: nav.view, back: [] } : nav;
+}
+
+/**
+ * Поправка вида, когда страница пришла; null — вид остаётся. Пустая страница при непустом списке (решённых
+ * убавилось) — показываем конец. Дошли «Предыдущей» до самого начала — показываем первую страницу «с начала»,
+ * полной, а не коротким остатком; но только если при этом ничего не пропадёт: счёт с начала по тем же
+ * строкам (`days` — их дни) должен показать их все. Счёт с конца мог взять на строку больше — сжатыми, тогда
+ * страница остаётся как есть.
+ */
+export function settledView(
+  view: ListView,
+  page: { start: number; count: number },
+  days: readonly string[],
+  total: number,
+  available: number | null,
+  openRows: number,
+): ListView | null {
+  if (total <= 0) return null;
+  if (page.count === 0) return view.mode === 'end' && view.row === total ? null : { mode: 'end', row: total };
+  if (
+    view.mode === 'end' &&
+    page.start === 0 &&
+    visibleCount(available, openRows, days, 'start') === page.count
+  )
+    return LIST_START.view;
+  return null;
 }

@@ -33,6 +33,12 @@ const byServer = (res: VmMatrixSeries[] | null): Map<string, number> => {
 };
 const total = (m: Map<string, number>): number | null =>
   m.size === 0 ? null : [...m.values()].reduce((a, b) => a + b, 0);
+/**
+ * Скорость сети агент присылает и хранилище держит в БАЙТАХ в секунду (дельта счётчиков байтов за время).
+ * Поэтому integrate() от неё — сразу байты, а скорость в ответе переводим в бит/с: так записано в контракте
+ * и так её подписывают страница («Мбит/с») и Джарвис.
+ */
+const BITS_PER_BYTE = 8;
 
 /**
  * Статистика всего парка за период. Всё только читается: VictoriaMetrics (трафик, нагрузка, онлайн нод),
@@ -75,8 +81,10 @@ export class FleetStatsService {
       diskThen,
       online,
     ] = await Promise.all([
-      this.vm.query(`integrate(${M.netRxBps}${sel}[${P}s])`),
-      this.vm.query(`integrate(${M.netTxBps}${sel}[${P}s])`),
+      // После переименования у сервера два ряда (метка server_name сменилась) — складываем их по серверу, иначе
+      // в объём попадал бы только один кусок периода.
+      this.vm.query(`sum by (server_id) (integrate(${M.netRxBps}${sel}[${P}s]))`),
+      this.vm.query(`sum by (server_id) (integrate(${M.netTxBps}${sel}[${P}s]))`),
       this.vm.query(`sum(integrate(${M.netRxBps}${sel}[${P}s] offset ${P}s))`),
       this.vm.query(`sum(integrate(${M.netTxBps}${sel}[${P}s] offset ${P}s))`),
       this.vm.queryRange(
@@ -85,8 +93,20 @@ export class FleetStatsService {
         end,
         spec.bucket,
       ),
-      this.vm.queryRange(`sum(avg_over_time(${M.netRxBps}${sel}[${spec.step}s]))`, start, end, spec.step),
-      this.vm.queryRange(`sum(avg_over_time(${M.netTxBps}${sel}[${spec.step}s]))`, start, end, spec.step),
+      // Скорость — сначала среднее по серверу: на шаге с переименованием два ряда одного сервера иначе дали бы
+      // ложный пик вдвое.
+      this.vm.queryRange(
+        `sum(avg by (server_id) (avg_over_time(${M.netRxBps}${sel}[${spec.step}s])))`,
+        start,
+        end,
+        spec.step,
+      ),
+      this.vm.queryRange(
+        `sum(avg by (server_id) (avg_over_time(${M.netTxBps}${sel}[${spec.step}s])))`,
+        start,
+        end,
+        spec.step,
+      ),
       this.vm.query(`avg_over_time(${M.cpuPct}${sel}[${P}s])`),
       this.vm.query(`max_over_time(${M.cpuPct}${sel}[${P}s])`),
       this.vm.query(`avg_over_time(${memPct}[${P}s:${spec.step}s])`),
@@ -98,18 +118,20 @@ export class FleetStatsService {
     ]);
     const vmOk = [rx, tx, cpuAvg].every((r) => r !== null);
 
-    // Трафик: integrate даёт биты, делим на 8.
+    // Трафик: ряд в байтах в секунду, integrate даёт байты — объёмы идут в ответ как есть.
     const rxBy = byServer(rx);
     const txBy = byServer(tx);
     const rxTotal = total(rxBy);
     const txTotal = total(txBy);
     const scalar = (r: VmMatrixSeries[] | null) => r?.[0]?.points.at(-1)?.[1] ?? null;
-    const prevBits =
+    const prevBytes =
       scalar(prevRx) !== null || scalar(prevTx) !== null
         ? (scalar(prevRx) ?? 0) + (scalar(prevTx) ?? 0)
         : null;
-    const rxPts = speedRx?.[0]?.points ?? [];
-    const txPts = speedTx?.[0]?.points ?? [];
+    // Скорость: из байт/с в бит/с — и точки графика, и пик со средней, которые по ним считаются.
+    const toBits = ([t, v]: [number, number]): [number, number] => [t, v * BITS_PER_BYTE];
+    const rxPts = (speedRx?.[0]?.points ?? []).map(toBits);
+    const txPts = (speedTx?.[0]?.points ?? []).map(toBits);
     const txAt = new Map(txPts);
     const speed = rxPts.map(([t, v]) => ({ at: iso(t), rx: v, tx: txAt.get(t) ?? 0 }));
     const sumPts = rxPts.map(([t, v]) => [t, v + (txAt.get(t) ?? 0)] as [number, number]);
@@ -180,7 +202,7 @@ export class FleetStatsService {
     const spent = paid.reduce((a, p) => a + p.rub, 0);
     const rw = await this.remnawave.status().catch(() => null);
     const users = rw?.stats?.users.total ?? null;
-    const totalBytes = rxTotal !== null || txTotal !== null ? ((rxTotal ?? 0) + (txTotal ?? 0)) / 8 : null;
+    const totalBytes = rxTotal !== null || txTotal !== null ? (rxTotal ?? 0) + (txTotal ?? 0) : null;
 
     const onlinePts = online?.[0]?.points ?? [];
     const onlinePeak = peakOf(onlinePts);
@@ -191,13 +213,13 @@ export class FleetStatsService {
       to: toD.toISOString(),
       vmOk,
       traffic: {
-        rxBytes: rxTotal === null ? null : rxTotal / 8,
-        txBytes: txTotal === null ? null : txTotal / 8,
-        prevTotalBytes: prevBits === null ? null : prevBits / 8,
+        rxBytes: rxTotal,
+        txBytes: txTotal,
+        prevTotalBytes: prevBytes,
         peakBps: peak?.value ?? null,
         peakAt: peak ? iso(peak.at) : null,
         avgBps: avgOf(sumPts.map(([, v]) => v)),
-        buckets: (buckets?.[0]?.points ?? []).map(([t, v]) => ({ at: iso(t - spec.bucket), bytes: v / 8 })),
+        buckets: (buckets?.[0]?.points ?? []).map(([t, v]) => ({ at: iso(t - spec.bucket), bytes: v })),
         speed,
       },
       availability: {
@@ -249,9 +271,8 @@ export class FleetStatsService {
       },
       servers: rows
         .map((r) => {
-          const bits =
+          const bytes =
             rxBy.has(r.id) || txBy.has(r.id) ? (rxBy.get(r.id) ?? 0) + (txBy.get(r.id) ?? 0) : null;
-          const bytes = bits === null ? null : bits / 8;
           return {
             id: r.id,
             name: r.name,

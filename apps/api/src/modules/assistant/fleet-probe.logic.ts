@@ -1,6 +1,7 @@
-import type { Server } from '@nodeservice/shared';
+import type { ReachabilityResult, Server } from '@nodeservice/shared';
 
 import { FIND_NODE, SH } from '../incidents/actions.registry.js';
+import { normalizeAddress } from '../servers/addresses.js';
 import { maskSecrets } from './terminal-hint.logic.js';
 
 /** Сколько независимых серверов задействуем и сколько портов проверяем за раз. */
@@ -73,6 +74,19 @@ export function pickProbes(target: Pick<Server, 'id'>, all: Server[], max = PROB
     if (!chosen.includes(s)) take(s);
   }
   return chosen;
+}
+
+/**
+ * Проверяющие для произвольного адреса (вход арендодателя, мост, сайт): независимые серверы парка, кроме
+ * самой проверяемой машины — под любой её записью в панели — и явно названных (например, мост и выход, чей
+ * вход проверяем). Сервер, стучащийся в собственный адрес, всегда видит «открыт»: такая проверка ничего не говорит.
+ */
+export function probesForAddress(host: string, all: Server[], exclude: readonly string[] = []): Server[] {
+  const target = normalizeAddress(host);
+  return pickProbes(
+    { id: '' },
+    all.filter((s) => !exclude.includes(s.id) && normalizeAddress(s.host) !== target),
+  );
 }
 
 /**
@@ -175,6 +189,68 @@ export function summarizeReach(probes: ReachProbe[], ports: number[]): ReachSumm
 export function dnsSummary(probes: ReachProbe[]): { answers: string[]; consistent: boolean } {
   const answers = [...new Set(probes.filter((p) => p.ok && p.dns).map((p) => p.dns as string))];
   return { answers, consistent: answers.length <= 1 };
+}
+
+/** Оговорки к проверке: одни и те же тексты у самой проверки и у склейки нескольких проверок. */
+export const REACH_NOTES = {
+  /** Что проверяющие видят снаружи парка; ограничение честно называется в самом результате. */
+  notUserView:
+    'Проверка идёт с других серверов парка, а не из сети пользователей. Если у части пользователей не работает, а отсюда всё открыто, причина может быть в блокировке для их провайдера или региона: отсюда это не видно.',
+  single: 'Проверяющий один: вывод касается только пути с этого сервера.',
+  weak: 'Независимых проверяющих меньше двух: вывод слабый.',
+  silent: 'Часть проверяющих не ответила: учтены только ответившие.',
+} as const;
+export const reachDnsNote = (answers: string[]): string =>
+  `DNS отвечает по-разному у разных проверяющих (${answers.join(', ')}): возможна подмена или сбой резолвера.`;
+
+/**
+ * Одна и та же цель: тот же адрес, а имя — одно и то же либо у одной из проверок вместо названия сервера
+ * стоит сам адрес (проверка по адресу). Вход сервера и сам сервер — разные цели, даже на одном адресе.
+ */
+export function sameReachTarget(a: ReachabilityResult, b: ReachabilityResult): boolean {
+  if (a.target.address !== b.target.address) return false;
+  const bare = (r: ReachabilityResult) => r.target.name === r.target.address;
+  return a.target.name === b.target.name || bare(a) || bare(b);
+}
+
+/**
+ * Несколько проверок одной цели в одном ответе складываются в одну таблицу: строка на каждого проверяющего
+ * (последнее, что он увидел), столбцы — все проверенные порты. Выводы по портам, DNS и оговорки считаются
+ * заново по всем строкам: иначе под ответом «проверил с шести серверов» стояла бы таблица последней проверки
+ * с выводом «открыт со всех».
+ */
+export function mergeReach(prev: ReachabilityResult, next: ReachabilityResult): ReachabilityResult {
+  const probes = new Map(prev.probes.map((p) => [p.from, p]));
+  for (const p of next.probes) {
+    const was = probes.get(p.from);
+    // Проверяющий не ответил во второй раз: то, что он видел раньше, остаётся в силе.
+    if (!p.ok && was?.ok) continue;
+    if (!p.ok || !was?.ok) {
+      probes.set(p.from, p);
+      continue;
+    }
+    const ports = new Map(was.ports.map((x) => [x.port, x]));
+    for (const x of p.ports) ports.set(x.port, x);
+    probes.set(p.from, { ...p, ports: [...ports.values()], dns: p.dns ?? was.dns, ping: p.ping ?? was.ping });
+  }
+  const list = [...probes.values()];
+  const dns = dnsSummary(list);
+  const lone = [...prev.notes, ...next.notes].includes(REACH_NOTES.single)
+    ? REACH_NOTES.single
+    : REACH_NOTES.weak;
+  return {
+    // В заголовке — название сервера, а не голый адрес, если хоть одна проверка его знала.
+    target: prev.target.name === prev.target.address ? next.target : prev.target,
+    probes: list,
+    ports: summarizeReach(list, [...new Set([...prev.ports, ...next.ports].map((p) => p.port))]),
+    dns,
+    notes: [
+      ...(dns.consistent ? [] : [reachDnsNote(dns.answers)]),
+      ...(list.some((p) => !p.ok) ? [REACH_NOTES.silent] : []),
+      ...(list.length < 2 ? [lone] : []),
+      REACH_NOTES.notUserView,
+    ],
+  };
 }
 
 export interface ProcRow {

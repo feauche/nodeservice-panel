@@ -198,8 +198,10 @@ export function seedBilling(): void {
     item.paidUntil = from.toISOString();
     pay(item, new Date(now - daysAgo * DAY), new Date(saved), true);
   };
-  past(i1, 1);
-  past(i3, 3);
+  // Обе оплаты — прямо сейчас: «в этом месяце» и «в этом году» они должны быть и первого числа (иначе тест
+  // статистики падал бы в первые дни каждого месяца, а по году — в январе).
+  past(i1, 0);
+  past(i3, 0);
   for (let m = 1; m <= 7; m += 1) {
     const p = pay({ ...i3 }, new Date(now - m * 30 * DAY), new Date(now - (m - 1) * 30 * DAY), true);
     p.amountRubMinor = Math.round(451 * (90 + m));

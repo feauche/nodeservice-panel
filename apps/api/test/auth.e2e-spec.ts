@@ -232,8 +232,13 @@ describe('auth e2e', () => {
     const after = await post('/api/auth/login/recovery', { code: recoveryCodes[9] as string });
     expect(after.status).toBe(401);
     expect(after.body.type).toBe(AUTH_PROBLEM.totpRequired);
-    // лимит шага кода не трогает throttle по паролю
-    await post('/api/auth/login', { login: LOGIN, password: PASSWORD }).expect(200);
+    // неудачи шага кода идут в общие паузы входа: после пяти неверных кодов ждёт и шаг пароля —
+    // иначе каждый новый шаг давал бы пять свежих попыток подбора кода
+    const paused = await post('/api/auth/login', { login: LOGIN, password: PASSWORD });
+    expect(paused.status).toBe(429);
+    expect(paused.body.type).toBe(AUTH_PROBLEM.throttled);
+    // снимаем паузу как «прошло время»
+    await app.get(ThrottleService).reset({ ip: '127.0.0.1', login: LOGIN });
   });
 
   it('login ok → next=totp; totp неверный → 401; верный → сессия + trusted cookie', async () => {

@@ -31,6 +31,7 @@ import type { CapacityService } from '../capacity/capacity.service.js';
 import type { FleetStatsService } from '../fleet-stats/fleet-stats.service.js';
 import type { IncidentMetricsService } from '../incidents/incident-metrics.service.js';
 import type { IncidentsService } from '../incidents/incidents.service.js';
+import type { UpstreamTarget } from '../incidents/upstream-target.js';
 import type { MaintenanceService } from '../maintenance/maintenance.service.js';
 import type { VmReaderService } from '../metrics/vm-reader.service.js';
 import type { ProvidersService } from '../providers/providers.service.js';
@@ -101,7 +102,7 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
   {
     name: 'check_reachability',
     description:
-      'Проверка доступности снаружи: с серверов парка по SSH стучимся в TCP-порт (сколько мс до ответа), смотрим, во что резолвится имя, и пингуем (многие хосты режут пинг — «нет пинга» ещё не «недоступен», решает порт). Только чтение. Цель — одно из трёх: serverId — сервер NodeService (по умолчанию его порт SSH); entry: true вместе с serverId — вход этого сервера-выхода из профиля («Откуда приходит трафик»: домен арендодателя с портом или свой мост) — добавлять вход в NodeService не нужно; address — любой домен или IPv4, можно с портом через двоеточие (например, вход арендодателя, сайт, сервер вне парка). from — id или имя сервера парка, с которого стучаться (например, сам выход, чтобы узнать, доходит ли выход до своего входа); без from — с 2–3 независимых серверов парка. ports — до трёх портов. Возвращает по каждому порту: открыт со всех / закрыт со всех / частично, пинг и DNS.',
+      'Проверка доступности снаружи: с серверов парка по SSH стучимся в TCP-порт (сколько мс до ответа), смотрим, во что резолвится имя, и пингуем (многие хосты режут пинг — «нет пинга» ещё не «недоступен», решает порт). Только чтение. Цель — одно из трёх: serverId — сервер NodeService (по умолчанию его порт SSH); entry: true вместе с serverId — вход этого сервера-выхода из профиля («Откуда приходит трафик»: домен арендодателя с портом или свой мост — у моста проверяется порт его ноды, в который приходят пользователи, а не порт SSH; сам мост и сам выход в проверке не участвуют) — добавлять вход в NodeService не нужно; address — любой домен или IPv4, можно с портом через двоеточие (например, вход арендодателя, сайт, сервер вне парка). from — id или имя сервера парка, с которого стучаться (например, сам выход, чтобы узнать, доходит ли выход до своего входа); без from — с 2–3 независимых серверов парка. ports — до трёх портов. Возвращает по каждому порту: открыт со всех / закрыт со всех / частично, пинг и DNS.',
     input_schema: {
       type: 'object',
       properties: {
@@ -259,6 +260,8 @@ export interface ReadDeps {
   billing?: Pick<BillingService, 'forAssistant'>;
   /** Живая строка в чате о долгом действии (есть только в чате, не в разборе инцидентов). */
   progress?: (a: AssistantActivity) => void;
+  /** Вход сервера-выхода из профиля: адрес и порт, в который стучаться (у своего моста — порт его ноды). */
+  upstreamTarget?: (server: Server, all: Server[]) => Promise<UpstreamTarget | null>;
 }
 
 /** Инструменты, которые включаются отдельным разрешением. Остальные доступны всегда. */
@@ -779,6 +782,8 @@ export async function runReadTool(
     const ports = arg.ports;
     // Произвольный адрес или вход сервера-выхода: цель не обязана быть сервером NodeService.
     let target: { name: string; host: string; port: number } | null = null;
+    /** Кого не брать в независимые проверяющие: мост и сам выход, когда проверяем вход. */
+    let exclude: string[] = [];
     const cite: ToolOutcome['citations'] = [];
     if (typeof arg.address === 'string' && arg.address.trim()) {
       const raw = arg.address
@@ -803,8 +808,19 @@ export async function runReadTool(
         } else {
           const bridge = servers.find((x) => x.id === up.serverId);
           if (!bridge) return none(`Мост, указанный как вход «${s.name}», удалён из NodeService.`);
-          target = { name: `Мост «${bridge.name}» — вход «${s.name}»`, host: bridge.host, port: bridge.port };
           cite.push({ type: 'server', id: bridge.id, label: bridge.name });
+          // Вход моста — порт его ноды (куда приходят пользователи), а не порт SSH: открытый SSH ничего
+          // не говорит о входе. Порт ноды моста панель берёт из Remnawave — так же, как при падении онлайна.
+          const entry = deps.upstreamTarget ? await deps.upstreamTarget(s, servers) : null;
+          if (!entry)
+            return {
+              ...none(
+                `Порт входа у моста «${bridge.name}» панель не знает: нода этого моста в Remnawave не найдена (или Remnawave не подключена). Проверить вход нечем. Можно проверить порт SSH самого моста — вызовите проверку по серверу «${bridge.name}»: она покажет, жив ли сервер-мост, но не покажет, доступен ли вход для пользователей. Связать мост с его нодой: окно сервера → «Профиль» → «Какая это нода в Remnawave».`,
+              ),
+              citations: cite,
+            };
+          target = { name: `Мост «${bridge.name}» — вход «${s.name}»`, host: entry.host, port: entry.port };
+          exclude = [bridge.id, s.id];
         }
       } else if (!from) {
         const result = await deps.probe.reachability(s, servers, ports);
@@ -816,7 +832,7 @@ export async function runReadTool(
         };
       } else target = { name: s.name, host: s.host, port: s.port };
     }
-    const result = await deps.probe.reachabilityAddress(target, servers, ports, from);
+    const result = await deps.probe.reachabilityAddress(target, servers, ports, from, exclude);
     return {
       content: JSON.stringify(result),
       citations: cite,

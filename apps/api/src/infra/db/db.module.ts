@@ -14,6 +14,10 @@ export const PG_POOL = Symbol('PG_POOL');
  * Пул соединений. Слушатель 'error' обязателен: обрыв простаивающего соединения (базу перезапустили или
  * подменили при восстановлении из копии) пул сообщает событием, и без слушателя оно роняет весь процесс —
  * при восстановлении это случалось посреди подмены базы. Оборванное соединение пул выбросит и откроет новое.
+ *
+ * Соединение, выданное из пула (транзакция между двумя запросами), пул уже не слушает: его обрыв — то же
+ * событие 'error', только у самого соединения. Поэтому слушатель стоит и на каждом соединении; запрос,
+ * который шёл или пойдёт по нему, получит свою ошибку сам.
  */
 export function createPool(connectionString: string): Pool {
   const pool = new Pool({
@@ -24,7 +28,15 @@ export function createPool(connectionString: string): Pool {
     application_name: 'nodeservice-api',
   });
   const log = new Logger('Postgres');
-  pool.on('error', (err) => log.warn(`Соединение с базой оборвалось: ${err.message}`));
+  // Об одном обрыве простаивающего соединения сообщают и оно само, и пул — в лог пишем один раз.
+  const seen = new WeakSet<Error>();
+  const warn = (err: Error) => {
+    if (seen.has(err)) return;
+    seen.add(err);
+    log.warn(`Соединение с базой оборвалось: ${err.message}`);
+  };
+  pool.on('error', warn);
+  pool.on('connect', (client) => client.on('error', warn));
   return pool;
 }
 

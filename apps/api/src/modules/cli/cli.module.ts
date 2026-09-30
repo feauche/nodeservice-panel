@@ -13,6 +13,7 @@ import { ListUsersCommand } from './commands/list-users.command.js';
 import { ResetPasswordCommand } from './commands/reset-password.command.js';
 import { RevokeSessionsCommand } from './commands/revoke-sessions.command.js';
 import { SetupTokenCommand } from './commands/setup-token.command.js';
+import { UnblockLoginCommand } from './commands/unblock-login.command.js';
 
 /** Модуль CLI: без контроллеров, guard-ов и bootstrap-хуков auth. */
 @Module({
@@ -33,6 +34,7 @@ import { SetupTokenCommand } from './commands/setup-token.command.js';
     ResetPasswordCommand,
     DisableTwoFactorCommand,
     RevokeSessionsCommand,
+    UnblockLoginCommand,
     ListUsersCommand,
   ],
 })

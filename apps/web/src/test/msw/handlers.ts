@@ -19,7 +19,7 @@ import { remnawaveHandlers, seedRemnawave } from './remnawave-mock';
 import { mockSecurity, securityHandlers, seedSecurity } from './security-mock';
 import { resetServerChecks, serverChecksHandlers } from './server-checks-mock';
 import { seedServers, serversHandlers, terminalHistoryHandlers } from './servers-mock';
-import { resetTelegram, telegramHandlers } from './telegram-mock';
+import { mockTelegram, resetTelegram, telegramHandlers } from './telegram-mock';
 
 /**
  * Мок /api/auth по контракту packages/shared/src/auth.ts.
@@ -205,7 +205,11 @@ export const handlers = [
   http.put('/api/settings/appearance', async ({ request }) => {
     if (!mockState.authenticated) return problem(401, AUTH_PROBLEM.unauthenticated, 'Требуется вход');
     const body = (await request.json()) as { logoUrl?: string | null; brandName?: string; timeZone?: string };
-    if (body.timeZone !== undefined) mockAppearance.timeZone = body.timeZone;
+    if (body.timeZone !== undefined) {
+      mockAppearance.timeZone = body.timeZone;
+      // По поясу панели считаются и тихие часы Telegram — «Уведомления» должны показать тот же пояс.
+      Object.assign(mockTelegram.settings, { timeZone: body.timeZone, timeZoneChosen: true });
+    }
     if (body.logoUrl !== undefined) mockAppearance.logoUrl = body.logoUrl;
     if (body.brandName !== undefined) mockAppearance.brandName = body.brandName;
     return HttpResponse.json(mockAppearance);

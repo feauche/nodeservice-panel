@@ -86,6 +86,7 @@ const KEY_LABELS: Record<string, string> = {
   login: 'Логин',
   amr: 'Способ входа',
   reason: 'Причина',
+  attempts: 'Попыток',
   stage: 'Этап',
   recoveryCodesLeft: 'Кодов восстановления осталось',
   sessionsRevoked: 'Сессий завершено',

@@ -43,6 +43,7 @@ import { IncidentRunnerService } from './incident-runner.service.js';
 import { IncidentsRepository } from './incidents.repository.js';
 import { type CountryReachResult, NodeBlockCheckService } from './node-block-check.service.js';
 import {
+  type FleetWhat,
   NO_PAYMENT_FACTS,
   type PaymentFacts,
   type PaymentPicture,
@@ -60,6 +61,11 @@ export const INCIDENT_HYSTERESIS_PCT = 5;
 export const STARTUP_GRACE_MS = process.env.NODE_ENV === 'test' ? 0 : 3 * 60_000;
 /** «Агент не в сети» — только если молчит дольше этого (короткий обрыв при обновлении — не инцидент). */
 export const AGENT_OFFLINE_FOR_MS = process.env.NODE_ENV === 'test' ? 0 : 2 * 60_000;
+/**
+ * «SSH недоступен» — только если SSH не отвечает дольше этого и неудачу подтвердили повторные проверки:
+ * одна неудачная попытка (потеря пакетов, отказ sshd из-за ботов) — ещё не «недоступен».
+ */
+export const SSH_DOWN_FOR_MS = process.env.NODE_ENV === 'test' ? 0 : 2 * 60_000;
 /** Сколько держим ответ проверки порта SSH, пока агент молчит. */
 const HOST_PROBE_TTL_MS = 60_000;
 /** Проверка порта «из каждой страны» — раз в 3 минуты на сервер. */
@@ -68,6 +74,16 @@ const REACH_TTL_MS = process.env.NODE_ENV === 'test' ? 0 : 3 * 60_000;
 const FLEET_WINDOW_MS = 30 * 60_000;
 /** Дело о падении онлайна узнаётся по первой строке текста: «Онлайн: 396 → 0 …». */
 const ONLINE_DROP_RE = /Онлайн:\s*\d+\s*→/;
+
+/** Что ещё сломалось у других за то же время (см. `IncidentsService.fleetTrouble`). */
+export interface FleetTrouble {
+  /** У скольких других нод упал онлайн — всего, вместе с нодами, у которых нет сервера в панели. */
+  nodes: number;
+  /** Из них нод с сервером в панели: про них точно известно, что это другая машина. */
+  linkedNodes: number;
+  /** Со сколькими другими серверами пропала связь: замолчал агент или открыто «Сервер недоступен». */
+  servers: number;
+}
 /** Почему из других стран никто не проверил порт — настоящая причина, а не «проверить не с чего» на все случаи. */
 const COUNTRY_BLIND: Record<NonNullable<CountryReachResult['blind']>, string> = {
   no_port: 'Проверить из других стран не с чего: нет серверов парка с известной страной и рабочим SSH.',
@@ -76,9 +92,18 @@ const COUNTRY_BLIND: Record<NonNullable<CountryReachResult['blind']>, string> = 
   ssh: 'Проверить из других стран не удалось: панель не зашла ни на один сервер парка — возможно, связь пропала у самой панели.',
   no_answer:
     'Проверить из других стран не удалось: команда проверки на серверах парка не вернула результата.',
+  // У проверки порта SSH этих причин не бывает (порт сервера панель знает сама) — строки для полноты набора.
+  remnawave: 'Проверить из других стран не удалось.',
+  gone: 'Проверить из других стран не удалось.',
 };
 /** Начало текста дела «Недоступен из части сетей» — по нему его узнаём среди «Похоже на блокировку». */
 export const PARTIAL_MARK = 'Недоступен из части сетей:';
+/**
+ * Начало причины закрытия, когда дело не решилось, а влилось в другое. По нему отличаем слияние от
+ * настоящего закрытия: если тревога о таком деле ещё не ушла в Telegram, она снимается молча — о сбое
+ * расскажет главное дело. Причина звучит иначе — уйдёт обычное сообщение о закрытии, ничего не потеряется.
+ */
+const MERGED_MARK = 'Объединено с делом';
 /** Статистика действий на вкладке «Автопочинка» — за последние N дней. */
 const STATS_DAYS = 30;
 
@@ -96,6 +121,10 @@ export class IncidentsService {
   private readonly log = new Logger(IncidentsService.name);
   /** Момент первого превышения порога (server:kind) — для «времени реакции» без флаппинга. */
   private readonly exceededSince = new Map<string, number>();
+  /** С какой неудачной проверки SSH у сервера идёт серия неудач (без единого успеха). */
+  private readonly sshDownSince = new Map<string, number>();
+  /** Порог «SSH недоступен»; в e2e подменяется, как probeHost. */
+  sshDownForMs = SSH_DOWN_FOR_MS;
   private readonly bootAt = Date.now();
 
   constructor(
@@ -115,12 +144,20 @@ export class IncidentsService {
   ) {}
 
   /**
+   * Сколько автоматических разборов ещё можно начать в этот час. Сообщает служба разбора при запуске (она
+   * в модуле Джарвиса и сама ведёт свой лимит); пока не сообщила — считаем, что место есть.
+   */
+  autoAnalysisRoom: () => number = () => 1;
+
+  /**
    * Джарвис сам разберёт новое дело (включены «Разбор» и «Автоматический разбор»): тогда сообщение в
-   * Telegram ждёт разбора и уходит уже с его выводом (решение владельца 29.09.2026).
+   * Telegram ждёт разбора и уходит уже с его выводом (решение владельца 29.09.2026). Лимит разборов в
+   * час исчерпан — разбор не начнётся, и ждать его сообщению незачем.
    */
   async analysisWillFollow(): Promise<boolean> {
     const a = await this.settingsService.getAssistant().catch(() => null);
-    return Boolean(a?.enabled && a.permissions.analysis && a.permissions.autoAnalysis);
+    if (!(a?.enabled && a.permissions.analysis && a.permissions.autoAnalysis)) return false;
+    return this.autoAnalysisRoom() > 0;
   }
 
   /**
@@ -189,7 +226,9 @@ export class IncidentsService {
       offset?: number | undefined;
     },
   ): Promise<IncidentsListResponse> {
-    // Вид, которого в контракте уже нет (после переименований), не должен ломать страницу целиком.
+    // Вид, которого в контракте уже нет (после переименований), не должен ломать страницу целиком. Постранично
+    // такие записи отбирает сам запрос (и в счёте, и в выборке) — иначе сдвинулось бы листание по смещению;
+    // целиком — отбираем здесь, до подсчёта.
     const known = new Set<string>(INCIDENT_KINDS);
     const counts = await this.repo.counts();
     const page = opts
@@ -201,7 +240,7 @@ export class IncidentsService {
           offset: opts.offset,
         })
       : await (async () => {
-          const rows = await this.repo.list(status);
+          const rows = (await this.repo.list(status)).filter((r) => known.has(r.kind));
           return {
             items: rows,
             page: 1,
@@ -211,7 +250,7 @@ export class IncidentsService {
           };
         })();
     return {
-      items: page.items.filter((r) => known.has(r.kind)).map((r) => this.toDto(r)),
+      items: page.items.map((r) => this.toDto(r)),
       counts,
       page: page.page,
       pageSize: page.pageSize,
@@ -291,6 +330,8 @@ export class IncidentsService {
       ],
     });
     if (row.serverId) this.exceededSince.delete(`${row.serverId}:${row.kind}`);
+    // Тревога в Telegram могла ещё ждать разбора: дело закрыто в панели — присылать её уже незачем.
+    await this.notifications.dropDeferred(id);
     await this.audit.record({
       action: 'incident.resolved',
       target: { type: 'incident', id, display: row.title },
@@ -506,6 +547,7 @@ export class IncidentsService {
    */
   private async evalConnectivity(server: ServerRow, agentOff: boolean): Promise<void> {
     const sshDown = server.sshOk === false;
+    const sshConfirmed = this.sshDownConfirmed(server);
     const hostDown = agentOff ? !(await this.hostAnswers(server)) : false;
     const suspect = agentOff && (hostDown || sshDown);
     // С панели не достучаться — это ещё не «сервер лёг»: панель смотрит из одной сети. Спрашиваем по
@@ -518,8 +560,14 @@ export class IncidentsService {
     const allOpen = anyOpen && !hostDown && seen.every((r) => r.open);
     const partial = anyOpen && !allOpen;
     const serverDown = suspect && !anyOpen;
+    /** Среди проверяющих есть зарубежный: только тогда «не отвечает ни из одной страны» — проверенный факт. */
+    const abroad = seen.some((r) => r.country !== null && r.country !== 'RU');
     const open = await this.repo.findOpen(server.id, 'server_down');
-    await this.evalPartialReach(server, partial, seen, !hostDown);
+    await this.evalPartialReach(server, partial, seen, !hostDown, {
+      serverDown,
+      agentOnline: server.agentStatus === 'online',
+      sshDown,
+    });
     if (partial) {
       if (open && !open.attempts.some((a) => a.status === 'running'))
         await this.autoResolve(
@@ -538,22 +586,28 @@ export class IncidentsService {
       // причина вероятнее. Из других стран порт не проверен — сервер не отвечает только самой панели:
       // причину не называем, оплату просим проверить.
       let picture: PaymentPicture | null = null;
-      if (hostDown && !open)
-        picture =
-          (await this.fleetTrouble({ serverId: server.id, names: [server.name] })) > 0
-            ? 'fleet-down'
-            : seen.length > 0
-              ? 'down'
-              : 'panel-only';
-      const payHint = picture ? paymentConclusion(pay, picture) : null;
+      let fleetWhat: FleetWhat | undefined;
+      if (hostDown && !open) {
+        // Дела без сервера (нода, которую панель не нашла среди серверов) здесь не считаем: это может быть
+        // нода этой же машины, и один сбой посчитался бы дважды.
+        const fleet = await this.fleetTrouble({ serverId: server.id, names: [server.name] });
+        if (fleet.servers > 0) fleetWhat = 'link';
+        else if (fleet.linkedNodes > 0) fleetWhat = 'online';
+        // «Вероятнее всего» — только если порт не открылся и из-за рубежа: проверяли одни российские серверы —
+        // блокировку адреса из России так не отличить, оплату просим проверить, но причиной не называем.
+        picture = fleetWhat ? 'fleet-down' : seen.length === 0 ? 'panel-only' : abroad ? 'down' : 'ru-only';
+      }
+      const payHint = picture ? paymentConclusion(pay, picture, fleetWhat) : null;
       const reachBlock = !reach
         ? []
         : seen.length > 0
           ? [
               '',
-              hostDown
-                ? `Порт SSH ${server.port} — ни из одной страны:`
-                : `Порт SSH ${server.port} — с серверов парка не отвечает, с сервера панели открыт:`,
+              !hostDown
+                ? `Порт SSH ${server.port} — с серверов парка не отвечает, с сервера панели открыт:`
+                : abroad
+                  ? `Порт SSH ${server.port} — ни из одной страны:`
+                  : `Порт SSH ${server.port} — не отвечает ни с одного проверяющего сервера, но все они в России; из-за рубежа порт не проверен:`,
               ...countryReachLines(seen, !hostDown),
             ]
           : ['', COUNTRY_BLIND[reach.blind ?? 'no_probers']];
@@ -568,7 +622,7 @@ export class IncidentsService {
           (await this.repo.findOpen(server.id, 'agent_offline')) ??
           (await this.repo.findOpen(server.id, 'ssh_down'));
         const label = picture ? serverDownLabel(pay, picture) : undefined;
-        main = earlier ? await this.refineToServerDown(earlier, server, detail, label) : undefined;
+        main = earlier ? await this.refineToServerDown(earlier, server, detail, hostDown, label) : undefined;
         if (!main) await this.openIncident(server, 'server_down', detail, label);
         main ??= await this.repo.findOpen(server.id, 'server_down');
       }
@@ -603,41 +657,68 @@ export class IncidentsService {
           ? 'Сервер снова отвечает, но агент молчит — открыто отдельное дело «Агент не в сети».'
           : 'Сервер снова на связи: агент и SSH отвечают.',
       );
-    await this.evalBinary(server, 'agent_offline', agentOff);
-    await this.evalBinary(server, 'ssh_down', sshDown);
+    // «Агент не в сети» закрываем, только когда агент действительно на связи: пока его переустанавливают
+    // («Агент устанавливается…», «Ожидает агента») или он пропал меньше двух минут назад, дело остаётся.
+    const agentBack = server.agentStatus === 'online' || server.agentStatus === 'not_installed';
+    await this.evalBinary(server, 'agent_offline', agentOff, agentBack);
+    await this.evalBinary(server, 'ssh_down', sshConfirmed, !sshDown);
   }
 
   /**
-   * С чем ещё случился сбой за последние полчаса, кроме этого сервера: серверы, у которых замолчал агент,
-   * и открытые за это время дела «Сервер недоступен» и дела о падении онлайна. Больше нуля — сбой не у
-   * одного сервера: общая причина (сеть, хостер, общий счёт) вероятнее, чем неоплата именно этого. Считают
-   * этим и детекция связи, и проверка онлайна — иначе на вопрос «упало сразу у нескольких?» они отвечали
-   * бы по-разному.
+   * SSH не отвечает дольше порога: между первой и последней неудачной проверкой прошло не меньше
+   * sshDownForMs, и ни одна проверка за это время не прошла. По одной неудачной попытке дело не заводим —
+   * неудачу подтверждают повторные проверки (их делает IncidentSshRecheckJob, раз в 20 секунд). Отметка —
+   * в памяти: после перезапуска панели серия считается заново, уже открытое дело при этом остаётся.
+   */
+  private sshDownConfirmed(server: ServerRow): boolean {
+    if (server.sshOk !== false) {
+      this.sshDownSince.delete(server.id);
+      return false;
+    }
+    const last = server.lastSshCheckAt?.getTime() ?? Date.now();
+    let since = this.sshDownSince.get(server.id);
+    // Отметки нет или после неё SSH успел ответить — серия неудач началась заново, с последней проверки.
+    if (since === undefined || (server.lastSshOkAt && server.lastSshOkAt.getTime() > since)) since = last;
+    this.sshDownSince.set(server.id, since);
+    return last - since >= this.sshDownForMs;
+  }
+
+  /**
+   * С чем ещё случился сбой за последние полчаса, кроме этого сервера. Больше нуля — сбой не у одного:
+   * общая причина (сеть, хостер, общий счёт) вероятнее, чем неоплата именно этого. Считают этим и детекция
+   * связи, и проверка онлайна — иначе на вопрос «упало сразу у нескольких?» они отвечали бы по-разному.
+   * Счёт раздельный: панель пишет то, что видела, — «упал онлайн у других нод» или «пропала связь с
+   * другими серверами».
    */
   async fleetTrouble(me: {
     serverId: string | null;
     /** Имена самого сервера и его ноды: своё прежнее дело «другим» не считается. */
     names: ReadonlyArray<string | null | undefined>;
-  }): Promise<number> {
-    const since = Date.now() - FLEET_WINDOW_MS;
+  }): Promise<FleetTrouble> {
+    const now = Date.now();
+    const since = now - FLEET_WINDOW_MS;
     const mine = new Set(me.names.filter((n): n is string => Boolean(n)));
-    const others = new Set<string>();
-    for (const s of await this.serversRepo.list().catch(() => []))
-      if (
-        s.id !== me.serverId &&
-        !mine.has(s.name) &&
-        s.agentStatus === 'offline' &&
-        s.agentLastSeenAt &&
-        s.agentLastSeenAt.getTime() >= since
-      )
-        others.add(s.id);
+    const lost = new Set<string>();
+    const dropped = new Set<string>();
+    const droppedLoose = new Set<string>();
+    for (const s of await this.serversRepo.list().catch(() => [])) {
+      if (s.id === me.serverId || mine.has(s.name) || s.agentStatus !== 'offline' || !s.agentLastSeenAt)
+        continue;
+      const seen = s.agentLastSeenAt.getTime();
+      // Замолчал — после того же порога, что и для своего дела «Агент не в сети»: двадцать секунд тишины
+      // (обновление агента, короткий обрыв) — ещё не сбой.
+      if (seen >= since && now - seen >= AGENT_OFFLINE_FOR_MS) lost.add(s.id);
+    }
     for (const i of await this.repo.list('open').catch(() => [])) {
       if (i.openedAt.getTime() < since) continue;
-      if (i.kind !== 'server_down' && !ONLINE_DROP_RE.test(i.detail)) continue;
       if ((i.serverId !== null && i.serverId === me.serverId) || mine.has(i.serverName)) continue;
-      others.add(i.serverId ?? `node:${i.serverName}`);
+      if (ONLINE_DROP_RE.test(i.detail)) {
+        // Дело без сервера заведено под именем ноды: та же ли это машина, что и наш сервер, неизвестно.
+        if (i.serverId) dropped.add(i.serverId);
+        else droppedLoose.add(i.serverName);
+      } else if (i.kind === 'server_down' && i.serverId) lost.add(i.serverId);
     }
-    return others.size;
+    return { nodes: dropped.size + droppedLoose.size, linkedNodes: dropped.size, servers: lost.size };
   }
 
   private readonly reachCache = new Map<string, { at: number; value: CountryReachResult }>();
@@ -664,14 +745,22 @@ export class IncidentsService {
     partial: boolean,
     reach: CountryReach[],
     panelOpen: boolean,
+    /** Что сейчас со связью — чтобы закрыть дело словами о том, что есть на самом деле. */
+    now: { serverDown: boolean; agentOnline: boolean; sshDown: boolean },
   ): Promise<void> {
     const existing = await this.repo.findOpen(server.id, 'node_blocked');
     const mine = existing?.detail.startsWith(PARTIAL_MARK) ? existing : undefined;
     if (!partial) {
+      // Сервер перестал отвечать совсем — это не «связь восстановилась»: дело присоединит «Сервер недоступен».
+      if (now.serverDown) return;
       if (mine && !mine.attempts.some((a) => a.status === 'running'))
         await this.autoResolve(
           mine,
-          'Связь восстановилась: агент выходит на связь, панель снова видит сервер.',
+          now.agentOnline
+            ? 'Связь восстановилась: агент снова на связи.'
+            : now.sshDown
+              ? 'Порт SSH снова открыт отовсюду, в том числе с сервера панели. Агент пока молчит, и по SSH панель зайти не может — дальше это отдельные дела «Агент не в сети» и «SSH недоступен».'
+              : 'Порт SSH снова открыт отовсюду, и панель заходит по SSH. Агент пока молчит — если он не выйдет на связь, откроется отдельное дело «Агент не в сети».',
         );
       return;
     }
@@ -688,7 +777,10 @@ export class IncidentsService {
       `Порт SSH ${server.port}:`,
       ...countryReachLines(reach, panelOpen),
       '',
-      `Похоже: путь до сервера закрыт из части сетей — ${closed.length ? `не отвечает с ${closed.join(', ')}` : 'часть проверяющих не отвечает'}${panelOpen ? '' : ' и с сервера панели (поэтому молчат агент и SSH)'}, а с ${opened.join(', ')} открыт. Чаще всего это блокировка в этих странах (ТСПУ в России) или сбой маршрута у хостера. Сервер выключать и переустанавливать ничего не нужно: помогает смена IP или ожидание, пока починят сеть.`,
+      closed.length === 0
+        ? // Все проверяющие видят порт, не видит только панель: «закрыт из части стран» было бы неправдой.
+          `Похоже: закрыт путь между сервером и панелью — со всех проверяющих серверов (${opened.join(', ')}) порт открыт, а с сервера панели не отвечает (поэтому молчат агент и SSH). Обычно это фильтрация у хостера одной из сторон или сбой маршрута между ними. Сервер выключать и переустанавливать ничего не нужно.`
+        : `Похоже: путь до сервера закрыт из части сетей — не отвечает с ${closed.join(', ')}${panelOpen ? '' : ' и с сервера панели (поэтому молчат агент и SSH)'}, а с ${opened.join(', ')} открыт. Чаще всего это блокировка в этих странах (ТСПУ в России) или сбой маршрута у хостера. Сервер выключать и переустанавливать ничего не нужно: помогает смена IP или ожидание, пока починят сеть.`,
       ...(out && out.results.length > 0 ? ['', egressText(out)] : []),
     ].join('\n');
     if (!existing) {
@@ -724,6 +816,8 @@ export class IncidentsService {
     row: IncidentRow,
     server: ServerRow,
     detail: string,
+    /** Порт SSH не открывается и с панели; false — порт открыт, панель не может зайти по SSH. */
+    hostDown: boolean,
     /** Своя подпись вместо вида: «Сервер недоступен — проверьте оплату». */
     label?: string,
   ): Promise<IncidentRow | undefined> {
@@ -743,7 +837,14 @@ export class IncidentsService {
         ...row.timeline,
         ev(
           'auto',
-          `Уточнено: сервер недоступен целиком — ${row.kind === 'agent_offline' ? 'порт SSH тоже не отвечает' : 'агент тоже молчит'}.${dropped}`,
+          // Хронология не должна спорить с текстом дела: порт с панели открывается — «порт не отвечает» не пишем.
+          `Уточнено: ${
+            row.kind !== 'agent_offline'
+              ? 'сервер недоступен целиком — агент тоже молчит'
+              : hostDown
+                ? 'сервер недоступен целиком — порт SSH тоже не отвечает'
+                : 'сервер не отвечает панели — по SSH панель зайти не может, хотя порт SSH открывается'
+          }.${dropped}`,
           'detect',
         ),
       ],
@@ -773,11 +874,22 @@ export class IncidentsService {
     return updated;
   }
 
-  /** Мгновенное состояние (агент офлайн / SSH недоступен): без «времени реакции». */
-  private async evalBinary(server: ServerRow, kind: IncidentKind, active: boolean): Promise<void> {
+  /**
+   * Состояние «есть / нет» (агент не в сети, SSH недоступен). `active` — пора заводить дело, `gone` — причина
+   * точно ушла; между ними (агента переустанавливают, неудачу SSH ещё подтверждают) дело не заводим и не
+   * закрываем. Пока по делу идёт действие, тоже не закрываем: иначе «проблема исчезла» опережала итог
+   * самого действия, и следующий шаг цепочки не предлагался.
+   */
+  private async evalBinary(
+    server: ServerRow,
+    kind: IncidentKind,
+    active: boolean,
+    gone: boolean,
+  ): Promise<void> {
     const existing = await this.repo.findOpen(server.id, kind);
     if (active && !existing) await this.openIncident(server, kind, this.binaryDetail(kind));
-    else if (!active && existing) await this.autoResolve(existing);
+    else if (gone && existing && !existing.attempts.some((a) => a.status === 'running'))
+      await this.autoResolve(existing);
   }
 
   /** Пороговое состояние с «временем реакции»: держится дольше forDuration → инцидент. */
@@ -906,7 +1018,18 @@ export class IncidentsService {
       ...(row.serverId ? { server: { id: row.serverId, name: row.serverName } } : {}),
       body: reason ?? 'Инцидент закрыт автоматически.',
       link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
-      telegram: { event: 'resolved', incidentId: row.id, kind: row.kind as IncidentKind },
+      telegram: {
+        event: 'resolved',
+        incidentId: row.id,
+        kind: row.kind as IncidentKind,
+        // Тревога могла ещё ждать разбора и не уйти: тогда вместо пары «тревога → починилось» уйдёт одно
+        // сообщение о коротком сбое. Без причины — проблема исчезла сама; с причиной — пересказываем её.
+        closed: !reason
+          ? { recovered: true }
+          : reason.startsWith(MERGED_MARK)
+            ? 'merged'
+            : { recovered: false, how: reason },
+      },
     });
     await this.repo.update(row.id, {
       status: 'resolved',

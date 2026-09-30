@@ -12,7 +12,6 @@ import {
   SERVER_NAME_MAX,
   type Server,
   type ServerCountry,
-  type ServerFacts,
   type ServerInventory,
   type ServerProfile,
   type ServerRole,
@@ -30,11 +29,18 @@ import type { ServerRow, servers } from '../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { diffChanges } from '../audit/audit.diff.js';
 import { AuditService } from '../audit/audit.service.js';
+import {
+  AGENT_INSTALL_LABEL,
+  AGENT_INSTALL_TIMEOUT_MS,
+  agentInstallCommand,
+  agentInstallScript,
+  installFailure,
+} from './agent-install.js';
 import { PanelKeyService } from './panel-key.service.js';
 import { ServerCountryService } from './server-country.service.js';
 import { serverProblems } from './servers.problems.js';
 import { ServersRepository } from './servers.repository.js';
-import { SshService, type SshSession, type SshTarget } from './ssh.service.js';
+import { type GatheredFacts, SshService, type SshSession, type SshTarget } from './ssh.service.js';
 import { normalizePrivateKey } from './ssh-key.js';
 
 /**
@@ -45,6 +51,13 @@ import { normalizePrivateKey } from './ssh-key.js';
  */
 @Injectable()
 export class ServersService {
+  /** Кого предупредить об удалении сервера: шлюз агентов закрывает соединение его агента. */
+  private readonly deleteListeners: Array<(id: string) => void> = [];
+  /** Когда на сервере закончилась последняя удачная установка агента (в памяти процесса). */
+  private readonly installedAt = new Map<string, number>();
+  /** Сколько установок агента идёт на сервере прямо сейчас — в этом процессе. */
+  private readonly installsRunning = new Map<string, number>();
+
   constructor(
     private readonly repo: ServersRepository,
     private readonly ssh: SshService,
@@ -89,6 +102,7 @@ export class ServersService {
       notes: row.notes,
       providerId: row.providerId ?? null,
       nodeWatch: row.nodeWatch as Server['nodeWatch'],
+      nodeLink: row.nodeLink,
       country: {
         code: row.country,
         source: row.countrySource as ServerCountry['source'],
@@ -110,6 +124,7 @@ export class ServersService {
         kernel: row.kernel,
         cpuCores: row.cpuCores,
         memoryMb: row.memoryMb,
+        addresses: row.addresses ?? [],
       },
       hostKeyFingerprint: row.hostKeyFp,
       agentStatus: row.agentStatus as Server['agentStatus'],
@@ -210,7 +225,7 @@ export class ServersService {
       user: req.sshUser,
       ...(await this.resolveAuth(req.auth)),
     });
-    let facts: ServerFacts;
+    let facts: GatheredFacts;
     const hostKeyFp = first.hostKeyFp;
     try {
       facts = await this.ssh.gatherFacts(first);
@@ -404,7 +419,7 @@ export class ServersService {
         ...(await this.resolveAuth(patch.auth)),
       });
       const hostKeyFp = first.hostKeyFp;
-      let facts: ServerFacts;
+      let facts: GatheredFacts;
       // Пароль ключа панель не хранит: ключ с паролем используем один раз — чтобы поставить свой ключ панели.
       const installPanelKey =
         patch.auth.method === 'password' || (patch.auth.method === 'key' && Boolean(patch.auth.passphrase));
@@ -463,6 +478,7 @@ export class ServersService {
       notes: r.notes,
       providerId: r.providerId,
       nodeWatch: r.nodeWatch,
+      nodeLink: r.nodeLink,
       country: r.country,
       countrySource: r.countrySource,
       roles: r.roles,
@@ -482,6 +498,7 @@ export class ServersService {
       ...(patch.notes !== undefined ? { notes: patch.notes?.trim() ? patch.notes.trim() : null } : {}),
       ...(patch.providerId !== undefined ? { providerId: await this.resolveProvider(patch.providerId) } : {}),
       ...(patch.nodeWatch !== undefined ? { nodeWatch: patch.nodeWatch } : {}),
+      ...(patch.nodeLink !== undefined ? { nodeLink: patch.nodeLink } : {}),
       ...(patch.country !== undefined
         ? {
             ...this.countryInsert(patch.country),
@@ -536,10 +553,23 @@ export class ServersService {
     return this.toDto(updated);
   }
 
+  onDeleted(listener: (id: string) => void): void {
+    this.deleteListeners.push(listener);
+  }
+
   async delete(id: string): Promise<void> {
     const row = await this.repo.findById(id);
     if (!row) throw serverProblems.notFound();
     await this.repo.delete(id);
+    // Агент удалённого сервера оставался на связи, пока соединение не оборвётся само, — закрываем сразу.
+    for (const listener of this.deleteListeners) {
+      try {
+        listener(id);
+      } catch {
+        // Сервер уже удалён: сбой слушателя не должен превращать удаление в ошибку.
+      }
+    }
+    this.installedAt.delete(id);
     await this.audit.record({
       action: 'server.deleted',
       severity: 'warn',
@@ -697,24 +727,55 @@ export class ServersService {
     void this.installAgent(id).catch(() => {});
   }
 
-  /** Установка агента кнопкой: панель сама заходит по SSH и выполняет установочный скрипт из релизов. */
+  /**
+   * Установка агента кнопкой: панель сама заходит по SSH и выполняет установочный скрипт из релизов.
+   * «Установлено» — только когда скрипт действительно отработал (ненулевой код и таймаут — неудача с
+   * причиной); в ошибках нет ни команды, ни токена; токен неудавшейся установки отзывается.
+   */
   async installAgent(id: string): Promise<Server> {
+    // Пока установка идёт, статус «Агент устанавливается…» — её; по этой отметке AgentPendingJob отличает
+    // идущую установку от оборванной перезапуском панели.
+    this.installsRunning.set(id, (this.installsRunning.get(id) ?? 0) + 1);
+    try {
+      return await this.runAgentInstall(id);
+    } finally {
+      const left = (this.installsRunning.get(id) ?? 1) - 1;
+      if (left > 0) this.installsRunning.set(id, left);
+      else this.installsRunning.delete(id);
+    }
+  }
+
+  private async runAgentInstall(id: string): Promise<Server> {
     const row = await this.repo.findById(id);
     if (!row) throw serverProblems.notFound();
-    const issued = await this.issueEnrollmentToken(id);
+    const issued = await this.issueToken(row);
     // Пока идёт установка — карточка показывает «Агент устанавливается…» (по живому потоку).
     if (row.agentStatus !== 'online') await this.repo.update(id, { agentStatus: 'installing' });
     let session: Awaited<ReturnType<SshService['connect']>> | undefined;
     try {
       session = await this.ssh.connect(await this.storedTarget(row));
-      const res = await session.exec(issued.installCommand);
+      let output = '';
+      const res = await session.execStream(agentInstallScript(this.agentInstallParams(issued.token)), {
+        label: AGENT_INSTALL_LABEL,
+        timeoutMs: AGENT_INSTALL_TIMEOUT_MS,
+        // Нужен только хвост вывода — причина неудачи.
+        onData: (chunk) => {
+          output = (output + chunk).slice(-2_000);
+        },
+      });
       if (res.code !== 0)
-        throw serverProblems.sshCommand(
-          'install.sh',
-          (res.stderr || res.stdout).slice(-300) || `код ${res.code}`,
-        );
+        throw serverProblems.sshCommand(AGENT_INSTALL_LABEL, installFailure(output, res.code));
     } catch (err) {
-      if (row.agentStatus !== 'online') await this.repo.update(id, { agentStatus: row.agentStatus });
+      // Установка не состоялась — её токен больше не нужен (после таймаута скрипт мог остаться на сервере).
+      await this.repo.revokeToken(issued.tokenId).catch(() => undefined);
+      // Прежний статус возвращаем, только если его не сменил сам агент (успел выйти на связь). Прежнее
+      // «устанавливается» (осталось от оборванной установки) не возвращаем — оно висело бы вечно.
+      const current = await this.repo.findById(id);
+      if (current?.agentStatus === 'installing') {
+        const before =
+          row.agentStatus !== 'installing' ? row.agentStatus : row.agentPubkey ? 'offline' : 'not_installed';
+        await this.repo.update(id, { agentStatus: before });
+      }
       await this.audit.record({
         action: 'server.agent.install',
         result: 'failed',
@@ -726,9 +787,12 @@ export class ServersService {
     } finally {
       session?.end();
     }
-    const updated = await this.repo.update(id, {
-      agentStatus: row.agentStatus === 'online' ? 'online' : 'pending',
-    });
+    // Новый агент мог выйти на связь раньше, чем вернулась команда, — тогда он уже «в сети». Иначе ждём его:
+    // прежний агент (если был) скриптом остановлен, показывать «в сети» по старой памяти нельзя.
+    const fresh = await this.repo.findById(id);
+    const updated =
+      fresh?.agentStatus === 'online' ? fresh : await this.repo.update(id, { agentStatus: 'pending' });
+    this.installedAt.set(id, Date.now());
     await this.audit.record({
       action: 'server.agent.install',
       target: { type: 'server', id, display: row.name },
@@ -738,30 +802,47 @@ export class ServersService {
     return this.toDto(updated);
   }
 
+  /** С этого момента «Ожидает агента» отсчитывает свои три минуты (AgentPendingJob); нет — установки не было. */
+  agentInstalledAt(id: string): number | undefined {
+    return this.installedAt.get(id);
+  }
+
+  /** Идёт ли установка агента на сервере прямо сейчас (после перезапуска панели — заведомо нет). */
+  agentInstallRunning(id: string): boolean {
+    return this.installsRunning.has(id);
+  }
+
   async issueEnrollmentToken(id: string): Promise<EnrollmentTokenResponse> {
     const row = await this.repo.findById(id);
     if (!row) throw serverProblems.notFound();
+    const issued = await this.issueToken(row);
+    return {
+      token: issued.token,
+      serverId: id,
+      expiresAt: issued.expiresAt.toISOString(),
+      installCommand: agentInstallCommand(this.agentInstallParams(issued.token)),
+    };
+  }
+
+  private agentInstallParams(token: string) {
+    return { repo: this.config.get('AGENT_REPO'), token, panel: this.config.get('PUBLIC_URL') };
+  }
+
+  /** Новый токен подключения агента (прежние живые отзываются); `tokenId` — чтобы отозвать именно его. */
+  private async issueToken(row: ServerRow): Promise<{ token: string; tokenId: string; expiresAt: Date }> {
     const token = `nse_${this.crypto.randomToken(24)}`;
     const expiresAt = new Date(Date.now() + ENROLLMENT_TOKEN_TTL_HOURS * 3_600_000);
-    const revoked = await this.repo.revokeActiveTokens(id);
-    await this.repo.insertEnrollmentToken({
-      serverId: id,
+    const revoked = await this.repo.revokeActiveTokens(row.id);
+    const saved = await this.repo.insertEnrollmentToken({
+      serverId: row.id,
       tokenHash: this.crypto.sha256Hex(token),
       expiresAt,
     });
     await this.audit.record({
       action: 'server.enrollment.issued',
-      target: { type: 'server', id, display: row.name },
+      target: { type: 'server', id: row.id, display: row.name },
       metadata: { expiresAt: expiresAt.toISOString(), replacedTokens: revoked },
     });
-    const base = this.config.get('PUBLIC_URL');
-    return {
-      token,
-      serverId: id,
-      expiresAt: expiresAt.toISOString(),
-      // Старая привязка агента (state.json) иначе переживает установку: агент пишет «токен игнорирую» и новый
-      // токен пропадает зря — повторная установка ничего не меняла (случай «Казахстан-1»).
-      installCommand: `rm -f /var/lib/nodeservice-agent/state.json 2>/dev/null; curl -fsSL https://github.com/${this.config.get('AGENT_REPO')}/releases/latest/download/install.sh | sh -s -- --token ${token} --panel ${base}`,
-    };
+    return { token, tokenId: saved.id, expiresAt };
   }
 }

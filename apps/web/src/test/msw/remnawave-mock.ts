@@ -1,6 +1,8 @@
 import type { RemnawaveCert, RemnawaveNode, RemnawaveStats, RemnawaveStatus } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
 
+import { mockServers } from './servers-mock';
+
 const CERT_OK: RemnawaveCert = {
   status: 'ok',
   expiresAt: '2026-11-21T00:00:00.000Z',
@@ -42,7 +44,8 @@ const NODES: RemnawaveNode[] = [
     isDisabled: false,
     isConnecting: false,
     lastStatusMessage: 'Node did not respond in time',
-    usersOnline: null,
+    // Как настоящий сервер: у включённой ноды без метрик онлайн — 0; пусто — только у выключенной вручную.
+    usersOnline: 0,
     trafficUsedBytes: 300_000_000_000,
     trafficLimitBytes: 5_000_000_000_000,
   },
@@ -83,6 +86,27 @@ export function seedRemnawave(): void {
   });
 }
 
+/**
+ * Как на сервере: к каждой ноде — серверы панели, на которых она работает. Сначала выбор из профиля сервера,
+ * затем совпадение адреса; «Нет ноды» связь снимает. (Сверку по IP за доменом мок не повторяет.)
+ */
+function withServers(nodes: RemnawaveNode[]): RemnawaveNode[] {
+  const manual = new Set(mockServers.items.map((s) => s.nodeLink));
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  return nodes.map((n) => {
+    const chosen = mockServers.items.filter((s) => s.nodeLink === n.uuid);
+    const found = manual.has(n.uuid)
+      ? []
+      : mockServers.items.filter((s) => s.nodeLink === 'auto' && same(s.host, n.address));
+    const servers = [...chosen, ...found];
+    return {
+      ...n,
+      serverIds: servers.map((s) => s.id),
+      linkedBy: chosen.length > 0 ? 'manual' : found.length > 0 ? 'address' : null,
+    };
+  });
+}
+
 function status(): RemnawaveStatus {
   return {
     connected: mockRemnawave.connected,
@@ -90,7 +114,7 @@ function status(): RemnawaveStatus {
     checkedAt: mockRemnawave.checkedAt,
     error: mockRemnawave.error,
     stats: mockRemnawave.stats,
-    nodes: mockRemnawave.nodes,
+    nodes: withServers(mockRemnawave.nodes),
     cert: mockRemnawave.cert,
   };
 }

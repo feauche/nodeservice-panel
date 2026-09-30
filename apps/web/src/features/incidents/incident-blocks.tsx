@@ -281,7 +281,11 @@ export function ProposalBlock({
     >
       <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold">
         <WrenchIcon className="size-4 text-warn" aria-hidden="true" />
-        {proposal.level === 'T3' ? 'Следующий шаг только вручную' : 'Следующий шаг требует подтверждения'}
+        {proposal.level === 'T3'
+          ? 'Следующий шаг только вручную'
+          : proposal.autoAfterPause
+            ? 'Следующий шаг панель запустит сама после паузы'
+            : 'Следующий шаг требует подтверждения'}
         <LevelChip level={proposal.level} />
       </div>
       <p className="mt-1.5 text-[13px] leading-normal">
@@ -341,7 +345,7 @@ export function ProposalBlock({
             ) : (
               <CheckIcon className="size-3.5" aria-hidden="true" />
             )}
-            Подтвердить: {action.title.toLowerCase()}
+            {proposal.autoAfterPause ? 'Запустить сейчас' : 'Подтвердить'}: {action.title.toLowerCase()}
           </button>
         )}
       </div>

@@ -290,9 +290,15 @@ describe('billing e2e', () => {
       sql`update incidents set kind = 'server_down', title = 'Сервер недоступен · DE-1' where server_id = ${serverId}`,
     );
     expect(await remind()).not.toContain('из-за неоплаты');
-    // Дело само называет оплату — вот тогда и напоминание говорит о вероятной причине.
+    // В заголовке дела названа оплата, но в тексте панель осторожна («возможно…»: из других стран порт не
+    // проверен) — напоминание не должно быть увереннее: «вероятно, из-за неоплаты» не пишем.
     await db.execute(
-      sql`update incidents set title = 'Сервер недоступен — просрочена оплата · DE-1' where server_id = ${serverId}`,
+      sql`update incidents set title = 'Сервер недоступен — просрочена оплата · DE-1', detail = 'Проверьте оплату: из других стран порт не проверен, а оплата просрочена — возможно, сервер отключили за неоплату.' where server_id = ${serverId}`,
+    );
+    expect(await remind()).not.toContain('из-за неоплаты');
+    // Дело само называет оплату вероятной причиной — вот тогда и напоминание говорит о ней.
+    await db.execute(
+      sql`update incidents set detail = 'Вероятнее всего: отключили за неоплату — продлите у провайдера или арендодателя и отметьте продление в «Биллинге».' where server_id = ${serverId}`,
     );
     // …но только для оплаты самого сервера: просроченный сертификат сервер не выключает.
     await db.execute(sql`update billing_items set kind = 'cert' where id = ${itemId}`);

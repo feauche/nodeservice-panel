@@ -525,9 +525,45 @@ describe('get_remnawave_status', () => {
       ],
       cert: { status: 'warn', expiresAt: '2026-10-03T00:00:00.000Z', daysLeft: 6, note: null },
     };
-    const d = { ...deps(), remnawave: { status: async () => st } } as unknown as ToolDeps;
+    const d = {
+      ...deps(),
+      servers: { list: async () => [] },
+      remnawave: { status: async () => st },
+    } as unknown as ToolDeps;
     const r = JSON.parse((await runTool('get_remnawave_status', {}, d)).content);
-    expect(r).toEqual(st);
+    // Сводка и сертификат — как есть; у ноды добавлено, на каком сервере панели она работает.
+    expect(r).toMatchObject({ ...st, nodes: [{ ...st.nodes[0], server: null, serverFoundBy: null }] });
+    expect(r.nodesNote).toContain('сервер этой ноды в панели не найден');
+  });
+
+  it('у ноды назван её сервер в панели и то, как панель их связала', async () => {
+    const node = (over: Record<string, unknown>) => ({
+      uuid: 'n1',
+      name: 'Нидерланды - 1',
+      address: '201.34.145.175',
+      usersOnline: 30,
+      ...over,
+    });
+    const st = {
+      connected: true,
+      nodes: [
+        node({ serverIds: ['srv-nl'], linkedBy: 'ip' }),
+        node({ uuid: 'n2', name: 'чужая', serverIds: [], linkedBy: null }),
+      ],
+    };
+    const d = {
+      ...deps(),
+      servers: { list: async () => [{ id: 'srv-nl', name: 'Нидерланды - 1 (сервер)' }] },
+      remnawave: { status: async () => st },
+    } as unknown as ToolDeps;
+    const r = JSON.parse((await runTool('get_remnawave_status', {}, d)).content);
+    expect(r.nodes[0]).toMatchObject({
+      server: 'Нидерланды - 1 (сервер)',
+      serverFoundBy: 'найдена по IP-адресу сервера',
+    });
+    expect(r.nodes[1]).toMatchObject({ server: null, serverFoundBy: null });
+    // Служебные идентификаторы серверов модели не нужны.
+    expect(JSON.stringify(r)).not.toContain('srv-nl');
   });
 });
 

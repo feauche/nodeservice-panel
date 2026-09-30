@@ -6,9 +6,12 @@ import { CapacityService } from '../capacity/capacity.service.js';
 import { FleetStatsService } from '../fleet-stats/fleet-stats.service.js';
 import { IncidentMetricsService } from '../incidents/incident-metrics.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
+import { resolveUpstreamTarget } from '../incidents/upstream-target.js';
 import { MaintenanceService } from '../maintenance/maintenance.service.js';
 import { VmReaderService } from '../metrics/vm-reader.service.js';
 import { ProvidersService } from '../providers/providers.service.js';
+import { NodeLinkService } from '../remnawave/node-link.service.js';
+import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServerChecksService } from '../server-checks/server-checks.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import type { ReadDeps } from './assistant.read-tools.js';
@@ -29,6 +32,8 @@ export class ReadDepsService {
     private readonly billing: BillingService,
     private readonly fleetStats: FleetStatsService,
     private readonly capacity: CapacityService,
+    private readonly remnawave: RemnawaveService,
+    private readonly links: NodeLinkService,
   ) {}
 
   get(permissions: AssistantPermissions): ReadDeps {
@@ -45,6 +50,8 @@ export class ReadDepsService {
       fleetStats: this.fleetStats,
       capacity: this.capacity,
       permissions,
+      upstreamTarget: (server, all) =>
+        resolveUpstreamTarget(server, all, this.remnawave, this.links).catch(() => null),
     };
   }
 }

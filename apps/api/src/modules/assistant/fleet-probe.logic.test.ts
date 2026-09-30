@@ -1,10 +1,11 @@
-import type { Server } from '@nodeservice/shared';
+import type { ReachabilityResult, Server } from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
   buildReachCommand,
   dnsSummary,
   isProbeHost,
+  mergeReach,
   NODE_LOGS_CHARS,
   NODE_LOGS_COMMAND,
   normalizePorts,
@@ -13,6 +14,9 @@ import {
   parseReach,
   pickProbes,
   prepareNodeLogs,
+  probesForAddress,
+  REACH_NOTES,
+  sameReachTarget,
   summarizeReach,
 } from './fleet-probe.logic.js';
 
@@ -121,6 +125,16 @@ describe('pickProbes', () => {
   it('пусто, если проверять не с чего', () => {
     expect(pickProbes(target, [target])).toEqual([]);
   });
+  it('проверяемая машина не проверяет себя ни под какой своей записью', () => {
+    const all = [
+      srv({ name: 'сам сервер', host: 'NL1.example.com.' }),
+      srv({ name: 'его вторая запись', host: 'nl1.example.com' }),
+      srv({ name: 'мост', host: '2.2.2.2' }),
+      srv({ name: 'другой', host: '3.3.3.3' }),
+    ];
+    // Адрес цели — тот же, что у двух записей; мост исключён явно (проверяем его же вход).
+    expect(probesForAddress('nl1.example.com', all, ['id-мост']).map((s) => s.name)).toEqual(['другой']);
+  });
 });
 
 describe('buildReachCommand', () => {
@@ -185,6 +199,111 @@ describe('parseReach и summarizeReach', () => {
       consistent: false,
     });
     expect(dnsSummary([probe('a', [true], '1.1.1.1'), probe('b', [true], '1.1.1.1')]).consistent).toBe(true);
+  });
+});
+
+describe('mergeReach: несколько проверок одной цели — одна таблица', () => {
+  const one = (
+    from: string,
+    ports: Array<[number, boolean]>,
+    over: Partial<ReachabilityResult['probes'][number]> = {},
+  ): ReachabilityResult['probes'][number] => ({
+    from,
+    ok: true,
+    error: null,
+    ports: ports.map(([port, open]) => ({ port, open, ms: open ? 12 : null })),
+    dns: '201.34.145.175',
+    ping: null,
+    ...over,
+  });
+  /** Результат одной проверки так, как его собирает служба: вывод по портам, DNS и оговорки. */
+  const result = (
+    probes: ReachabilityResult['probes'],
+    ports: number[],
+    target = { name: 'Нидерланды - 1', address: '201.34.145.175' },
+  ): ReachabilityResult => ({
+    target,
+    probes,
+    ports: summarizeReach(probes, ports),
+    dns: dnsSummary(probes),
+    notes: [...(probes.length < 2 ? [REACH_NOTES.single] : []), REACH_NOTES.notUserView],
+  });
+
+  it('случай владельца: шесть проверок по одному серверу — шесть строк, а не последняя', () => {
+    const from = ['Мост', 'Россия - 1', 'Германия - 1', 'Казахстан - 1', 'Польша - 1', 'Нидерланды - 2'];
+    const open = [false, false, true, true, true, true];
+    const merged = from
+      .map((name, i) => result([one(name, [[443, open[i] as boolean]])], [443]))
+      .reduce(mergeReach);
+    expect(merged.probes.map((p) => p.from)).toEqual(from);
+    expect(merged.ports).toHaveLength(1);
+    // Из России порт не отвечал — «открыт со всех» по последней проверке было бы неправдой.
+    expect(merged.ports[0]).toMatchObject({ port: 443, open: 4, closed: 2, verdict: 'partial' });
+    // Проверяющих шесть — оговорка «проверяющий один» больше не к месту.
+    expect(merged.notes).not.toContain(REACH_NOTES.single);
+    expect(merged.notes.at(-1)).toBe(REACH_NOTES.notUserView);
+  });
+
+  it('повторная проверка с того же сервера заменяет его прежний ответ, а не добавляет строку', () => {
+    const merged = mergeReach(
+      result([one('Мост', [[443, false]]), one('Польша - 1', [[443, true]])], [443]),
+      result([one('Мост', [[443, true]])], [443]),
+    );
+    expect(merged.probes.map((p) => p.from)).toEqual(['Мост', 'Польша - 1']);
+    expect(merged.ports[0]).toMatchObject({ open: 2, closed: 0, verdict: 'reachable' });
+  });
+
+  it('разные порты складываются в столбцы: кто какой порт не проверял, в выводе не считается', () => {
+    const merged = mergeReach(
+      result([one('Мост', [[22, true]]), one('Польша - 1', [[22, true]])], [22]),
+      result([one('Мост', [[443, false]])], [443]),
+    );
+    expect(merged.ports.map((p) => p.port)).toEqual([22, 443]);
+    expect(merged.probes.find((p) => p.from === 'Мост')?.ports.map((p) => p.port)).toEqual([22, 443]);
+    expect(merged.probes.find((p) => p.from === 'Польша - 1')?.ports.map((p) => p.port)).toEqual([22]);
+    expect(merged.ports[1]).toMatchObject({ port: 443, open: 0, closed: 1, verdict: 'closed_everywhere' });
+    expect(merged.ports[1]?.text).toContain('1 проверяющего сервера');
+  });
+
+  it('проверяющий не ответил во второй раз — то, что он видел раньше, остаётся', () => {
+    const dead = one('Мост', [], { ok: false, error: 'Не удалось подключиться к проверяющему серверу.' });
+    const merged = mergeReach(result([one('Мост', [[443, true]])], [443]), result([dead], [443]));
+    expect(merged.probes).toHaveLength(1);
+    expect(merged.probes[0]).toMatchObject({ ok: true, ports: [{ port: 443, open: true, ms: 12 }] });
+    expect(merged.notes).not.toContain(REACH_NOTES.silent);
+    // А если он не отвечал и раньше — строка «не ответил» остаётся, с оговоркой.
+    const both = mergeReach(result([dead], [443]), result([one('Польша - 1', [[443, true]])], [443]));
+    expect(both.probes.map((p) => p.ok)).toEqual([false, true]);
+    expect(both.notes).toContain(REACH_NOTES.silent);
+  });
+
+  it('расхождение DNS между проверками попадает в оговорки', () => {
+    const merged = mergeReach(
+      result([one('Мост', [[443, true]], { dns: '1.1.1.1' })], [443]),
+      result([one('Польша - 1', [[443, true]], { dns: '2.2.2.2' })], [443]),
+    );
+    expect(merged.dns).toEqual({ answers: ['1.1.1.1', '2.2.2.2'], consistent: false });
+    expect(merged.notes[0]).toContain('DNS отвечает по-разному');
+  });
+
+  it('одна цель — тот же адрес; имя может быть названием сервера или самим адресом', () => {
+    const byName = result([one('Мост', [[443, true]])], [443]);
+    const byAddress = result([one('Польша - 1', [[443, true]])], [443], {
+      name: '201.34.145.175',
+      address: '201.34.145.175',
+    });
+    expect(sameReachTarget(byName, byAddress)).toBe(true);
+    // В заголовке остаётся название сервера, а не голый адрес.
+    expect(mergeReach(byAddress, byName).target.name).toBe('Нидерланды - 1');
+    expect(mergeReach(byName, byAddress).target.name).toBe('Нидерланды - 1');
+    const other = result([one('Мост', [[443, true]])], [443], { name: 'Германия - 1', address: '5.5.5.5' });
+    expect(sameReachTarget(byName, other)).toBe(false);
+    // Вход сервера и сам сервер — разные цели, даже если адрес один.
+    const entry = result([one('Мост', [[443, true]])], [443], {
+      name: 'Вход «Нидерланды - 1»: 201.34.145.175:443',
+      address: '201.34.145.175',
+    });
+    expect(sameReachTarget(byName, entry)).toBe(false);
   });
 });
 

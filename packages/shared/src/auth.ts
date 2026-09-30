@@ -147,6 +147,10 @@ export type SessionResponse = z.infer<typeof sessionResponseSchema>;
 export const AUTH_PROBLEM = {
   invalidCredentials: 'https://nodeservice.dev/problems/auth/invalid-credentials',
   throttled: 'https://nodeservice.dev/problems/auth/throttled',
+  /** Суточный лимит неверных кодов исчерпан: вход по коду из приложения закрыт (есть retryAfterSeconds). */
+  codeEntryClosed: 'https://nodeservice.dev/problems/auth/code-entry-closed',
+  /** Слишком много попыток входа одновременно — повторить через несколько секунд. */
+  busy: 'https://nodeservice.dev/problems/auth/busy',
   totpRequired: 'https://nodeservice.dev/problems/auth/totp-required',
   invalidTotp: 'https://nodeservice.dev/problems/auth/invalid-totp',
   invalidRecovery: 'https://nodeservice.dev/problems/auth/invalid-recovery-code',

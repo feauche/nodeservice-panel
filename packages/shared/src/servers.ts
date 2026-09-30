@@ -75,6 +75,28 @@ export const NODE_WATCH_LABELS: Record<NodeWatch, string> = {
   on: 'Есть, следить',
   off: 'Нет, не следить',
 };
+/**
+ * Какая нода Remnawave работает на сервере (решение владельца 30.09.2026). «auto» — панель находит её сама:
+ * по адресу сервера и по IP, куда указывает домен; «none» — ноды на сервере нет; иначе — идентификатор ноды,
+ * выбранной вручную (когда адреса записаны по-разному и сама панель связать их не может).
+ */
+export const NODE_LINK_AUTO = 'auto';
+export const NODE_LINK_NONE = 'none';
+export const nodeLinkSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9._-]+$/, 'Выберите ноду из списка');
+/** Как панель связала ноду с сервером: выбрана вручную, совпал адрес, совпал IP. */
+export const NODE_LINK_BY = ['manual', 'address', 'ip'] as const;
+export type NodeLinkBy = (typeof NODE_LINK_BY)[number];
+export const NODE_LINK_BY_LABELS: Record<NodeLinkBy, string> = {
+  manual: 'выбрана вручную',
+  address: 'найдена по адресу сервера',
+  ip: 'найдена по IP-адресу сервера',
+};
+
 /** Что зонд видел в последний раз: контейнер работает / остановлен / не найден. */
 export const NODE_STATES = ['running', 'stopped', 'none'] as const;
 export const nodeStateSchema = z.enum(NODE_STATES);
@@ -133,6 +155,11 @@ export const serverFactsSchema = z.object({
   kernel: z.string().nullable(),
   cpuCores: z.number().int().nullable(),
   memoryMb: z.number().int().nullable(),
+  /**
+   * Внешние IP-адреса на сетевых интерфейсах сервера (без локальных и служебных). По ним панель узнаёт
+   * сервер, когда нода Remnawave записана по другому его адресу. Нет поля — ещё не собирались.
+   */
+  addresses: z.array(z.string()).optional(),
 });
 export type ServerFacts = z.infer<typeof serverFactsSchema>;
 
@@ -160,6 +187,8 @@ export const serverSchema = z.object({
   /** Хостер из справочника провайдеров; null — не указан. */
   providerId: z.uuid().nullable(),
   nodeWatch: nodeWatchSchema,
+  /** Какая нода Remnawave работает на сервере: «auto», «none» или идентификатор ноды (см. nodeLinkSchema). */
+  nodeLink: nodeLinkSchema,
   /** Страна сервера: выбрана вручную или определена по IP (см. countries.ts). */
   country: serverCountrySchema,
   /** Роль, важность, окно обслуживания и то, что должно работать на сервере (знание владельца). */
@@ -242,6 +271,8 @@ export const updateServerRequestSchema = z.object({
   notes: z.string().trim().max(SERVER_NOTES_MAX).nullable().optional(),
   providerId: z.uuid().nullable().optional(),
   nodeWatch: nodeWatchSchema.optional(),
+  /** Какая нода Remnawave работает на сервере: «auto», «none» или идентификатор выбранной ноды. */
+  nodeLink: nodeLinkSchema.optional(),
   /** «Определять автоматически» (заново запускает определение) или страна, выбранная вручную. */
   country: countryChoiceSchema.optional(),
   /** Профиль сервера: поля меняются по отдельности, списки заменяются целиком. */

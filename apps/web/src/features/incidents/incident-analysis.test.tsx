@@ -25,6 +25,37 @@ const open = (id: string) => {
   );
 };
 
+describe('предложение панели в деле', () => {
+  beforeEach(() => resetMockState({ authenticated: true }));
+
+  it('обычное предложение ждёт подтверждения', async () => {
+    open(cpuIncident().id);
+    const block = await screen.findByTestId('proposal-block');
+    expect(within(block).getByText('Следующий шаг требует подтверждения')).toBeInTheDocument();
+    expect(within(block).getByRole('button', { name: /^Подтвердить: / })).toBeInTheDocument();
+  });
+
+  it('шаг, отложенный паузой между автопочинками: сказано, что панель запустит его сама, и есть «Запустить сейчас»', async () => {
+    const inc = cpuIncident();
+    inc.proposal = {
+      action: 'free_disk',
+      level: 'T1',
+      reason:
+        'панель недавно уже чинила этот сигнал на сервере и следующую починку запустит сама, когда пройдёт пауза между автопочинками',
+      proposedAt: new Date().toISOString(),
+      autoAfterPause: true,
+    };
+    open(inc.id);
+    const block = await screen.findByTestId('proposal-block');
+    expect(within(block).getByText('Следующий шаг панель запустит сама после паузы')).toBeInTheDocument();
+    expect(within(block).queryByText('Следующий шаг требует подтверждения')).not.toBeInTheDocument();
+    expect(
+      within(block).getByText(/запустит сама, когда пройдёт пауза между автопочинками/),
+    ).toBeInTheDocument();
+    expect(within(block).getByRole('button', { name: /^Запустить сейчас: / })).toBeInTheDocument();
+  });
+});
+
 describe('IncidentAnalysis', () => {
   beforeEach(() => {
     resetMockState({ authenticated: true });

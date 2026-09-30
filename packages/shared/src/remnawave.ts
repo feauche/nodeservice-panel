@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { NODE_LINK_BY } from './servers.js';
+
 /**
  * Подключение к панели Remnawave (J4), только чтение. Владелец создаёт в самой Remnawave токен API
  * с правами только на чтение (в её разделе «API Tokens») и вставляет сюда домен и токен один раз.
@@ -27,6 +29,13 @@ export const remnawaveNodeSchema = z.object({
   usersOnline: z.number().int().min(0).nullable(),
   trafficUsedBytes: z.number().nullable(),
   trafficLimitBytes: z.number().nullable(),
+  /**
+   * Серверы NodeService, на которых работает эта нода (обычно один; первый — основной); пусто — сервер в
+   * панели не найден. Считается при отдаче статуса: в сохранённом снимке Remnawave этих полей нет.
+   */
+  serverIds: z.array(z.string()).optional(),
+  /** Как найдена связь с основным сервером; null — связи нет. */
+  linkedBy: z.enum(NODE_LINK_BY).nullable().optional(),
 });
 export type RemnawaveNode = z.infer<typeof remnawaveNodeSchema>;
 

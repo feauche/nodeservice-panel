@@ -162,6 +162,8 @@ export function BackupSettingsForm({
 
   const save = async () => {
     setError(null);
+    // Свой чат сервер отдаёт маской, без токена: обратно её не отправляем — сохранить маску нельзя.
+    const { ownUrl: _mask, ...chat } = d.s.telegram;
     const body: BackupSettingsUpdate = {
       auto: d.s.auto,
       frequency: d.s.frequency,
@@ -171,9 +173,9 @@ export function BackupSettingsForm({
       beforeUpdate: d.s.beforeUpdate,
       includeMetrics: d.s.includeMetrics,
       telegram: {
-        ...d.s.telegram,
-        // Маска — «не менять»; новая строка — заменить; пусто — убрать.
-        ownUrl: ownChanged ? d.ownUrl.trim() || null : (saved.telegram.ownUrl ?? null),
+        ...chat,
+        // Поле не трогали — не передаём («не менять»); новая строка — заменить; пусто — убрать.
+        ...(ownChanged ? { ownUrl: d.ownUrl.trim() || null } : {}),
       },
       extra: { enabled: d.s.extra.enabled, paths: cleanPaths },
       ...(needNewPw ? { password: d.pw } : !d.pwOn && saved.passwordSet ? { password: null } : {}),

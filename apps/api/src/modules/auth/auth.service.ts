@@ -2,6 +2,7 @@ import { randomInt } from 'node:crypto';
 import { type HttpException, Injectable } from '@nestjs/common';
 import {
   type LoginResponse,
+  loginSchema,
   type Me,
   RECOVERY_CODES_COUNT,
   type SessionResponse,
@@ -14,23 +15,29 @@ import {
 import { CryptoService } from '../../common/crypto/crypto.service.js';
 import type { UserRow } from '../../infra/db/schema/index.js';
 import { authProblems } from './auth.problems.js';
-import { AuthEventsService } from './auth-events.service.js';
+import { type AttemptStage, type AuthEventContext, AuthEventsService } from './auth-events.service.js';
 import {
   PENDING_LOGIN_TTL_MS,
   PENDING_MAX_ATTEMPTS,
   PENDING_SETUP_TTL_MS,
+  type PendingLogin,
   PendingStore,
 } from './pending.store.js';
 import { ipPrefix, type RequestContext } from './request-context.js';
 import { SecurityPolicyStore } from './security-policy.store.js';
 import { type SessionRecord, SessionStore } from './session.store.js';
 import { SetupService } from './setup.service.js';
-import { ThrottleService } from './throttle.service.js';
+import { deviceScope, sessionScope, type ThrottleKey, ThrottleService } from './throttle.service.js';
 import { TotpService } from './totp.service.js';
 import { normalizeLogin, UsersRepository } from './users.repository.js';
 
 const RECOVERY_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const TRUSTED_DEVICE_TTL_MS = TRUSTED_DEVICE_DAYS * 24 * 3_600_000;
+/**
+ * Сколько проверок пароля может ждать своей очереди. Дальше вход отвечает «подождите» сразу, без
+ * хеширования: иначе после залпа запросов владелец ждал бы, пока разберётся очередь из чужих попыток.
+ */
+export const PASSWORD_QUEUE_MAX = 8;
 
 /** Что контроллер должен сделать с cookie после операции. */
 export interface CookieActions {
@@ -150,7 +157,7 @@ export class AuthService {
         login: pending.login,
         meta: { stage: 'setup' },
       });
-      throw await this.failPendingAttempt(pendingToken, pending.login, ctx, authProblems.invalidTotp());
+      throw await this.failSetupAttempt(pendingToken);
     }
 
     const now = new Date();
@@ -191,38 +198,45 @@ export class AuthService {
     trustedToken: string | undefined,
     ctx: RequestContext,
   ): Promise<AuthResult<LoginResponse>> {
-    const key = { ip: ctx.ip, login: input.login };
-    await this.throttle.assertAllowed(key).catch(async (e: unknown) => {
-      await this.events.record('auth.login.throttled', { ...ctx, login: input.login });
-      throw e;
-    });
+    // Логин присылает кто угодно. Настоящий логин — латиница, цифры, точка, дефис, подчёркивание
+    // (loginSchema): с остальным в базу не идём — такого пользователя быть не может, а нулевой символ
+    // в запросе обрывает его ошибкой. В Журнал, сообщения и ключи счёта логин идёт уже очищенным.
+    const login = presentableLogin(input.login);
+    const user = loginSchema.safeParse(input.login).success
+      ? await this.users.findByLogin(input.login)
+      : undefined;
+    // Запомненное устройство ищем до проверки паузы: с него владелец входит, даже когда по его логину
+    // идут чужие неудачные попытки. Ищем при любом логине — время ответа не выдаёт, есть ли такой.
+    const remembered = trustedToken
+      ? await this.users.findTrustedDevice(this.crypto.sha256Hex(trustedToken))
+      : undefined;
+    const own =
+      remembered && user && remembered.userId === user.id && remembered.expiresAt.getTime() > Date.now();
+    // Очередь проверок пароля уже длинная — отвечаем сразу, без хеширования: каждая проверка занимает
+    // 128 МиБ. Запомненное устройство в очередь пускаем всегда: залп чужих попыток не должен его вытеснять.
+    if (!own && this.crypto.passwordChecksWaiting >= PASSWORD_QUEUE_MAX) throw authProblems.busy();
+    const key: ThrottleKey = { ip: ctx.ip, login, ...(own ? { known: deviceScope(remembered.id) } : {}) };
+    const evt: AuthEventContext = { ...ctx, login, ...(user ? { loginExists: true } : {}) };
+    await this.reserve(key, evt, 'password');
 
-    const user = await this.users.findByLogin(input.login);
     const ok = user
       ? await this.crypto.verifyPassword(user.passwordHash, input.password)
       : await this.crypto.verifyAgainstDummy(input.password);
     if (!user || !ok) {
-      await this.events.record('auth.login.failed', {
-        ...ctx,
-        login: input.login,
-        meta: { reason: 'credentials' },
-      });
-      await this.throttle.recordFailure(key).catch(async (e: unknown) => {
-        await this.events.record('auth.login.throttled', { ...ctx, login: input.login });
-        throw e;
-      });
+      await this.events.record('auth.login.failed', { ...evt, meta: { reason: 'credentials' } });
+      await this.failed(key, evt, 'password');
       throw authProblems.invalidCredentials();
     }
-    await this.throttle.reset(key);
+    // Пароль верный: попытка возвращается. Счёт неудач при этом остаётся — он сбрасывается только
+    // полным входом, иначе знающий пароль обнулял бы его перед каждой новой пятёркой кодов.
+    await this.throttle.release(key);
 
     // Доверенное устройство: пропускаем TOTP — если политика не требует код всегда.
     const alwaysAskTotp = (await this.policy.get()).alwaysAskTotp;
-    const device =
-      trustedToken && !alwaysAskTotp
-        ? await this.users.findTrustedDevice(this.crypto.sha256Hex(trustedToken))
-        : undefined;
+    const device = alwaysAskTotp ? undefined : remembered;
     if (device && device.userId === user.id && device.expiresAt.getTime() > Date.now()) {
       await this.users.touchTrustedDevice(device.id);
+      await this.throttle.reset(key);
       const session = await this.sessions.create({
         userId: user.id,
         ua: ctx.ua,
@@ -249,6 +263,7 @@ export class AuthService {
 
     // 2FA не настроена (например, отключена через CLI) — впускаем по паролю.
     if (!user.totpSecretEnc || !user.totpConfirmedAt) {
+      await this.throttle.reset(key);
       const session = await this.sessions.create({ userId: user.id, ua: ctx.ua, ip: ctx.ip, amr: ['pwd'] });
       await this.events.record('auth.login.success', {
         ...ctx,
@@ -263,7 +278,14 @@ export class AuthService {
     }
 
     const pendingToken = await this.pending.create(
-      { kind: 'login', userId: user.id, login: user.login, ip: ctx.ip, ua: ctx.ua },
+      {
+        kind: 'login',
+        userId: user.id,
+        login: user.login,
+        ip: ctx.ip,
+        ua: ctx.ua,
+        ...(key.known ? { known: key.known } : {}),
+      },
       PENDING_LOGIN_TTL_MS,
     );
     return {
@@ -277,15 +299,25 @@ export class AuthService {
     input: { code: string; rememberDevice: boolean },
     ctx: RequestContext,
   ): Promise<AuthResult<SessionResponse>> {
-    const { token, user } = await this.requirePendingLogin(pendingToken);
+    const { token, pending, user } = await this.requirePendingLogin(pendingToken);
     if (!user.totpSecretEnc) throw authProblems.totpRequired();
+    const secret = this.crypto.decrypt(user.totpSecretEnc);
+    const key = secondStepKey(pending, ctx);
+    const evt: AuthEventContext = { ...ctx, userId: user.id, login: user.login };
+    // Суточный лимит неверных кодов исчерпан: код из шести цифр подбирается перебором, поэтому до
+    // конца окна не принимается даже верный. Код восстановления и запомненное устройство работают.
+    const closed = await this.throttle.secondFactorClosedSeconds(user.login);
+    if (closed > 0) throw authProblems.codeEntryClosed(closed, await this.rememberedWorks());
+    await this.reserve(key, evt, 'code');
 
-    const ok = await this.totp.verify(user.id, this.crypto.decrypt(user.totpSecretEnc), input.code);
+    const ok = await this.totp.verify(user.id, secret, input.code);
     if (!ok) {
-      await this.events.record('auth.totp.failed', { ...ctx, userId: user.id, login: user.login });
-      throw await this.failPendingAttempt(token, user.login, ctx, authProblems.invalidTotp(), user.id);
+      await this.events.record('auth.totp.failed', evt);
+      throw await this.failSecondStep(token, key, evt, 'code', authProblems.invalidTotp());
     }
     await this.pending.consume(token);
+    // Вход полный — только теперь счётчики неудач и серии сбрасываются.
+    await this.throttle.reset(key);
 
     const session = await this.sessions.create({
       userId: user.id,
@@ -323,7 +355,10 @@ export class AuthService {
     code: string,
     ctx: RequestContext,
   ): Promise<AuthResult<SessionResponse>> {
-    const { token, user } = await this.requirePendingLogin(pendingToken);
+    const { token, pending, user } = await this.requirePendingLogin(pendingToken);
+    const key = secondStepKey(pending, ctx);
+    const evt: AuthEventContext = { ...ctx, userId: user.id, login: user.login };
+    await this.reserve(key, evt, 'recovery');
 
     const normalized = normalizeRecoveryCode(code);
     let matchedId: string | null = null;
@@ -334,13 +369,8 @@ export class AuthService {
       }
     }
     if (!matchedId) {
-      await this.events.record('auth.login.failed', {
-        ...ctx,
-        userId: user.id,
-        login: user.login,
-        meta: { reason: 'recovery' },
-      });
-      throw await this.failPendingAttempt(token, user.login, ctx, authProblems.invalidRecovery(), user.id);
+      await this.events.record('auth.login.failed', { ...evt, meta: { reason: 'recovery' } });
+      throw await this.failSecondStep(token, key, evt, 'recovery', authProblems.invalidRecovery());
     }
     await this.users.markRecoveryCodeUsed(matchedId);
     // Код восстановления = потеря второго фактора: доверенные устройства больше не доверенные,
@@ -348,6 +378,7 @@ export class AuthService {
     await this.users.deleteTrustedDevices(user.id);
     const revoked = await this.sessions.destroyAllForUser(user.id);
     await this.pending.consume(token);
+    await this.throttle.reset(key);
 
     const session = await this.sessions.create({
       userId: user.id,
@@ -377,25 +408,15 @@ export class AuthService {
     password: string,
     ctx: RequestContext,
   ): Promise<SessionResponse> {
-    const key = { ip: ctx.ip, login: user.login };
-    await this.throttle.assertAllowed(key).catch(async (e: unknown) => {
-      await this.events.record('auth.login.throttled', {
-        ...ctx,
-        userId: user.id,
-        login: user.login,
-        meta: { reason: 'unlock' },
-      });
-      throw e;
-    });
+    // У открытой сессии своя пауза: чужие неудачные попытки по логину экран блокировки не держат,
+    // а подбор пароля с самого экрана сдерживается так же, как вход.
+    const key: ThrottleKey = { ip: ctx.ip, login: user.login, known: sessionScope(session.id) };
+    const evt: AuthEventContext = { ...ctx, userId: user.id, login: user.login };
+    await this.reserve(key, evt, 'unlock');
     const full = await this.users.findById(user.id);
     if (!full || !(await this.crypto.verifyPassword(full.passwordHash, password))) {
-      await this.events.record('auth.login.failed', {
-        ...ctx,
-        userId: user.id,
-        login: user.login,
-        meta: { reason: 'unlock' },
-      });
-      await this.throttle.recordFailure(key);
+      await this.events.record('auth.login.failed', { ...evt, meta: { reason: 'unlock' } });
+      await this.failed(key, evt, 'unlock');
       throw authProblems.invalidCredentials();
     }
     await this.throttle.reset(key);
@@ -439,28 +460,65 @@ export class AuthService {
   }
 
   /**
-   * Неудача на шаге кода: свой счётчик в pending. На PENDING_MAX_ATTEMPTS-й — pending сгорает,
-   * cookie стирается, клиент получает totpRequired и возвращается к паролю (там свой throttle).
+   * Занимает попытку до проверки пароля или кода: залп параллельных запросов паузу не обходит.
+   * Отказ во время паузы не пишется в Журнал отдельной строкой и не шлёт сообщение — только в счёт сводки.
    */
-  private async failPendingAttempt(
+  private async reserve(key: ThrottleKey, evt: AuthEventContext, stage: AttemptStage): Promise<void> {
+    const kind = stage === 'code' || stage === 'recovery' ? 'code' : 'password';
+    const reservation = await this.throttle.reserve(key, kind);
+    if (reservation.allowed) return;
+    if (reservation.reason === 'busy') throw authProblems.busy();
+    this.events.rejected(evt, reservation);
+    throw authProblems.throttled(reservation.retryAfterSeconds);
+  }
+
+  /** Неверный пароль (вход или экран блокировки). Порог достигнут — пауза, одна запись и одно сообщение. */
+  private async failed(key: ThrottleKey, evt: AuthEventContext, stage: 'password' | 'unlock'): Promise<void> {
+    const outcome = await this.throttle.fail(key);
+    if (outcome.started.length > 0) await this.events.pauseStarted(evt, stage, outcome);
+    if (outcome.retryAfterSeconds > 0) throw authProblems.throttled(outcome.retryAfterSeconds);
+  }
+
+  /**
+   * Неверный код на втором шаге. Считается трижды: в самом шаге (на PENDING_MAX_ATTEMPTS-й он сгорает,
+   * назад к паролю), в общих паузах входа (по адресу и логину) и в суточном лимите неверных кодов по
+   * логину — без двух последних знающий пароль получал бы пять свежих попыток на каждый новый шаг.
+   */
+  private async failSecondStep(
     token: string,
-    login: string,
-    ctx: RequestContext,
+    key: ThrottleKey,
+    evt: AuthEventContext,
+    stage: 'code' | 'recovery',
     problem: HttpException,
-    userId?: string,
-  ): Promise<never> {
+  ): Promise<HttpException> {
+    const attempts = await this.pending.recordFailure(token);
+    const burned = attempts === 0 || attempts >= PENDING_MAX_ATTEMPTS;
+    if (burned) await this.pending.consume(token);
+    const outcome = await this.throttle.fail(key);
+    const day = await this.throttle.secondFactorFailure(evt.login ?? '');
+    await this.events.secondStepFailed(evt, stage, outcome, day, await this.rememberedWorks());
+    if (burned) return withCookies(authProblems.totpRequired(), { clearPending: true });
+    if (outcome.retryAfterSeconds > 0) return authProblems.throttled(outcome.retryAfterSeconds);
+    return problem;
+  }
+
+  /** Входят ли запомненные устройства без кода: политика «всегда спрашивать код» это выключает. */
+  private async rememberedWorks(): Promise<boolean> {
+    return !(await this.policy.get()).alwaysAskTotp;
+  }
+
+  /**
+   * Мастер первого запуска: свой счётчик в pending. На PENDING_MAX_ATTEMPTS-й — pending сгорает,
+   * cookie стирается, мастер начинается заново (нужен токен первого запуска). Входа здесь ещё нет,
+   * поэтому и «вход заблокирован» в Журнал не пишется — только сами неверные коды.
+   */
+  private async failSetupAttempt(token: string): Promise<HttpException> {
     const attempts = await this.pending.recordFailure(token);
     if (attempts === 0 || attempts >= PENDING_MAX_ATTEMPTS) {
       await this.pending.consume(token);
-      await this.events.record('auth.login.throttled', {
-        ...ctx,
-        login,
-        ...(userId ? { userId } : {}),
-        meta: { stage: 'code', attempts },
-      });
-      throw withCookies(authProblems.totpRequired(), { clearPending: true });
+      return withCookies(authProblems.totpRequired(), { clearPending: true });
     }
-    throw problem;
+    return authProblems.invalidTotp();
   }
 
   /** Перевыпуск: 10 кодов XXXXX-XXXXX; в БД — argon2-хеш + шифрованная копия (для повторного показа). */
@@ -479,6 +537,22 @@ export class AuthService {
       })),
     );
   }
+}
+
+/**
+ * Ключ пауз для шага кода: адрес — текущего запроса, логин — из принятого шага пароля. Пароль принят
+ * с запомненного устройства — оно и на шаге кода не ждёт паузу по логину.
+ */
+function secondStepKey(pending: PendingLogin, ctx: RequestContext): ThrottleKey {
+  return { ip: ctx.ip, login: pending.login, ...(pending.known ? { known: pending.known } : {}) };
+}
+
+/**
+ * Логин в том виде, в каком его можно показать и записать: без управляющих символов и битых суррогатов
+ * (первые ломают строки сообщений, вторые — запись в Журнал).
+ */
+function presentableLogin(raw: string): string {
+  return raw.replace(/[\p{Cc}\p{Cs}]+/gu, ' ').trim();
 }
 
 /** Ключ anti-replay для TOTP в мастере, пока у пользователя нет id. */

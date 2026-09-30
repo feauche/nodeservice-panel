@@ -151,7 +151,7 @@ describe('проверка порта ноды: смешанная картин�
     expect(r.verdict).toBe('partial');
     expect(r.probes[0]).toMatchObject({
       verdict: 'partial',
-      detail: 'Порт отвечает не каждый раз: удачных попыток 1 из 3.',
+      detail: 'Порт отвечает не каждый раз: подключение прошло в 1 из 3 попыток.',
     });
     expect(r.foreign).toEqual([]);
   });

@@ -3,8 +3,6 @@ import {
   type AuditCategory,
   auditActionLabel,
   INCIDENT_KIND_META,
-  type OverviewServerMetrics,
-  type Server,
 } from '@nodeservice/shared';
 import { Link, type LinkProps } from '@tanstack/react-router';
 import {
@@ -26,12 +24,7 @@ import { BillingTile } from '@/features/billing/billing-tile';
 import { useIncidents } from '@/features/incidents/incidents-api';
 import { useRemnawaveStatus } from '@/features/remnawave/remnawave-api';
 import { formatByteTotal, nodesOnline } from '@/features/remnawave/remnawave-page';
-import {
-  CPU_WARN_PCT,
-  MEM_WARN_PCT,
-  type ServerHealth,
-  serverHealth,
-} from '@/features/servers/server-health';
+import { type ServerHealth, serverState } from '@/features/servers/server-health';
 import { openServer } from '@/features/servers/server-modal-store';
 import { useServers } from '@/features/servers/servers-api';
 import { apiErrorMessage } from '@/lib/api';
@@ -42,27 +35,10 @@ import { avg, formatPct, formatTraffic, sum } from './overview-format';
 import { AreaSpark, Sparkline } from './primitives';
 
 /**
- * Состояние сервера — тот же классификатор, что на «Серверах» (server-health.ts): Обзор и карточки
- * не должны спорить друг с другом. Здесь добавляется только причина словами.
+ * Состояние сервера и его причина словами — тот же классификатор, что на «Серверах» (server-health.ts):
+ * Обзор и карточки не должны спорить друг с другом ни цветом, ни текстом.
  */
 type Health = ServerHealth;
-
-function healthOf(s: Server, m: OverviewServerMetrics | undefined): { health: Health; reason: string } {
-  const health = serverHealth(s, m ?? null);
-  if (health === 'crit') {
-    return { health, reason: s.sshOk === false ? 'SSH недоступен' : 'Агент пропал со связи' };
-  }
-  if (health === 'warn') {
-    if (s.agentStatus === 'not_installed') return { health, reason: 'Агент не установлен' };
-    if (s.agentStatus === 'installing') return { health, reason: 'Агент устанавливается' };
-    if (s.agentStatus === 'pending') return { health, reason: 'Ожидает агента' };
-    if (s.sshOk === null) return { health, reason: 'SSH ещё не проверялся' };
-    if ((m?.cpuPct ?? 0) >= CPU_WARN_PCT) return { health, reason: `CPU ${Math.round(m?.cpuPct ?? 0)}%` };
-    if ((m?.memPct ?? 0) >= MEM_WARN_PCT) return { health, reason: `Память ${Math.round(m?.memPct ?? 0)}%` };
-    return { health, reason: `Диск ${Math.round(m?.diskPct ?? 0)}%` };
-  }
-  return { health, reason: '' };
-}
 
 const HEALTH_DOT: Record<Health | 'muted', string> = {
   ok: 'bg-ok',
@@ -134,7 +110,9 @@ function Panel({
   className?: string;
 }) {
   return (
-    <section className={cn('rounded-2xl border border-border bg-surface', className)}>
+    // min-w-0: в одну колонку (телефон) панель — ячейка сетки, и без этого длинная строка (имя сервера,
+    // причина) не обрезалась бы, а распирала панель шире окна.
+    <section className={cn('min-w-0 rounded-2xl border border-border bg-surface', className)}>
       <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
         <h2 className="font-heading text-[14.5px] font-bold">{title}</h2>
         {right}
@@ -275,31 +253,44 @@ export function OverviewPage() {
   const items = servers.data?.items ?? [];
   const byId = new Map((metrics.data?.servers ?? []).map((m) => [m.serverId, m]));
   const fleet = metrics.data?.fleet;
-  const judged = items.map((s) => ({ server: s, ...healthOf(s, byId.get(s.id)) }));
+  const judged = items.map((s) => ({ server: s, ...serverState(s, byId.get(s.id)) }));
   const okCount = judged.filter((j) => j.health === 'ok').length;
   const warnCount = judged.filter((j) => j.health === 'warn').length;
-  const offlineCount = judged.filter((j) => j.health === 'crit').length;
+  // Сбой — с сервером нет связи или на нём не работает нода. «Офлайн» не пишем: без связи панель не знает,
+  // выключен ли сервер, а с остановленной нодой он и вовсе работает.
+  const critCount = judged.filter((j) => j.health === 'crit').length;
   const healthPct = items.length ? Math.round((okCount / items.length) * 100) : 100;
-  // «Требует внимания» = проблемы по здоровью серверов + открытые инциденты (например, «Xray не
-  // запущен» — сервер по метрикам в норме, но нода не работает).
+  const openItems = openIncidents.data?.items ?? [];
+  // «Требует внимания» = проблемы по здоровью серверов + открытые инциденты. Одно и то же дважды не
+  // показываем: о связи говорит строка сервера, о ноде — дело (у него починка и «ждёт подтверждения»);
+  // строка сервера о ноде остаётся, только пока дела о ней нет.
   const healthRows = judged
     .filter((j) => j.health !== 'ok')
+    .filter(
+      (j) =>
+        !(
+          j.about === 'node' &&
+          openItems.some((inc) => inc.kind === 'node_down' && inc.serverId === j.server.id)
+        ),
+    )
     .map((j) => ({
       key: `h:${j.server.id}`,
       name: j.server.name,
-      reason: j.reason,
+      reason: j.reason ?? '',
+      about: j.about,
       tone: j.health as 'warn' | 'crit',
-      pill: j.health === 'crit' ? 'Офлайн' : 'Внимание',
+      pill: j.health === 'crit' ? 'Сбой' : 'Внимание',
       serverId: j.server.id as string | null,
       link: null as LinkProps | null,
     }));
-  const incidentRows = (openIncidents.data?.items ?? [])
-    // Связь (агент/SSH) уже отражена строкой здоровья — не дублируем.
+  const incidentRows = openItems
+    // Связь (агент/SSH) уже названа строкой сервера — не дублируем. Если строка сервера о другом
+    // (остановлена нода), дело о связи остаётся: иначе о молчащем агенте не узнать.
     .filter(
       (inc) =>
         !(
           (inc.kind === 'agent_offline' || inc.kind === 'ssh_down' || inc.kind === 'server_down') &&
-          healthRows.some((h) => h.name === inc.serverName)
+          healthRows.some((h) => h.about === 'link' && h.name === inc.serverName)
         ),
     )
     .map((inc) => ({
@@ -341,8 +332,8 @@ export function OverviewPage() {
             {warnCount > 0 && (
               <div className="bg-warn" style={{ width: `${(warnCount / items.length) * 100}%` }} />
             )}
-            {offlineCount > 0 && (
-              <div className="bg-crit" style={{ width: `${(offlineCount / items.length) * 100}%` }} />
+            {critCount > 0 && (
+              <div className="bg-crit" style={{ width: `${(critCount / items.length) * 100}%` }} />
             )}
           </div>
           <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[12.5px] text-text-2">
@@ -353,7 +344,7 @@ export function OverviewPage() {
               <span className="size-1.5 rounded-full bg-warn" /> {warnCount} внимание
             </span>
             <span className="flex items-center gap-1.5 whitespace-nowrap">
-              <span className="size-1.5 rounded-full bg-crit" /> {offlineCount} офлайн
+              <span className="size-1.5 rounded-full bg-crit" /> {critCount} со сбоем
             </span>
             <span className="whitespace-nowrap text-text-3">
               здоровье парка <b className="text-foreground tabular-nums">{healthPct}%</b>
@@ -372,8 +363,8 @@ export function OverviewPage() {
           caps="Серверов в норме"
           value={`${okCount}`}
           unit={`/ ${items.length}`}
-          status={offlineCount > 0 ? 'Есть офлайн' : 'Стабильно'}
-          tone={offlineCount > 0 ? 'crit' : 'ok'}
+          status={critCount > 0 ? 'Есть сбой' : 'Стабильно'}
+          tone={critCount > 0 ? 'crit' : 'ok'}
           spark={fleet?.cpuAvgSpark ?? []}
         />
         <Kpi

@@ -61,7 +61,11 @@ export function ReachabilityCard({ result }: { result: ReachabilityResult }) {
                   return (
                     <span key={p} className="inline-flex items-center gap-1.5">
                       <span className="text-text-3">{p}</span>
-                      {r ? <Cell open={r.open} ms={r.ms} /> : <span className="text-text-3">Нет данных</span>}
+                      {r ? (
+                        <Cell open={r.open} ms={r.ms} />
+                      ) : (
+                        <span className="text-text-3">Не проверялся</span>
+                      )}
                     </span>
                   );
                 })}
@@ -107,7 +111,7 @@ export function ReachabilityCard({ result }: { result: ReachabilityResult }) {
                         {r ? (
                           <Cell open={r.open} ms={r.ms} />
                         ) : (
-                          <span className="text-text-3">Нет данных</span>
+                          <span className="text-text-3">Не проверялся</span>
                         )}
                       </td>
                     );

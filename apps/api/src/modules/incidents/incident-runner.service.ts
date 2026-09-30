@@ -12,6 +12,7 @@ import {
   actionByKey,
   actionMeta,
   DEFAULT_AUTOFIX_POLICY,
+  type EgressVerdict,
   INCIDENT_CHAINS,
   INCIDENT_KIND_META,
   type IncidentAttempt,
@@ -30,7 +31,9 @@ import { ServersRepository } from '../servers/servers.repository.js';
 import { ServersService } from '../servers/servers.service.js';
 import { SshService } from '../servers/ssh.service.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
-import { ACTION_SPECS, type Precheck, postcheckMetricFor } from './actions.registry.js';
+import { ACTION_SPECS, FIND_NODE, type Precheck, postcheckMetricFor } from './actions.registry.js';
+import { egressVerdict } from './egress-check.logic.js';
+import { EgressCheckService } from './egress-check.service.js';
 import { IncidentMetricsService } from './incident-metrics.service.js';
 import { IncidentsRepository } from './incidents.repository.js';
 
@@ -63,12 +66,13 @@ const T = TEST
     };
 
 /**
- * Контейнер ноды ищем по имени `*remna*` или образу `remnawave/node` — имя у установок разное
- * (remnanode, remnawave-node…). Зонд по SSH от root: `true` / `false` / `none` (контейнера нет).
+ * Зонд контейнера ноды по SSH от root: `true` / `false` / `none` (контейнера нет). Как ищется контейнер —
+ * см. FIND_NODE: команда одна на зонд, действия и журнал ноды.
  */
-export const NODE_FIND =
-  "N=$(docker ps -a --format '{{.Names}}|{{.Image}}' 2>/dev/null | awk -F'|' 'tolower($1) ~ /remna/ || tolower($2) ~ /remnawave\\/node/ {print $1; exit}')";
-export const NODE_PROBE = `${NODE_FIND}; [ -n "$N" ] && docker inspect -f '{{.State.Running}}' "$N" 2>/dev/null || echo none`;
+export const NODE_PROBE = `${FIND_NODE}; [ -n "$N" ] && docker inspect -f '{{.State.Running}}' "$N" 2>/dev/null || echo none`;
+
+/** Итоги проверки «куда сервер может выйти», при которых агенту до панели не дойти: переустановка не поможет. */
+const PANEL_CUT: ReadonlySet<EgressVerdict> = new Set(['panel_cut', 'ru_and_panel_cut']);
 
 const NUL_RE = new RegExp(String.fromCharCode(0), 'g');
 const iso = () => new Date().toISOString();
@@ -88,7 +92,30 @@ export const proposalReason = (level: string, policy: AutofixPolicy): string =>
 const autofixActive = (cfg: { autofixEnabled: boolean; pausedUntil: string | null }): boolean =>
   cfg.autofixEnabled && !(cfg.pausedUntil && new Date(cfg.pausedUntil).getTime() > Date.now());
 
-/** Что сделано с открытым инцидентом: ждём паузу автопочинки, предложили шаг, запустили, ничего. */
+/**
+ * Причина предложения, отложенного паузой между автопочинками: панель уже чинила этот сигнал на сервере, и
+ * новое дело того же вида сама не чинит, пока пауза не пройдёт — иначе одна и та же починка шла бы по кругу
+ * (диск снова заполнился → снова «Освободить диск»). Шаг предложен (его можно запустить сразу), а после паузы
+ * панель запускает его сама: у предложения стоит отметка `autoAfterPause`.
+ */
+export const AUTOFIX_PAUSE_REASON =
+  'панель недавно уже чинила этот сигнал на сервере и следующую починку запустит сама, когда пройдёт пауза между автопочинками';
+
+/** Причина, когда отложенный шаг сама панель уже не запустит (см. `undefer`). */
+export const AUTOFIX_PAUSE_LAPSED_REASON =
+  'шаг был отложен паузой между автопочинками, но сама панель его уже не запустит: режим «Само» для этого сигнала сейчас не действует';
+
+/** Шаг, отложенный паузой между автопочинками; null — предложения нет или оно ждёт только владельца. */
+const deferredStep = (row: IncidentRow): ActionKey | null => {
+  if (!row.proposal?.autoAfterPause) return null;
+  const key = row.proposal.action as ActionKey;
+  return INCIDENT_CHAINS[row.kind as IncidentKind]?.includes(key) ? key : null;
+};
+
+/**
+ * Что сделано с открытым инцидентом: ждём минуту «вдруг поднимется само», предложили шаг (в том числе
+ * отложенный паузой между автопочинками), запустили, ничего.
+ */
 export type Decision = 'waiting' | 'proposed' | 'started' | 'none';
 const ev = (
   by: 'auto' | 'manual',
@@ -156,6 +183,7 @@ export class IncidentRunnerService implements OnModuleInit {
     private readonly audit: AuditService,
     private readonly metrics: IncidentMetricsService,
     private readonly notifications: NotificationsService,
+    private readonly egress: EgressCheckService,
   ) {}
 
   /** Панель перезапустили — попытки, шедшие в памяти, некому завершить: закрываем их как прерванные. */
@@ -295,7 +323,6 @@ export class IncidentRunnerService implements OnModuleInit {
       return this.repo.update(incidentId, {
         attempts: [...fresh.attempts, attempt],
         proposal: null,
-        lastAutofixAt: new Date(),
         ...(fresh.status === 'open' && by === 'manual' ? { status: 'acknowledged' } : {}),
       });
     });
@@ -335,13 +362,19 @@ export class IncidentRunnerService implements OnModuleInit {
    * Первый шаг цепочки. T1 с включённым авто — выполняется сам, но не раньше AUTOFIX_GRACE_SECONDS
    * после открытия: вдруг поднимется само. Всё остальное (T2, T3, выключенное авто) предлагается
    * сразу — предложение и ручной запуск не ждут.
+   *
+   * Панель недавно уже чинила этот сигнал на сервере (пауза между автопочинками) — шаг тоже предлагается, с
+   * объяснением, а когда пауза пройдёт, тик запускает его сам. Пауза стоит между заходами, а не между шагами
+   * одной цепочки: внутри дела каждый шаг выполняется один раз, и петли там быть не может (см. `escalate`).
    */
   private async decide(
     row: IncidentRow,
     cfg: Awaited<ReturnType<IncidentsSettingsStore['get']>>,
   ): Promise<Decision> {
-    if (!row.serverId || row.proposal || row.attempts.length > 0) return 'none';
-    const first = INCIDENT_CHAINS[row.kind as IncidentKind][0];
+    if (!row.serverId) return 'none';
+    const deferred = deferredStep(row);
+    if (!deferred && (row.proposal || row.attempts.length > 0)) return 'none';
+    const first = deferred ?? INCIDENT_CHAINS[row.kind as IncidentKind][0];
     if (!first) return 'none';
     // Шаг требует SSH или агента, а мы точно знаем, что их сейчас нет (не «не проверяли», а именно
     // «недоступен») — предлагать нечего, само действие тут же провалится на предпроверке. Ничего не
@@ -349,17 +382,33 @@ export class IncidentRunnerService implements OnModuleInit {
     if (row.serverId && (await this.chainStepImpossible(first, row.serverId))) return 'none';
     const action = actionByKey(first);
     const policy = policyFor(cfg, row.kind);
+    const autoAllowed = autofixActive(cfg) && policy === 'auto' && action.level === 'T1';
+    if (deferred && !autoAllowed) {
+      await this.undefer(row.id);
+      return 'none';
+    }
     // «Наблюдать»: инцидент и уведомление есть, шагов панель не предлагает.
     if (policy === 'watch') return 'none';
-    const autoAllowed = autofixActive(cfg) && policy === 'auto' && action.level === 'T1';
     if (!autoAllowed) {
       await this.propose(row, first, proposalReason(action.level, policy));
       return 'proposed';
     }
-    if (Date.now() - row.openedAt.getTime() < T.graceMs) return 'waiting';
+    const graceLeft = row.openedAt.getTime() + T.graceMs - Date.now();
+    // Пауза между автопочинками кончится позже, чем «вдруг поднимется само»: обещать «починим через минуту»
+    // нельзя. Шаг предлагаем сразу (владелец может подтвердить), сама панель запустит его после паузы.
+    if ((await this.autofixPauseLeft(row.serverId, row.kind, cfg)) > Math.max(graceLeft, 0)) {
+      if (deferred) return 'none';
+      await this.propose(row, first, AUTOFIX_PAUSE_REASON, undefined, true);
+      return 'proposed';
+    }
+    if (graceLeft > 0) return 'waiting';
     if (this.busy.has(row.serverId)) return 'waiting';
-    if (row.lastAutofixAt && Date.now() - row.lastAutofixAt.getTime() < cfg.autofixCooldownMinutes * 60_000)
-      return 'waiting';
+    if (deferred) {
+      // Пока шёл тик, отложенный шаг могли подтвердить вручную, а дело — закрыться: перечитываем, чтобы не
+      // объявить «чиню автоматически» зря.
+      const fresh = await this.repo.findById(row.id);
+      if (!fresh || fresh.status === 'resolved' || deferredStep(fresh) !== deferred) return 'none';
+    }
     await this.notifications.push({
       severity: 'info',
       title: `${this.titleTok(row)}: чиню автоматически`,
@@ -375,11 +424,56 @@ export class IncidentRunnerService implements OnModuleInit {
   }
 
   /**
+   * Отложенный паузой шаг сама панель уже не запустит: режим сигнала сменили, автопочинку выключили или
+   * поставили на паузу. Отметку снимаем, причину переписываем — иначе в деле осталось бы обещание «запустит
+   * сама». Дальше это обычное предложение: даже если «Само» вернут, шаг ждёт подтверждения.
+   */
+  private async undefer(incidentId: string): Promise<void> {
+    const fresh = await this.repo.findById(incidentId);
+    if (!fresh?.proposal?.autoAfterPause || fresh.status === 'resolved') return;
+    const { autoAfterPause: _flag, ...proposal } = fresh.proposal;
+    await this.repo.update(incidentId, {
+      proposal: { ...proposal, reason: AUTOFIX_PAUSE_LAPSED_REASON },
+      timeline: [
+        ...fresh.timeline,
+        ev(
+          'auto',
+          'Отложенный шаг ждёт подтверждения: режим «Само» для этого сигнала сейчас не действует',
+          'escalate',
+          proposal.level,
+        ),
+      ],
+    });
+  }
+
+  /**
+   * Сколько ещё ждать до следующей автопочинки этого сигнала на сервере, мс; 0 — пауза прошла или панель его
+   * сама ещё не чинила. Считается по серверу и виду сигнала, а не по одному делу: дело закрылось и тут же
+   * открылось новое — пауза та же. Ручной запуск шага эту проверку не проходит вовсе.
+   */
+  private async autofixPauseLeft(
+    serverId: string,
+    kind: string,
+    cfg: { autofixCooldownMinutes: number },
+  ): Promise<number> {
+    const last = await this.repo.lastAutofixAt(serverId, kind);
+    if (!last) return 0;
+    return Math.max(0, last.getTime() + cfg.autofixCooldownMinutes * 60_000 - Date.now());
+  }
+
+  /**
    * У шага есть предпроверка `ssh_ok`/`agent_online`, а сервер прямо сейчас числится недоступным
    * по этому каналу — значит шаг гарантированно провалится, даже не начавшись (пример: «Переустановить
    * агента» по SSH, когда SSH сам недоступен). `null`/не проверяли — не блокируем, только точное «нет».
    */
   private async chainStepImpossible(key: ActionKey, serverId: string): Promise<boolean> {
+    // Проверка «куда сервер может выйти» уже показала, что сеть сервера не пускает его к панели: панель только
+    // что написала «повторная установка не поможет» — предлагать «Переустановить агента» следом значило бы
+    // противоречить самой себе. Агент выйдет на связь сам, когда путь откроют, и дело закроется.
+    if (key === 'agent_reinstall') {
+      const last = this.egress.lastFor(serverId)?.value;
+      if (last && PANEL_CUT.has(egressVerdict(last))) return true;
+    }
     const spec = ACTION_SPECS[key];
     if (!spec || (!spec.precheck.includes('ssh_ok') && !spec.precheck.includes('agent_online'))) return false;
     const server = await this.serversRepo.findById(serverId);
@@ -430,6 +524,10 @@ export class IncidentRunnerService implements OnModuleInit {
 
     // 2. Действие
     await this.step(incidentId, attemptId, 'action', 'running');
+    // Отсчёт паузы между автопочинками — от починки, которую панель начала сама. Ручной запуск, осмотр (T0,
+    // только чтение) и запуск, остановленный пред-проверкой, его не сдвигают: там панель сама ничего не чинила.
+    if (by === 'auto' && action.level !== 'T0')
+      await this.repo.update(incidentId, { lastAutofixAt: new Date() });
     const act = await this.execute(spec, serverId, incidentId, attemptId);
     if (!act.ok) {
       await this.step(incidentId, attemptId, 'action', 'failed', act.note);
@@ -742,6 +840,8 @@ export class IncidentRunnerService implements OnModuleInit {
       return;
     }
     // Осмотр (T0) запускаем сами всегда, кроме «Наблюдать»: он только читает и экономит вам заход по SSH.
+    // Следующий безопасный шаг цепочки паузу между автопочинками не ждёт: это тот же заход, а не новая
+    // починка того же самого — ждать полчаса с почти полным диском ради «Очистить кэш apt» незачем.
     if (
       action.level === 'T0' ||
       (by === 'auto' && action.level === 'T1' && autofixActive(cfg) && policy === 'auto')
@@ -770,10 +870,18 @@ export class IncidentRunnerService implements OnModuleInit {
     key: ActionKey,
     reason: string,
     levelOverride?: ActionLevel,
+    /** Шаг отложен паузой между автопочинками: после неё панель запустит его сама (см. `decide`). */
+    autoAfterPause = false,
   ): Promise<void> {
     const action = actionByKey(key);
     const level = levelOverride ?? action.level;
-    const proposal: IncidentProposal = { action: key, level, reason, proposedAt: iso() };
+    const proposal: IncidentProposal = {
+      action: key,
+      level,
+      reason,
+      proposedAt: iso(),
+      ...(autoAfterPause ? { autoAfterPause: true } : {}),
+    };
     const fresh = await this.repo.findById(row.id);
     if (!fresh || fresh.status === 'resolved') return;
     await this.repo.update(row.id, {
@@ -784,7 +892,9 @@ export class IncidentRunnerService implements OnModuleInit {
           'auto',
           level === 'T3'
             ? `Следующий шаг только вручную: ${action.title} — команда показана в инциденте`
-            : `Предложено: ${action.title} — ждёт подтверждения`,
+            : autoAfterPause
+              ? `Отложено паузой между автопочинками: ${action.title} — панель запустит сама, подтвердить можно раньше`
+              : `Предложено: ${action.title} — ждёт подтверждения`,
           'escalate',
           level,
         ),
@@ -796,14 +906,25 @@ export class IncidentRunnerService implements OnModuleInit {
       title:
         level === 'T3'
           ? `${this.titleTok(row)}: нужно вмешательство`
-          : `${this.titleTok(row)}: ждёт подтверждения`,
+          : autoAfterPause
+            ? `${this.titleTok(row)}: починка отложена паузой`
+            : `${this.titleTok(row)}: ждёт подтверждения`,
       ...this.serverOf(row),
       body:
         level === 'T3'
           ? `${action.title} — только вручную. ${reason}.`
-          : `${first ? `${row.detail} ` : ''}Предложено: ${action.title} (${level}), ${reason}. Подтвердите запуск в инциденте.`,
+          : autoAfterPause
+            ? `${first ? `${row.detail} ` : ''}Шаг «${action.title}» (${level}) отложен: ${reason}. Ждать не обязательно — его можно запустить в инциденте.`
+            : `${first ? `${row.detail} ` : ''}Предложено: ${action.title} (${level}), ${reason}. Подтвердите запуск в инциденте.`,
       link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
-      telegram: { event: 'needs_confirm', incidentId: row.id, kind: row.kind as IncidentKind },
+      telegram: {
+        event: 'needs_confirm',
+        incidentId: row.id,
+        kind: row.kind as IncidentKind,
+        // Важность для Telegram — самого дела: предложение по критичному делу, если оно первое сообщение о
+        // нём, приходит и ночью. Шаг «только вручную» по некритичному делу ночью не будит.
+        severity: row.severity === 'crit' ? 'crit' : 'warn',
+      },
     });
     await this.audit.record({
       action: 'incident.action.proposed',
@@ -924,6 +1045,16 @@ export class IncidentRunnerService implements OnModuleInit {
           event: result === 'helped' ? ('resolved' as const) : ('fix_failed' as const),
           incidentId: row.id,
           kind: row.kind as IncidentKind,
+          // Шаг помог раньше, чем тревога о деле ушла в Telegram (она ждала разбора), — уйдёт одно
+          // сообщение о коротком сбое: пост-проверка прошла, «в норме» здесь проверенный факт.
+          ...(result === 'helped'
+            ? {
+                closed: {
+                  recovered: true,
+                  how: `помог шаг «${action.title}» (${by === 'auto' ? 'автоматически' : 'по вашей команде'})`,
+                },
+              }
+            : {}),
         },
       });
     await this.audit.record({

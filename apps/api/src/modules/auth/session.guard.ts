@@ -4,6 +4,7 @@ import { ClsService } from 'nestjs-cls';
 
 import { CookiesService } from '../../common/http/cookies.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { AnonAuditLimiter, clipPath } from './anon-audit.limiter.js';
 import { IS_PUBLIC_KEY } from './auth.decorators.js';
 import { authProblems } from './auth.problems.js';
 import { CLS_SESSION, CLS_USER } from './cls-keys.js';
@@ -29,6 +30,7 @@ export class SessionGuard implements CanActivate {
     private readonly cls: ClsService,
     private readonly policy: SecurityPolicyStore,
     private readonly audit: AuditService,
+    private readonly limiter: AnonAuditLimiter,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
@@ -54,15 +56,16 @@ export class SessionGuard implements CanActivate {
   /**
    * Guard срабатывает раньше интерсептора @Audit, поэтому отказ пишем отсюда. Только для
    * изменяющих запросов: GET-опросы протухшей вкладки (/auth/me и т.п.) Журналу не нужны.
+   * Запрос без входа может прислать кто угодно — записи идут через предел в минуту, путь обрезается.
    */
   private async denied(req: AuthenticatedRequest, reason: 'unauthenticated' | 'locked'): Promise<void> {
     if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return;
-    await this.audit.record({
+    await this.limiter.record('request', req.ip ?? '', {
       action: 'auth.request.denied',
       result: 'denied',
       severity: 'warn',
       ...(req.user ? { actor: { type: 'admin', id: req.user.id, display: req.user.login } } : {}),
-      metadata: { reason, method: req.method, path: req.path },
+      metadata: { reason, method: req.method, path: clipPath(req.path) },
     });
   }
 

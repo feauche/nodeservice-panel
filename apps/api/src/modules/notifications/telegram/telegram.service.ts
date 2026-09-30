@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   type IncidentKind,
+  type NotificationSeverity,
   parseTelegramUrl,
   TELEGRAM_EVENT_LABELS,
   type TelegramEvent,
@@ -15,8 +16,17 @@ import { panelTimeZone } from '../../../common/panel-time-zone.js';
 import type { Env } from '../../../config/env.schema.js';
 import { DB, type Db } from '../../../infra/db/db.module.js';
 import { telegramMessages } from '../../../infra/db/schema/index.js';
+import { SYSTEM_ACTOR } from '../../audit/audit.context.js';
+import { AuditService } from '../../audit/audit.service.js';
 import { describeTelegramError, TELEGRAM_CLIENT, type TelegramClient } from './telegram.client.js';
 import { esc, formatTelegramMessage, inQuietHours, localTime } from './telegram.format.js';
+import {
+  digestBlocks,
+  isRichRejected,
+  type RichBlock,
+  richMessageBlocks,
+  sampleBlocks,
+} from './telegram.rich.js';
 import {
   type LiveDestination,
   type StoredDestination,
@@ -38,6 +48,18 @@ export interface TelegramDispatch {
   link?: { to: string; label: string } | null;
   /** Готовое HTML-сообщение (биллинг): форматирование по блокам не применяется. */
   html?: string | null;
+  /**
+   * Важность сбоя, о котором сообщение. Судим по ней, а не по типу события: первое сообщение о критичном
+   * деле — его открытие, даже если оно пришло как «ждёт подтверждения» (панель сразу предложила шаг).
+   */
+  severity?: NotificationSeverity | null;
+  /** Прислать без звука в любом случае: короткий сбой уже прошёл, будить некого. */
+  silent?: boolean;
+  /**
+   * Сообщение пришло вместо несостоявшейся тревоги (короткий сбой): проходит и по её тумблеру. Иначе при
+   * выключенном «Починилось» о сбое не пришло бы ничего — ни тревоги, ни вести о том, что он был.
+   */
+  replaces?: TelegramEvent | null;
 }
 
 /** Со звуком при «Предупреждения без звука»: только то, что требует внимания сейчас. */
@@ -50,27 +72,84 @@ const LOUD = new Set<TelegramEvent>([
 ]);
 /** Открытие сбоя — то, что склеивается по серверу. */
 const OPENING = new Set<TelegramEvent>(['incident_crit', 'incident_warn', 'needs_confirm']);
+/** Не ждут конца тихих часов, кроме критичных инцидентов: вход с нового устройства — это про безопасность. */
+const NIGHT_NOW = new Set<TelegramEvent>(['login']);
 const GROUP_WINDOW_MS = 10 * 60_000;
+
+/**
+ * Насколько громко сообщение о сбое: 2 — критичное, 1 — требует внимания сейчас (приходит со звуком),
+ * 0 — тихое. По этому решается склейка по серверу: сбой глушится только равным или более важным.
+ */
+const rankOf = (event: TelegramEvent, crit: boolean): number => (crit ? 2 : LOUD.has(event) ? 1 : 0);
+
+/** Чат, в который сообщения не доходят: для предупреждения владельцу. */
+interface DeliveryTrouble {
+  id: string;
+  /** Как назвать чат в тексте: «VPN-алерты» в кавычках или «с номером …». */
+  chat: string;
+  fails: number;
+  reason: string;
+}
+
+/** «3 сообщения», «5 сообщений», «21 сообщение». */
+const messagesWord = (n: number): string =>
+  n % 10 === 1 && n % 100 !== 11
+    ? 'сообщение'
+    : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)
+      ? 'сообщения'
+      : 'сообщений';
 
 /** «Починилось» по одному инциденту не шлём дважды (шаг помог + автозакрытие идут почти подряд). */
 const RESOLVED_DEDUP_MS = 10 * 60_000;
+/**
+ * Telegram не принял расширенное оформление (старый сервер Bot API, не та разметка) — столько времени в этот
+ * чат шлём сразу по-старому, а не пробуем каждый раз заново: каждая неудачная попытка — лишний запрос и
+ * задержка тревоги.
+ */
+const RICH_RETRY_MS = 60 * 60_000;
+
+/** Итог отправки. `plain` — сообщение ушло по-старому, потому что Telegram не принял расширенное оформление. */
+type SendResult = { ok: true; messageId: number; plain?: string } | { ok: false; error: string };
 
 @Injectable()
 export class TelegramService {
   private readonly log = new Logger(TelegramService.name);
   private readonly resolvedSent = new Map<string, number>();
-  /** Последний «первый» сбой по серверу: к нему в течение 10 минут цепляются следующие. */
-  private readonly lastByServer = new Map<string, { incidentId: string; at: number }>();
+  /**
+   * Последний «главный» сбой по серверу: к нему в течение 10 минут цепляются следующие. `rank` — насколько
+   * громко о нём сообщили (см. `rankOf`): тихое предупреждение не глушит критичный сбой, пришедший следом.
+   */
+  private readonly lastByServer = new Map<string, { incidentId: string; at: number; rank: number }>();
+  /** Очередь отправки по серверу — для открытий сбоев, которые участвуют в склейке. */
+  private readonly serverTurns = new Map<string, Promise<void>>();
+  /** Когда Telegram в последний раз не принял расширенное оформление, по чатам (см. RICH_RETRY_MS). */
+  private readonly richRejectedAt = new Map<string, number>();
+  /**
+   * Куда сказать владельцу, что сообщения не доходят: колокольчик панели. Задаёт центр уведомлений — сам
+   * Telegram от него не зависит (иначе круг: центр уведомлений шлёт через Telegram).
+   */
+  bell: ((n: { title: string; body: string }) => Promise<void>) | null = null;
 
   constructor(
     private readonly store: TelegramSettingsStore,
     @Inject(TELEGRAM_CLIENT) private readonly client: TelegramClient,
     private readonly config: ConfigService<Env, true>,
     @Inject(DB) private readonly db: Db,
+    private readonly audit: AuditService,
   ) {}
 
   async get(): Promise<TelegramSettings> {
-    return this.store.toPublic(await this.store.load());
+    return this.toPublic(await this.store.load());
+  }
+
+  /** Настройки для интерфейса — с отметками настоящей доставки и поясом, по которому идут тихие часы. */
+  private async toPublic(s: Awaited<ReturnType<TelegramSettingsStore['load']>>): Promise<TelegramSettings> {
+    const panel = await panelTimeZone(this.db);
+    return this.store.toPublic(s, {
+      delivery: await this.store.deliveryState(),
+      timeZone: panel ?? s.quiet.timeZone,
+      timeZoneChosen: panel !== null,
+    });
   }
 
   async update(
@@ -106,6 +185,15 @@ export class TelegramService {
         }
       }
       removed = cur.destinations.filter((d) => !next.some((n) => n.id === d.id)).length;
+      // Пока панель спрашивала у Telegram имена новых чатов, у сохранённого могли смениться номер (группа
+      // стала супергруппой) или отметка теста — берём их свежими, а не затираем прочитанным в начале.
+      if (added > 0) {
+        const fresh = new Map((await this.store.load()).destinations.map((d) => [d.id, d]));
+        for (const d of next) {
+          const latest = fresh.get(d.id);
+          if (latest) Object.assign(d, { chatId: latest.chatId, lastTest: latest.lastTest });
+        }
+      }
       cur.destinations = next;
     }
     if (patch.events)
@@ -119,7 +207,7 @@ export class TelegramService {
     // Прокси: не передан — как было; пусто или null — убрать; иначе — новый (с паролем шифруется).
     if (patch.proxy !== undefined) cur.proxyEnc = patch.proxy ? this.store.encryptProxy(patch.proxy) : null;
     await this.store.save(cur);
-    return { settings: this.store.toPublic(cur), added, removed };
+    return { settings: await this.toPublic(cur), added, removed };
   }
 
   /** @имя бота и название чата — для подписи под строкой; ошибки не мешают сохранению. */
@@ -169,6 +257,9 @@ export class TelegramService {
     // Прокси для теста: как в поле сейчас (даже несохранённый); не передан — сохранённый.
     dest = { ...dest, proxy: req.proxy === undefined ? this.store.proxy(cur) : req.proxy || null };
     const names = await this.lookupNames(dest);
+    // Расширенное оформление — как в переключателе сейчас: по образцу владелец видит, показывает ли его
+    // приложение Telegram такие сообщения. Прошлый отказ Telegram здесь не в счёт: тест пробует заново.
+    const rich = req.rich ?? cur.delivery.rich;
     const res = await this.send(
       dest,
       `✅ <b>NodeService</b>\nТестовое сообщение: уведомления в этот чат работают.${
@@ -176,45 +267,186 @@ export class TelegramService {
       }`,
       [],
       null,
+      false,
+      rich ? sampleBlocks(names.chatTitle) : null,
+      true,
     );
-    const detail = res.ok ? 'Тест доставлен' : res.error;
+    const detail = !res.ok
+      ? res.error
+      : res.plain
+        ? `Тест доставлен обычным сообщением: расширенное оформление Telegram не принял (${res.plain})`
+        : rich
+          ? 'Тест доставлен в расширенном оформлении — если в чате видна таблица, его можно включать'
+          : 'Тест доставлен';
     if (req.id) {
-      const d = cur.destinations.find((x) => x.id === req.id);
+      // Настройки перечитываем: пока шёл тест, у чата мог смениться номер (группа стала супергруппой).
+      const now = await this.store.load();
+      const d = now.destinations.find((x) => x.id === req.id);
       if (d) {
         d.lastTest = { at: new Date().toISOString(), ok: res.ok, detail };
         if (names.botName) d.botName = names.botName;
         if (names.chatTitle) d.chatTitle = names.chatTitle;
-        await this.store.save(cur);
+        await this.store.save(now);
       }
+      // Чат проверен и работает — прежние неудачи настоящих отправок больше не «подряд».
+      if (res.ok) await this.store.clearDeliveryFails(req.id).catch(() => undefined);
     }
     return { ok: res.ok, detail, botName: names.botName, chatTitle: names.chatTitle };
   }
 
+  /**
+   * Сообщение в чат. `rich` — то же сообщение блоками (расширенное оформление): Telegram его не принял
+   * (старый сервер Bot API, не та разметка) — сразу шлём `text` по-старому, тревога не теряется. Сеть, лимит
+   * частоты или «чат не найден» — не про оформление: второй раз не шлём, иначе сообщение могло бы прийти
+   * дважды. `forceRich` — пробовать оформление, даже если недавно был отказ (кнопка «Отправить тест»).
+   */
   private async send(
     d: LiveDestination,
     text: string,
     buttons: Array<{ text: string; url: string }>,
     replyTo: number | null,
     silent = false,
-  ): Promise<{ ok: true; messageId: number } | { ok: false; error: string }> {
-    const body: Record<string, unknown> = {
-      chat_id: d.chatId,
+    rich: RichBlock[] | null = null,
+    forceRich = false,
+  ): Promise<SendResult> {
+    const common: Record<string, unknown> = {};
+    if (d.topic !== null) common.message_thread_id = d.topic;
+    if (replyTo !== null)
+      common.reply_parameters = { message_id: replyTo, allow_sending_without_reply: true };
+    if (buttons.length > 0) common.reply_markup = { inline_keyboard: [buttons] };
+    // Штатная возможность Bot API: сообщение приходит, но телефон не звенит.
+    if (silent) common.disable_notification = true;
+    let plain: string | undefined;
+    const lastRejected = this.richRejectedAt.get(d.id);
+    if (rich && (forceRich || !lastRejected || Date.now() - lastRejected > RICH_RETRY_MS)) {
+      // Текст блоков экранировать не нужно; распознавание ссылок и упоминаний выключено — адреса серверов и
+      // имена не должны становиться ссылками.
+      const res = await this.post(d, 'sendRichMessage', {
+        ...common,
+        rich_message: { blocks: rich, skip_entity_detection: true },
+      });
+      if (res.ok || !res.rejected) return res;
+      this.richRejectedAt.set(d.id, Date.now());
+      plain = res.error;
+    }
+    const res = await this.post(d, 'sendMessage', {
+      ...common,
       text,
       parse_mode: 'HTML',
       link_preview_options: { is_disabled: true },
+    });
+    return res.ok ? { ...res, ...(plain ? { plain } : {}) } : res;
+  }
+
+  /**
+   * Один вызов метода отправки. Группа стала супергруппой — Telegram называет новый номер чата: запоминаем его
+   * и отправляем туда же, иначе это сообщение пропало бы, а все следующие падали бы с той же ошибкой.
+   * `rejected` — отказ относится к самому расширенному оформлению (см. isRichRejected).
+   */
+  private async post(
+    d: LiveDestination,
+    method: 'sendMessage' | 'sendRichMessage',
+    body: Record<string, unknown>,
+  ): Promise<{ ok: true; messageId: number } | { ok: false; error: string; rejected: boolean }> {
+    const call = (chatId: string) =>
+      this.client
+        .call<{ message_id: number }>(d.token, method, { ...body, chat_id: chatId }, d.proxy ?? null)
+        .catch(() => null);
+    let res = await call(d.chatId);
+    if (res && !res.ok && res.migrateToChatId && res.migrateToChatId !== d.chatId) {
+      await this.chatMoved(d, res.migrateToChatId);
+      res = await call(res.migrateToChatId);
+    }
+    if (!res) return { ok: false, error: describeTelegramError(0, 'network'), rejected: false };
+    if (res.ok) return { ok: true, messageId: res.result.message_id };
+    // Ответ Telegram как есть — только в лог; владельцу уходит причина по-русски.
+    if (res.status !== 0)
+      this.log.warn(`Telegram (${d.chatId}, ${method}) ответил ${res.status}: ${res.description}`);
+    return {
+      ok: false,
+      error: describeTelegramError(res.status, res.description),
+      rejected: method === 'sendRichMessage' && isRichRejected(res.status, res.description),
     };
-    if (d.topic !== null) body.message_thread_id = d.topic;
-    if (replyTo !== null) body.reply_parameters = { message_id: replyTo, allow_sending_without_reply: true };
-    if (buttons.length > 0) body.reply_markup = { inline_keyboard: [buttons] };
-    // Штатная возможность Bot API: сообщение приходит, но телефон не звенит.
-    if (silent) body.disable_notification = true;
-    const res = await this.client
-      .call<{ message_id: number }>(d.token, 'sendMessage', body, d.proxy ?? null)
-      .catch(() => null);
-    if (!res) return { ok: false, error: describeTelegramError(0, 'network') };
-    return res.ok
-      ? { ok: true, messageId: res.result.message_id }
-      : { ok: false, error: describeTelegramError(res.status, res.description) };
+  }
+
+  /** У сохранённого чата новый номер: правим настройки и оставляем след в Журнале. */
+  private async chatMoved(d: LiveDestination, chatId: string): Promise<void> {
+    const saved = await this.store.migrateChat(d.id, chatId).catch(() => false);
+    if (!saved) return;
+    await this.audit.record({
+      action: 'settings.telegram.chat_migrated',
+      actor: SYSTEM_ACTOR,
+      source: 'auto',
+      target: { type: 'settings', id: 'telegram', display: 'Уведомления в Telegram' },
+      metadata: {
+        note: `${d.chatTitle ? `Чат «${d.chatTitle}»` : 'Чат'}: номер ${d.chatId} заменён на ${chatId}`,
+      },
+    });
+  }
+
+  /**
+   * Отметка настоящей отправки у чата. Возвращает чат, о котором пора сказать владельцу: неудач подряд
+   * набралось достаточно, а об этом чате сегодня ещё не предупреждали.
+   */
+  private async noteDelivery(
+    d: LiveDestination,
+    res: { ok: true; plain?: string } | { ok: false; error: string },
+  ): Promise<DeliveryTrouble | null> {
+    try {
+      const { fails, warn } = await this.store.recordDelivery(
+        d.id,
+        res.ok,
+        !res.ok
+          ? res.error
+          : res.plain
+            ? 'Доставлено обычным сообщением: Telegram не принял расширенное оформление'
+            : 'Доставлено',
+      );
+      if (res.ok || !warn) return null;
+      return {
+        id: d.id,
+        chat: d.chatTitle ? `«${d.chatTitle}»` : `с номером ${d.chatId}`,
+        fails,
+        reason: res.error,
+      };
+    } catch (err) {
+      this.log.warn(`Telegram: отметка доставки не записана: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  }
+
+  /**
+   * Сообщения не доходят: говорим владельцу в колокольчик и пишем в Журнал — иначе он уверен, что тревоги
+   * приходят, а они не доходят неделями. Одно предупреждение на все чаты, набравшие неудачи этой отправкой
+   * (пропала связь с Telegram — чатов много, беда одна); о каждом чате — не чаще раза в сутки.
+   */
+  private async warnUndelivered(list: DeliveryTrouble[]): Promise<void> {
+    if (list.length === 0) return;
+    try {
+      const notes = list.map(
+        (t) => `В чат ${t.chat} не доставлено ${t.fails} ${messagesWord(t.fails)} подряд.`,
+      );
+      const withReasons = list.map((t, i) => `${notes[i]} Причина: ${t.reason}`).join(' ');
+      await this.audit.record({
+        action: 'settings.telegram.delivery_failed',
+        actor: SYSTEM_ACTOR,
+        source: 'auto',
+        result: 'failed',
+        severity: 'warn',
+        target: { type: 'settings', id: 'telegram', display: 'Уведомления в Telegram' },
+        metadata: list.length === 1 ? { note: notes[0], reason: list[0]?.reason } : { note: withReasons },
+      });
+      await this.bell?.({
+        title: 'Сообщения в Telegram не доходят',
+        body: `${withReasons} Пока это не исправлено, ${
+          list.length > 1 ? 'в эти чаты' : 'в этот чат'
+        } тревоги не приходят.`,
+      });
+      // Отметку «предупредили» ставим после: не вышло сказать — скажем при следующей неудаче.
+      await this.store.markDeliveryWarned(list.map((t) => t.id));
+    } catch (err) {
+      this.log.warn(`Telegram: предупреждение о доставке: ${err instanceof Error ? err.message : err}`);
+    }
   }
 
   /** Кнопки-ссылки только для настоящего адреса по https: Telegram не принимает localhost и http. */
@@ -234,12 +466,39 @@ export class TelegramService {
     return out.slice(0, 2);
   }
 
-  /** Отправить событие во все чаты. Никогда не бросает: уведомление не должно ронять основную работу. */
-  async dispatch(m: TelegramDispatch): Promise<void> {
+  /**
+   * Отправить событие во все чаты. Никогда не бросает: уведомление не должно ронять основную работу.
+   * Открытия сбоев одного сервера идут по очереди: отпущенные разом (после перезапуска, по общему сроку
+   * ожидания), они иначе не увидели бы друг друга в склейке, и оба пришли бы со звуком.
+   */
+  dispatch(m: TelegramDispatch): Promise<void> {
+    const key = m.incidentId && m.serverKey && OPENING.has(m.event) ? m.serverKey : null;
+    if (!key) return this.deliver(m);
+    const next = (this.serverTurns.get(key) ?? Promise.resolve()).then(() => this.deliver(m));
+    this.serverTurns.set(key, next);
+    void next.then(() => {
+      if (this.serverTurns.get(key) === next) this.serverTurns.delete(key);
+    });
+    return next;
+  }
+
+  private async deliver(m: TelegramDispatch): Promise<void> {
     try {
       const s = await this.store.load();
-      if (s.destinations.length === 0 || !s.events[m.event]) return;
+      if (s.destinations.length === 0) return;
       if (m.kind && !s.kinds[m.kind]) return;
+      // Первое сообщение о деле — его открытие, каким бы событием оно ни пришло. Панель сразу предложила
+      // шаг — открытие приходит как «ждёт подтверждения», но решает его важность, а не тип события.
+      const crit = m.event === 'incident_crit' || m.severity === 'crit';
+      const opening =
+        Boolean(m.incidentId) &&
+        OPENING.has(m.event) &&
+        (await this.lastMessageAt(m.incidentId as string)) === null;
+      // Тумблер «Нужно ваше „Да“» не глушит само открытие инцидента: за него отвечает тумблер его важности.
+      // Прошло только как открытие — и звук у него как у открытия: предупреждение остаётся тихим.
+      const asOpening: TelegramEvent | null = opening ? (crit ? 'incident_crit' : 'incident_warn') : null;
+      const soundAs = asOpening && !s.events[m.event] ? asOpening : m.event;
+      if (!s.events[soundAs] && !(m.replaces && s.events[m.replaces])) return;
       const now = new Date();
       if (m.event === 'resolved' && m.incidentId) {
         // Починилось — следующий сбой этого сервера уже новая беда: со звуком, не ответом на старую.
@@ -249,29 +508,31 @@ export class TelegramService {
         if (at && Date.now() - at < RESOLVED_DEDUP_MS) return;
         this.resolvedSent.set(m.incidentId, Date.now());
       }
-      if (
-        s.quiet.enabled &&
-        m.event !== 'incident_crit' &&
-        inQuietHours(now, s.quiet.from, s.quiet.to, s.quiet.timeZone)
-      ) {
-        const items = await this.store.digest();
-        items.push({
+      // Пояс панели — тот же, что у времени в подписи: тихие часы и подпись не должны жить в разных поясах.
+      const zone = (await panelTimeZone(this.db)) ?? s.quiet.timeZone;
+      // Ночью не ждут утра: критичный инцидент (в том числе открытый сразу с предложением шага) и вход
+      // в панель. Остальное копится в утреннюю сводку.
+      const urgent = m.event === 'incident_crit' || (opening && crit) || NIGHT_NOW.has(m.event);
+      if (s.quiet.enabled && !urgent && inQuietHours(now, s.quiet.from, s.quiet.to, zone)) {
+        await this.store.addToDigest({
           event: m.event,
           title: m.server ? `${m.title} · ${m.server.name}` : m.title,
           at: now.toISOString(),
         });
-        await this.store.setDigest(items);
         return;
       }
       // Склейка по серверу: первый сбой — со звуком, следующий сбой того же сервера за 10 минут — ответом на
       // первый и тихо («агент не в сети» + «SSH недоступен» — одна беда, телефон не пищит дважды).
-      let groupWith: string | null = null;
+      let head: { incidentId: string; rank: number } | null = null;
       if (m.incidentId && m.serverKey && OPENING.has(m.event) && s.delivery.groupPerServer) {
         const prev = this.lastByServer.get(m.serverKey);
-        if (prev && prev.incidentId !== m.incidentId && Date.now() - prev.at < GROUP_WINDOW_MS)
-          groupWith = prev.incidentId;
+        if (prev && prev.incidentId !== m.incidentId && Date.now() - prev.at < GROUP_WINDOW_MS) head = prev;
       }
-      const silent = groupWith !== null || (s.delivery.silentWarnings && !LOUD.has(m.event));
+      // Глушит только сбой не менее важный, о котором телефон уже пищал: критичное после тихого
+      // предупреждения («память на пределе» → «сервер завис») приходит со звуком, хоть и ответом на него.
+      const rank = rankOf(soundAs, crit);
+      const glued = head !== null && head.rank >= rank;
+      const silent = m.silent === true || glued || (s.delivery.silentWarnings && !LOUD.has(soundAs));
       const text =
         m.html ??
         formatTelegramMessage({
@@ -280,15 +541,29 @@ export class TelegramService {
           body: m.body ?? null,
           server: m.server ?? null,
           // Время — по поясу панели, как и в тексте сообщения (срок оплаты): иначе в одном сообщении два пояса.
-          footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, await this.timeZone())}`,
+          footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, zone)}`,
         });
+      // Расширенное оформление — для сообщений, которые панель собирает сама; готовый HTML (биллинг) — как есть.
+      const rich =
+        s.delivery.rich && !m.html
+          ? richMessageBlocks({
+              event: m.event,
+              title: m.title,
+              body: m.body ?? null,
+              server: m.server ?? null,
+              footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, zone)}`,
+            })
+          : null;
       const buttons = this.buttons(m.link, m.incidentId ?? null);
       let anyFirst = false;
+      const undelivered: DeliveryTrouble[] = [];
       for (const d of this.store.live(s)) {
         // Всё после первого сообщения по инциденту — ответом на него; первое — ответом на сбой-соседа.
         const own = m.incidentId ? await this.firstMessage(m.incidentId, d.id) : null;
-        const replyTo = own ?? (groupWith ? await this.firstMessage(groupWith, d.id) : null);
-        const res = await this.send(d, text, buttons, replyTo, silent);
+        const replyTo = own ?? (head ? await this.firstMessage(head.incidentId, d.id) : null);
+        const res = await this.send(d, text, buttons, replyTo, silent, rich);
+        const trouble = await this.noteDelivery(d, res);
+        if (trouble) undelivered.push(trouble);
         if (!res.ok) {
           this.log.warn(`Telegram (${d.chatId}): ${res.error}`);
           continue;
@@ -301,8 +576,14 @@ export class TelegramService {
             .catch(() => undefined);
         }
       }
-      if (anyFirst && m.serverKey && m.incidentId && groupWith === null)
-        this.lastByServer.set(m.serverKey, { incidentId: m.incidentId, at: Date.now() });
+      // Главным по серверу становится первый сбой — или более важный, если до него были только тихие.
+      if (anyFirst && m.serverKey && m.incidentId && !glued)
+        this.lastByServer.set(m.serverKey, {
+          incidentId: m.incidentId,
+          at: Date.now(),
+          rank: silent ? 0 : rank,
+        });
+      await this.warnUndelivered(undelivered);
     } catch (err) {
       this.log.warn(`Telegram: ${err instanceof Error ? err.message : err}`);
     }
@@ -343,6 +624,8 @@ export class TelegramService {
     silent = false,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const res = await this.send(d, html, [], null, silent);
+    const trouble = await this.noteDelivery(d, res);
+    if (trouble) await this.warnUndelivered([trouble]);
     return res.ok ? { ok: true } : res;
   }
 
@@ -354,9 +637,18 @@ export class TelegramService {
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const fields: Record<string, string> = { chat_id: d.chatId, caption, parse_mode: 'HTML' };
     if (d.topic !== null) fields.message_thread_id = String(d.topic);
-    const res = await this.client.sendFile(d.token, fields, file, d.proxy ?? null).catch(() => null);
+    const call = (chatId: string) =>
+      this.client.sendFile(d.token, { ...fields, chat_id: chatId }, file, d.proxy ?? null).catch(() => null);
+    let res = await call(d.chatId);
+    // Группа стала супергруппой — как и с сообщениями: запоминаем новый номер чата и отправляем туда.
+    if (res && !res.ok && res.migrateToChatId && res.migrateToChatId !== d.chatId) {
+      await this.chatMoved(d, res.migrateToChatId);
+      res = await call(res.migrateToChatId);
+    }
     if (!res) return { ok: false, error: describeTelegramError(0, 'network') };
-    return res.ok ? { ok: true } : { ok: false, error: describeTelegramError(res.status, res.description) };
+    if (res.ok) return { ok: true };
+    if (res.status !== 0) this.log.warn(`Telegram (${d.chatId}) ответил ${res.status}: ${res.description}`);
+    return { ok: false, error: describeTelegramError(res.status, res.description) };
   }
 
   /** Часовой пояс панели (из «Внешнего вида», иначе — из настроек уведомлений) — для времени в сообщениях. */
@@ -405,24 +697,37 @@ export class TelegramService {
   /** После тихих часов — одна сводка того, что копилось ночью. */
   async flushDigest(): Promise<void> {
     const s = await this.store.load();
-    if (s.quiet.enabled && inQuietHours(new Date(), s.quiet.from, s.quiet.to, s.quiet.timeZone)) return;
-    const items = await this.store.digest();
+    // Тихие часы — по поясу панели, как и время в самой сводке.
+    const timeZone = (await panelTimeZone(this.db)) ?? s.quiet.timeZone;
+    if (s.quiet.enabled && inQuietHours(new Date(), s.quiet.from, s.quiet.to, timeZone)) return;
+    const items = await this.store.takeDigest();
     if (items.length === 0) return;
-    await this.store.setDigest([]);
     if (s.destinations.length === 0) return;
-    const timeZone = await this.timeZone();
-    const lines = items.slice(-20).map((i) => `• ${localTime(new Date(i.at), timeZone)} — ${esc(i.title)}`);
+    const shown = items.slice(-20);
+    const lines = shown.map((i) => `• ${localTime(new Date(i.at), timeZone)} — ${esc(i.title)}`);
     const text = `🌅 <b>Пока были тихие часы</b>\n\n${lines.join('\n')}${
       items.length > 20 ? `\n…и ещё ${items.length - 20}` : ''
     }\n\n<i>Подробности — в «Инцидентах» и колокольчике панели.</i>`;
+    const rich = s.delivery.rich
+      ? digestBlocks(
+          shown.map((i) => ({ time: localTime(new Date(i.at), timeZone), title: i.title })),
+          Math.max(0, items.length - 20),
+        )
+      : null;
+    const undelivered: DeliveryTrouble[] = [];
     for (const d of this.store.live(s)) {
       const res = await this.send(
         d,
         text,
         this.buttons({ to: '/incidents', label: 'Открыть инциденты' }),
         null,
+        false,
+        rich,
       );
+      const trouble = await this.noteDelivery(d, res);
+      if (trouble) undelivered.push(trouble);
       if (!res.ok) this.log.warn(`Telegram (${d.chatId}): ${res.error}`);
     }
+    await this.warnUndelivered(undelivered);
   }
 }

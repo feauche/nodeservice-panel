@@ -97,7 +97,7 @@ export class AnthropicProvider implements LlmProvider {
           id: b.id,
           name: b.name,
           // Ответ упёрся в предел длины — последний вызов недописан.
-          input: res.stop_reason === 'max_tokens' ? TRUNCATED_TOOL_INPUT : repairToolInput(b.input),
+          input: res.stop_reason === 'max_tokens' ? TRUNCATED_TOOL_INPUT : repairToolInput(b.input, b.name),
         };
       return { type: 'text', text: '' };
     });

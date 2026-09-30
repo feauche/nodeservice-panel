@@ -1,12 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type {
-  IncidentAnalysis,
-  IncidentEvent,
-  IncidentKind,
-  IncidentSeverity,
-  IncidentSnapshot,
+import {
+  INCIDENT_KINDS,
+  type IncidentAnalysis,
+  type IncidentEvent,
+  type IncidentKind,
+  type IncidentSeverity,
+  type IncidentSnapshot,
 } from '@nodeservice/shared';
-import { and, desc, eq, gte, ne, type SQL, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, max, ne, type SQL, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { type IncidentRow, incidents } from '../../infra/db/schema/index.js';
@@ -49,6 +50,8 @@ export class IncidentsRepository {
   /**
    * Тот же список, но постранично — для HTTP-ручки. «Открытые» всё равно приходят целиком (их немного,
    * резать их пополам между страницами не нужно), режутся только «Все»/«Решённые».
+   * Только виды из контракта — и в счёте, и в выборке: запись вида, которого уже нет (после переименований),
+   * выброшенная после нарезки, сдвигала бы листание по смещению и расходилась с общим числом.
    */
   async listPage(query: {
     status: IncidentStatusFilter;
@@ -58,7 +61,10 @@ export class IncidentsRepository {
     /** С какой строки начать (с нуля); задано — `page` не учитывается и к последней странице не подгоняется. */
     offset?: number | undefined;
   }): Promise<IncidentsPage> {
-    const where = this.where(query.status, query.openedFrom);
+    const where = and(
+      this.where(query.status, query.openedFrom),
+      inArray(incidents.kind, [...INCIDENT_KINDS]),
+    );
     if (query.status === 'open') {
       const rows = await this.db.select().from(incidents).where(where).orderBy(desc(incidents.openedAt));
       return {
@@ -137,6 +143,18 @@ export class IncidentsRepository {
         ),
       );
     return rows[0];
+  }
+
+  /**
+   * Когда панель последний раз сама запускала починку этого сигнала на сервере — по всем его делам, включая
+   * закрытые: пауза между автопочинками считается по серверу и виду сигнала, а не по одному делу.
+   */
+  async lastAutofixAt(serverId: string, kind: string): Promise<Date | null> {
+    const [row] = await this.db
+      .select({ at: max(incidents.lastAutofixAt) })
+      .from(incidents)
+      .where(and(eq(incidents.serverId, serverId), eq(incidents.kind, kind)));
+    return row?.at ?? null;
   }
 
   async open(values: {

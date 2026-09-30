@@ -1,11 +1,26 @@
 import { z } from 'zod';
 
+import { AGENT_HEARTBEAT_SECONDS } from './agent-protocol.js';
+
 /**
  * Настройки → «Автопроверки»: все фоновые проверки панели и агента.
  * Каждая — тумблер + интервал; кнопка «По умолчанию» возвращает раздел к AUTOCHECKS_DEFAULTS.
  */
 
-const interval = (min: number, max: number) => z.coerce.number().int().min(min).max(max);
+/** Текст ошибки — у самого поля формы, поэтому короткий и по-русски. */
+const interval = (min: number, max: number) =>
+  z.coerce
+    .number({ error: 'Введите целое число' })
+    .int('Введите целое число')
+    .min(min, `Не меньше ${min}`)
+    .max(max, `Не больше ${max}`);
+
+/**
+ * Наименьший порог «Агент не в сети» — три сигнала агента. При пороге, равном интервалу сигнала, любое
+ * запоздание на доли секунды помечало исправный сервер: карточка мигала, метрики прятались, в Журнал
+ * сыпались пары «пропал со связи / вышел на связь».
+ */
+export const AGENT_OFFLINE_MIN_SECONDS = 3 * AGENT_HEARTBEAT_SECONDS;
 
 export const autochecksSettingsSchema = z.object({
   /** SSH-проверка серверов БЕЗ online-агента (живость только по SSH). */
@@ -16,7 +31,7 @@ export const autochecksSettingsSchema = z.object({
   sshAgentIntervalMinutes: interval(15, 10_080),
   /** Отметка «агент не в сети», если heartbeat молчит дольше порога. */
   agentOfflineEnabled: z.boolean(),
-  agentOfflineAfterSeconds: interval(10, 600),
+  agentOfflineAfterSeconds: interval(AGENT_OFFLINE_MIN_SECONDS, 600),
   /** Сбор и отправка метрик агентом (частота уходит агенту при подключении). */
   metricsEnabled: z.boolean(),
   metricsIntervalSeconds: interval(5, 120),

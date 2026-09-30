@@ -13,6 +13,13 @@ import { appMeta } from '../../infra/db/schema/index.js';
 const KEY = 'settings.incidents';
 const CACHE_MS = 5_000;
 
+/**
+ * Что можно поменять в записи: поля раздела «Настройки → Инциденты» (только их принимает его ручка) и режимы
+ * по сигналам с паузой автопочинки — их передаёт страница «Автопочинка». Друг друга они не затирают.
+ */
+export type IncidentsSettingsPatch = IncidentsSettingsUpdate &
+  Partial<Pick<IncidentsSettings, 'policy' | 'pausedUntil'>>;
+
 /** Настройки инцидентов (пороги, время реакции, автопочинка). Хранятся в app_meta. */
 @Injectable()
 export class IncidentsSettingsStore {
@@ -28,9 +35,7 @@ export class IncidentsSettingsStore {
     return value;
   }
 
-  async set(
-    patch: IncidentsSettingsUpdate,
-  ): Promise<{ before: IncidentsSettings; after: IncidentsSettings }> {
+  async set(patch: IncidentsSettingsPatch): Promise<{ before: IncidentsSettings; after: IncidentsSettings }> {
     const before = await this.load();
     const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
     const after = incidentsSettingsSchema.parse({ ...before, ...defined });

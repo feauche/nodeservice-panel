@@ -33,6 +33,7 @@ import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useRefreshInventory } from '../servers-api';
+import { NodeLinkField } from './node-link-field';
 import { UpstreamField } from './upstream-field';
 import type { ServerEdit } from './use-server-edit';
 
@@ -411,6 +412,7 @@ export function ProfileTab({ server, edit }: { server: Server; edit: ServerEdit[
           остановился.
         </p>
         <NodeWatchSegments value={nodeWatch} onChange={setNodeWatch} />
+        <NodeLinkField server={server} value={edit.nodeLink} onChange={edit.setNodeLink} />
       </section>
 
       <section aria-labelledby="pf-roles" className="flex flex-col gap-2">

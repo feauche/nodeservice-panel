@@ -5,7 +5,6 @@ import type {
   AutochecksSettings,
   AutochecksSettingsUpdate,
   IncidentsSettings,
-  IncidentsSettingsUpdate,
 } from '@nodeservice/shared';
 import {
   APPEARANCE_DEFAULTS,
@@ -24,7 +23,7 @@ import { AssistantSettingsStore } from '../assistant/assistant-settings.store.js
 import { diffChanges } from '../audit/audit.diff.js';
 import { AuditService } from '../audit/audit.service.js';
 import { AutochecksStore } from './autochecks.store.js';
-import { IncidentsSettingsStore } from './incidents-settings.store.js';
+import { type IncidentsSettingsPatch, IncidentsSettingsStore } from './incidents-settings.store.js';
 
 /**
  * Настройки панели хранятся в app_meta как JSON по ключу раздела.
@@ -63,7 +62,7 @@ export class SettingsService {
     return this.incidents.get();
   }
 
-  async updateIncidents(patch: IncidentsSettingsUpdate): Promise<IncidentsSettings> {
+  async updateIncidents(patch: IncidentsSettingsPatch): Promise<IncidentsSettings> {
     const { before, after } = await this.incidents.set(patch);
     this.audit.extend({ changes: diffChanges(before, after) });
     return after;

@@ -97,6 +97,8 @@ describe('servers e2e', () => {
       arch: 'x86_64',
       cpuCores: 4,
       memoryMb: 8000,
+      // Только внешние адреса: сети Docker и частные адреса панель отбрасывает.
+      addresses: ['198.51.100.7', '198.51.100.8'],
     });
 
     const badAuth = await agent
@@ -138,6 +140,9 @@ describe('servers e2e', () => {
       tags: ['prod', 'de'],
     });
     expect(server.facts.os).toBe('Ubuntu');
+    // Адреса интерфейсов сохраняются вместе с остальными фактами и отдаются в карточке.
+    expect(server.facts.addresses).toEqual(['198.51.100.7', '198.51.100.8']);
+    expect(server.nodeLink).toBe('auto');
     expect(server.hostKeyFingerprint).toMatch(/^SHA256:/);
     expect(ssh.installedKeys).toHaveLength(1);
     expect(ssh.installedKeys[0]).toContain('ssh-ed25519');

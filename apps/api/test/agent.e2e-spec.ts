@@ -1,4 +1,5 @@
 import { sign as edSign, generateKeyPairSync } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { INestApplication } from '@nestjs/common';
@@ -8,6 +9,7 @@ import {
   AGENT_MSG,
   AGENT_PROTOCOL_VERSION,
   type AgentEnvelope,
+  AUTOCHECKS_DEFAULTS,
   agentEnrollResponseSchema,
   auditListResponseSchema,
   CSRF_HEADER,
@@ -27,7 +29,7 @@ import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { WsUpgradeService } from '../src/infra/ws/ws-upgrade.service.js';
-import { AgentGateway } from '../src/modules/agent/agent.gateway.js';
+import { AgentGateway, CLOSE_SERVER_DELETED } from '../src/modules/agent/agent.gateway.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
 import { FakeSsh, SSH_PASSWORD, SSH_USER } from './fake-ssh.js';
 
@@ -266,6 +268,67 @@ describe('agent e2e', () => {
       expect(audit.items.some((e) => e.action === action)).toBe(true);
   });
 
+  /** Вошедший агент: hello → challenge → auth → welcome. */
+  const login = async (id: string, pub: string, sign: (nonce: string) => string): Promise<WsAgent> => {
+    const ws = new WsAgent();
+    await ws.connect(wsBase);
+    ws.send(AGENT_MSG.hello, { serverId: id, pubkey: pub, version: '0.5.0-test' });
+    const challenge = await ws.next();
+    ws.send(AGENT_MSG.auth, { signature: sign((challenge.payload as { nonce: string }).nonce) });
+    expect((await ws.next()).type).toBe(AGENT_MSG.welcome);
+    return ws;
+  };
+  const statusOf = async (id: string) =>
+    serverSchema.parse((await agent.get(`/api/servers/${id}`).expect(200)).body).agentStatus;
+  /** Записи Журнала о сервере, новые сверху. */
+  const journal = async (targetId: string) =>
+    auditListResponseSchema.parse(
+      (await agent.get(`/api/audit?category=server&targetId=${targetId}&pageSize=200`).expect(200)).body,
+    ).items;
+
+  it('сигнал по открытому соединению возвращает «в сети»: статус не залипает, в Журнале одна запись', async () => {
+    const ws = await login(serverId, pubkeyB64, signNonce);
+    await expect.poll(() => statusOf(serverId), { timeout: 5_000 }).toBe('online');
+    const before = (await journal(serverId)).filter((e) => e.action === 'server.agent.online').length;
+    // Сигналов не было дольше порога — джоба пометила «не в сети»; соединение при этом не рвалось.
+    await app.get<Db>(DB).execute(sql`update servers set agent_status = 'offline' where id = ${serverId}`);
+    ws.send(AGENT_MSG.heartbeat, {});
+    ws.send(AGENT_MSG.metrics, METRICS);
+    await expect.poll(() => statusOf(serverId), { timeout: 5_000 }).toBe('online');
+    ws.send(AGENT_MSG.heartbeat, {});
+    ws.send(AGENT_MSG.heartbeat, {});
+    await new Promise((r) => setTimeout(r, 300));
+    const online = (await journal(serverId)).filter((e) => e.action === 'server.agent.online');
+    expect(online).toHaveLength(before + 1);
+    expect(String(online[0]?.metadata.reason)).toMatch(/возобновились/);
+
+    ws.ws.close();
+    await expect.poll(() => statusOf(serverId), { timeout: 5_000 }).toBe('offline');
+  });
+
+  it('отвергнутый агент стучится снова и снова — в Журнале одна запись в час, с числом попыток', async () => {
+    const ghost = crypto.randomUUID();
+    const knock = async () => {
+      const ws = new WsAgent();
+      await ws.connect(wsBase);
+      ws.send(AGENT_MSG.hello, { serverId: ghost, pubkey: pubkeyB64, version: '0.5.0-test' });
+      expect(((await ws.next()).payload as { code: string }).code).toBe('unknown-server');
+    };
+    const denied = async () => (await journal(ghost)).filter((e) => e.action === 'server.agent.auth_failed');
+    for (let i = 0; i < 3; i += 1) await knock();
+    expect(await denied()).toHaveLength(1);
+    expect((await denied())[0]?.metadata).toMatchObject({ code: 'unknown-server', attempts: 1 });
+
+    // Час спустя — следующая запись; в ней видно, сколько попыток панель отклонила за это время.
+    const marks = (app.get(AgentGateway) as unknown as { authFailures: Map<string, { loggedAt: number }> })
+      .authFailures;
+    (marks.get(ghost) as { loggedAt: number }).loggedAt -= 61 * 60_000;
+    await knock();
+    await knock();
+    expect(await denied()).toHaveLength(2);
+    expect((await denied())[0]?.metadata).toMatchObject({ attempts: 3 });
+  });
+
   it('настройки автопроверок управляют welcome: метрики выключены → metricsSeconds 0', async () => {
     await agent
       .put('/api/settings/autochecks')
@@ -297,6 +360,39 @@ describe('agent e2e', () => {
     expect(ssh.execLog.some((c) => c.includes('github.com/feauche/nodeservice-agent'))).toBe(true);
   });
 
+  it('установка не удалась: причина словами, ни команды, ни токена в ответе и в Журнале; токен отозван', async () => {
+    const before = await statusOf(serverId);
+    const reason =
+      'Установочный скрипт агента не скачался: скачивание с GitHub не уложилось в минуту. На сервере ничего не изменено.';
+    ssh.agentInstall = { code: 1, output: `${reason}\n` };
+    try {
+      const res = await agent
+        .post(`/api/servers/${serverId}/agent/install`)
+        .set(CSRF_HEADER, csrf)
+        .expect(502);
+      expect(res.body.detail).toBe(`Команда на сервере не выполнилась (установка агента): ${reason}`);
+      // Токен этой установки — из команды, которую получил сервер.
+      const command = [...ssh.execLog].reverse().find((c) => c.includes('# ns-agent:install')) ?? '';
+      const token = /--token '(nse_[^']+)'/.exec(command)?.[1] ?? '';
+      expect(token).toMatch(/^nse_/);
+      const log = await journal(serverId);
+      expect(log.find((e) => e.action === 'server.agent.install')).toMatchObject({
+        result: 'failed',
+        metadata: { reason: res.body.detail },
+      });
+      for (const secret of [token, 'curl', 'mktemp'])
+        expect(JSON.stringify([res.body, log]), secret).not.toContain(secret);
+      // Статус — прежний, а не «Ожидает агента»; токен неудавшейся установки больше не действует.
+      expect(await statusOf(serverId)).toBe(before);
+      await request(app.getHttpServer())
+        .post('/api/agent/v1/enroll')
+        .send({ token, pubkey: pubkeyB64, version: '0.5.0-test' })
+        .expect(400);
+    } finally {
+      ssh.agentInstall = { code: 0, output: '' };
+    }
+  });
+
   it('настройки: GET отдаёт дефолты после PUT-отката «По умолчанию»', async () => {
     const res = await agent
       .put('/api/settings/autochecks')
@@ -308,5 +404,123 @@ describe('agent e2e', () => {
       (await agent.get('/api/audit?category=settings').expect(200)).body,
     );
     expect(audit.items.some((e) => e.action === 'settings.autochecks.updated')).toBe(true);
+  });
+
+  it('порог «Агент не в сети» меньше трёх сигналов не принимается; сохранённый раньше меньший порог миграция поднимает до минимума', async () => {
+    const low = await agent
+      .put('/api/settings/autochecks')
+      .set(CSRF_HEADER, csrf)
+      .send({ agentOfflineAfterSeconds: 10 })
+      .expect(400);
+    expect(JSON.stringify(low.body.errors)).toContain('Не меньше 30');
+    const ok = await agent
+      .put('/api/settings/autochecks')
+      .set(CSRF_HEADER, csrf)
+      .send({ agentOfflineAfterSeconds: 30 })
+      .expect(200);
+    expect(ok.body.agentOfflineAfterSeconds).toBe(30);
+
+    const db = app.get<Db>(DB);
+    // Хранилище настроек держит прочитанное 5 секунд — для проверки «как после перезапуска» сбрасываем.
+    const { AutochecksStore } = await import('../src/modules/settings/autochecks.store.js');
+    const store = app.get(AutochecksStore) as unknown as { cache: unknown };
+    const save = (value: string) =>
+      db.execute(
+        sql`insert into app_meta (key, value) values ('settings.autochecks', ${value})
+            on conflict (key) do update set value = excluded.value`,
+      );
+    const stored = async () =>
+      (await db.execute<{ value: string }>(sql`select value from app_meta where key = 'settings.autochecks'`))
+        .rows[0]?.value ?? '';
+    const current = async () => {
+      store.cache = null;
+      return (await agent.get('/api/settings/autochecks').expect(200)).body as typeof AUTOCHECKS_DEFAULTS;
+    };
+    const migration = readFileSync(
+      new URL('../drizzle/migrations/0048_autochecks_agent_offline_min.sql', import.meta.url),
+      'utf8',
+    );
+    try {
+      // Настройки прежней версии: порог 15 секунд и свой интервал проверки SSH.
+      const old = { ...AUTOCHECKS_DEFAULTS, sshIntervalMinutes: 45, agentOfflineAfterSeconds: 15 };
+      await save(JSON.stringify(old));
+      // Без миграции запись не проходит проверку — и весь раздел возвращается к значениям по умолчанию.
+      expect((await current()).sshIntervalMinutes).toBe(AUTOCHECKS_DEFAULTS.sshIntervalMinutes);
+      await db.execute(sql.raw(migration));
+      expect(JSON.parse(await stored())).toEqual({ ...old, agentOfflineAfterSeconds: 30 });
+      expect(await current()).toMatchObject({ sshIntervalMinutes: 45, agentOfflineAfterSeconds: 30 });
+      // Повторный запуск и значения, которые менять не нужно, — без изменений.
+      for (const keep of [30, 120, 600]) {
+        const value = JSON.stringify({ ...old, agentOfflineAfterSeconds: keep });
+        await save(value);
+        await db.execute(sql.raw(migration));
+        expect(await stored(), String(keep)).toBe(value);
+      }
+      // Повреждённая запись миграцию не роняет.
+      await save('не json');
+      await db.execute(sql.raw(migration));
+      expect(await stored()).toBe('не json');
+    } finally {
+      await save(JSON.stringify(AUTOCHECKS_DEFAULTS));
+      store.cache = null;
+    }
+  });
+
+  it('удаление сервера закрывает соединение его агента особым кодом, без «пропал со связи» в Журнале', async () => {
+    const db = app.get<Db>(DB);
+    const created = await agent
+      .post('/api/servers')
+      .set(CSRF_HEADER, csrf)
+      .send({
+        name: 'agent-gone',
+        host: '127.0.0.1',
+        port: ssh.port,
+        sshUser: SSH_USER,
+        auth: { method: 'password', password: SSH_PASSWORD },
+      })
+      .expect(201);
+    const goneId = serverSchema.parse(created.body).id;
+    // Фоновая автоустановка выпускает свой токен — дождёмся её, чтобы не гоняться за токенами.
+    await expect.poll(() => statusOf(goneId), { timeout: 10_000 }).toBe('pending');
+    const issued = await agent
+      .post(`/api/servers/${goneId}/enrollment-token`)
+      .set(CSRF_HEADER, csrf)
+      .expect(200);
+    const k = generateKeyPairSync('ed25519');
+    const pub = (k.publicKey.export({ format: 'der', type: 'spki' }) as Buffer)
+      .subarray(-32)
+      .toString('base64');
+    await request(app.getHttpServer())
+      .post('/api/agent/v1/enroll')
+      .send({ token: issued.body.token as string, pubkey: pub, version: '0.5.0-test' })
+      .expect(200);
+    const ws = await login(goneId, pub, (nonce) =>
+      edSign(null, Buffer.from(nonce, 'base64'), k.privateKey).toString('base64'),
+    );
+    await expect.poll(() => statusOf(goneId), { timeout: 5_000 }).toBe('online');
+
+    const closed = new Promise<number>((resolve) => ws.ws.once('close', (code) => resolve(code)));
+    await agent.delete(`/api/servers/${goneId}`).set(CSRF_HEADER, csrf).expect(204);
+    const bye = await ws.next();
+    expect(bye.type).toBe(AGENT_MSG.error);
+    expect(bye.payload).toMatchObject({ code: 'unknown-server', message: 'Сервер удалён из панели' });
+    expect(await closed).toBe(CLOSE_SERVER_DELETED);
+    await new Promise((r) => setTimeout(r, 200));
+    const after = await db.execute<{ action: string }>(
+      sql`select action from audit_log where target_id = ${goneId} and action = 'server.agent.offline'`,
+    );
+    expect(after.rows).toEqual([]);
+  }, 30_000);
+
+  it('запись сервера исчезла мимо панели (восстановление из копии): первый же сигнал агента закрывает соединение', async () => {
+    const ws = await login(serverId, pubkeyB64, signNonce);
+    await expect.poll(() => statusOf(serverId), { timeout: 5_000 }).toBe('online');
+    const closed = new Promise<number>((resolve) => ws.ws.once('close', (code) => resolve(code)));
+    // Удаляем строку напрямую: слушатели удаления не сработали, соединение осталось открытым.
+    await app.get<Db>(DB).execute(sql`delete from servers where id = ${serverId}`);
+    ws.send(AGENT_MSG.heartbeat, {});
+    const bye = await ws.next();
+    expect(bye.payload).toMatchObject({ code: 'unknown-server', message: 'Сервер удалён из панели' });
+    expect(await closed).toBe(CLOSE_SERVER_DELETED);
   });
 });

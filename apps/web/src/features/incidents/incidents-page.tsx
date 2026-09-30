@@ -1,10 +1,10 @@
 import type { Incident, IncidentStatus } from '@nodeservice/shared';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { ChevronRightIcon, Trash2Icon, WrenchIcon } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
-import { Pagination } from '@/components/pagination';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
@@ -25,20 +25,30 @@ import {
 } from './incident-format';
 import {
   type IncidentsFilter,
+  incidentsKeys,
   useDeleteResolvedIncidents,
   useIncidents,
   useIncidentWeekStats,
 } from './incidents-api';
 import {
   BOTTOM_GAP,
+  expectedSpan,
   FOOTER_HEIGHT,
   fitRows,
+  LIST_START,
+  type ListNav,
   type ListView,
-  paging,
+  type PageSpan,
+  pageOf,
+  reanchored,
   requestSize,
   requestWindow,
-  visibleCount,
+  settledView,
+  toLast,
+  toNext,
+  toPrev,
 } from './incidents-fit';
+import { IncidentsPager } from './incidents-pager';
 import { LevelChip } from './level-chip';
 
 const FILTERS: ReadonlyArray<{ key: IncidentsFilter; label: string }> = [
@@ -53,15 +63,31 @@ const STATUS_PILL: Record<IncidentStatus, { tone: 'ok' | 'warn' | 'crit' | 'mute
 };
 /** День закрытия инцидента — по нему решённые собираются в группы. */
 const dayOf = (inc: Incident, now: number): string => dayLabel(inc.resolvedAt ?? inc.openedAt, now);
+/** Начало календарного дня (местное время) — по нему дни сравниваются. */
+const dayStart = (iso: string): number => {
+  const d = new Date(iso);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+};
+const closeDay = (inc: Incident): number => dayStart(inc.resolvedAt ?? inc.openedAt);
 
 /**
- * Решённые по дням. `cut` — на каких краях страницы список продолжается: у крайних дней число сбоев тогда
- * относится только к этой странице (остальные сбои того же дня — на соседней), и итогом дня его не называем.
+ * Какие дни продолжаются за краями страницы — число сбоев у них относится только к этой странице. Сервер
+ * отдаёт строки по времени открытия (от новых к старым), а группы — по дню закрытия. `before` — день, не
+ * раньше которого открыты строки до страницы: закрыты они не раньше, поэтому день закрытия не раньше него
+ * может продолжаться на прежних страницах — и у долгого инцидента (открыт три дня назад, закрыт сегодня),
+ * даже если его группа стоит не с краю. `after` — день закрытия строки сразу после страницы: он продолжается
+ * на следующей. null — с этой стороны строк нет.
  */
+interface PageEdges {
+  before: number | null;
+  after: number | null;
+}
+
+/** Решённые по дням; у дня, который продолжается на соседней странице, число сбоев — «на этой странице». */
 const dayGroups = (
   items: Incident[],
   now: number,
-  cut: { before: boolean; after: boolean } = { before: false, after: false },
+  edges: PageEdges = { before: null, after: null },
 ): Array<{ key: string; label: string; note?: string; items: Incident[] }> => {
   // Недавно закрытый — сверху; день группы — день закрытия, а не открытия.
   const sorted = [...items].sort((a, b) => closedAtMs(b) - closedAtMs(a));
@@ -70,12 +96,13 @@ const dayGroups = (
     const label = dayOf(inc, now);
     byDay.set(label, [...(byDay.get(label) ?? []), inc]);
   }
-  const days = [...byDay];
-  return days.map(([label, list], i) => {
+  return [...byDay].map(([label, list]) => {
     const auto = list.filter((x) => x.attempts.some((a) => a.status === 'helped' && a.by === 'auto')).length;
     const n = list.length;
     const word = n === 1 ? 'сбой' : n < 5 ? 'сбоя' : 'сбоев';
-    const partial = (i === 0 && cut.before) || (i === days.length - 1 && cut.after);
+    const day = closeDay(list[0] as Incident);
+    const partial =
+      (edges.before !== null && day >= edges.before) || (edges.after !== null && day === edges.after);
     return {
       key: label,
       label,
@@ -98,6 +125,18 @@ function barTone(inc: Incident): string {
 }
 
 /**
+ * Показанная страница решённых: каким видом открыта, с какой строки начинается, её строки (в порядке
+ * сервера) и соседние строки за её краями — по ним подпись дня узнаёт, продолжается ли день.
+ */
+interface ShownPage {
+  view: ListView;
+  start: number;
+  rows: Incident[];
+  before: Incident | undefined;
+  after: Incident | undefined;
+}
+
+/**
  * «Инциденты» (витрина v3, A1): полоса итога за 7 дней и реестр по дням — время, сервер, что случилось
  * и чем кончилось одним предложением, статус, длительность. Строка ведёт на страницу-кейс.
  * На широком экране реестр занимает высоту окна: решённых на странице столько, сколько помещается, а поле
@@ -106,13 +145,15 @@ function barTone(inc: Incident): string {
 export function IncidentsPage() {
   const [filter, setFilter] = useState<IncidentsFilter>('all');
   // Что показано из решённых: с какой строки страница начинается (или перед какой кончается — когда листаем
-  // назад). Хранится строка, а не номер страницы: страницы разной длины (сколько помещается по высоте), и
-  // при изменении окна или числа открытых на экране должны остаться те же инциденты.
-  const [view, setView] = useState<ListView>({ mode: 'start', row: 0 });
+  // назад) и с каких страниц сюда пришли «Следующей». Хранится строка, а не номер страницы: страницы разной
+  // длины (сколько помещается по высоте), и при изменении окна или числа открытых на экране должны остаться
+  // те же инциденты.
+  const [nav, setNav] = useState<ListNav>(LIST_START);
+  const { view } = nav;
   // Вкладка и страница меняются одним действием: сброс эффектом успевал отправить запрос по старой странице.
   const pickFilter = (next: IncidentsFilter) => {
     setFilter(next);
-    setView({ mode: 'start', row: 0 });
+    setNav(LIST_START);
   };
 
   // Открытых обычно мало — держим целиком, без пагинации: «Сейчас» видно сразу на любой вкладке, кроме
@@ -149,6 +190,9 @@ export function IncidentsPage() {
   const now = useNow(openItems.length > 0, 1000);
   const deleteResolved = useDeleteResolvedIncidents();
   const [confirmClear, setConfirmClear] = useState(false);
+  const queryClient = useQueryClient();
+  // Сколько раз удаляли решённые — после удаления из кэша убирается страница, бывшая тогда на экране.
+  const [cleared, setCleared] = useState(0);
 
   const openCount = openItems.length;
   const pending = (needsOpen && open.isPending) || (needsResolved && resolvedPaged.isPending);
@@ -158,50 +202,92 @@ export function IncidentsPage() {
   const footer = total > 0;
   const available = roomFor(footer);
 
+  // Пока новая страница не пришла, на экране остаётся прежняя — как была, только приглушённая.
+  const last = useRef<ShownPage | null>(null);
+  // Место под реестр изменилось (высота окна, число открытых): страница, открытая «Предыдущей», держится за
+  // первую показанную строку, а не за конец — иначе верхние строки ушли бы с экрана. Запомненные для
+  // «Предыдущей» страницы были другой длины, как и при другом числе решённых, — они забываются. Правится
+  // сразу, до запроса: иначе ушёл бы запрос по прежнему виду.
+  const [seen, setSeen] = useState({ height, openRows, total });
+  const moved = seen.height !== height || seen.openRows !== openRows;
+  if (moved || seen.total !== total) {
+    setSeen({ height, openRows, total });
+    const shownStart = last.current?.view === view ? last.current.start : null;
+    setNav(reanchored(nav, moved ? shownStart : null));
+  }
+
   // Какие решённые показать: из полученного окна — столько, сколько помещается по высоте. Листаем вперёд —
   // первые строки, назад — последние (страница кончается там, где начиналась следующая).
   const items = resolvedPaged.data?.items;
-  const fresh = useMemo(() => {
+  const fresh = useMemo((): ShownPage | null => {
     if (!needsResolved || stale || !items) return null;
-    // Назад: в окно могли попасть строки за концом страницы (сервер отдаёт не меньше пяти) — их отбрасываем.
-    const usable = view.mode === 'end' ? items.slice(0, Math.max(0, view.row - win.offset)) : items;
-    const k = visibleCount(
-      available,
-      openRows,
-      usable.map((i) => dayOf(i, now)),
-      view.mode,
-    );
-    const rows = view.mode === 'start' ? usable.slice(0, k) : usable.slice(usable.length - k);
-    const start = view.mode === 'start' ? win.offset : win.offset + usable.length - k;
-    return { rows, start };
-  }, [needsResolved, stale, items, view, win.offset, available, openRows, now]);
-  // Пока новая страница не пришла, на экране остаётся прежняя — как была, только приглушённая.
-  const last = useRef<{ rows: Incident[]; start: number } | null>(null);
-  if (fresh) last.current = fresh;
-  const shown = fresh ?? (needsResolved ? last.current : null);
+    const days = items.map((i) => dayOf(i, now));
+    const { start, count } = pageOf(view, win.offset, days, size, available, openRows);
+    const from = start - win.offset;
+    return {
+      view,
+      start,
+      rows: items.slice(from, from + count),
+      before: items[from - 1],
+      after: items[from + count],
+    };
+  }, [needsResolved, stale, items, view, win.offset, size, available, openRows, now]);
+  // Список кончился раньше открытой страницы (решённых убавилось): ответ пуст, а решённые есть. Это не
+  // «решённых нет», а ещё загрузка — прежняя страница остаётся, вид сейчас перейдёт к концу списка.
+  const beyond = fresh !== null && fresh.rows.length === 0 && total > 0;
+  if (fresh && !beyond && !moved) last.current = fresh;
+  const shown = fresh && !beyond ? fresh : needsResolved ? last.current : null;
+  const loading = stale || beyond;
   const resolvedRows = shown?.rows ?? [];
   const start = shown?.start ?? 0;
 
-  // Строка за концом списка (решённых убавилось) — показываем конец. Листали назад и дошли до самого
-  // начала — показываем начало полной страницей, а не короткий остаток.
-  const settled = fresh !== null && !resolvedPaged.isFetching;
+  // Страница пришла — поправить вид, если нужно (см. settledView): строка за концом списка — показываем
+  // конец; дошли «Предыдущей» до начала — первую страницу полной, если при этом ничего не пропадёт.
+  const settle = useMemo(
+    () =>
+      fresh && !resolvedPaged.isFetching
+        ? settledView(
+            view,
+            { start: fresh.start, count: fresh.rows.length },
+            fresh.rows.map((i) => dayOf(i, now)),
+            total,
+            available,
+            openRows,
+          )
+        : null,
+    [fresh, resolvedPaged.isFetching, view, total, available, openRows, now],
+  );
   useEffect(() => {
-    if (!settled || total === 0) return;
-    if (resolvedRows.length === 0) setView({ mode: 'end', row: total });
-    else if (view.mode === 'end' && start === 0) setView({ mode: 'start', row: 0 });
-  }, [settled, total, resolvedRows.length, view.mode, start]);
+    if (settle) setNav({ view: settle, back: [] });
+  }, [settle]);
+
+  // «Удалить решённые»: страница, бывшая на экране, переписана в кэше в «пусто» (удалённые исчезают сразу).
+  // После перехода к началу списка она уже не на экране — убираем её, иначе, когда решённые появятся снова,
+  // она подставилась бы под тем же адресом и показала бы «Пока спокойно».
+  useEffect(() => {
+    if (cleared > 0)
+      queryClient.removeQueries({ queryKey: incidentsKeys.list('resolved'), type: 'inactive' });
+  }, [cleared, queryClient]);
 
   const showOpen = needsOpen && openItems.length > 0;
   const showResolved = needsResolved && resolvedRows.length > 0;
   const groups = useMemo(() => {
     const out: Array<{ key: string; label: string; note?: string; items: Incident[] }> = [];
     if (showOpen) out.push({ key: 'now', label: 'Сейчас', items: openItems });
-    if (showResolved)
+    if (showResolved && shown) {
+      // Соседней строки в окне нет (больше ста сервер не отдаёт) — берём крайнюю строку самой страницы: так
+      // крайний день скорее назовём «на этой странице», чем целым.
+      const above = shown.before ?? (shown.rows[0] as Incident);
+      const below = shown.after ?? (shown.rows.at(-1) as Incident);
       out.push(
-        ...dayGroups(resolvedRows, now, { before: start > 0, after: start + resolvedRows.length < total }),
+        ...dayGroups(resolvedRows, now, {
+          before: shown.start > 0 ? dayStart(above.openedAt) : null,
+          after: shown.start + resolvedRows.length < total ? closeDay(below) : null,
+        }),
       );
+    }
     return out;
-  }, [showOpen, openItems, showResolved, resolvedRows, now, start, total]);
+  }, [showOpen, openItems, showResolved, shown, resolvedRows, now, total]);
   // Высота каждой строки, при которой реестр кончается ровно у нижнего поля; null — обычная высота.
   // Страница полная, если решённые на ней не кончаются: дальше (или раньше, когда листали назад) есть ещё.
   const rowCount = groups.reduce((n, g) => n + g.items.length, 0);
@@ -213,14 +299,14 @@ export function IncidentsPage() {
   // Номер первой строки каждой группы в общем счёте — по нему берётся высота строки.
   const groupStart = groups.map((_, i) => groups.slice(0, i).reduce((n, g) => n + g.items.length, 0));
 
-  // Номера страниц. Пока показана прежняя страница, считаем от запрошенной строки: иначе «Следующая»
-  // считалась бы от устаревшего места и быстрые нажатия терялись бы. Длина ещё не пришедшей страницы
-  // неизвестна — берём длину показанной.
+  // Где страница в списке. Пока нужная не пришла, считаем от запрошенного места: иначе быстрые нажатия
+  // считались бы от устаревшего и терялись. Длина ещё не пришедшей страницы неизвестна — берём длину показанной.
   const per = Math.max(1, resolvedRows.length || size);
-  const at = stale
-    ? { start: view.mode === 'start' ? view.row : Math.max(0, view.row - per), shown: per }
-    : { start, shown: resolvedRows.length };
-  const pages = paging(at.start, Math.min(at.shown, Math.max(0, total - at.start)), total, size);
+  const span: PageSpan = loading
+    ? expectedSpan(beyond ? { mode: 'end', row: total } : view, per, total)
+    : { start, end: start + resolvedRows.length };
+  // Ячейка «открыто сейчас» в полосе — как её считает сервер: открытые, заведённые за последние 7 дней.
+  const openThisWeek = openItems.some((i) => new Date(i.openedAt).getTime() >= now - 7 * 86_400_000);
 
   return (
     // Нижнее поле страницы (60px у оболочки) на широком экране сводим к боковому — 26px.
@@ -269,12 +355,12 @@ export function IncidentsPage() {
         </Link>
       </div>
 
-      {/* Заглушка той же высоты, что и полоса в одну строку: реестр под ней не прыгает после загрузки. */}
-      {weekly.data ? <StatsStrip stats={weekly.data} /> : <Skeleton className="h-[64px] rounded-2xl" />}
+      {/* Заглушка — та же полоса без чисел, той же высоты: реестр под ней не пересчитывается после загрузки. */}
+      <StatsStrip stats={weekly.data ?? null} withOpen={openThisWeek} />
 
       {/* Верх этого блока — точка отсчёта высоты реестра: он есть при загрузке, ошибке и пустом списке. */}
       <div ref={listRef}>
-        {pending ? (
+        {pending || (loading && !showOpen && !showResolved && total > 0) ? (
           <Skeleton className="rounded-2xl" style={{ height: roomFor(needsResolved) ?? 320 }} />
         ) : failed ? (
           <p
@@ -295,10 +381,10 @@ export function IncidentsPage() {
         ) : (
           <div
             data-testid="incidents-list"
-            aria-busy={stale}
+            aria-busy={loading}
             className={cn(
               'overflow-hidden rounded-2xl border border-border bg-surface transition-opacity',
-              stale && 'opacity-60',
+              loading && 'opacity-60',
             )}
           >
             {groups.map((g, gi) => (
@@ -327,13 +413,16 @@ export function IncidentsPage() {
         <div data-testid="incidents-footer" className="flex min-h-8 items-center justify-between gap-3 px-1">
           <p className="min-w-0 truncate text-[12px] text-text-3 tabular-nums">
             {filter === 'all' ? 'Решённых: ' : ''}
-            {`${at.start + 1}–${Math.min(at.start + at.shown, total)} из ${total.toLocaleString('ru-RU')}`}
+            {`${Math.min(span.start + 1, total)}–${Math.min(span.end, total)} из ${total.toLocaleString('ru-RU')}`}
           </p>
           <div className="flex-none">
-            <Pagination
-              page={pages.page}
-              totalPages={pages.totalPages}
-              onChange={(next) => setView(pages.go(next))}
+            <IncidentsPager
+              atStart={span.start <= 0}
+              atEnd={span.end >= total}
+              onFirst={() => setNav(LIST_START)}
+              onPrev={() => setNav(toPrev(nav, span))}
+              onNext={() => setNav(toNext(nav, span, !loading))}
+              onLast={() => setNav(toLast(total))}
               label="Страницы решённых инцидентов"
             />
           </div>
@@ -353,7 +442,8 @@ export function IncidentsPage() {
             const { deleted } = await deleteResolved.mutateAsync();
             // Удалённые не должны остаться на экране «прежней страницей», пока список перечитывается.
             last.current = null;
-            setView({ mode: 'start', row: 0 });
+            setNav(LIST_START);
+            setCleared((n) => n + 1);
             setConfirmClear(false);
             toast.success(deleted > 0 ? `Удалено инцидентов: ${deleted}.` : 'Решённых инцидентов не было.');
           } catch (err) {
@@ -366,35 +456,65 @@ export function IncidentsPage() {
   );
 }
 
-/** Полоса итога за 7 дней: числа словами, без KPI-плиток. */
-function StatsStrip({ stats }: { stats: WeekStats }) {
-  const resolved = stats.auto + stats.waited + stats.self + stats.manual;
+/** Разметка полосы — общая у полосы и её заглушки: по ней переносится на узком окне. */
+const STRIP_LAYOUT = 'flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border px-4 py-3';
+
+/**
+ * Полоса итога за 7 дней: числа словами, без KPI-плиток. Без `stats` — заглушка на время загрузки: та же
+ * разметка со скрытыми ячейками, поэтому и высота та же (узкое окно переносит полосу на вторую и третью
+ * строку), и реестр под ней сразу посчитан по верной высоте. `withOpen` — будет ли ячейка «открыто сейчас»:
+ * от неё зависит перенос. Чего заглушка знать не может — будет ли «Типичное время починки»: где полоска долей
+ * стоит на отдельной строке, с ним полоса на 10px выше.
+ */
+function StatsStrip({ stats, withOpen }: { stats: WeekStats | null; withOpen: boolean }) {
+  const s = stats ?? {
+    total: 0,
+    auto: 0,
+    waited: 0,
+    self: 0,
+    manual: 0,
+    open: withOpen ? 1 : 0,
+    medianFixS: null,
+  };
+  const resolved = s.auto + s.waited + s.self + s.manual;
   const pct = (n: number) => (resolved > 0 ? `${(n / resolved) * 100}%` : '0%');
-  return (
-    <div
-      data-testid="incidents-stats"
-      className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-border bg-surface px-4 py-3"
-    >
-      <Stat n={stats.total} label="сбоев за 7 дней" />
+  const cells = (
+    <>
+      <Stat n={s.total} label="сбоев за 7 дней" />
       <span className="hidden h-7 w-px bg-border sm:block" aria-hidden="true" />
-      <Stat n={stats.auto} label="починила панель" cls="text-ok" />
-      <Stat n={stats.waited} label="по вашей команде" cls="text-warn" />
-      <Stat n={stats.self} label="прошли сами" cls="text-brand" />
-      <Stat n={stats.manual} label="закрыты вручную" />
-      {stats.open > 0 && <Stat n={stats.open} label="открыто сейчас" cls="text-crit" />}
+      <Stat n={s.auto} label="починила панель" cls="text-ok" />
+      <Stat n={s.waited} label="по вашей команде" cls="text-warn" />
+      <Stat n={s.self} label="прошли сами" cls="text-brand" />
+      <Stat n={s.manual} label="закрыты вручную" />
+      {s.open > 0 && <Stat n={s.open} label="открыто сейчас" cls="text-crit" />}
       <div className="flex min-w-[120px] flex-1 items-center gap-3">
         <div className="flex h-2 flex-1 overflow-hidden rounded-full bg-surface-3" aria-hidden="true">
-          <span className="h-full bg-ok" style={{ width: pct(stats.auto) }} />
-          <span className="h-full bg-warn" style={{ width: pct(stats.waited) }} />
-          <span className="h-full bg-brand" style={{ width: pct(stats.self) }} />
-          <span className="h-full bg-border-2" style={{ width: pct(stats.manual) }} />
+          <span className="h-full bg-ok" style={{ width: pct(s.auto) }} />
+          <span className="h-full bg-warn" style={{ width: pct(s.waited) }} />
+          <span className="h-full bg-brand" style={{ width: pct(s.self) }} />
+          <span className="h-full bg-border-2" style={{ width: pct(s.manual) }} />
         </div>
-        {stats.medianFixS !== null && (
+        {s.medianFixS !== null && (
           <span className="text-[12px] whitespace-nowrap text-text-3">
-            Типичное время починки {humanSeconds(stats.medianFixS)}
+            Типичное время починки {humanSeconds(s.medianFixS)}
           </span>
         )}
       </div>
+    </>
+  );
+  if (!stats)
+    return (
+      <Skeleton
+        data-testid="incidents-stats-placeholder"
+        aria-hidden="true"
+        className={cn(STRIP_LAYOUT, 'border-transparent *:invisible')}
+      >
+        {cells}
+      </Skeleton>
+    );
+  return (
+    <div data-testid="incidents-stats" className={cn(STRIP_LAYOUT, 'border-border bg-surface')}>
+      {cells}
     </div>
   );
 }

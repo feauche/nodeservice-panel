@@ -1,8 +1,15 @@
 import type { ActionKey, IncidentKind } from '@nodeservice/shared';
 
-/** Имя контейнера ноды в переменную $N (см. NODE_FIND в исполнителе). */
+/**
+ * Имя контейнера ноды в переменную $N — одна команда на все места: зонд раз в 15 с, «Поднять» и
+ * «Перезапустить контейнер ноды», журнал ноды для Джарвиса. Сначала — контейнер с образом ноды
+ * (`remnawave/node` из любого реестра), затем — с привычным именем (remnanode, remnawave-node, remna_node):
+ * у своих сборок образ другой. Раньше подходил любой контейнер с «remna» в имени, и на сервере с панелью
+ * Remnawave «нодой» оказывался её собственный контейнер: остановленная нода не замечалась, а
+ * «Перезапустить контейнер ноды» перезапускал панель.
+ */
 export const FIND_NODE =
-  "N=$(docker ps -a --format '{{.Names}}|{{.Image}}' 2>/dev/null | awk -F'|' 'tolower($1) ~ /remna/ || tolower($2) ~ /remnawave\\/node/ {print $1; exit}')";
+  "N=$(docker ps -a --format '{{.Names}}|{{.Image}}' 2>/dev/null | awk -F'|' 'tolower($2) ~ /(^|\\/)remnawave\\/node(:|@|$)/ {print $1; hit=1; exit} !named && tolower($1) ~ /^remna(wave)?[-_]?node/ {named=$1} END {if (!hit && named) print named}')";
 
 /**
  * Что именно делает каждое действие реестра — ТОЛЬКО здесь (никаких shell-строк из БД).

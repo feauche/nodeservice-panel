@@ -32,6 +32,8 @@ const agentActor = (serverName: string, serverId: string): AuditActor => ({
 @Injectable()
 export class AgentService {
   private readonly log = new Logger(AgentService.name);
+  /** Серверы, которым прямо сейчас возвращаем «в сети»: сигнал и метрика приходят почти разом, запись в Журнале — одна. */
+  private readonly reviving = new Set<string>();
 
   constructor(
     private readonly servers: ServersRepository,
@@ -94,7 +96,8 @@ export class AgentService {
     };
   }
 
-  async markOnline(server: ServerRow, version: string): Promise<void> {
+  /** `reason` — почему агент «вышел на связь» без нового подключения (в Журнал, словами). */
+  async markOnline(server: ServerRow, version: string, reason?: string): Promise<void> {
     const was = server.agentStatus;
     await this.servers.update(server.id, {
       agentStatus: 'online',
@@ -107,18 +110,38 @@ export class AgentService {
         actor: agentActor(server.name, server.id),
         source: 'auto',
         target: { type: 'server', id: server.id, display: server.name },
-        metadata: { version },
+        metadata: { version, ...(reason ? { reason } : {}) },
       });
   }
 
-  /** Лёгкая отметка живости на каждый heartbeat/метрику. */
-  async touch(serverId: string): Promise<void> {
-    await this.servers.update(serverId, { agentLastSeenAt: new Date() });
+  /**
+   * Отметка живости на каждый сигнал и метрику. Соединение открыто и агент шлёт данные, а сервер числится
+   * не «в сети» (джоба пометила его по затянувшейся паузе, связь при этом не рвалась) — возвращаем статус
+   * сами: иначе «не в сети» висело бы до переподключения агента, то есть днями. Пока идёт установка,
+   * статус ведёт она. false — сервера уже нет: шлюзу пора закрыть соединение.
+   */
+  async touch(serverId: string, version: string): Promise<boolean> {
+    const row = await this.servers.update(serverId, { agentLastSeenAt: new Date() });
+    if (!row) return false;
+    if (row.agentStatus === 'online' || row.agentStatus === 'installing' || this.reviving.has(serverId))
+      return true;
+    this.reviving.add(serverId);
+    try {
+      await this.markOnline(row, version, 'сигналы от агента возобновились, соединение не прерывалось');
+    } finally {
+      this.reviving.delete(serverId);
+    }
+    return true;
   }
 
-  async markOffline(server: ServerRow, reason: string): Promise<void> {
+  /**
+   * `staleBefore` — для джобы: она решает по списку, прочитанному чуть раньше; если сигнал с тех пор
+   * пришёл (позже этой отметки), агент на связи и помечать его нельзя.
+   */
+  async markOffline(server: ServerRow, reason: string, staleBefore?: Date): Promise<void> {
     const fresh = await this.servers.findById(server.id);
     if (!fresh || fresh.agentStatus !== 'online') return;
+    if (staleBefore && fresh.agentLastSeenAt && fresh.agentLastSeenAt >= staleBefore) return;
     await this.servers.update(server.id, { agentStatus: 'offline' });
     await this.audit.record({
       action: 'server.agent.offline',
@@ -130,8 +153,10 @@ export class AgentService {
     });
   }
 
-  async handleMetrics(server: ServerRow, metrics: AgentMetrics): Promise<void> {
-    await this.touch(server.id);
+  /** false — сервера уже нет (см. touch): метрики не пишем. */
+  async handleMetrics(server: ServerRow, version: string, metrics: AgentMetrics): Promise<boolean> {
+    if (!(await this.touch(server.id, version))) return false;
     await this.vm.write(server.id, server.name, metrics);
+    return true;
   }
 }

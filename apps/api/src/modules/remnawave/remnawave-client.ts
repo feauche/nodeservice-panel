@@ -33,6 +33,8 @@ export interface RemnawaveFetched {
 export interface RemnawaveNodeInbound {
   sni: string | null;
   port: number | null;
+  /** Remnawave не ответила на запрос: порт неизвестен, но это не значит, что его у ноды нет. */
+  failed?: boolean;
 }
 
 /** Обёртка над публичным API Remnawave. В тестах подменяется. */

@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Pill } from '@/features/settings/settings-ui';
+import { apiErrorMessage } from '@/lib/api';
 import { backupsApi } from './backups-api';
 import { formatSize, formatWhen } from './backups-format';
 
@@ -31,6 +32,8 @@ export function BackupsList({
   keep,
   timeZone,
   loading,
+  error,
+  onRetry,
   busy,
   onRestore,
   onDelete,
@@ -39,6 +42,9 @@ export function BackupsList({
   keep: number | null;
   timeZone: string;
   loading: boolean;
+  /** Список не загрузился: это не «копий нет» — показываем причину и «Повторить». */
+  error: unknown;
+  onRetry: () => void;
   /** Идёт копия или восстановление — восстанавливать и удалять нельзя. */
   busy: boolean;
   onRestore: (item: BackupItem) => void;
@@ -71,6 +77,13 @@ export function BackupsList({
           <Skeleton className="h-12 rounded-[10px]" />
           <Skeleton className="h-12 rounded-[10px]" />
         </div>
+      ) : error ? (
+        <p className="m-0 border-t border-border px-4 py-8 text-center text-[12.5px] text-crit">
+          Не удалось загрузить список копий. {apiErrorMessage(error)}{' '}
+          <button type="button" className="ml-2 cursor-pointer underline" onClick={onRetry}>
+            Повторить
+          </button>
+        </p>
       ) : items.length === 0 ? (
         <p className="m-0 border-t border-border px-4 py-8 text-center text-[12.5px] text-text-3">
           Копий пока нет. Нажмите «Сделать копию сейчас» — первая появится здесь через полминуты.

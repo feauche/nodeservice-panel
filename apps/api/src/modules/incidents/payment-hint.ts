@@ -40,7 +40,9 @@ export const NO_PAYMENT_FACTS: PaymentFacts = { overdue: [], dueSoon: [], paying
  * - ru-only — из России порт не отвечает, из-за рубежа порт не проверен (нечем или не удалось);
  * - panel-only — сервер не отвечает панели, из других стран порт не проверен (не с чего или не удалось);
  * - port-only — порт отвечает, но блокировку проверить нельзя (нет имени маскировки);
- * - entry-unchecked — сервер отвечает, а свой мост проверить не удалось: возможная причина не проверена;
+ * - entry-unchecked — сервер отвечает, а вход арендодателя проверить не удалось: возможная причина не проверена;
+ * - bridge-unchecked — сервер отвечает, а свой мост проверить не удалось: начинать надо с моста (арендодатель
+ *   свой мост выключить не может, и сам сервер он не выключал — он отвечает);
  * - partial — порт отвечает с перебоями (не со всех проверяющих или не каждый раз): уже есть другая находка;
  * - stalled — итог «в норме», но соединение обрывается на небольшом объёме данных: тоже находка;
  * - fleet — онлайн упал сразу у нескольких нод, этот сервер отвечает;
@@ -57,6 +59,7 @@ export type PaymentPicture =
   | 'panel-only'
   | 'port-only'
   | 'entry-unchecked'
+  | 'bridge-unchecked'
   | 'partial'
   | 'stalled'
   | 'fleet'
@@ -71,32 +74,50 @@ export type PaymentPicture =
 const ANY_PAYER: readonly BillingKind[] = ['server', 'rent'];
 const RENT_ONLY: readonly BillingKind[] = ['rent'];
 
+/**
+ * Что именно случилось у других за то же время: упал онлайн у других нод ('online') или пропала связь с
+ * другими серверами ('link'). Панель пишет то, что видела: «онлайн упал у нескольких нод» при одном
+ * замолчавшем агенте соседнего сервера было бы выдумкой.
+ */
+export type FleetWhat = 'online' | 'link';
+
 interface PictureText {
   /** Какие оплаты объясняют картину. */
   kinds: readonly BillingKind[];
   /** Ставить ли оплату в заголовок дела: нет, когда панель уже нашла другое объяснение. */
   titled: boolean;
-  /** Вывод при просрочке. */
-  late: string;
+  /** Вывод при просрочке. У картин «сбой не у одного» зависит от того, что случилось у других. */
+  late: string | ((what: FleetWhat) => string);
   /** Вывод при сроке в ближайшие сутки. */
-  soon: string;
+  soon: string | ((what: FleetWhat) => string);
 }
 
 const AFTER_PAY = 'после оплаты отметьте продление в «Биллинге»';
 /** У панели уже есть другое объяснение: оплату просим проверить «заодно» — и говорим, почему она не первая. */
 const ALSO = 'Заодно проверьте оплату:';
-const SEVERAL_NODES = 'Онлайн упал сразу у нескольких нод — это больше похоже на общую причину';
-const SEVERAL_SERVERS = 'Сбой сразу у нескольких серверов — это больше похоже на общую причину';
+const COMMON = 'это больше похоже на общую причину';
+/** Онлайн упал у этой ноды — и что в то же время было у других. */
+const WITH_DROP: Record<FleetWhat, string> = {
+  online: `Онлайн упал сразу у нескольких нод — ${COMMON}`,
+  link: `В это же время пропала связь с другими серверами — ${COMMON}`,
+};
+/** Этот сервер перестал отвечать — и что в то же время было у других. */
+const WITH_DOWN: Record<FleetWhat, string> = {
+  link: `Связь пропала сразу с несколькими серверами — ${COMMON}`,
+  online: `В это же время упал онлайн у других нод — ${COMMON}`,
+};
 const SAME_HOSTER = 'если они у одного хостера, ею может быть и оплата';
 const FLAKY =
   'Порт отвечает с перебоями — это больше похоже на сбой маршрута или блокировку у части провайдеров, чем на неоплату';
+const OWN_BRIDGE =
+  'Сервер отвечает, а свой мост проверить не удалось — начните с моста: арендодатель его выключить не может';
 const STALLED =
   'Соединение с нодой обрывается на небольшом объёме данных — это больше похоже на помехи на пути, чем на неоплату';
 
 /**
  * «Вероятнее всего» — только там, где панель проверила всё, что могла, и другой причины не нашла (down,
- * entry, nothing). Проверка неполная — «Проверьте оплату: …» с тем, что мешает. Уже есть другая находка —
- * «Заодно проверьте оплату: …» и что у панели на первом месте.
+ * entry, nothing). Проверка неполная — «Проверьте оплату: …» с тем, что мешает. Уже есть другая находка или
+ * непроверенное место, с которого надо начать (свой мост), — «Заодно проверьте оплату: …» и что на первом месте.
  */
 const PICTURES: Record<PaymentPicture, PictureText> = {
   down: {
@@ -150,8 +171,14 @@ const PICTURES: Record<PaymentPicture, PictureText> = {
   'entry-unchecked': {
     kinds: RENT_ONLY,
     titled: true,
-    late: 'Проверьте оплату: вход проверить не удалось, а оплата аренды просрочена — возможно, доступ закрыли за неоплату.',
-    soon: 'Проверьте оплату: вход проверить не удалось, а срок оплаты аренды близко — возможно, оплата закончилась чуть раньше срока.',
+    late: 'Проверьте оплату: вход арендодателя проверить не удалось, а оплата аренды просрочена — возможно, вход отключили за неоплату.',
+    soon: 'Проверьте оплату: вход арендодателя проверить не удалось, а срок оплаты аренды близко — возможно, оплата закончилась чуть раньше срока.',
+  },
+  'bridge-unchecked': {
+    kinds: RENT_ONLY,
+    titled: false,
+    late: `${ALSO} аренда просрочена. ${OWN_BRIDGE}.`,
+    soon: `${ALSO} срок аренды близко. ${OWN_BRIDGE}.`,
   },
   partial: {
     kinds: RENT_ONLY,
@@ -168,20 +195,20 @@ const PICTURES: Record<PaymentPicture, PictureText> = {
   fleet: {
     kinds: RENT_ONLY,
     titled: false,
-    late: `${ALSO} аренда просрочена. ${SEVERAL_NODES}.`,
-    soon: `${ALSO} срок аренды близко. ${SEVERAL_NODES}.`,
+    late: (what) => `${ALSO} аренда просрочена. ${WITH_DROP[what]}.`,
+    soon: (what) => `${ALSO} срок аренды близко. ${WITH_DROP[what]}.`,
   },
   'fleet-dark': {
     kinds: ANY_PAYER,
     titled: false,
-    late: `${ALSO} оплата этого сервера просрочена. ${SEVERAL_NODES}; ${SAME_HOSTER}.`,
-    soon: `${ALSO} срок оплаты этого сервера близко. ${SEVERAL_NODES}; ${SAME_HOSTER}.`,
+    late: (what) => `${ALSO} оплата этого сервера просрочена. ${WITH_DROP[what]}; ${SAME_HOSTER}.`,
+    soon: (what) => `${ALSO} срок оплаты этого сервера близко. ${WITH_DROP[what]}; ${SAME_HOSTER}.`,
   },
   'fleet-down': {
     kinds: ANY_PAYER,
     titled: false,
-    late: `${ALSO} оплата этого сервера просрочена. ${SEVERAL_SERVERS}; ${SAME_HOSTER}.`,
-    soon: `${ALSO} срок оплаты этого сервера близко. ${SEVERAL_SERVERS}; ${SAME_HOSTER}.`,
+    late: (what) => `${ALSO} оплата этого сервера просрочена. ${WITH_DOWN[what]}; ${SAME_HOSTER}.`,
+    soon: (what) => `${ALSO} срок оплаты этого сервера близко. ${WITH_DOWN[what]}; ${SAME_HOSTER}.`,
   },
 };
 
@@ -205,11 +232,20 @@ export function paymentLines(p: PaymentFacts, picture: PaymentPicture): string[]
   ];
 }
 
-/** Вывод об оплате одной строкой; null — подходящей оплаты в окне нет. Просрочка важнее близкого срока. */
-export function paymentConclusion(p: PaymentFacts, picture: PaymentPicture): string | null {
+/**
+ * Вывод об оплате одной строкой; null — подходящей оплаты в окне нет. Просрочка важнее близкого срока.
+ * `fleet` — что случилось у других (нужно только картинам «сбой не у одного»): по умолчанию то, о чём сама
+ * картина, — упавший онлайн для падения онлайна, пропавшая связь для недоступного сервера.
+ */
+export function paymentConclusion(
+  p: PaymentFacts,
+  picture: PaymentPicture,
+  fleet?: FleetWhat,
+): string | null {
   const r = relevant(p, picture);
   if (r.overdue.length === 0 && r.dueSoon.length === 0) return null;
-  return r.overdue.length > 0 ? PICTURES[picture].late : PICTURES[picture].soon;
+  const text = r.overdue.length > 0 ? PICTURES[picture].late : PICTURES[picture].soon;
+  return typeof text === 'string' ? text : text(fleet ?? (picture === 'fleet-down' ? 'link' : 'online'));
 }
 
 /** Ставить ли оплату в заголовок дела: да, если есть вывод и панель не нашла другого объяснения. */

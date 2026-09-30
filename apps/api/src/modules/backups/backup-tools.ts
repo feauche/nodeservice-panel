@@ -3,7 +3,10 @@ import { existsSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { Logger } from '@nestjs/common';
 import pg from 'pg';
+
+import { BackupToolError } from './backup-errors.js';
 
 /**
  * Инструменты копии: база данных (pg_dump / pg_restore), упаковка и чтение путей сервера панели.
@@ -17,7 +20,7 @@ export interface BackupTools {
   verify(dump: string): Promise<boolean>;
   /**
    * Развернуть дамп вместо текущей базы: во временную базу, потом подмена имён; прежняя база остаётся
-   * как nodeservice_pre_restore_<время>. Ошибка на любом шаге — текущая база не тронута.
+   * как nodeservice_pre_restore_<время>. Ошибка на любом шаге — текущая база не тронута, временная удалена.
    */
   restore(dump: string): Promise<void>;
   /** Упаковать пути сервера панели (относительно hostRoot) в tar.gz; нечитаемые и отсутствующие — пропуск. */
@@ -42,8 +45,8 @@ async function runReader(
   priv: string,
   plain: string,
   args: string[],
-  opts: { timeoutMs?: number } = {},
-): Promise<{ code: number; stdout: string; stderr: string }> {
+  opts: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
+): Promise<RunResult> {
   try {
     return await run(priv, args, opts);
   } catch (err) {
@@ -52,11 +55,19 @@ async function runReader(
   }
 }
 
+/** timedOut — программа не уложилась в отведённое время и была остановлена (код при этом — 1). */
+export interface RunResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+  timedOut?: boolean;
+}
+
 export function run(
   cmd: string,
   args: string[],
   opts: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
-): Promise<{ code: number; stdout: string; stderr: string }> {
+): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { env: { ...process.env, ...opts.env }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -69,40 +80,172 @@ export function run(
       stderr += d.toString();
       if (stderr.length > 200_000) stderr = stderr.slice(-100_000);
     });
-    const timer = setTimeout(() => p.kill('SIGKILL'), opts.timeoutMs ?? 30 * 60_000);
+    let timedOut = false;
+    const timer = setTimeout(
+      () => {
+        timedOut = true;
+        p.kill('SIGKILL');
+      },
+      opts.timeoutMs ?? 30 * 60_000,
+    );
     p.on('error', (err) => {
       clearTimeout(timer);
       reject(err);
     });
     p.on('close', (code) => {
       clearTimeout(timer);
-      resolve({ code: code ?? 1, stdout, stderr });
+      resolve({ code: code ?? 1, stdout, stderr, timedOut });
     });
   });
 }
 
-const lastLine = (s: string) => s.trim().split('\n').filter(Boolean).at(-1) ?? '';
+/** Конец вывода программы — для лога: причина бывает не в последней строке (у pg_dump за ней идёт подсказка). */
+const stderrTail = (s: string) => s.trim().split('\n').filter(Boolean).slice(-8).join('\n').slice(-2000);
+/** Что программа сказала о своём сбое; молча — код выхода или то, что её остановили по времени. */
+export const failureText = (r: RunResult) =>
+  stderrTail(r.stderr) || (r.timedOut ? 'остановлено: не уложилось в отведённое время' : `код ${r.code}`);
+
+const ident = (s: string) => `"${s.replaceAll('"', '""')}"`;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** Как часто завершаются сессии прежней базы, пока идёт её переименование. */
+const TERMINATE_EVERY_MS = 100;
+
+/** Сбой команды базы: код и текст Postgres — в лог, владельцу — перевод. */
+function dbError(step: 'prepare' | 'swap', err: unknown): BackupToolError {
+  if (err instanceof BackupToolError) return err;
+  const code = (err as { code?: unknown }).code;
+  const text = err instanceof Error ? err.message : String(err);
+  return new BackupToolError(step, `${typeof code === 'string' ? `${code} ` : ''}${text}`);
+}
+
+/** Короткое подключение к служебной базе postgres: открыть, выполнить, закрыть. */
+async function withAdmin<T>(adminUrl: string, fn: (client: pg.Client) => Promise<T>): Promise<T> {
+  // Недоступную базу ждём не дольше десяти секунд: иначе восстановление повисло бы на минуты.
+  const client = new pg.Client({ connectionString: adminUrl, connectionTimeoutMillis: 10_000 });
+  // Обрыв соединения клиент сообщает событием 'error': без слушателя оно уронило бы весь процесс.
+  client.on('error', () => undefined);
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+export interface SwapNames {
+  /** Рабочая база панели. */
+  current: string;
+  /** Временная база с развёрнутой копией — станет рабочей. */
+  temp: string;
+  /** Под этим именем остаётся прежняя база. */
+  keep: string;
+}
+
+/**
+ * Подмена базы. Оба переименования — в одной транзакции: сбой между ними ничего не меняет, панель не
+ * остаётся без базы. Новые подключения запрещает сама команда переименования: она держит блокировку базы
+ * до конца транзакции (и ждёт до 5 секунд, пока уйдут уже открытые сессии), а открытые сессии в это время
+ * раз за разом завершает второй клиент — пул панели переподключается, как только агент пришлёт сигнал.
+ * Блокировка снимается сама, даже если панель упадёт посреди подмены: после сбоя чинить нечего.
+ */
+export async function swapDatabases(adminUrl: string, names: SwapNames): Promise<void> {
+  let committing = false;
+  try {
+    await withAdmin(adminUrl, (main) =>
+      withAdmin(adminUrl, async (killer) => {
+        const found = await main.query<{ oid: number }>('SELECT oid FROM pg_database WHERE datname = $1', [
+          names.current,
+        ]);
+        const oid = found.rows[0]?.oid;
+        if (oid === undefined) throw new Error(`database "${names.current}" does not exist`);
+        let renaming = true;
+        // По номеру базы, а не по имени: после подмены это имя носит уже новая база.
+        const terminating = (async () => {
+          while (renaming) {
+            await killer
+              .query(
+                'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datid = $1 AND pid <> pg_backend_pid()',
+                [oid],
+              )
+              .catch(() => undefined);
+            await sleep(TERMINATE_EVERY_MS);
+          }
+        })();
+        try {
+          await main.query('BEGIN');
+          await main.query(`ALTER DATABASE ${ident(names.current)} RENAME TO ${ident(names.keep)}`);
+          await main.query(`ALTER DATABASE ${ident(names.temp)} RENAME TO ${ident(names.current)}`);
+          committing = true;
+          await main.query('COMMIT');
+        } catch (err) {
+          if (!committing) await main.query('ROLLBACK').catch(() => undefined);
+          throw err;
+        } finally {
+          renaming = false;
+          await terminating;
+        }
+      }),
+    );
+  } catch (err) {
+    const failure = dbError('swap', err);
+    if (!committing) throw failure;
+    // Связь оборвалась на самом подтверждении: подмена могла состояться. Смотрим, что в базе на самом деле.
+    const swapped = await withAdmin(adminUrl, async (c) => {
+      const r = await c.query<{ datname: string }>(
+        'SELECT datname FROM pg_database WHERE datname = ANY($1)',
+        [[names.temp, names.keep]],
+      );
+      const have = new Set(r.rows.map((x) => x.datname));
+      return have.has(names.keep) && !have.has(names.temp);
+    }).catch(() => null);
+    if (swapped === true) return;
+    failure.outcomeUnknown = swapped === null;
+    throw failure;
+  }
+}
+
+/** du с правом читать любой файл; null — программа не запустилась. В тестах подменяется. */
+export type DiskUsage = (args: string[]) => Promise<RunResult | null>;
+const readerDu: DiskUsage = (args) =>
+  // Сообщения — на английском при любой локали сервера: по ним отличаем «нет такого пути» от «нет доступа».
+  runReader(NS_DU, 'du', args, { timeoutMs: 60_000, env: { LC_ALL: 'C' } }).catch(() => null);
+const kilobytes = (stdout: string) => Number(stdout.split(/\s+/)[0]) * 1024;
+
+/** Аргументы упаковки: пути — только после «--», иначе путь вида «/--параметр» стал бы параметром tar. */
+export function packArgs(paths: string[], hostRoot: string, out: string): string[] {
+  const rel = paths.map((p) => p.replace(/^\/+/, '')).filter(Boolean);
+  return ['-czf', out, '--ignore-failed-read', '-C', hostRoot || '/', '--', ...rel];
+}
 
 export class PgBackupTools implements BackupTools {
-  constructor(private readonly databaseUrl: string) {}
+  private readonly log = new Logger('BackupTools');
+
+  constructor(
+    private readonly databaseUrl: string,
+    private readonly du: DiskUsage = readerDu,
+  ) {}
 
   async check(): Promise<{ ok: boolean; reason: string | null }> {
     try {
       const r = await run('pg_dump', ['--version'], { timeoutMs: 10_000 });
-      if (r.code !== 0) return { ok: false, reason: 'pg_dump не запускается в контейнере панели.' };
+      if (r.code !== 0)
+        return {
+          ok: false,
+          reason:
+            'Инструмент для копии базы данных в панели не запускается. Попробуйте обновить панель с сервера.',
+        };
       return { ok: true, reason: null };
     } catch {
       return {
         ok: false,
-        reason:
-          'В этой сборке панели нет инструментов базы данных (pg_dump). Обновите панель: nodeservice update.',
+        reason: 'В этой сборке панели нет инструментов для копии базы данных. Обновите панель с сервера.',
       };
     }
   }
 
   async dump(out: string): Promise<void> {
     const r = await run('pg_dump', ['-Fc', '-d', this.databaseUrl, '-f', out]);
-    if (r.code !== 0) throw new Error(`pg_dump: ${lastLine(r.stderr) || `код ${r.code}`}`);
+    if (r.code !== 0) throw new BackupToolError('dump', failureText(r));
   }
 
   async verify(dump: string): Promise<boolean> {
@@ -118,12 +261,30 @@ export class PgBackupTools implements BackupTools {
     const keep = `${dbName}_pre_restore_${ts}`;
     const admin = new URL(url.toString());
     admin.pathname = '/postgres';
-    const client = new pg.Client({ connectionString: admin.toString() });
-    await client.connect();
-    const q = (sql: string) => client.query(sql);
-    const ident = (s: string) => `"${s.replaceAll('"', '""')}"`;
+    const adminUrl = admin.toString();
+    // Подключение — на каждый шаг своё: pg_restore идёт минутами, простаивающее могло бы оборваться.
+    const drop = (name: string, force: boolean) =>
+      withAdmin(adminUrl, (c) =>
+        c.query(`DROP DATABASE IF EXISTS ${ident(name)}${force ? ' WITH (FORCE)' : ''}`),
+      );
+    /** Базы, чьё имя начинается так же: временные (<база>_restore_…) и прежние (<база>_pre_restore_…). */
+    const named = (prefix: string) =>
+      withAdmin(adminUrl, async (c) =>
+        (await c.query<{ datname: string }>('SELECT datname FROM pg_database ORDER BY datname')).rows
+          .map((r) => r.datname)
+          .filter((n) => n.startsWith(prefix)),
+      );
     try {
-      await q(`CREATE DATABASE ${ident(temp)}`);
+      // Временные базы прошлых попыток, оставшиеся после сбоя: каждая — полная копия базы на диске.
+      // Только со своим именем: <база>_restore_<14 цифр времени> — чужую базу с похожим началом не трогаем.
+      const prefix = `${dbName}_restore_`;
+      for (const name of await named(prefix))
+        if (/^\d{14}$/.test(name.slice(prefix.length))) await drop(name, true).catch(() => undefined);
+      await withAdmin(adminUrl, (c) => c.query(`CREATE DATABASE ${ident(temp)}`));
+    } catch (err) {
+      throw dbError('prepare', err);
+    }
+    try {
       const target = new URL(url.toString());
       target.pathname = `/${temp}`;
       const r = await run('pg_restore', [
@@ -134,39 +295,26 @@ export class PgBackupTools implements BackupTools {
         target.toString(),
         dump,
       ]);
-      if (r.code !== 0) {
-        await q(`DROP DATABASE IF EXISTS ${ident(temp)}`);
-        throw new Error(`pg_restore: ${lastLine(r.stderr) || `код ${r.code}`}`);
-      }
-      // Подмена: все подключения к текущей базе закрываем (и свои тоже — панель сразу перезапустится).
-      await q(
-        `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName.replaceAll("'", "''")}' AND pid <> pg_backend_pid()`,
+      if (r.code !== 0) throw new BackupToolError('restore', failureText(r));
+      await swapDatabases(adminUrl, { current: dbName, temp, keep });
+    } catch (err) {
+      // Что бы ни сорвалось, временная база не остаётся. Если подмена всё же состоялась, базы с таким
+      // именем уже нет — команда ничего не удалит.
+      await drop(temp, true).catch((e: unknown) =>
+        this.log.warn(`Временная база ${temp} не удалилась: ${e instanceof Error ? e.message : e}`),
       );
-      await q(`ALTER DATABASE ${ident(dbName)} RENAME TO ${ident(keep)}`);
-      await q(`ALTER DATABASE ${ident(temp)} RENAME TO ${ident(dbName)}`);
-      // Держим одну прежнюю базу на случай отката, более старые — удаляем.
-      const old = await q(
-        `SELECT datname FROM pg_database WHERE datname LIKE '${dbName.replaceAll("'", "''")}\\_pre\\_restore\\_%' AND datname <> '${keep}' ORDER BY datname`,
-      );
-      for (const row of old.rows as Array<{ datname: string }>)
-        await q(`DROP DATABASE IF EXISTS ${ident(row.datname)}`).catch(() => undefined);
-    } finally {
-      await client.end().catch(() => undefined);
+      throw err;
     }
+    // Держим одну прежнюю базу на случай отката, более старые — удаляем (и оставленные консольным
+    // восстановлением: у них то же начало имени).
+    const old = await named(`${dbName}_pre_restore_`).catch(() => [] as string[]);
+    for (const name of old) if (name !== keep) await drop(name, false).catch(() => undefined);
   }
 
   async packPaths(paths: string[], hostRoot: string, out: string): Promise<void> {
-    const rel = paths.map((p) => p.replace(/^\/+/, '')).filter(Boolean);
-    const r = await runReader(NS_TAR, 'tar', [
-      '-czf',
-      out,
-      '--ignore-failed-read',
-      '-C',
-      hostRoot || '/',
-      ...rel,
-    ]);
+    const r = await runReader(NS_TAR, 'tar', packArgs(paths, hostRoot, out));
     // 2 — часть файлов не прочиталась (сокеты, пропавшие за время упаковки): архив всё равно годен.
-    if (r.code !== 0 && r.code !== 2) throw new Error(`tar: ${lastLine(r.stderr) || `код ${r.code}`}`);
+    if (r.code !== 0 && r.code !== 2) throw new BackupToolError('files', failureText(r));
   }
 
   async probePath(
@@ -174,20 +322,27 @@ export class PgBackupTools implements BackupTools {
     hostRoot: string,
   ): Promise<{ state: 'file' | 'dir' | 'missing' | 'denied'; size: number | null }> {
     const full = join(hostRoot || '/', path);
-    let st: Awaited<ReturnType<typeof stat>>;
-    try {
-      st = await stat(full);
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'EACCES' || code === 'EPERM') return { state: 'denied', size: null };
-      // Путь может лежать за закрытой папкой (например, /root): спросим у du с правом чтения.
-      const r = await runReader(NS_DU, 'du', ['-sk', full], { timeoutMs: 60_000 }).catch(() => null);
-      if (r && r.code === 0) return { state: 'dir', size: Number(r.stdout.split(/\s+/)[0]) * 1024 };
-      return { state: 'missing', size: null };
+    const st = await stat(full).catch((err: NodeJS.ErrnoException) => err);
+    if (!(st instanceof Error)) {
+      if (st.isFile()) return { state: 'file', size: st.size };
+      const r = await this.du(['-sk', '--', full]);
+      if (r?.code !== 0) return { state: r?.stderr.includes('denied') ? 'denied' : 'dir', size: null };
+      return { state: 'dir', size: kilobytes(r.stdout) };
     }
-    if (st.isFile()) return { state: 'file', size: st.size };
-    const r = await runReader(NS_DU, 'du', ['-sk', full], { timeoutMs: 60_000 }).catch(() => null);
-    if (r?.code !== 0) return { state: r?.stderr.includes('denied') ? 'denied' : 'dir', size: null };
-    return { state: 'dir', size: Number(r.stdout.split(/\s+/)[0]) * 1024 };
+    if (st.code !== 'EACCES' && st.code !== 'EPERM') return { state: 'missing', size: null };
+    // Пользователю панели путь закрыт (лежит за папкой вроде /root). Но упаковывает его программа с правом
+    // читать любой файл — спрашиваем такую же: видит она — значит, путь попадёт в копию. Сначала как папку
+    // («путь/.»): так большая папка обходится один раз, а файл отсеивается сразу.
+    const dir = await this.du(['-sk', '--', `${full}/.`]);
+    if (dir?.code === 0) return { state: 'dir', size: kilobytes(dir.stdout) };
+    // Не успела посчитать за минуту — папка есть и читается, просто большая: размера не знаем.
+    if (dir?.timedOut) return { state: 'dir', size: null };
+    if (dir && /not a directory/i.test(dir.stderr)) {
+      // Размер файла — в байтах, как у открытого файла (а не занятое место, кратное 4 КБ).
+      const file = await this.du(['-sb', '--', full]);
+      if (file?.code === 0) return { state: 'file', size: Number(file.stdout.split(/\s+/)[0]) };
+    }
+    // «Нет доступа» — только когда и она не смогла: тогда путь не попадёт и в копию.
+    return { state: dir && /no such file/i.test(dir.stderr) ? 'missing' : 'denied', size: null };
   }
 }

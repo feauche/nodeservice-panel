@@ -57,7 +57,7 @@ describe('RemnawavePage', () => {
     expect(await screen.findByRole('heading', { name: 'Подключено' })).toBeInTheDocument();
     expect(screen.getByText('vpn-panel.example.com')).toBeInTheDocument();
     expect(screen.getByText('870')).toBeInTheDocument(); // пользователей
-    // Онлайн — сумма по нодам (42 + нет данных), подписки в сети — подписью.
+    // Онлайн — сумма по нодам (42 + 0 у ноды не на связи), подписки в сети — подписью.
     expect(screen.getByText('подписок в сети 236')).toBeInTheDocument();
     expect(screen.getByText('bridge')).toBeInTheDocument();
     expect(screen.getByText('exit-nl')).toBeInTheDocument();
@@ -65,6 +65,21 @@ describe('RemnawavePage', () => {
     expect(screen.getByTestId('rw-cert')).toHaveTextContent(/^Сертификат до \d+ нояб? · \d+ дн/);
     expect(screen.queryByLabelText('Домен панели')).not.toBeInTheDocument();
     expect(await screen.findByText('Remnawave подключена.')).toBeInTheDocument();
+  });
+
+  it('у ноды, связанной с сервером панели, назван её сервер; «Добавить в NodeService» — только у остальных', async () => {
+    renderPage(Page, '/servers/remnawave');
+    await screen.findByRole('heading', { name: 'Подключение' });
+    const user = userEvent.setup();
+    await fill(user, 'vpn-panel.example.com', 'rw_pat_good');
+    await user.click(screen.getByRole('button', { name: 'Проверить и сохранить' }));
+    // «bridge» стоит на сервере de-fra-01 (адреса совпали), «exit-nl» в панели нет.
+    const linked = (await screen.findByText('bridge')).closest('li') as HTMLElement;
+    expect(within(linked).getByText('Сервер: de-fra-01')).toBeInTheDocument();
+    expect(within(linked).queryByRole('button', { name: 'Добавить в NodeService' })).toBeNull();
+    const lone = screen.getByText('exit-nl').closest('li') as HTMLElement;
+    expect(within(lone).getByRole('button', { name: 'Добавить в NodeService' })).toBeInTheDocument();
+    expect(within(lone).queryByText(/Сервер:/)).toBeNull();
   });
 
   it('ошибка домена (502) и ошибка токена (400): текст с сервера, форма остаётся', async () => {

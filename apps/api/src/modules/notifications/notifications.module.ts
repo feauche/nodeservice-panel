@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 
+import { DeferredTelegramJob } from './deferred-telegram.job.js';
 import { NotificationsController } from './notifications.controller.js';
 import { NotificationsRepository } from './notifications.repository.js';
 import { NotificationsService } from './notifications.service.js';
@@ -22,6 +23,7 @@ import { TelegramSettingsStore } from './telegram/telegram-settings.store.js';
     TelegramSettingsStore,
     TelegramService,
     TelegramDigestJob,
+    DeferredTelegramJob,
     { provide: TELEGRAM_CLIENT, useClass: HttpTelegramClient },
   ],
   exports: [NotificationsService, TelegramService],

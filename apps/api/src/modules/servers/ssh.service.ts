@@ -4,8 +4,12 @@ import { StringDecoder } from 'node:string_decoder';
 import { Injectable, Logger } from '@nestjs/common';
 import { EMPTY_FACTS, type ServerFacts } from '@nodeservice/shared';
 import { Client, type ConnectConfig } from 'ssh2';
+import { externalAddresses } from './addresses.js';
 import { serverProblems } from './servers.problems.js';
 import { normalizePrivateKey, privateKeyProblem } from './ssh-key.js';
+
+/** Факты, собранные с сервера: адреса интерфейсов здесь есть всегда (пусть и пустым списком). */
+export type GatheredFacts = Omit<ServerFacts, 'addresses'> & { addresses: string[] };
 
 export interface SshTarget {
   host: string;
@@ -31,6 +35,8 @@ export interface SshExecStreamOptions {
   onData?: (chunk: string) => void;
   /** Внешняя отмена: команда обрывается закрытием соединения. */
   signal?: AbortSignal;
+  /** Как назвать команду в тексте ошибки («установка агента») вместо её начала: в команде бывает токен. */
+  label?: string;
 }
 
 export interface SshSession {
@@ -60,6 +66,11 @@ const OUTPUT_MAX = 256 * 1024;
 /** Чем завершается команда, если соединение оборвалось, пока она шла. */
 const CONNECTION_LOST = 'соединение с сервером оборвалось';
 const CLOSED_BEFORE_LOGIN = 'сервер закрыл соединение до входа';
+/**
+ * В текст ошибки идёт только начало команды: целиком она попадала в ответ интерфейсу и в Журнал вместе с
+ * секретами (токен подключения агента) и вытесняла саму причину.
+ */
+const commandHead = (command: string) => command.slice(0, 60);
 
 /** Ключ или пароль в настройки ssh2; ключ сначала выправляем и проверяем, что он читается. */
 function applyAuth(config: ConnectConfig, target: SshTarget): void {
@@ -221,6 +232,7 @@ export class SshService {
       execStream: (command, opts = {}) =>
         new Promise((resolve, reject) => {
           const timeoutMs = opts.timeoutMs ?? EXEC_TIMEOUT_MS;
+          const name = opts.label ?? commandHead(command);
           let settled = false;
           const finish = (fn: () => void) => {
             if (settled) return;
@@ -230,19 +242,16 @@ export class SshService {
             opts.signal?.removeEventListener('abort', onAbort);
             fn();
           };
-          const lost = () =>
-            finish(() => reject(serverProblems.sshCommand(command.slice(0, 60), CONNECTION_LOST)));
+          const lost = () => finish(() => reject(serverProblems.sshCommand(name, CONNECTION_LOST)));
           const timer = setTimeout(() => {
             client.end();
             finish(() =>
-              reject(
-                serverProblems.sshCommand(command.slice(0, 60), `таймаут ${Math.round(timeoutMs / 1000)} с`),
-              ),
+              reject(serverProblems.sshCommand(name, `таймаут ${Math.round(timeoutMs / 1000)} с`)),
             );
           }, timeoutMs);
           const onAbort = () => {
             client.end();
-            finish(() => reject(serverProblems.sshCommand(command.slice(0, 60), 'отменено')));
+            finish(() => reject(serverProblems.sshCommand(name, 'отменено')));
           };
           if (opts.signal?.aborted) {
             onAbort();
@@ -252,7 +261,7 @@ export class SshService {
           pending.add(lost);
           client.exec(asRoot(command), (err, stream) => {
             if (err) {
-              finish(() => reject(serverProblems.sshCommand(command.slice(0, 60), err.message)));
+              finish(() => reject(serverProblems.sshCommand(name, err.message)));
               return;
             }
             // UTF-8 может разрываться между чанками — декодеры копят «хвост» до полного символа.
@@ -263,10 +272,13 @@ export class SshService {
             stream.on('close', (code: number | null) => finish(() => resolve({ code: code ?? -1 })));
           });
         }),
-      exec: (command) => runPlain(asRoot(command)),
-      execAsUser: (command) => runPlain(command),
+      exec: (command) => runPlain(asRoot(command), commandHead(command)),
+      execAsUser: (command) => runPlain(command, commandHead(command)),
     };
-    function runPlain(command: string): Promise<{ code: number; stdout: string; stderr: string }> {
+    function runPlain(
+      command: string,
+      name: string,
+    ): Promise<{ code: number; stdout: string; stderr: string }> {
       return new Promise((resolve, reject) => {
         const done = () => {
           clearTimeout(timer);
@@ -274,18 +286,18 @@ export class SshService {
         };
         const lost = () => {
           done();
-          reject(serverProblems.sshCommand(command, CONNECTION_LOST));
+          reject(serverProblems.sshCommand(name, CONNECTION_LOST));
         };
         const timer = setTimeout(() => {
           pending.delete(lost);
           client.end();
-          reject(serverProblems.sshCommand(command, 'таймаут выполнения'));
+          reject(serverProblems.sshCommand(name, 'таймаут выполнения'));
         }, EXEC_TIMEOUT_MS);
         pending.add(lost);
         client.exec(command, (err, stream) => {
           if (err) {
             done();
-            reject(serverProblems.sshCommand(command, err.message));
+            reject(serverProblems.sshCommand(name, err.message));
             return;
           }
           let stdout = '';
@@ -381,13 +393,15 @@ export class SshService {
    * Факты о сервере одной командой (посимвольно устойчиво к отсутствию утилит).
    * Ничего не меняет на сервере.
    */
-  async gatherFacts(session: SshSession): Promise<ServerFacts> {
+  async gatherFacts(session: SshSession): Promise<GatheredFacts> {
     const cmd = [
       'echo "@@hostname=$(hostname 2>/dev/null)"',
       'echo "@@arch=$(uname -m 2>/dev/null)"',
       'echo "@@kernel=$(uname -r 2>/dev/null)"',
       'echo "@@cores=$(nproc 2>/dev/null)"',
       'echo "@@memkb=$(grep MemTotal /proc/meminfo 2>/dev/null | tr -dc 0-9)"',
+      // Адреса на интерфейсах: по ним нода Remnawave находит свой сервер, если записана по другому его адресу.
+      'echo "@@ips=$(hostname -I 2>/dev/null || ip -o addr show scope global 2>/dev/null | awk \'{print $4}\' | cut -d/ -f1 | tr "\\n" " ")"',
       '. /etc/os-release 2>/dev/null && echo "@@os=$NAME" && echo "@@osver=$VERSION_ID"',
     ].join('; ');
     const { stdout } = await session.exec(cmd);
@@ -407,6 +421,7 @@ export class SshService {
       kernel: get('kernel'),
       cpuCores: Number.isFinite(cores) && cores > 0 ? cores : null,
       memoryMb: Number.isFinite(memKb) && memKb > 0 ? Math.round(memKb / 1024) : null,
+      addresses: externalAddresses(get('ips')),
     };
   }
 

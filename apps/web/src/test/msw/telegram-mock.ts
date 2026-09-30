@@ -1,6 +1,7 @@
 import {
   maskTelegramProxy,
   maskTelegramUrl,
+  PANEL_TIME_ZONE_DEFAULT,
   parseTelegramUrl,
   TELEGRAM_DELIVERY_DEFAULT,
   TELEGRAM_EVENTS_DEFAULT,
@@ -16,12 +17,15 @@ import { HttpResponse, http } from 'msw';
 export const mockTelegram = {
   settings: null as unknown as TelegramSettings,
   tokens: new Map<string, string>(),
+  /** С каким значением «Расширенное оформление» пришёл последний тест; null — теста не было. */
+  lastTestRich: null as boolean | null,
 };
 
 let seq = 0;
 
 export function resetTelegram(): void {
   mockTelegram.tokens = new Map();
+  mockTelegram.lastTestRich = null;
   mockTelegram.settings = {
     destinations: [],
     events: { ...TELEGRAM_EVENTS_DEFAULT },
@@ -29,6 +33,9 @@ export function resetTelegram(): void {
     kinds: { ...TELEGRAM_KINDS_DEFAULT },
     delivery: { ...TELEGRAM_DELIVERY_DEFAULT },
     proxy: null,
+    // Как на сервере: тихие часы идут по поясу панели (его меняет мок «Внешнего вида»).
+    timeZone: PANEL_TIME_ZONE_DEFAULT,
+    timeZoneChosen: true,
   };
 }
 resetTelegram();
@@ -73,6 +80,11 @@ export const telegramHandlers = [
           botName: '@lumax_alert_bot',
           chatTitle: t.chatId.startsWith('-') ? 'VPN-алерты' : 'Личный чат',
           lastTest: null,
+          // В «ненайденный» чат настоящие сообщения не доходят — в демо это видно отметкой у строки.
+          lastDelivery:
+            t.chatId === '-100999'
+              ? { at: new Date(Date.now() - 2 * 3_600_000).toISOString(), ...verdict(t.chatId) }
+              : null,
         });
       }
       s.destinations = next;
@@ -88,8 +100,17 @@ export const telegramHandlers = [
     const body = (await request.json()) as TelegramTestRequest;
     const saved = body.id ? mockTelegram.settings.destinations.find((d) => d.id === body.id) : null;
     const chatId = saved?.chatId ?? parseTelegramUrl(body.url ?? '')?.chatId ?? '';
-    const v = verdict(chatId);
+    const base = verdict(chatId);
+    // Образец в расширенном оформлении мок «принимает» всегда — как свежий Telegram.
+    const v =
+      base.ok && body.rich
+        ? {
+            ...base,
+            detail: 'Тест доставлен в расширенном оформлении — если в чате видна таблица, его можно включать',
+          }
+        : base;
     if (saved) saved.lastTest = { at: new Date().toISOString(), ...v };
+    mockTelegram.lastTestRich = body.rich ?? null;
     return HttpResponse.json({
       ...v,
       botName: '@lumax_alert_bot',

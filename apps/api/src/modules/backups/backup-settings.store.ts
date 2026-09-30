@@ -13,6 +13,19 @@ import { DB, type Db } from '../../infra/db/db.module.js';
 import { appMeta } from '../../infra/db/schema/index.js';
 
 const KEY = 'settings.backups';
+const SCHEDULE_KEY = 'backups.schedule';
+
+/**
+ * Ход расписания — рядом с настройками, но отдельной записью: её пишет фоновая задача, а не владелец.
+ * В базе, а не в памяти: неудачная копия файла не оставляет, и после перезапуска панель иначе начала бы
+ * отсчёт заново.
+ */
+export interface BackupScheduleState {
+  /** Когда панель последний раз бралась за копию по расписанию — получилась она или нет. */
+  attemptAt: string | null;
+  /** Момент расписания, о сбое которого уже сообщили: одно сообщение на момент. */
+  noticeSlot: string | null;
+}
 
 /** Как настройки лежат в app_meta: пароль и свой чат (с токеном бота) — зашифрованы. */
 export interface StoredBackupSettings extends Omit<BackupSettings, 'passwordSet' | 'telegram'> {
@@ -62,6 +75,25 @@ export class BackupSettingsStore {
     await this.db
       .insert(appMeta)
       .values({ key: KEY, value: v })
+      .onConflictDoUpdate({ target: appMeta.key, set: { value: v, updatedAt: new Date() } });
+  }
+
+  async schedule(): Promise<BackupScheduleState> {
+    const row = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, SCHEDULE_KEY) });
+    const iso = (v: unknown) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : null);
+    try {
+      const raw = (row ? JSON.parse(row.value) : {}) as Partial<BackupScheduleState> | null;
+      return { attemptAt: iso(raw?.attemptAt), noticeSlot: iso(raw?.noticeSlot) };
+    } catch {
+      return { attemptAt: null, noticeSlot: null };
+    }
+  }
+
+  async saveSchedule(s: BackupScheduleState): Promise<void> {
+    const v = JSON.stringify(s);
+    await this.db
+      .insert(appMeta)
+      .values({ key: SCHEDULE_KEY, value: v })
       .onConflictDoUpdate({ target: appMeta.key, set: { value: v, updatedAt: new Date() } });
   }
 

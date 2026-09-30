@@ -4,6 +4,7 @@ import { Interval } from '@nestjs/schedule';
 import { ServersRepository } from '../servers/servers.repository.js';
 import { ServersService } from '../servers/servers.service.js';
 import { IncidentsRepository } from './incidents.repository.js';
+import { PARTIAL_MARK } from './incidents.service.js';
 
 /** Пока «SSH недоступен» открыт, не ждём обычного интервала автопроверки (может быть час): перепроверяем чаще. */
 const RECHECK_INTERVAL_MS = 20_000;
@@ -15,6 +16,10 @@ const MIN_GAP_MS = 15_000;
  * что в настройках) слишком редкая: доступ мог вернуться уже через минуту. Эта джоба, пока такой
  * инцидент открыт, гоняет ту же проверку куда чаще — инцидент закрывается сам, как только связь пришла,
  * а не только по кнопке «Проверить все».
+ *
+ * Она же подтверждает неудачу до того, как дело заведено: SSH один раз не ответил — перепроверяем сразу,
+ * а не через час. Прошла проверка — тревоги не было; не проходят дольше порога — детекция открывает
+ * «SSH недоступен» (см. IncidentsService.sshDownConfirmed).
  */
 @Injectable()
 export class IncidentSshRecheckJob {
@@ -44,6 +49,15 @@ export class IncidentSshRecheckJob {
           .filter((i) => (i.kind === 'ssh_down' || i.kind === 'server_down') && i.serverId)
           .map((i) => i.serverId as string),
       );
+      // SSH не ответил, а дела ещё нет — неудачу нужно подтвердить или снять. Сервер с открытым делом
+      // «Недоступен из части сетей» не трогаем: там молчание SSH уже объяснено, хватит обычной автопроверки.
+      const explained = new Set(
+        open
+          .filter((i) => i.kind === 'node_blocked' && i.detail.startsWith(PARTIAL_MARK))
+          .map((i) => i.serverId),
+      );
+      for (const s of await this.serversRepo.list())
+        if (s.sshOk === false && !explained.has(s.id)) serverIds.add(s.id);
       if (serverIds.size === 0) return;
       const now = Date.now();
       for (const id of serverIds) {

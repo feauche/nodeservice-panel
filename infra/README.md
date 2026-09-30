@@ -28,7 +28,7 @@ Settings → Deploy keys), сгенерирует `infra/.env` с секрета
 | `nodeservice rollback` | вернуть предыдущий образ api |
 | `nodeservice backup [--to user@host:/dir]` | полный бэкап одним архивом `nodeservice-backup-<время>.tar.gz` (дамп БД + `.env` + meta) в `/opt/nodeservice/backups`, 14 дней; `--to` — копия по scp или в папку |
 | `nodeservice restore <файл> [--yes]` | восстановить из архива на работающей панели: секреты из бэкапа переносятся в `.env`, БД заменяется (прежняя сохраняется как `nodeservice_pre_restore_*`), api перезапускается |
-| `nodeservice cli setup-token` | rescue CLI: `setup-token`, `list-users`, `reset-password`, `disable-2fa`, `revoke-sessions` |
+| `nodeservice cli setup-token` | rescue CLI: `setup-token`, `list-users`, `reset-password`, `disable-2fa`, `revoke-sessions`, `unblock-login` (снять паузы входа после неудачных попыток) |
 | `nodeservice uninstall` | снять панель: бэкап БД и `.env` в `/root/nodeservice-last-backup`, затем контейнеры, образы, тома, `/opt/nodeservice`, cron и сама команда. Docker и deploy-ключ остаются |
 
 `infra/.env` — единственное место с секретами. Без `ENCRYPTION_KEY` из него зашифрованные данные

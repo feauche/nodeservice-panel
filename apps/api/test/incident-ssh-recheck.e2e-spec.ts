@@ -99,6 +99,17 @@ describe('ускоренная перепроверка SSH при открыт�
     expect((await getServer(target.id)).lastSshCheckAt).toBe(before);
   });
 
+  it('SSH один раз не ответил, дела ещё нет: джоба перепроверяет сама и снимает ложную неудачу', async () => {
+    // Автопроверка попала на сбой связи: в записи «SSH не отвечает», хотя сервер жив.
+    await app.get<Db>(DB).execute(sql`update servers set ssh_ok = false where id = ${target.id}`);
+    await setChecked(target.id, 999);
+    const before = (await getServer(target.id)).lastSshCheckAt;
+    await app.get(IncidentSshRecheckJob).run();
+    const s = await getServer(target.id);
+    expect(s.sshOk).toBe(true);
+    expect(s.lastSshCheckAt).not.toBe(before);
+  });
+
   it('пока «SSH недоступен» открыт: сервер перепроверяется, а как только SSH снова отвечает — доступ виден без ручной кнопки', async () => {
     const row = await app.get(IncidentsRepository).open({
       serverId: target.id,

@@ -20,11 +20,13 @@ import { EventsService } from '../events/events.service.js';
 import { FleetStatsService } from '../fleet-stats/fleet-stats.service.js';
 import { IncidentMetricsService } from '../incidents/incident-metrics.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
+import { resolveUpstreamTarget } from '../incidents/upstream-target.js';
 import { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
 import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import { MaintenanceService } from '../maintenance/maintenance.service.js';
 import { VmReaderService } from '../metrics/vm-reader.service.js';
 import { ProvidersService } from '../providers/providers.service.js';
+import { NodeLinkService } from '../remnawave/node-link.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServerChecksService } from '../server-checks/server-checks.service.js';
 import { ServersService } from '../servers/servers.service.js';
@@ -36,6 +38,7 @@ import { AssistantRepository } from './assistant.repository.js';
 import { ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
 import { ChangesService } from './changes/changes.service.js';
+import { mergeReach, sameReachTarget } from './fleet-probe.logic.js';
 import { FleetProbeService } from './fleet-probe.service.js';
 import { extractDefinitions, glossaryImportReply, isPureGlossary } from './glossary-import.js';
 import { IncidentAnalysisService } from './incident-analysis.service.js';
@@ -100,6 +103,7 @@ export class AssistantService {
     private readonly remnawave: RemnawaveService,
     private readonly events: EventsService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
+    private readonly links: NodeLinkService,
   ) {}
 
   status(): Promise<AssistantStatus> {
@@ -245,7 +249,15 @@ export class AssistantService {
       permissions,
       progress: (a) =>
         this.events.emit({ type: 'assistant', data: { conversationId: conv.id, activity: a } }),
-      remnawave: this.remnawave,
+      upstreamTarget: (server, all) =>
+        resolveUpstreamTarget(server, all, this.remnawave, this.links).catch(() => null),
+      // Ноды — уже с их серверами в панели (связь по адресу, IP или выбору в профиле).
+      remnawave: {
+        status: async () => {
+          const st = await this.remnawave.status();
+          return { ...st, nodes: await this.links.annotate(await this.servers.list(), st.nodes) };
+        },
+      },
       changes: {
         propose: async (operation, args, reason) => {
           changeCards += 1;
@@ -310,10 +322,12 @@ export class AssistantService {
           const outcome = await runTool(use.name, use.input, deps);
           citations.push(...outcome.citations);
           activity.push(...(outcome.activity ?? []));
+          // Повторные проверки той же цели (с другого сервера, по другому порту) — в одну таблицу:
+          // иначе под ответом «проверил с шести серверов» осталась бы только последняя проверка.
           for (const r of outcome.reachability ?? []) {
-            const at = reachability.findIndex((x) => x.target.name === r.target.name);
-            if (at >= 0) reachability.splice(at, 1);
-            reachability.push(r);
+            const at = reachability.findIndex((x) => sameReachTarget(x, r));
+            if (at >= 0) reachability[at] = mergeReach(reachability[at] as ReachabilityResult, r);
+            else reachability.push(r);
           }
           for (const p of outcome.proposals)
             if (!proposals.some((x) => proposalKey(x) === proposalKey(p))) proposals.push(p);

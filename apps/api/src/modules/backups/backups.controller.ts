@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs';
+import { pipeline } from 'node:stream';
 
 import {
   Body,
@@ -6,6 +6,7 @@ import {
   Delete,
   Get,
   HttpCode,
+  Logger,
   Param,
   Post,
   Put,
@@ -56,6 +57,8 @@ export class BackupTestChatDto extends createZodDto(z.object({ url: z.string().m
 @ApiCookieAuth()
 @Controller('backups')
 export class BackupsController {
+  private readonly log = new Logger(BackupsController.name);
+
   constructor(private readonly backups: BackupsService) {}
 
   @Get()
@@ -119,11 +122,17 @@ export class BackupsController {
   @Get(':name/download')
   @ApiOperation({ summary: 'Скачать архив копии' })
   async download(@Param('name') name: string, @Res() res: Response): Promise<void> {
-    const f = await this.backups.downloadPath(name);
+    const f = await this.backups.download(name);
     res.setHeader('content-type', 'application/octet-stream');
     res.setHeader('content-length', String(f.size));
     res.setHeader('content-disposition', `attachment; filename="${name}"`);
-    createReadStream(f.path).pipe(res);
+    // Сбой чтения посреди отдачи: у потока без обработчика событие 'error' роняло весь процесс, а ответ
+    // повисал. Заголовки уже ушли, поэтому ответ обрывается — браузер покажет несостоявшееся скачивание.
+    pipeline(f.stream, res, (err) => {
+      // Скачивание отменили в браузере — не сбой.
+      if (err && (err as NodeJS.ErrnoException).code !== 'ERR_STREAM_PREMATURE_CLOSE')
+        this.log.warn(`Копия ${name} отдана не полностью: ${err.message}`);
+    });
   }
 
   @Post(':name/inspect')

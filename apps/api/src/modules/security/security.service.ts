@@ -26,7 +26,7 @@ import { AuthService } from '../auth/auth.service.js';
 import type { RequestContext } from '../auth/request-context.js';
 import { SecurityPolicyStore } from '../auth/security-policy.store.js';
 import { type SessionRecord, SessionStore } from '../auth/session.store.js';
-import { ThrottleService } from '../auth/throttle.service.js';
+import { sessionScope, type ThrottleKey, ThrottleService } from '../auth/throttle.service.js';
 import { TotpService } from '../auth/totp.service.js';
 import { UsersRepository } from '../auth/users.repository.js';
 import { PwnedPasswordsService } from './pwned-passwords.service.js';
@@ -88,17 +88,22 @@ export class SecurityService {
     body: ChangePasswordRequest,
     ctx: RequestContext,
   ): Promise<ChangePasswordResponse> {
-    // Текущий пароль — это и есть step-up; подбор через этот эндпоинт тормозим тем же throttle, что и вход.
-    const key = { ip: ctx.ip, login: user.login };
-    await this.throttle.assertAllowed(key).catch(async (e: unknown) => {
+    // Текущий пароль — это и есть step-up; подбор через этот эндпоинт тормозим так же, как разблокировку
+    // экрана. Пауза — у открытой сессии и её адреса (общая с экраном блокировки): чужие неудачные попытки
+    // по логину не мешают владельцу сменить пароль именно тогда, когда это нужнее всего. Попытка
+    // занимается до проверки пароля — залп параллельных запросов паузу не обходит.
+    const key: ThrottleKey = { ip: ctx.ip, login: user.login, known: sessionScope(session.id) };
+    const reservation = await this.throttle.reserve(key);
+    if (!reservation.allowed) {
+      if (reservation.reason === 'busy') throw authProblems.busy();
       await this.audit.record({
         action: 'security.password.changed',
         result: 'denied',
         severity: 'warn',
         metadata: { reason: 'throttled' },
       });
-      throw e;
-    });
+      throw authProblems.throttled(reservation.retryAfterSeconds);
+    }
     const full = await this.users.findById(user.id);
     if (!full || !(await this.crypto.verifyPassword(full.passwordHash, body.currentPassword))) {
       await this.audit.record({
@@ -107,7 +112,8 @@ export class SecurityService {
         severity: 'warn',
         metadata: { reason: 'password' },
       });
-      await this.throttle.recordFailure(key);
+      const outcome = await this.throttle.fail(key);
+      if (outcome.retryAfterSeconds > 0) throw authProblems.throttled(outcome.retryAfterSeconds);
       throw authProblems.invalidCredentials();
     }
     await this.throttle.reset(key);

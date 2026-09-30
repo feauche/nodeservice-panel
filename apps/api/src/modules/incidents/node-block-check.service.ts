@@ -7,14 +7,17 @@ import {
   type Server,
 } from '@nodeservice/shared';
 
+import { normalizeAddress } from '../servers/addresses.js';
 import { ServersService } from '../servers/servers.service.js';
 import { SshService } from '../servers/ssh.service.js';
 import {
+  blindAttempt,
   blindReason,
   buildBlockCheckCommand,
   type CountryReach,
   combineVerdicts,
   isSafeBlockCheckTarget,
+  type ProbeExclude,
   parseBlockCheckOutput,
   pickCountryProbes,
   pickForeignProbes,
@@ -25,6 +28,23 @@ import {
   withForeign,
 } from './block-check.logic.js';
 import type { UpstreamTarget } from './upstream-target.js';
+
+/**
+ * Записи панели, которые и есть проверяемая машина: названные вызывающим (сервер ноды, его вторые записи)
+ * и все серверы с тем же адресом, что у цели, — их вызывающий мог и не знать.
+ */
+function selfIds(
+  exclude: ProbeExclude,
+  address: string | null,
+  all: Pick<Server, 'id' | 'host'>[],
+): string[] {
+  const ids = new Set(typeof exclude === 'string' ? [exclude] : (exclude ?? []));
+  if (address !== null) {
+    const target = normalizeAddress(address);
+    for (const s of all) if (normalizeAddress(s.host) === target) ids.add(s.id);
+  }
+  return [...ids];
+}
 
 /** Панель зашла на проверяющий сервер, но команда проверки не завершилась (таймаут, обрыв посреди команды). */
 class ProbeRunError extends Error {}
@@ -98,7 +118,7 @@ export class NodeBlockCheckService {
       }
     }
     // Ни одна попытка не дошла до цели — это «проверить не удалось», а не «порт закрыт».
-    const winner = settleAttempts(attempts, sni === null) ?? (attempts[0] as BlockProbeResult);
+    const winner = settleAttempts(attempts, sni === null) ?? blindAttempt(attempts);
     return { ...winner, from: prober.name };
   }
 
@@ -113,8 +133,10 @@ export class NodeBlockCheckService {
     address: string,
     port: number | null,
     sni: string | null,
-    excludeServerId: string | null,
+    exclude: ProbeExclude,
     allServers: Server[],
+    /** Порта нет потому, что Remnawave не ответила на запрос, — а не потому, что у ноды его нет. */
+    inboundFailed = false,
   ): Promise<BlockCheckResult> {
     // Проверка не состоялась: проб нет, а причина названа — текст дела скажет, что именно помешало.
     const unchecked = (reason: BlockUncheckedReason, sniUsed: string | null): BlockCheckResult => ({
@@ -128,11 +150,14 @@ export class NodeBlockCheckService {
       foreignUnchecked: null,
       entry: null,
     });
-    if (!port) return unchecked('no_port', null);
+    if (!port) return unchecked(inboundFailed ? 'remnawave' : 'no_port', null);
     // Не только «нет данных», но и «данные не похожи на настоящий адрес/порт/имя»: Remnawave — внешний
     // источник, панель эти значения не проверяет на своей стороне.
     if (!isSafeBlockCheckTarget(address, port, sni || null)) return unchecked('bad_address', null);
-    const probers = pickRuProbes(excludeServerId, allServers);
+    // Проверяемая машина в проверку не идёт — ни под какой своей записью: подключение к самой себе
+    // не видят ни файрвол хостера, ни блокировщик.
+    const self = selfIds(exclude, address, allServers);
+    const probers = pickRuProbes(self, allServers);
     if (probers.length === 0) return unchecked('no_probers', sni || null);
     // Проверяющий, на который панель не зашла (или который не смог выполнить проверку), о ноде ничего
     // не знает — в вердикт не идёт.
@@ -147,7 +172,7 @@ export class NodeBlockCheckService {
     // не получилась. «Проверить нечем» про второй случай было бы неправдой.
     let foreignUnchecked: BlockUncheckedReason | null = null;
     if (ruVerdict === 'unreachable') {
-      const abroad = pickForeignProbes(excludeServerId, allServers);
+      const abroad = pickForeignProbes(self, allServers);
       const triedAbroad = await Promise.all(abroad.map((p) => this.probeFrom(p, address, port, null, true)));
       foreign = triedAbroad.filter(probeSaw);
       if (foreign.length === 0)
@@ -173,11 +198,11 @@ export class NodeBlockCheckService {
   async countryReach(
     address: string,
     port: number,
-    excludeServerId: string | null,
+    exclude: ProbeExclude,
     allServers: Server[],
   ): Promise<CountryReachResult> {
     if (!isSafeBlockCheckTarget(address, port, null)) return { results: [], blind: 'bad_address' };
-    const probers = pickCountryProbes(excludeServerId, allServers);
+    const probers = pickCountryProbes(selfIds(exclude, address, allServers), allServers);
     if (probers.length === 0) return { results: [], blind: 'no_probers' };
     // Проверяющий, на который панель не зашла, в список не попадает: «не смогли проверить» ≠ «закрыт».
     const tried = await Promise.all(probers.map((p) => this.probeFrom(p, address, port, null, true)));
@@ -198,7 +223,7 @@ export class NodeBlockCheckService {
    */
   async checkEntry(
     target: UpstreamTarget,
-    excludeServerId: string | null,
+    exclude: ProbeExclude,
     allServers: Server[],
   ): Promise<NonNullable<BlockCheckResult['entry']>> {
     const address = `${target.host}:${target.port}`;
@@ -210,7 +235,13 @@ export class NodeBlockCheckService {
       unchecked: reason,
     });
     if (!isSafeBlockCheckTarget(target.host, target.port, null)) return skipped('bad_address');
-    const probers = pickRuProbes(excludeServerId, allServers).filter((p) => p.id !== target.serverId);
+    // С самого выхода вход не проверяем (это другой вопрос — «доходит ли выход до входа»), с самого входа —
+    // тем более: мост под любой своей записью в панели отпадает.
+    const self = new Set([
+      ...selfIds(exclude, null, allServers),
+      ...selfIds(target.serverId, target.host, allServers),
+    ]);
+    const probers = pickRuProbes([...self], allServers);
     if (probers.length === 0) return skipped('no_probers');
     const tried = await Promise.all(
       probers.map((p) => this.probeFrom(p, target.host, target.port, null, true)),

@@ -24,7 +24,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { StepUpCancelledError } from '@/features/security/step-up';
-import { apiErrorMessage } from '@/lib/api';
+import { apiErrorMessage, isApiError } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { backupsApi, uploadBackup, useDeleteBackup, useRestoreBackup, useRunBackup } from './backups-api';
@@ -127,10 +127,30 @@ const inputClass = 'h-10 rounded-[10px] bg-surface-2 text-[13.5px]';
 
 const VISIBLE_STAGES: BackupStage[] = BACKUP_STAGES.filter((s) => s !== 'cleanup');
 
+/** Копия, за ходом которой следит окно. */
+interface Watch {
+  /** Имена копий, которые были до неё: готовая копия — та, чьего имени среди них нет. */
+  known: ReadonlySet<string>;
+  /** Отметка списка копий на момент запуска: перечитанный после неё список уже знает об этой копии. */
+  since: number;
+  /** Копию застали уже идущей (по расписанию или свою после «Свернуть»), а не запустили из этого окна. */
+  found: boolean;
+}
+
+/**
+ * Имена копий, которые были до запуска, начавшегося в `startedAt`. Оба времени — с сервера: файл идущей
+ * копии появляется в списке раньше её конца (перед отправкой в Telegram), и «прежним» он считаться не должен.
+ */
+function namesBefore(items: BackupItem[], startedAt: string | null): Set<string> {
+  const from = startedAt ? Date.parse(startedAt) : Number.NaN;
+  return new Set(items.filter((i) => !(Date.parse(i.createdAt) >= from)).map((i) => i.name));
+}
+
 export function RunDialog({
   open,
   onOpenChange,
   data,
+  updatedAt,
   telegramReady,
   telegramDefault,
   telegramWhere,
@@ -138,6 +158,8 @@ export function RunDialog({
   open: boolean;
   onOpenChange: (o: boolean) => void;
   data: BackupsResponse | undefined;
+  /** Отметка списка копий: когда он перечитан в последний раз. */
+  updatedAt: number;
   /** Отправка в Telegram настроена (чат выбран). */
   telegramReady: boolean;
   telegramDefault: boolean;
@@ -145,26 +167,36 @@ export function RunDialog({
 }) {
   const run = useRunBackup();
   const [send, setSend] = useState(telegramDefault);
-  const [started, setStarted] = useState<string | null>(null);
+  const [watch, setWatch] = useState<Watch | null>(null);
   useEffect(() => {
-    if (open) {
-      setSend(telegramDefault && telegramReady);
-      setStarted(null);
-    }
+    if (open) setSend(telegramDefault && telegramReady);
   }, [open, telegramDefault, telegramReady]);
+  // Окно открыли заново — за прошлой копией больше не следим.
+  useEffect(() => {
+    if (open) setWatch(null);
+  }, [open]);
 
-  const stage = data?.run.mode === 'backup' ? data.run.stage : null;
-  const running = Boolean(started) && Boolean(stage);
-  const finished = Boolean(started) && !stage && !run.isPending;
-  const newest = data?.items[0];
-  const madeNew = finished && newest && started && newest.createdAt >= started;
-  const failed = finished && !madeNew ? (data?.run.lastError ?? null) : null;
+  const live = data?.run.mode === 'backup' && data.run.stage ? data.run : null;
+  // Копия уже идёт (по расписанию или своя после «Свернуть») — окно показывает её ход. Форма запуска —
+  // только когда ничего не идёт: иначе «Сделать копию» упирается в «Копия уже делается».
+  if (open && data && live && !watch && !run.isPending)
+    setWatch({ known: namesBefore(data.items, live.startedAt), since: 0, found: true });
+
+  const stage = live?.stage ?? null;
+  // Пока список не перечитан после запуска, в кэше прежний: копии в нём ещё нет, а ошибка — от прошлой
+  // попытки. По нему итог не объявляем — показываем «Начинаю…».
+  const aware = watch !== null && updatedAt !== watch.since;
+  const finished = aware && !stage;
+  const failed = finished ? (data?.run.lastError ?? null) : null;
+  const made = watch && finished && !failed ? data?.items.find((i) => !watch.known.has(i.name)) : undefined;
 
   const start = async () => {
-    const at = new Date(Date.now() - 2000).toISOString();
+    // Готовую копию узнаём по имени, которого до запуска не было. Время копии с часами компьютера не
+    // сравниваем: если они спешат, удачная копия выглядела бы проваленной.
+    const known = new Set(data?.items.map((i) => i.name));
     try {
-      await run.mutateAsync(send);
-      setStarted(at);
+      const since = await run.mutateAsync(send);
+      setWatch({ known, since, found: false });
     } catch (err) {
       toast.error(apiErrorMessage(err));
     }
@@ -176,10 +208,10 @@ export function RunDialog({
       onOpenChange={onOpenChange}
       icon={<DownloadIcon aria-hidden="true" />}
       tone="brand"
-      title="Сделать копию сейчас"
+      title={watch?.found ? 'Ход копии' : 'Сделать копию сейчас'}
       description="Как по расписанию: всё, что отмечено в «Что входит в копию», с паролем, если он задан."
     >
-      {!started ? (
+      {!watch ? (
         <label
           htmlFor="run-telegram"
           className={cn(
@@ -204,16 +236,16 @@ export function RunDialog({
           </span>
         </label>
       ) : (
-        <Progress stage={stage} finished={finished} ok={Boolean(madeNew)} />
+        <Progress stage={stage} finished={finished} ok={Boolean(made)} />
       )}
-      {madeNew && newest && (
+      {made && (
         <p className="m-0 rounded-[11px] border border-ok/30 bg-ok-soft px-3.5 py-3 text-[12.5px]">
-          <b>Готово:</b> {formatSize(newest.size)}
-          {newest.verified ? ', проверена' : ''}
-          {newest.telegram
-            ? newest.telegram.ok
+          <b>Готово:</b> {formatSize(made.size)}
+          {made.verified ? ', проверена' : ''}
+          {made.telegram
+            ? made.telegram.ok
               ? ', отправлена в Telegram'
-              : `. Telegram: ${newest.telegram.note}`
+              : `. Telegram: ${made.telegram.note}`
             : ''}
           .
         </p>
@@ -224,7 +256,7 @@ export function RunDialog({
         </WarnBox>
       )}
       <DialogActions>
-        {!started ? (
+        {!watch ? (
           <>
             <DialogSecondaryButton onClick={() => onOpenChange(false)}>Отмена</DialogSecondaryButton>
             <DialogPrimaryButton disabled={run.isPending || !data?.available} onClick={() => void start()}>
@@ -234,7 +266,7 @@ export function RunDialog({
           </>
         ) : (
           <DialogSecondaryButton onClick={() => onOpenChange(false)}>
-            {running ? 'Свернуть' : 'Закрыть'}
+            {finished ? 'Закрыть' : 'Свернуть'}
           </DialogSecondaryButton>
         )}
       </DialogActions>
@@ -283,6 +315,8 @@ function useRestartWatch(active: boolean) {
     const tick = async () => {
       while (!stop) {
         await new Promise((r) => setTimeout(r, 2000));
+        // Окно успели убрать, пока ждали, — опрашивать уже некому.
+        if (stop) return;
         const ok = await fetch('/api/health/live', { cache: 'no-store' })
           .then((r) => r.ok)
           .catch(() => false);
@@ -326,6 +360,24 @@ function InspectSummary({ info, tz }: { info: BackupInspect; tz: string }) {
 }
 
 /**
+ * Что сказать в окне, когда восстановление не прошло. Отказ до начала (идёт копия, копии уже нет) и свою
+ * ошибку восстановления сервер объясняет сам — в том числе цела ли текущая база: это его слова, как есть.
+ * Обрыв связи и сбой без объяснения — честно: чем кончилось, панель не знает, и «база не тронута» здесь
+ * не говорим.
+ */
+function restoreFailure(err: unknown): string {
+  if (isApiError(err)) {
+    if (err.status >= 400 && err.status < 500) return apiErrorMessage(err);
+    if (err.status >= 500 && err.type !== 'about:blank' && err.detail) return err.detail;
+  }
+  const request =
+    isApiError(err) && err.requestId
+      ? ` Идентификатор запроса поможет найти причину в логах: ${err.requestId}.`
+      : '';
+  return `Панель не подтвердила восстановление: ответ не пришёл или пришёл с ошибкой. Что сейчас с базой — неизвестно. Подождите минуту, обновите страницу и проверьте, вернулась ли панель к состоянию на момент копии.${request}`;
+}
+
+/**
  * Проверка архива → пароль (если нужен) → предупреждения → слово «ВОССТАНОВИТЬ» → восстановление →
  * ожидание перезапуска. Общая часть для копии из списка и для файла с компьютера.
  */
@@ -343,6 +395,7 @@ function RestoreBody({
   const [password, setPassword] = useState('');
   const [checkedWith, setCheckedWith] = useState<string | undefined>(undefined);
   const [confirm, setConfirm] = useState('');
+  const [failure, setFailure] = useState<string | null>(null);
   const restore = useRestoreBackup();
   const inspect = useQuery({
     queryKey: ['backups', 'inspect', item.name, checkedWith ?? ''],
@@ -361,6 +414,7 @@ function RestoreBody({
   useEffect(() => onLockChange(restore.isPending || done), [restore.isPending, done, onLockChange]);
 
   const submit = async () => {
+    setFailure(null);
     try {
       await restore.mutateAsync({
         name: item.name,
@@ -368,7 +422,8 @@ function RestoreBody({
         ...(checkedWith ? { password: checkedWith } : {}),
       });
     } catch (err) {
-      if (!(err instanceof StepUpCancelledError)) toast.error(apiErrorMessage(err));
+      // В окне, а не всплывашкой: цела ли база — главное, что нужно знать, и оно не должно исчезнуть.
+      if (!(err instanceof StepUpCancelledError)) setFailure(restoreFailure(err));
     }
   };
 
@@ -411,7 +466,13 @@ function RestoreBody({
                   id="restore-password"
                   label="Пароль архива"
                   hint={
-                    checkedWith ? (
+                    // Пока ответ не пришёл, на экране прежний — про другой пароль: «не подошёл» по нему не говорим.
+                    inspect.isPlaceholderData ? (
+                      <span className="flex items-center gap-1.5">
+                        <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />
+                        Проверяю пароль…
+                      </span>
+                    ) : checkedWith ? (
                       <span className="text-crit">Пароль не подошёл.</span>
                     ) : (
                       'Копия защищена паролем — без него не открыть.'
@@ -446,6 +507,8 @@ function RestoreBody({
                   Пароль подошёл.
                 </p>
               )}
+              {/* Восстановить можно, но с оговоркой — например, в старой копии нет ключей шифрования. */}
+              {info.warning && <WarnBox>{info.warning}</WarnBox>}
               <WarnBox>
                 <b>
                   Всё, что изменилось после{' '}
@@ -459,6 +522,14 @@ function RestoreBody({
                   к ней.
                 </li>
                 <li>Панель будет недоступна около минуты и попросит войти заново.</li>
+                <li>
+                  Вход — по паролю и коду 2FA, которые действовали на момент копии
+                  {info.createdAt ? ` (${formatWhen(info.createdAt, tz).toLowerCase()})` : ''}; коды
+                  восстановления тоже вернутся прежние. Если позже вы меняли пароль или перевыпускали 2FA —
+                  убедитесь, что помните прежний пароль и что в приложении-аутентификаторе осталась прежняя
+                  запись. Иначе войти не получится, и доступ придётся возвращать из консоли сервера панели —
+                  как это сделать, написано на странице входа под «Забыли пароль?».
+                </li>
                 <li>Серверы, ноды и агенты работают как работали: восстанавливается только панель.</li>
                 {info.contents && info.contents.paths > 0 && (
                   <li>
@@ -482,6 +553,7 @@ function RestoreBody({
           )}
         </>
       ) : null}
+      {failure && <WarnBox tone="crit">{failure}</WarnBox>}
       <DialogActions>
         <DialogSecondaryButton disabled={restore.isPending} onClick={onCancel}>
           Отмена

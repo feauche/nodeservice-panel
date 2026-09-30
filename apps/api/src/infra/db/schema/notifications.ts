@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { bigint, index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { bigint, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 import { incidents } from './incidents.js';
 
@@ -41,3 +41,17 @@ export const telegramMessages = pgTable(
   },
   (t) => [index('telegram_messages_incident_idx').on(t.incidentId, t.destinationId)],
 );
+
+/**
+ * Сообщения Telegram, которые ждут разбора Джарвиса (миграция 0051). Раньше признак «ждёт отправки» жил
+ * только в памяти процесса, и перезапуск панели терял сообщение. `alert` — что отправить, `queued` —
+ * события того же дела, вставшие за ним в очередь (их формат знает служба уведомлений).
+ */
+export const telegramPending = pgTable('telegram_pending', {
+  incidentId: uuid('incident_id')
+    .primaryKey()
+    .references(() => incidents.id, { onDelete: 'cascade' }),
+  alert: jsonb('alert').$type<Record<string, unknown>>().notNull(),
+  queued: jsonb('queued').$type<Array<Record<string, unknown>>>().notNull().default([]),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});

@@ -1,7 +1,7 @@
 import {
   INCIDENTS_SETTINGS_DEFAULTS,
   type IncidentsSettings,
-  incidentsSettingsSchema,
+  incidentsSettingsUpdateSchema,
 } from '@nodeservice/shared';
 import { RotateCcwIcon, TriangleAlertIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -74,7 +74,7 @@ const FIELDS: ReadonlyArray<{
   {
     key: 'autofixCooldownMinutes',
     label: 'Пауза между автопочинками',
-    hint: 'Один инцидент не чинится автоматически чаще, чем раз в это время.',
+    hint: 'Если панель уже чинила этот сигнал на сервере, новое дело того же вида она сама чинить не станет, пока не пройдёт это время: шаг ждёт вашего подтверждения, а после паузы запускается сам. Шаги одной цепочки идут подряд.',
     unit: 'мин',
     min: 1,
     max: 240,
@@ -83,6 +83,11 @@ const FIELDS: ReadonlyArray<{
 
 /** Политика по сигналам и пауза живут на странице «Автопочинка» — здесь их не сравниваем и не сбрасываем. */
 const SCALAR_DEFAULTS = (({ policy: _p, pausedUntil: _u, ...rest }) => rest)(INCIDENTS_SETTINGS_DEFAULTS);
+/**
+ * Форма проверяется и отправляется только своими полями. Полная схема настроек подставила бы в запрос
+ * пустые режимы по сигналам и «паузы нет» — и сохранение раздела стёрло бы выбранное на «Автопочинке».
+ */
+const FORM_SCHEMA = incidentsSettingsUpdateSchema.required();
 const isDefaults = (s: IncidentsSettings) =>
   (Object.keys(SCALAR_DEFAULTS) as Array<keyof typeof SCALAR_DEFAULTS>).every(
     (k) => s[k] === SCALAR_DEFAULTS[k],
@@ -108,7 +113,7 @@ export function IncidentsSettingsPage() {
 
   const save = async () => {
     if (!draft) return;
-    const parsed = incidentsSettingsSchema.safeParse(draft);
+    const parsed = FORM_SCHEMA.safeParse(draft);
     if (!parsed.success) {
       const byPath: Record<string, string> = {};
       for (const issue of parsed.error.issues) byPath[String(issue.path[0])] ??= issue.message;
