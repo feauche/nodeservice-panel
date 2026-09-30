@@ -1,12 +1,14 @@
 import type { Incident } from '@nodeservice/shared';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ago,
+  changesText,
   connectionText,
   coverageText,
   fleetText,
   historyText,
+  kbText,
   onlineText,
   reachText,
   summarizeOnline,
@@ -42,7 +44,8 @@ describe('онлайн ноды вокруг дела', () => {
       opened,
     );
     expect(s).toEqual({ before: 410, minAfter: 35, now: 40, dropPct: 91 });
-    expect(onlineText('Казахстан', s)).toMatch(/Падение на 91% — люди массово не могут подключиться/);
+    // Оценка подана как оценка, а не как факт о пользователях.
+    expect(onlineText('Казахстан', s)).toMatch(/Падение на 91% — так выглядит массовая потеря подключений/);
   });
   it('без падения и без истории', () => {
     const flat = summarizeOnline(
@@ -95,7 +98,51 @@ describe('доступность из разных стран', () => {
   it('закрыто отовсюду и открыто отовсюду', () => {
     expect(reachText(22, [{ from: 'A', country: 'DE', open: false }], false)).toMatch(/ни из одной страны/);
     expect(reachText(22, [{ from: 'A', country: 'DE', open: true }], true)).toMatch(/искать внутри/);
+    // Агент на связи и SSH работает — «искать внутри» нечего: подсказка толкала бы искать поломку на сервере.
+    const healthy = reachText(22, [{ from: 'A', country: 'DE', open: true }], true, true);
+    // «Сеть в порядке» — только про точки, с которых проверяли: про сети пользователей проверка не говорит.
+    expect(healthy).toMatch(/Открыт отовсюду: сервер включён, с этих точек сеть до него в порядке\.$/);
+    expect(healthy).not.toMatch(/искать внутри/);
     expect(reachText(22, [], null)).toMatch(/проверить не с чего/);
+  });
+  it('с серверов парка порт закрыт, а сервер заведомо работает — «выключен» не пишем', () => {
+    const park = [
+      { from: 'Мост', country: 'RU', open: false },
+      { from: 'Германия-1', country: 'DE', open: false },
+    ];
+    // SSH разрешён только адресу панели: с панели порт открыт.
+    const fromPanel = reachText(22, park, true);
+    expect(fromPanel).toMatch(/• Сервер панели — порт открыт/);
+    expect(fromPanel).toMatch(/С серверов парка порт не отвечает, но сервер работает/);
+    expect(fromPanel).not.toMatch(/выключен/);
+    // Агент на связи — то же, даже если порт с панели не проверяли.
+    expect(reachText(22, park, null, true)).not.toMatch(/выключен/);
+    // Закрыт отовсюду, включая панель, — «выключен, завис или отрезан».
+    expect(reachText(22, park, false)).toMatch(/Не отвечает ни из одной страны: сервер выключен/);
+  });
+  it('все проверяющие из одной страны и панель не проверяла — «выключен» от «закрыт путь из этой страны» не отличить', () => {
+    const onlyRu = [
+      { from: 'Мост', country: 'RU', open: false },
+      { from: 'Россия - 1', country: 'RU', open: false },
+    ];
+    const t = reachText(22, onlyRu, null);
+    expect(t).toMatch(/все они из одной страны/);
+    expect(t).not.toMatch(/Не отвечает ни из одной страны/);
+    expect(t).not.toMatch(/выключен, завис/);
+  });
+  it('российские проверяющие расходятся — это не «закрыт только из России»', () => {
+    const t = reachText(
+      22,
+      [
+        { from: 'Мост-Москва', country: 'RU', open: true },
+        { from: 'Мост-Питер', country: 'RU', open: false },
+        { from: 'Германия-1', country: 'DE', open: true },
+      ],
+      true,
+    );
+    expect(t).toMatch(/Из России — частично: открыт с Мост-Москва, закрыт с Мост-Питер; из-за рубежа открыт/);
+    expect(t).toMatch(/Это не блокировка IP по всей России/);
+    expect(t).not.toMatch(/Закрыт только из России/);
   });
 });
 
@@ -127,6 +174,8 @@ describe('агент, парк, прошлые дела, покрытие', () =
     const far = inc({ id: 'z', serverId: 's3', serverName: 'Финляндия', openedAt: '2026-09-29T08:00:00Z' });
     expect(fleetText(me, [me, far])).toMatch(/похожих сбоев нет/);
     expect(fleetText(me, [me, other, far])).toMatch(/Германия-1 \(сервер недоступен\).*общая причина/);
+    // Сокращение в названии вида не превращается в «ssh».
+    expect(fleetText(me, [me, { ...other, kind: 'ssh_down' }])).toContain('Германия-1 (SSH недоступен)');
   });
   it('прошлые дела: по видам и как закрывались', () => {
     const past = [
@@ -144,6 +193,38 @@ describe('агент, парк, прошлые дела, покрытие', () =
     expect(t).toMatch(/похоже на блокировку — 1/);
     expect(t).toMatch(/закрыто вручную через 2 ч/);
     expect(historyText(inc({}), [])).toMatch(/не было/);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  it('время прошлых дел и записей Журнала — в поясе панели, а не всегда по Москве', () => {
+    // Год в дате печатается, только если он не текущий, — фиксируем «сейчас», чтобы тест не зависел от года.
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    const past = [
+      inc({
+        id: 'p1',
+        title: 'Сервер недоступен — просрочена оплата · Казахстан',
+        status: 'resolved',
+        openedAt: '2026-09-29T09:37:00Z',
+        resolvedAt: '2026-09-29T09:53:00Z',
+        resolvedBy: 'auto',
+      }),
+    ];
+    expect(historyText(inc({}), past, 'Asia/Omsk')).toContain('• 29 сентября, 15:37 — Сервер недоступен');
+    expect(historyText(inc({}), past, 'Europe/Moscow')).toContain('• 29 сентября, 12:37 — Сервер недоступен');
+    const log = [{ at: '2026-09-29T09:40:00Z', action: 'Проверка связи', result: 'success' }];
+    expect(changesText(log, 'Asia/Omsk')).toContain('• 29 сентября, 15:40 — Проверка связи');
+  });
+  it('дата статьи базы знаний — в поясе панели и с годом, а не датой по UTC', () => {
+    const doc = {
+      title: 'Смена IP',
+      content: 'Помогла смена IP.',
+      updatedAt: new Date('2026-09-30T21:00:00Z'),
+      source: 'Вручную',
+    };
+    // 1 октября, 03:00 в Омске — по UTC это ещё 30 сентября.
+    expect(kbText([doc], 'Asia/Omsk')).toContain('• «Смена IP» (1 октября 2026, Вручную): Помогла смена IP.');
+    expect(kbText([doc], 'UTC')).toContain('(30 сентября 2026, Вручную)');
   });
   it('покрытие: что проверено и что нет', () => {
     expect(coverageText({ 'онлайн ноды': true, 'база знаний': false })).toBe(

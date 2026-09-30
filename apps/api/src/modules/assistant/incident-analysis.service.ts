@@ -12,9 +12,12 @@ import {
 } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
+import { localizeIsoTimes, safeTimeZone } from '../../common/local-time.js';
+import { DEFAULT_TIME_ZONE } from '../../common/panel-time-zone.js';
 import { AuditRepository } from '../audit/audit.repository.js';
 import { AuditService } from '../audit/audit.service.js';
 import { BillingService } from '../billing/billing.service.js';
+import type { PaymentWindow } from '../billing/payment-window.js';
 import { NODE_ONLINE_METRIC } from '../fleet-stats/fleet-stats.service.js';
 import { egressText } from '../incidents/egress-check.logic.js';
 import { EgressCheckService } from '../incidents/egress-check.service.js';
@@ -39,6 +42,7 @@ import {
   askSystem,
   chartName,
   dataBlock,
+  entryAbsentText,
   freshCheckText,
   nodeNowText,
   parseSubmission,
@@ -61,7 +65,7 @@ import {
 } from './incident-evidence.logic.js';
 import { LLM_PROVIDER, type LlmBlock, type LlmMsg, type LlmProvider } from './llm.provider.js';
 
-/** Сбои «сервер недоступен»: к делу добавляем просроченную оплату — частая причина. */
+/** Сбои связи: к делу добавляем окно оплаты (срок прошёл или близко) — частая причина. */
 const BILLING_DOWN_KINDS = new Set(['server_down', 'agent_offline', 'ssh_down', 'node_down', 'node_blocked']);
 
 const MAX_ROUNDS = 6;
@@ -184,6 +188,18 @@ export class IncidentAnalysisService implements OnModuleInit {
       }
     }
     return started;
+  }
+
+  /**
+   * Пояс панели: в нём модель получает всё время в данных (дело, улики, ответы инструментов), иначе в одном
+   * разборе смешивались UTC, Москва и пояс сервера. Настройки недоступны — пояс по умолчанию.
+   */
+  private async timeZone(): Promise<string> {
+    try {
+      return safeTimeZone(await this.notifications.timeZone());
+    } catch {
+      return DEFAULT_TIME_ZONE;
+    }
   }
 
   private async config() {
@@ -314,12 +330,13 @@ export class IncidentAnalysisService implements OnModuleInit {
         );
         metricText = out?.content ?? null;
       }
-      const { nowText, billingLines, evidence } = await this.collectConnectivity(inc, deps, step);
+      const timeZone = await this.timeZone();
+      const { nowText, payment, evidence } = await this.collectConnectivity(inc, deps, step, timeZone);
       const messages: LlmMsg[] = [
         {
           role: 'user',
           content: text(
-            `${dataBlock(incidentCase(inc), metricText, nowText, billingLines, evidence)}\n\nСделайте разбор.`,
+            `${dataBlock(incidentCase(inc), metricText, nowText, payment, evidence, { timeZone })}\n\nСделайте разбор.`,
           ),
         },
       ];
@@ -361,7 +378,7 @@ export class IncidentAnalysisService implements OnModuleInit {
           } else if (ANALYSIS_TOOLS.some((t) => t.name === use.name)) {
             try {
               const out = await this.runAnalysisTool(use.name, use.input, deps);
-              content = out?.content ?? 'Нет данных.';
+              content = out?.content ? localizeIsoTimes(out.content, timeZone) : 'Нет данных.';
               if (out?.reachability?.[0]) reach = out.reachability[0];
             } catch (err) {
               this.log.warn(
@@ -412,7 +429,8 @@ export class IncidentAnalysisService implements OnModuleInit {
     inc: Incident,
     deps: ReadDeps,
     step: (label: string) => Promise<void>,
-  ): Promise<{ nowText: string | null; billingLines: string[]; evidence: string[] }> {
+    timeZone: string,
+  ): Promise<{ nowText: string | null; payment: PaymentWindow | null; evidence: string[] }> {
     let nowText: string | null = null;
     let nodeRef: { uuid: string; name: string } | null = null;
     let blockChecked = false;
@@ -422,7 +440,7 @@ export class IncidentAnalysisService implements OnModuleInit {
         ? ((await deps.servers.list()).find((s) => s.id === inc.serverId)?.host ?? null)
         : null;
       const st = await this.remnawave.status().catch(() => null);
-      nowText = st ? nodeNowText(inc, st, host) : null;
+      nowText = st ? nodeNowText(inc, st, host, timeZone) : null;
       // Свежая проверка порта: при «Разобрать заново» Джарвис должен видеть, что сейчас, а не только
       // то, что было при открытии. Нода может и не быть сервером NodeService — адрес берём из Remnawave.
       const node = st?.connected
@@ -433,19 +451,12 @@ export class IncidentAnalysisService implements OnModuleInit {
       if (node) {
         await step('Проверяю порт ноды сейчас');
         const inbound = await this.remnawave.nodeInbound(node.uuid);
+        const all = await deps.servers.list();
+        const me = inc.serverId ? (all.find((x) => x.id === inc.serverId) ?? null) : null;
         const result = await this.blockCheck
-          .check(
-            node.name,
-            node.address,
-            inbound?.port ?? null,
-            inbound?.sni ?? null,
-            inc.serverId,
-            await deps.servers.list(),
-          )
+          .check(node.name, node.address, inbound?.port ?? null, inbound?.sni ?? null, inc.serverId, all)
           .catch(() => null);
         if (result) {
-          const all = await deps.servers.list();
-          const me = inc.serverId ? (all.find((x) => x.id === inc.serverId) ?? null) : null;
           const target = await resolveUpstreamTarget(me, all, this.remnawave).catch(() => null);
           if (target) {
             await step('Проверяю вход этого выхода');
@@ -453,19 +464,28 @@ export class IncidentAnalysisService implements OnModuleInit {
           }
         }
         blockChecked = Boolean(result && result.probes.length > 0);
-        const fresh = result ? freshCheckText(result) : null;
+        // Агент на связи — сервер работает: молчащий порт ноды тогда не «сервер лежит», как и в тексте дела.
+        const check = result
+          ? freshCheckText(result, { timeZone, serverAlive: me?.agentStatus === 'online' })
+          : null;
+        // Проверка состоялась, а строк о входе в ней нет — говорим почему: входа нет в профиле или его нечем проверить.
+        const fresh =
+          check && result && result.probes.length > 0 && !result.entry
+            ? `${check}\n${entryAbsentText(me)}`
+            : check;
         if (fresh) nowText = nowText ? `${nowText}\n${fresh}` : fresh;
       }
     }
-    let billingLines: string[] = [];
+    // null — «Биллинг» не спрашивали (сервера нет в панели) или он не ответил: в данных о нём ничего не будет.
+    let payment: PaymentWindow | null = null;
     if (inc.serverId && BILLING_DOWN_KINDS.has(inc.kind)) {
       await step('Сверяюсь с биллингом');
-      billingLines = await this.billing.paymentRiskForServer(inc.serverId).catch(() => []);
+      payment = await this.billing.paymentWindowForServer(inc.serverId).catch(() => null);
     }
     const evidence = CONNECTIVITY_KINDS.has(inc.kind)
-      ? await this.gatherEvidence(inc, deps, step, nodeRef, billingLines.length > 0, blockChecked)
+      ? await this.gatherEvidence(inc, deps, step, nodeRef, payment !== null, blockChecked, timeZone)
       : [];
-    return { nowText, billingLines, evidence };
+    return { nowText, payment, evidence };
   }
 
   /** Чтения разбора; поиск в базе знаний и по Журналу идут через общий исполнитель инструментов. */
@@ -488,6 +508,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     node: { uuid: string; name: string } | null,
     billingChecked: boolean,
     blockChecked = false,
+    timeZone: string = DEFAULT_TIME_ZONE,
   ): Promise<string[]> {
     const out: string[] = [];
     const checked: Record<string, boolean> = {};
@@ -535,7 +556,7 @@ export class IncidentAnalysisService implements OnModuleInit {
         }));
       checked['порт из разных стран'] = reach.length > 0;
       if (result) this.evidenceReach.set(inc.id, result);
-      out.push(reachText(me.port, reach, panelOpen));
+      out.push(reachText(me.port, reach, panelOpen, me.agentStatus === 'online' && me.sshOk === true));
 
       // Куда может выйти сам сервер (Россия, панель, зарубеж) — заходим напрямую или через сервер, откуда
       // он доступен. Это отличает «фильтрация у хостера» от «сервер лежит» и от «сломан агент».
@@ -563,6 +584,7 @@ export class IncidentAnalysisService implements OnModuleInit {
           historyText(
             inc,
             past.items.filter((i) => i.serverId === inc.serverId),
+            timeZone,
           ),
         );
 
@@ -585,6 +607,7 @@ export class IncidentAnalysisService implements OnModuleInit {
                 (AUDIT_ACTIONS as Record<string, { label: string } | undefined>)[e.action]?.label ?? e.action,
               result: e.result,
             })),
+            timeZone,
           ),
         );
     }
@@ -601,14 +624,16 @@ export class IncidentAnalysisService implements OnModuleInit {
             updatedAt: d.updatedAt,
             source: KB_SOURCE_LABELS[d.source as KbSource] ?? d.source,
           })),
+          timeZone,
         ),
       );
 
-    checked['биллинг'] = billingChecked || BILLING_DOWN_KINDS.has(inc.kind);
+    // «Проверено» — только если «Биллинг» действительно ответил по этому серверу.
+    checked['биллинг'] = billingChecked;
     checked[
       node
-        ? 'проверка блокировки ТСПУ из России'
-        : 'проверка блокировки ТСПУ (сервер не найден среди нод Remnawave)'
+        ? 'проверка порта ноды из России (блокировка)'
+        : 'проверка порта ноды из России (сервер не найден среди нод Remnawave)'
     ] = blockChecked;
     out.push(coverageText(checked));
     return out;
@@ -632,15 +657,17 @@ export class IncidentAnalysisService implements OnModuleInit {
       const deps = this.readDeps(cfg);
       const past = analysis.thread;
       // Про связь — свежие улики на момент вопроса («перепроверь» должно значить именно это), а не только дело.
+      const timeZone = await this.timeZone();
       const fresh = CONNECTIVITY_KINDS.has(inc.kind)
-        ? await this.collectConnectivity(inc, deps, async () => undefined).catch(() => null)
+        ? await this.collectConnectivity(inc, deps, async () => undefined, timeZone).catch(() => null)
         : null;
       const data = dataBlock(
         incidentCase(inc),
         null,
         fresh?.nowText ?? null,
-        fresh?.billingLines ?? [],
+        fresh?.payment ?? null,
         fresh?.evidence ?? [],
+        { timeZone },
       );
       const messages: LlmMsg[] = [
         {
@@ -675,9 +702,8 @@ export class IncidentAnalysisService implements OnModuleInit {
         for (const use of uses) {
           let content: string;
           try {
-            content =
-              (await this.runAnalysisTool(use.name, use.input, deps))?.content ??
-              'Этот инструмент недоступен.';
+            const out = (await this.runAnalysisTool(use.name, use.input, deps))?.content;
+            content = out ? localizeIsoTimes(out, timeZone) : 'Этот инструмент недоступен.';
           } catch {
             content = 'Инструмент временно недоступен.';
           }

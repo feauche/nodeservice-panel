@@ -430,7 +430,8 @@ export const incidentSchema = z.object({
 });
 export type Incident = z.infer<typeof incidentSchema>;
 
-export const INCIDENTS_PAGE_SIZE_MIN = 10;
+/** Реестр показывает столько решённых, сколько помещается по высоте окна: на низком окне — от пяти. */
+export const INCIDENTS_PAGE_SIZE_MIN = 5;
 export const INCIDENTS_PAGE_SIZE_MAX = 100;
 export const INCIDENTS_PAGE_SIZE_DEFAULT = 30;
 
@@ -445,6 +446,12 @@ export const incidentsListQuerySchema = z.object({
     .min(INCIDENTS_PAGE_SIZE_MIN)
     .max(INCIDENTS_PAGE_SIZE_MAX)
     .default(INCIDENTS_PAGE_SIZE_DEFAULT),
+  /**
+   * С какой строки начать (с нуля) — вместо номера страницы. Реестр показывает столько решённых, сколько
+   * помещается по высоте окна, а это число зависит от того, сколько на странице дней: страницы разной
+   * длины номером не адресуются. Задано — `page` не учитывается.
+   */
+  offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
 });
 export type IncidentsListQuery = z.infer<typeof incidentsListQuerySchema>;
 

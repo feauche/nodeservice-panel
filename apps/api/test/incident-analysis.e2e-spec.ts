@@ -131,7 +131,7 @@ describe('разбор инцидента Джарвисом e2e', () => {
     const db = app.get<Db>(DB);
     await runMigrations(db);
     await db.execute(
-      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents cascade`,
+      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents, billing_items cascade`,
     );
     await db.execute(sql`delete from app_meta where key like 'settings.%' or key = 'panel.ssh-key'`);
     await app.get<Redis>(VALKEY).flushdb();
@@ -225,11 +225,17 @@ describe('разбор инцидента Джарвисом e2e', () => {
       timeline: [],
     });
     const id = row?.id ?? '';
+    // Срок оплаты этого сервера — через пару часов: «ещё не просрочено», но уже окно оплаты.
+    await app.get<Db>(DB).execute(
+      sql`insert into billing_items (kind, title, server_ids, amount_minor, currency, period_unit, period_count, paid_until)
+          values ('rent', 'Guardora', ${JSON.stringify([serverId])}::jsonb, 250000, 'RUB', 'month', 1, now() + interval '3 hours')`,
+    );
     const before = fake.seen.length;
     await run(id).expect(202);
     const inc = await settled(id);
     expect(inc.analysis?.status).toBe('done');
     for (const s of [
+      'Сверяюсь с биллингом',
       'Проверяю порт SSH из разных стран',
       'Сверяю со сбоями на других серверах',
       'Смотрю прошлые дела этого сервера',
@@ -249,7 +255,17 @@ describe('разбор инцидента Джарвисом e2e', () => {
     ])
       expect(data, s).toContain(s);
     expect(fake.seen.at(-1)?.system).toContain('не меньше 90%');
-    expect(data).toContain('проверка блокировки ТСПУ');
+    expect(data).toContain('проверка порта ноды из России');
+    // Окно оплаты — в данных и в правилах: оплата близко и другой причины нет — вероятнее всего, она и закончилась.
+    expect(data).toContain('Окно оплаты (срок оплаты этого сервера в «Биллинге» прошёл или наступит');
+    expect(data).toMatch(
+      /- Срок близко: Аренда «Guardora»: 2\s500 ₽, оплачено до [^—]+ — через (2 часа|3 часа)\./,
+    );
+    expect(data).toMatch(/Проверено панелью до разбора: [^.]*биллинг/);
+    expect(fake.seen.at(-1)?.system).toContain('ОКНО ОПЛАТЫ');
+    // Время в данных — в поясе панели: первой строкой «Сейчас», отметок UTC нет.
+    expect(data).toMatch(/<данные>\\nСейчас: \d{1,2} [а-я]+ \d{4}, \d{2}:\d{2} \((МСК|UTC[+-]\d+)\)/);
+    expect(data).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
 
     // Вопрос по разбору про связь — свежие улики на момент вопроса, а не только дело.
     const askedFrom = fake.seen.length;
@@ -261,6 +277,9 @@ describe('разбор инцидента Джарвисом e2e', () => {
     const askData = JSON.stringify(fake.seen[askedFrom]?.messages[0]);
     expect(askData).toContain('Улики, собранные панелью перед разбором');
     expect(fake.seen[askedFrom]?.system).toContain('КАК ЧИТАТЬ СВЯЗЬ');
+    expect(fake.seen[askedFrom]?.system).toContain('ОКНО ОПЛАТЫ');
+    expect(askData).toContain('- Срок близко: Аренда «Guardora»');
+    await app.get<Db>(DB).execute(sql`delete from billing_items where title = 'Guardora'`);
   });
 
   it('пока идёт разбор — повторный запуск и вопрос дают 409; итог приходит после', async () => {

@@ -33,6 +33,13 @@ interface Candidate {
   seen: number;
 }
 
+/** Подтверждённое падение онлайна, которое пора разбирать. */
+interface Drop {
+  node: RemnawaveNode;
+  before: number;
+  after: number;
+}
+
 /**
  * J10: аномалия онлайна ноды Remnawave (решения владельца 27.09.2026, уточнение 28.09.2026, поправка
  * 28.09.2026 про короткие просадки). Раз в минуту сравнивает свежий снимок Remnawave с предыдущим по
@@ -75,7 +82,24 @@ export class NodeAnomalyJob {
     try {
       const status = await this.remnawave.status();
       if (!status.connected || !status.checkedAt) return;
-      for (const node of status.nodes) await this.checkNode(node, status.checkedAt);
+      // Опрос Remnawave не удался: в снимке новое время, но числа прежние. Считать его новой проверкой
+      // нельзя — иначе «три снимка подряд» набрались бы на одном настоящем.
+      if (status.error) return;
+      // Сначала смотрим все ноды, потом разбираем подтверждённые падения: так видно, упал онлайн у одной
+      // ноды или сразу у нескольких (общая причина вероятнее неоплаты одного сервера).
+      const due: Drop[] = [];
+      for (const node of status.nodes) {
+        const drop = this.checkNode(node, status.checkedAt);
+        if (drop) due.push(drop);
+      }
+      if (due.length === 0) return;
+      for (const drop of due) {
+        await this.investigate(drop.node, drop.before, drop.after, due.length - 1).catch((err) =>
+          this.log.warn(
+            `Проверка блокировки ноды «${drop.node.name}»: ${err instanceof Error ? err.message : err}`,
+          ),
+        );
+      }
     } catch (err) {
       this.log.warn(`Тик аномалии онлайна: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -83,11 +107,19 @@ export class NodeAnomalyJob {
     }
   }
 
-  private async checkNode(node: RemnawaveNode, checkedAt: string): Promise<void> {
+  /** Учесть свежий снимок ноды; вернуть падение, если оно подтвердилось и его пора разбирать. */
+  private checkNode(node: RemnawaveNode, checkedAt: string): Drop | null {
+    // Ноду выключили в Remnawave вручную: онлайн у неё пропал по решению администратора — это не сбой.
+    // Забываем и прежний онлайн: после включения он растёт с нуля, и сравнивать его не с чем.
+    if (node.isDisabled) {
+      this.pending.delete(node.uuid);
+      this.lastSample.delete(node.uuid);
+      return null;
+    }
     const prev = this.lastSample.get(node.uuid);
     const online = node.usersOnline ?? 0;
     // Тот же снимок Remnawave (данные ещё не обновились) — сравнивать пока не с чем, ждём следующего.
-    if (prev && prev.checkedAt === checkedAt) return;
+    if (prev && prev.checkedAt === checkedAt) return null;
     this.lastSample.set(node.uuid, { online, checkedAt });
 
     const candidate = this.pending.get(node.uuid);
@@ -96,34 +128,43 @@ export class NodeAnomalyJob {
       if (stillDown && candidate.seen + 1 < NODE_ONLINE_DROP_CONFIRM_CHECKS) {
         // Просадка держится, но проверок подряд ещё мало — ждём следующий снимок.
         candidate.seen += 1;
-        return;
+        return null;
       }
       this.pending.delete(node.uuid);
       if (stillDown) {
         const until = this.cooldownUntil.get(node.uuid) ?? 0;
-        if (Date.now() >= until) {
-          this.cooldownUntil.set(node.uuid, Date.now() + COOLDOWN_MIN * 60_000);
-          await this.investigate(node, candidate.baselineOnline, online).catch((err) =>
-            this.log.warn(
-              `Проверка блокировки ноды «${node.name}»: ${err instanceof Error ? err.message : err}`,
-            ),
-          );
-        }
-        return;
+        if (Date.now() < until) return null;
+        this.cooldownUntil.set(node.uuid, Date.now() + COOLDOWN_MIN * 60_000);
+        return { node, before: candidate.baselineOnline, after: online };
       }
       // Поднялось само на следующей же проверке — инцидент не заводим, идём дальше как обычно.
     }
 
-    if (!prev || prev.online < NODE_ONLINE_DROP_MIN_BASELINE) return;
+    if (!prev || prev.online < NODE_ONLINE_DROP_MIN_BASELINE) return null;
     const dropPct = ((prev.online - online) / prev.online) * 100;
-    if (dropPct < NODE_ONLINE_DROP_PCT) return;
+    if (dropPct < NODE_ONLINE_DROP_PCT) return null;
     // Не открываем сразу — ждём подтверждения следующим снимком (см. коммент к классу).
     this.pending.set(node.uuid, { baselineOnline: prev.online, seen: 1 });
+    return null;
   }
 
-  private async investigate(node: RemnawaveNode, before: number, after: number): Promise<void> {
+  private async investigate(
+    node: RemnawaveNode,
+    before: number,
+    after: number,
+    /** У скольких ещё нод онлайн упал в этом же проходе (дел по ним ещё нет). */
+    sameTick = 0,
+  ): Promise<void> {
     const allServers = await this.servers.list();
     const matched = allServers.find((s) => s.host === node.address) ?? null;
+    // Сбой не у одного сервера — общая причина вероятнее неоплаты одного из них. Считаем так же, как
+    // детекция связи: замолчавшие агенты, свежие дела «Сервер недоступен» и о падении онлайна у других;
+    // своё прежнее дело (под именем ноды или сервера) «другим» не считается.
+    const othersDown =
+      sameTick +
+      (await this.incidentsService
+        .fleetTrouble({ serverId: matched?.id ?? null, names: [node.name, matched?.name] })
+        .catch(() => 0));
     // Сервер ноды лежит целиком — онлайн упал поэтому, а не из-за блокировки. Отдельное дело не заводим:
     // пишем в «Сервер недоступен» (или его откроет детекция связи на ближайшем тике).
     if (matched) {
@@ -154,7 +195,9 @@ export class NodeAnomalyJob {
       result.entry = await this.blockCheck
         .checkEntry(target, matched?.id ?? null, allServers)
         .catch(() => null);
-    const overdue = matched ? await this.incidentsService.overdueFor(matched.id) : [];
+    // Оплата в окне (срок прошёл или наступит в ближайшие сутки) — вероятная причина, если блокировки нет.
+    // Ноды нет среди серверов панели — «Биллинг» спросить не о чем: null, про оплату панель не утверждает.
+    const payment = matched ? await this.incidentsService.paymentWindowFor(matched.id) : null;
     const described = describeAnomaly({
       nodeName: node.name,
       before,
@@ -162,7 +205,10 @@ export class NodeAnomalyJob {
       windowMin: NODE_ONLINE_DROP_WINDOW_MIN,
       result,
       portKnown: Boolean(inbound?.port),
-      overdue,
+      payment,
+      // Агент на связи — сервер работает: закрытый порт ноды тогда не «сервер отключили».
+      serverAlive: matched?.agentStatus === 'online',
+      othersDown,
     });
     const { title, detail, confirmed } = described;
     // Агент на связи — сервер жив, порт закрыт у самой ноды или файрволом: это не «Сервер недоступен».

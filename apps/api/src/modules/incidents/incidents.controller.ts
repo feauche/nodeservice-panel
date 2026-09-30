@@ -48,6 +48,7 @@ export class IncidentsController {
       openedFrom: query.openedFrom,
       page: query.page,
       pageSize: query.pageSize,
+      offset: query.offset,
     });
   }
 

@@ -10,6 +10,8 @@ export interface UpstreamTarget {
   owner: string | null;
   /** Свой мост — его сервер в NodeService (с него самого не проверяем). */
   serverId: string | null;
+  /** Вход арендован: при неоплате выключают его, а не выход. */
+  rented: boolean;
 }
 
 /**
@@ -26,7 +28,7 @@ export async function resolveUpstreamTarget(
   if (up.kind === 'rent') {
     if (!up.address) return null;
     const { host, port } = splitUpstreamAddress(up.address);
-    return { label: 'Вход арендодателя', host, port, owner: up.owner, serverId: null };
+    return { label: 'Вход арендодателя', host, port, owner: up.owner, serverId: null, rented: true };
   }
   const bridge = allServers.find((s) => s.id === up.serverId);
   if (!bridge) return null;
@@ -40,5 +42,6 @@ export async function resolveUpstreamTarget(
     port: inbound.port,
     owner: null,
     serverId: bridge.id,
+    rented: false,
   };
 }

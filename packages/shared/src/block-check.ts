@@ -36,15 +36,32 @@ export const BLOCK_CHECK_ATTEMPTS = 3;
 export const BLOCK_CHECK_CONNECT_TIMEOUT_SEC = 8;
 export const BLOCK_CHECK_READ_TIMEOUT_SEC = 12;
 
-export const BLOCK_VERDICTS = ['unreachable', 'ip_block', 'tspu', 'block_16_20', 'ok'] as const;
+/**
+ * `partial` — порт отвечает с перебоями: с части российских проверяющих отвечает, с части нет, либо один и
+ * тот же проверяющий подключается не каждый раз. Сервер работает: «недоступен» и «блокировка IP из России»
+ * про него сказать нельзя (молчащий проверяющий или сорвавшаяся попытка не перевешивают удачных).
+ */
+export const BLOCK_VERDICTS = ['unreachable', 'ip_block', 'tspu', 'block_16_20', 'partial', 'ok'] as const;
 export type BlockVerdict = (typeof BLOCK_VERDICTS)[number];
 export const BLOCK_VERDICT_LABELS: Record<BlockVerdict, string> = {
   unreachable: 'Сервер недоступен',
   ip_block: 'Похоже на блокировку IP из России',
   tspu: 'Похоже на блокировку ТСПУ',
   block_16_20: 'Похоже на блок «16–20 КБ»',
+  partial: 'Порт отвечает с перебоями',
   ok: 'Проблем не обнаружено',
 };
+
+/**
+ * Почему проверка не состоялась (проб нет): панель называет настоящую причину, а не одну на все случаи.
+ * - no_port — в Remnawave не нашёлся порт подключения ноды;
+ * - bad_address — адрес, порт или имя маскировки записаны с недопустимыми знаками;
+ * - no_probers — в парке нет подходящего российского сервера с рабочим SSH;
+ * - ssh — проверяющие есть, но панель не зашла ни на один из них;
+ * - no_answer — панель зашла, но команда проверки на проверяющих не вернула результата.
+ */
+export const BLOCK_UNCHECKED_REASONS = ['no_port', 'bad_address', 'no_probers', 'ssh', 'no_answer'] as const;
+export type BlockUncheckedReason = (typeof BLOCK_UNCHECKED_REASONS)[number];
 
 /** Один прогон проверки с одного пробующего сервера. */
 export const blockProbeResultSchema = z.object({
@@ -73,6 +90,13 @@ export const blockCheckResultSchema = z.object({
   foreign: z.array(blockProbeResultSchema).default([]),
   /** Итоговый вердикт по всем пробам вместе (см. combineVerdicts). */
   verdict: z.enum(BLOCK_VERDICTS),
+  /** Почему проб нет; null — пробы есть (или причина не записана: старый результат). */
+  unchecked: z.enum(BLOCK_UNCHECKED_REASONS).nullable().default(null),
+  /**
+   * Почему нет встречной проверки из-за рубежа, хотя из России порт не отвечает: зарубежных серверов в парке
+   * нет, панель на них не зашла или команда не вернула результата. null — проверка есть либо не понадобилась.
+   */
+  foreignUnchecked: z.enum(BLOCK_UNCHECKED_REASONS).nullable().default(null),
   /**
    * Проверка входа, если у сервера-выхода в профиле указано, откуда приходит трафик (свой мост или вход
    * арендодателя): стучимся в порт входа из России. Видно, чья сторона сломалась. null — входа нет.
@@ -83,8 +107,15 @@ export const blockCheckResultSchema = z.object({
       label: z.string(),
       address: z.string(),
       owner: z.string().nullable(),
+      /**
+       * Вход арендован (не свой мост): при неоплате арендодатель выключает именно его, а выход продолжает
+       * работать — поэтому «вход молчит, выход жив» при близком сроке оплаты читается как неоплата.
+       */
+      rented: z.boolean().default(false),
       probes: z.array(blockProbeResultSchema),
       verdict: z.enum(BLOCK_VERDICTS),
+      /** Почему у входа нет проб; null — пробы есть. */
+      unchecked: z.enum(BLOCK_UNCHECKED_REASONS).nullable().default(null),
     })
     .nullable()
     .default(null),

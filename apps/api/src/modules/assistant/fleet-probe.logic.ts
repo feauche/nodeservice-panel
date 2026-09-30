@@ -28,11 +28,14 @@ const prefix24 = (host: string): string | null => {
 /**
  * Выбор независимых проверяющих: не сам сервер, SSH работает, разные страны, хостеры и подсети.
  * Сначала по одному из каждой страны, потом от каждого хостера, потом добираем остальными, но не из уже занятой подсети /24.
+ * Российский сервер — первым (как в проверке «из каждой страны»): при шести и более странах он иначе мог
+ * не попасть в пятёрку, а «закрыто из России, открыто из-за рубежа» — главное, что надо увидеть.
  */
 export function pickProbes(target: Pick<Server, 'id'>, all: Server[], max = PROBE_MAX): Server[] {
+  const ruFirst = (s: Server) => (s.country?.code === 'RU' ? 0 : 1);
   const pool = all
     .filter((s) => s.id !== target.id && s.sshOk === true && isProbeHost(s.host))
-    .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    .sort((a, b) => ruFirst(a) - ruFirst(b) || a.name.localeCompare(b.name, 'ru'));
   const chosen: Server[] = [];
   const providers = new Set<string>();
   const nets = new Set<string>();

@@ -113,7 +113,7 @@ describe('J10: аномалия онлайна → проверка блокир
     const db = app.get<Db>(DB);
     await runMigrations(db);
     await db.execute(
-      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents cascade`,
+      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents, billing_items cascade`,
     );
     await db.execute(sql`delete from app_meta where key like 'settings.%' or key = 'panel.ssh-key'`);
     await app.get<Redis>(VALKEY).flushdb();
@@ -443,5 +443,62 @@ describe('J10: аномалия онлайна → проверка блокир
     // И принимает, и выпускает — вход у сервера он сам: сохранённый вход убирается.
     const both = serverSchema.parse((await patch({ roles: ['entry', 'exit'] })).body);
     expect(both.profile.upstream).toBeNull();
+  });
+
+  it('окно оплаты: выход работает, вход арендодателя молчит, срок оплаты через пару часов → «проверьте оплату»', async () => {
+    const db = app.get<Db>(DB);
+    const ins = await db.execute<{ id: string }>(
+      sql`insert into servers (name, host, ssh_user) values ('guardora', '198.51.100.40', 'root') returning id`,
+    );
+    const id = ins.rows[0]?.id ?? '';
+    await agent
+      .patch(`/api/servers/${id}`)
+      .set(CSRF_HEADER, csrf)
+      .send({
+        profile: {
+          roles: ['exit'],
+          upstream: { kind: 'rent', address: 'entry.example.com:9443', owner: 'Guardora' },
+        },
+      })
+      .expect(200);
+    // Срок в «Биллинге» ещё не прошёл, но до него меньше суток — окно оплаты.
+    await db.execute(
+      sql`insert into billing_items (kind, title, server_ids, amount_minor, currency, period_unit, period_count, paid_until)
+          values ('rent', 'Guardora', ${JSON.stringify([id])}::jsonb, 250000, 'RUB', 'month', 1, now() + interval '3 hours')`,
+    );
+
+    fake.node = { uuid: 'node-8', name: 'guardora (Аренда)', address: '198.51.100.40', online: 211 };
+    fake.inbound = { sni: 'www.example.com', port: 8443 };
+    // Выход проходит полную проверку, а порт входа (проверка только порта) не отвечает.
+    ssh.blockCheckOutput = '{"stage":"data","ok":true,"stalledAtKb":null}';
+    ssh.blockCheckPortOnlyOutput = '{"stage":"tcp","ok":false,"stalledAtKb":null}';
+    await app.get(RemnawaveService).refresh();
+    await app.get(NodeAnomalyJob).run();
+    fake.node.online = 0;
+    for (let i = 0; i < 3; i += 1) {
+      await app.get(RemnawaveService).refresh();
+      await app.get(NodeAnomalyJob).run();
+    }
+    ssh.blockCheckPortOnlyOutput = null;
+
+    const list = incidentsListResponseSchema.parse(
+      (await agent.get('/api/incidents?status=open').expect(200)).body,
+    );
+    const inc = list.items.find((i) => i.serverName === 'guardora');
+    expect(inc?.title).toBe('Резко упал онлайн — проверьте оплату · guardora (Аренда)');
+    // Блокировка не подтверждена — это по-прежнему предупреждение, а не крит.
+    expect(inc?.kind).toBe('node_blocked');
+    expect(inc?.severity).toBe('warn');
+    expect(inc?.detail).toContain('Онлайн: 211 → 0 (−100 %)');
+    expect(inc?.detail).toContain('Вывод: блокировка не подтвердилась.\nВыход отвечает, а вход — нет');
+    // Срок — датой в поясе панели; «через N часов» в хранимом тексте нет: оно устарело бы.
+    expect(inc?.detail).toMatch(
+      /💳 Срок оплаты близко: Аренда «Guardora»: 2\s500 ₽, оплачено до \d{1,2} [а-я]+( \d{4})?, \d{2}:\d{2} \((МСК|UTC[+-]\d+)\)\.\n/,
+    );
+    expect(inc?.detail).not.toMatch(/через \d+ час/);
+    expect(inc?.detail).toContain(
+      'Вероятнее всего: оплата закончилась чуть раньше срока, и вход отключили — при неоплаченной аренде вход выключают, а выход продолжает работать.',
+    );
+    await db.execute(sql`delete from billing_items where title = 'Guardora'`);
   });
 });

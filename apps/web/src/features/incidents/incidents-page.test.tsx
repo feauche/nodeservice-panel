@@ -1,9 +1,11 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { delay, http } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetMockState } from '@/test/msw/handlers';
 import { mockIncidents } from '@/test/msw/incidents-mock';
+import { server } from '@/test/msw/server';
 import { renderPage } from '@/test/render';
 import { IncidentsPage } from './incidents-page';
 
@@ -157,6 +159,93 @@ describe('IncidentsPage', () => {
     mockIncidents.items = [];
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     expect(await screen.findByText('Пока спокойно')).toBeInTheDocument();
+  });
+
+  /** Сорок пять решённых, по одному в час: четыре полные страницы по десять и пятая из пяти. */
+  const seedResolved = () => {
+    const [base] = mockIncidents.items;
+    if (!base) throw new Error('нет мок-инцидента');
+    mockIncidents.items = Array.from({ length: 45 }, (_, i) => ({
+      ...base,
+      id: `7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3c${String(i).padStart(2, '0')}`,
+      kind: 'cpu_high' as const,
+      status: 'resolved' as const,
+      openedAt: new Date(Date.now() - (i + 2) * 3_600_000).toISOString(),
+      resolvedAt: new Date(Date.now() - (i + 1) * 3_600_000).toISOString(),
+      resolvedBy: 'auto' as const,
+      attempts: [],
+      proposal: null,
+    }));
+  };
+  /** Ответ списка инцидентов приходит с задержкой; сам ответ — обычный (запрос идёт дальше по обработчикам). */
+  const slowList = (ms: number) =>
+    server.use(
+      http.get('/api/incidents', async () => {
+        await delay(ms);
+      }),
+    );
+
+  it('медленный ответ: быстрые нажатия «Следующая» не теряются, а прежняя страница на экране приглушена', async () => {
+    seedResolved();
+    renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(10));
+    slowList(150);
+    const pages = screen.getByRole('navigation', { name: 'Страницы решённых инцидентов' });
+    await user.click(screen.getByRole('button', { name: 'Следующая' }));
+    // Ответ ещё не пришёл: на экране прежние строки, но номер страницы и диапазон — уже запрошенные.
+    expect(within(pages).getByRole('button', { current: 'page' })).toHaveTextContent('2');
+    expect(screen.getByText(/11–20 из 45/)).toBeInTheDocument();
+    expect(screen.getByTestId('incidents-list')).toHaveAttribute('aria-busy', 'true');
+    // Второе и третье нажатия считаются от запрошенной страницы, а не от той, что ещё на экране.
+    await user.click(screen.getByRole('button', { name: 'Следующая' }));
+    await user.click(screen.getByRole('button', { name: 'Следующая' }));
+    expect(within(pages).getByRole('button', { current: 'page' })).toHaveTextContent('4');
+    await waitFor(() => expect(screen.getByTestId('incidents-list')).toHaveAttribute('aria-busy', 'false'));
+    expect(screen.getByText(/31–40 из 45/)).toBeInTheDocument();
+  });
+
+  it('«Удалить решённые» с дальней страницы: удалённые не возвращаются на экран, пока список перечитывается', async () => {
+    seedResolved();
+    renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /^Решённые/ }));
+    await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(10));
+    await user.click(screen.getByRole('button', { name: 'Следующая' }));
+    await user.click(screen.getByRole('button', { name: 'Следующая' }));
+    await screen.findByText(/21–30 из 45/);
+    // Перечитывание списка после удаления идёт долго: всё это время первая страница лежит в кэше.
+    slowList(600);
+    await user.click(screen.getByRole('button', { name: /Удалить решённые/ }));
+    await user.click(await screen.findByRole('button', { name: 'Удалить' }));
+    expect(await screen.findByText('Пока спокойно', undefined, { timeout: 400 })).toBeInTheDocument();
+    expect(screen.queryAllByTestId('incident-row')).toHaveLength(0);
+    // И после перечитывания — тоже пусто.
+    await delay(700);
+    expect(screen.getByText('Пока спокойно')).toBeInTheDocument();
+    expect(screen.queryAllByTestId('incident-row')).toHaveLength(0);
+  });
+
+  it('смена вкладки сбрасывает страницу сразу: запрос по старой странице не уходит', async () => {
+    seedResolved();
+    const asked: string[] = [];
+    server.use(
+      http.get('/api/incidents', ({ request }) => {
+        const q = new URL(request.url).searchParams;
+        if (q.get('status') === 'resolved') asked.push(`page=${q.get('page')}`);
+      }),
+    );
+    renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /^Решённые/ }));
+    await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(10));
+    await user.click(screen.getByRole('button', { name: 'Следующая' }));
+    await user.click(screen.getByRole('button', { name: 'Следующая' }));
+    await screen.findByText(/21–30 из 45/);
+    asked.length = 0;
+    await user.click(screen.getByRole('button', { name: /^Все/ }));
+    await screen.findByText(/1–10 из 45/);
+    expect(asked).not.toContain('page=3');
   });
 });
 

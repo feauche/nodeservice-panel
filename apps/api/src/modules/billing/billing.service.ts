@@ -9,6 +9,7 @@ import {
   type BillingForecastItem,
   type BillingItem,
   type BillingItemUpsert,
+  type BillingKind,
   type BillingPayment,
   type BillingStatPeriod,
   type BillingStats,
@@ -46,15 +47,23 @@ import {
   occurrenceDates,
   occurrencesUntil,
   periodBounds,
+  periodMs,
   timesPerYear,
   toRubMinor,
 } from './billing.logic.js';
 import { BillingRatesService } from './billing-rates.service.js';
+import {
+  buildPaymentWindow,
+  PAYMENT_WINDOW_MS,
+  type PaymentEntry,
+  type PaymentWindow,
+  SERVER_PAYMENT_KINDS,
+} from './payment-window.js';
 
 const DEFAULT_TZ = 'Europe/Moscow';
 const DAY_MS = 86_400_000;
-/** Виды инцидентов, при которых сервер считается «лежит» — возможная причина: не оплачен. */
-const DOWN_KINDS = ['server_down', 'agent_offline', 'ssh_down', 'node_down', 'node_blocked'];
+/** Кем записано продление, которое панель сделала сама по автоплатежу. */
+const AUTO_CHARGE_ACTOR = 'Автоплатёж';
 
 const validTz = (tz: string | undefined): string => {
   if (!tz) return DEFAULT_TZ;
@@ -744,8 +753,10 @@ export class BillingService {
     const now = new Date();
     let active = await this.activeRows();
     if (opts.serverId) active = active.filter((i) => i.serverIds.includes(opts.serverId as string));
-    const s = await this.summary();
-    const f = await this.forecast();
+    // Границы «месяца» и «года» — по поясу панели, как и остальное время у Джарвиса.
+    const tz = await this.notifications.timeZone().catch(() => DEFAULT_TZ);
+    const s = await this.summary(tz);
+    const f = await this.forecast(tz);
     const MONTHS = [
       'январь',
       'февраль',
@@ -807,47 +818,61 @@ export class BillingService {
   }
 
   /**
-   * Оплаты, связанные с сервером, которые просрочены или истекают в ближайшие сутки — вероятная причина
-   * падения. Пустой массив — с оплатой всё в порядке (или её не завели).
+   * Окно оплаты сервера (см. payment-window.ts): что просрочено, что истекает в ближайшие сутки, где
+   * автоплатёж только что продлил срок, и ближайший срок остальных оплат. Факты идут в текст инцидента и
+   * в разбор Джарвиса; сроки — в поясе панели. total = 0 — оплат этого сервера в «Биллинге» нет.
+   * Берутся оплаты всех видов: какой вид что объясняет, решает тот, кто пишет вывод (payment-hint.ts).
    */
-  async paymentRiskForServer(serverId: string, now = new Date()): Promise<string[]> {
+  async paymentWindowForServer(serverId: string, now = new Date()): Promise<PaymentWindow> {
     const rows = await this.db
       .select()
       .from(billingItems)
       .where(
         and(
           isNull(billingItems.archivedAt),
-          lte(billingItems.paidUntil, new Date(now.getTime() + DAY_MS)),
           sql`${billingItems.serverIds} @> ${JSON.stringify([serverId])}::jsonb`,
         ),
       );
-    const briefs = await this.briefs(rows, now);
-    return briefs.map(
-      (b) =>
-        `${b.kind} «${b.title}»${b.provider ? ` у ${b.provider}` : ''}: ${b.amount}, оплачено до ${b.paidUntil} — ${b.due}${b.autoCharge ? ' (включён автоплатёж)' : ''}.`,
+    const timeZone = validTz(await this.notifications.timeZone().catch(() => DEFAULT_TZ));
+    if (rows.length === 0) return buildPaymentWindow([], [], now, timeZone);
+    const prov = await this.db.select({ id: providers.id, name: providers.name }).from(providers);
+    const pName = new Map(prov.map((p) => [p.id, p.name]));
+    const entries = new Map<string, PaymentEntry>(
+      rows.map((it) => [
+        it.id,
+        {
+          kind: it.kind,
+          kindLabel: BILLING_KIND_LABELS[it.kind],
+          title: it.title,
+          provider: it.providerId ? (pName.get(it.providerId) ?? null) : null,
+          amount: formatMoney(it.amountMinor, it.currency),
+          paidUntil: it.paidUntil,
+          autoCharge: it.autoCharge,
+          periodMs: periodMs(it.periodUnit, it.periodCount),
+        },
+      ]),
     );
-  }
-
-  /**
-   * Только уже просроченные оплаты сервера (срок прошёл) — факт для инцидента «Сервер недоступен»:
-   * «Аренда «Guardora»: 2 500 ₽, оплачено до 29 сентября, 00:00 — просрочено на 15 часов».
-   */
-  async overdueForServer(serverId: string, now = new Date()): Promise<string[]> {
-    const rows = await this.db
-      .select()
-      .from(billingItems)
+    // Автоплатёж панель продлевает сама, не зная, прошло ли списание: недавнее продление — тоже «окно».
+    const renewed = await this.db
+      .select({ itemId: billingPayments.itemId, at: billingPayments.extendedFrom })
+      .from(billingPayments)
       .where(
         and(
-          isNull(billingItems.archivedAt),
-          lte(billingItems.paidUntil, now),
-          sql`${billingItems.serverIds} @> ${JSON.stringify([serverId])}::jsonb`,
+          inArray(billingPayments.itemId, [...entries.keys()]),
+          eq(billingPayments.actorDisplay, AUTO_CHARGE_ACTOR),
+          gte(billingPayments.extendedFrom, new Date(now.getTime() - PAYMENT_WINDOW_MS)),
         ),
-      );
-    const briefs = await this.briefs(rows, now);
-    return briefs.map(
-      (b) =>
-        `${b.kind} «${b.title}»${b.provider ? ` у ${b.provider}` : ''}: ${b.amount}, оплачено до ${b.paidUntil} — ${b.due}`,
-    );
+      )
+      .orderBy(desc(billingPayments.extendedFrom));
+    const seen = new Set<string>();
+    const renewals: Array<{ entry: PaymentEntry; at: Date }> = [];
+    for (const r of renewed) {
+      const entry = entries.get(r.itemId);
+      if (!entry || seen.has(r.itemId)) continue;
+      seen.add(r.itemId);
+      renewals.push({ entry, at: r.at });
+    }
+    return buildPaymentWindow([...entries.values()], renewals, now, timeZone);
   }
 
   /* ─────────── Фоновая задача: автоплатёж, напоминания, досчёт рублей ─────────── */
@@ -870,7 +895,7 @@ export class BillingService {
       for (let i = 0; i < 60 && row.paidUntil <= now; i += 1) {
         const to = extendTarget(row.paidUntil, { period: true }, row.periodUnit, row.periodCount);
         if (!to) break;
-        const res = await this.recordExtend(row, to, true, row.amountMinor, 'Автоплатёж', row.paidUntil);
+        const res = await this.recordExtend(row, to, true, row.amountMinor, AUTO_CHARGE_ACTOR, row.paidUntil);
         row = res.item;
         n += 1;
       }
@@ -907,9 +932,15 @@ export class BillingService {
     return n;
   }
 
-  /** Серверы, у которых сейчас открыт инцидент «лежит»: агент, SSH, нода. */
-  private async downServers(ids: string[]): Promise<Set<string>> {
-    if (ids.length === 0) return new Set();
+  /**
+   * Серверы оплаты, по которым сейчас открыто дело «Сервер недоступен», само называющее оплату (в заголовке
+   * «проверьте оплату» или «просрочена оплата»): там неоплата — вероятная причина. Где дело об оплате молчит
+   * (порт с панели открыт) или называет общую причину, напоминание не должно быть увереннее самого дела.
+   * Только для оплат самого сервера (хостинг и аренда): сертификат, домен и «Другое» сервер не выключают.
+   * «Агент не в сети», «SSH недоступен», остановленная нода и блокировка — сервер работает, оплата ни при чём.
+   */
+  private async downServers(ids: string[], kind: BillingKind): Promise<Set<string>> {
+    if (ids.length === 0 || !SERVER_PAYMENT_KINDS.includes(kind)) return new Set();
     const rows = await this.db
       .select({ serverId: incidents.serverId })
       .from(incidents)
@@ -917,7 +948,8 @@ export class BillingService {
         and(
           inArray(incidents.serverId, ids),
           ne(incidents.status, 'resolved'),
-          inArray(incidents.kind, DOWN_KINDS),
+          eq(incidents.kind, 'server_down'),
+          sql`${incidents.title} like ${'%оплат%'}`,
         ),
       );
     return new Set(rows.map((r) => r.serverId).filter((x): x is string => Boolean(x)));
@@ -955,7 +987,7 @@ export class BillingService {
       } else if ((state === 'soon' || state === 'today') && it.notifiedState === null) kind = 'soon';
       if (!kind) continue;
       const ids = it.serverIds.filter((id) => sName.has(id));
-      const down = await this.downServers(ids);
+      const down = await this.downServers(ids, it.kind as BillingKind);
       const rate = await this.rates.rate(it.currency, now);
       const html = formatBillingMessage({
         state: kind,
@@ -986,7 +1018,8 @@ export class BillingService {
             ? `. ${downNames.join(', ')} ${downNames.length > 1 ? 'недоступны' : 'недоступен'} — вероятно, из-за неоплаты.`
             : ''
         }`,
-        link: { to: `/billing?item=${it.id}`, label: 'Открыть биллинг' },
+        // Страница биллинга — подпункт «Серверы»; ?item открывает окно «Продлить» у этой оплаты.
+        link: { to: `/servers/billing?item=${it.id}`, label: 'Открыть биллинг' },
         telegram: { event: kind === 'overdue' ? 'billing_overdue' : 'billing_soon', html, serverKey: null },
       });
       await this.db

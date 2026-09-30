@@ -31,6 +31,9 @@ import { IncidentsSettingsStore } from './incidents-settings.store.js';
  * Пока один раздел — «внешний вид»; следующие этапы добавят свои ключи.
  */
 const KEY_APPEARANCE = 'settings.appearance';
+/** Владелец сам выбрал пояс панели (в записи он есть), а не получил значение по умолчанию. */
+const timeZoneChosen = (raw: unknown): boolean =>
+  typeof (raw as { timeZone?: unknown } | null | undefined)?.timeZone === 'string';
 const KEY_SNIPPETS = 'settings.snippets';
 
 @Injectable()
@@ -76,6 +79,10 @@ export class SettingsService {
     return after;
   }
 
+  /**
+   * «Внешний вид». Чтение открыто (логотип нужен на экране входа), поэтому пояс отдаём только записанный
+   * или по умолчанию — пояс браузера владельца из «Уведомлений» сюда не подставляется.
+   */
   async getAppearance(): Promise<AppearanceSettings> {
     const raw = await this.readJson(KEY_APPEARANCE);
     const parsed = appearanceSettingsSchema.safeParse(raw ?? APPEARANCE_DEFAULTS);
@@ -88,11 +95,18 @@ export class SettingsService {
   }
 
   async updateAppearance(patch: AppearanceSettingsUpdate): Promise<AppearanceSettings> {
+    const raw = await this.readJson(KEY_APPEARANCE);
     const current = await this.getAppearance();
     // undefined = «поле не трогать» (partial), null = «сбросить»
     const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
     const next = appearanceSettingsSchema.parse({ ...current, ...defined });
-    await this.writeJson(KEY_APPEARANCE, next);
+    // Пояс записываем, только когда его выбрали: сохранение логотипа или названия не должно молча
+    // закреплять пояс по умолчанию — пока пояс не выбран, время в сообщениях идёт по поясу из «Уведомлений».
+    const { timeZone: _unchosen, ...withoutZone } = next;
+    await this.writeJson(
+      KEY_APPEARANCE,
+      timeZoneChosen(raw) || defined.timeZone !== undefined ? next : withoutZone,
+    );
     // В Журнал (запись делает @Audit на контроллере) — только изменённые поля.
     this.audit.extend({ changes: diffChanges(current, next) });
     return next;

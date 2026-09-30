@@ -66,7 +66,7 @@ export class AgentPendingJob {
     const openFrom =
       s.sshOk === true
         ? []
-        : (await this.blockCheck.countryReach(s.host, s.port, s.id, all))
+        : (await this.blockCheck.countryReach(s.host, s.port, s.id, all)).results
             .filter((r) => r.open)
             .map((r) => r.from);
     const report = await this.egress.check(s, all, openFrom);

@@ -39,13 +39,13 @@ import {
 import { ClsService } from 'nestjs-cls';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
+import { zoneLabel } from '../../common/local-time.js';
 import { DEFAULT_TIME_ZONE, panelTimeZone } from '../../common/panel-time-zone.js';
 import type { Env } from '../../config/env.schema.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CLS_USER } from '../auth/cls-keys.js';
-import { zoneLabel } from '../billing/billing.format.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { esc } from '../notifications/telegram/telegram.format.js';
 import { TelegramService } from '../notifications/telegram/telegram.service.js';

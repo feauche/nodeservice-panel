@@ -84,7 +84,7 @@ describe('pickProbes', () => {
     expect(names.slice(0, 2)).toEqual(['a', 'c']);
     expect(names).not.toContain('b');
   });
-  it('сначала по одному из каждой страны', () => {
+  it('сначала по одному из каждой страны, российский — первым', () => {
     const c = (code: string) => ({ code, name: code }) as Server['country'];
     const all = [
       target,
@@ -93,7 +93,20 @@ describe('pickProbes', () => {
       srv({ name: 'fi', host: '7.7.7.1', providerId: 'p1', country: c('FI') }),
       srv({ name: 'ru', host: '8.8.8.1', providerId: 'p1', country: c('RU') }),
     ];
-    expect(pickProbes(target, all, 3).map((s) => s.name)).toEqual(['de1', 'fi', 'ru']);
+    expect(pickProbes(target, all, 3).map((s) => s.name)).toEqual(['ru', 'de1', 'fi']);
+  });
+  it('шесть стран и пять мест: российский сервер не выпадает из проверки', () => {
+    const c = (code: string) => ({ code, name: code }) as Server['country'];
+    const all = [
+      target,
+      ...(['DE', 'KZ', 'LV', 'NL', 'PL'] as const).map((code, i) =>
+        srv({ name: `a-${code}`, host: `5.5.${i}.1`, country: c(code) }),
+      ),
+      srv({ name: 'я-россия', host: '8.8.8.1', country: c('RU') }),
+    ];
+    const names = pickProbes(target, all).map((s) => s.name);
+    expect(names).toHaveLength(5);
+    expect(names[0]).toBe('я-россия');
   });
   it('не больше max и без адресов, непригодных для команды', () => {
     const all = [

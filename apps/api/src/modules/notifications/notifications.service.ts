@@ -11,6 +11,7 @@ import {
 } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
+import { clipKeepingEnd } from '../../common/text.js';
 import type { NotificationRow } from '../../infra/db/schema/index.js';
 import { EventsService } from '../events/events.service.js';
 import { NotificationsRepository } from './notifications.repository.js';
@@ -169,7 +170,8 @@ export class NotificationsService {
       const row = await this.repo.insert({
         severity: input.severity,
         title: input.title.slice(0, 200),
-        body: input.body ? input.body.slice(0, 1000) : null,
+        // Длинный текст дела режем в середине: вывод стоит в конце и должен остаться целым.
+        body: input.body ? clipKeepingEnd(input.body, 1000) : null,
         linkTo: input.link?.to ?? null,
         linkLabel: input.link?.label ?? null,
         serverId: input.server?.id ?? null,

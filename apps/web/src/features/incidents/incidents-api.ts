@@ -11,7 +11,7 @@ import {
   incidentWeekStatsSchema,
   type ResolveIncidentRequest,
 } from '@nodeservice/shared';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { api, request } from '@/lib/api';
@@ -23,6 +23,8 @@ export interface IncidentsListParams {
   /** Только «Все»/«Решённые» режутся постранично — «Открытые» сервер всё равно вернёт целиком. */
   page?: number;
   pageSize?: number;
+  /** С какой строки начать (с нуля) — вместо номера страницы: страницы реестра разной длины. */
+  offset?: number;
 }
 
 export const incidentsApi = {
@@ -35,6 +37,7 @@ export const incidentsApi = {
     if (params?.openedFrom) q.set('openedFrom', params.openedFrom);
     if (params?.page) q.set('page', String(params.page));
     if (params?.pageSize) q.set('pageSize', String(params.pageSize));
+    if (params?.offset !== undefined) q.set('offset', String(params.offset));
     return api.get(`/incidents?${q}`, incidentsListResponseSchema, signal);
   },
   weekStats: (signal?: AbortSignal): Promise<IncidentWeekStats> =>
@@ -81,6 +84,9 @@ export function useIncidents(status: IncidentsFilter, params?: IncidentsListPara
     queryKey: incidentsKeys.list(status, hasParams ? listParams : undefined),
     queryFn: ({ signal }) => incidentsApi.list(status, hasParams ? listParams : undefined, signal),
     enabled,
+    // Листание и смена размера страницы (реестр подстраивается под высоту окна): прежняя страница остаётся
+    // на экране, пока не пришла новая, — без мигания заглушкой.
+    ...(hasParams ? { placeholderData: keepPreviousData } : {}),
     // Живой поток приносит изменения сразу; опрос — страховка. Пока идёт попытка — чаще.
     refetchInterval: (q) => (hasRunningAttempt(q.state.data?.items) ? 2_000 : 60_000),
   });
@@ -127,11 +133,27 @@ export function useDeleteIncident() {
     },
   });
 }
+/**
+ * Удаление всех решённых: из кэша списков они убираются сразу. Иначе, пока идёт перечитывание, страница из
+ * кэша показывала бы удалённые инциденты как существующие — со ссылками на то, чего уже нет.
+ */
 export function useDeleteResolvedIncidents() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: incidentsApi.removeResolved,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: incidentsKeys.all }),
+    onSuccess: () => {
+      // Страницы решённых, которых сейчас нет на экране, из кэша убираем совсем: переписанные в «пусто»,
+      // они потом подставились бы под тем же ключом, когда решённые появятся снова.
+      qc.removeQueries({ queryKey: incidentsKeys.list('resolved'), type: 'inactive' });
+      qc.setQueriesData<IncidentsListResponse>({ queryKey: incidentsKeys.lists }, (cur) => {
+        if (!cur) return cur;
+        const items = cur.items.filter((i) => i.status !== 'resolved');
+        if (items.length === cur.items.length) return cur;
+        // Список из одних решённых пуст целиком; в смешанном счётчики поправит перечитывание.
+        return items.length === 0 ? { ...cur, items, page: 1, total: 0, totalPages: 0 } : { ...cur, items };
+      });
+      void qc.invalidateQueries({ queryKey: incidentsKeys.all });
+    },
   });
 }
 

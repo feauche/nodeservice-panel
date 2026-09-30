@@ -41,7 +41,15 @@ import { EgressCheckService } from './egress-check.service.js';
 import { IncidentMetricsService } from './incident-metrics.service.js';
 import { IncidentRunnerService } from './incident-runner.service.js';
 import { IncidentsRepository } from './incidents.repository.js';
-import { NodeBlockCheckService } from './node-block-check.service.js';
+import { type CountryReachResult, NodeBlockCheckService } from './node-block-check.service.js';
+import {
+  NO_PAYMENT_FACTS,
+  type PaymentFacts,
+  type PaymentPicture,
+  paymentConclusion,
+  paymentLines,
+  serverDownLabel,
+} from './payment-hint.js';
 
 /** Гистерезис порогов: инцидент закрывается, когда метрика ушла ниже порога на столько процентов. */
 export const INCIDENT_HYSTERESIS_PCT = 5;
@@ -56,6 +64,19 @@ export const AGENT_OFFLINE_FOR_MS = process.env.NODE_ENV === 'test' ? 0 : 2 * 60
 const HOST_PROBE_TTL_MS = 60_000;
 /** Проверка порта «из каждой страны» — раз в 3 минуты на сервер. */
 const REACH_TTL_MS = process.env.NODE_ENV === 'test' ? 0 : 3 * 60_000;
+/** Связь пропала с другими серверами за это время — сбой считается одновременным: общая причина. */
+const FLEET_WINDOW_MS = 30 * 60_000;
+/** Дело о падении онлайна узнаётся по первой строке текста: «Онлайн: 396 → 0 …». */
+const ONLINE_DROP_RE = /Онлайн:\s*\d+\s*→/;
+/** Почему из других стран никто не проверил порт — настоящая причина, а не «проверить не с чего» на все случаи. */
+const COUNTRY_BLIND: Record<NonNullable<CountryReachResult['blind']>, string> = {
+  no_port: 'Проверить из других стран не с чего: нет серверов парка с известной страной и рабочим SSH.',
+  no_probers: 'Проверить из других стран не с чего: нет серверов парка с известной страной и рабочим SSH.',
+  bad_address: 'Проверить из других стран нельзя: адрес сервера записан с недопустимыми знаками.',
+  ssh: 'Проверить из других стран не удалось: панель не зашла ни на один сервер парка — возможно, связь пропала у самой панели.',
+  no_answer:
+    'Проверить из других стран не удалось: команда проверки на серверах парка не вернула результата.',
+};
 /** Начало текста дела «Недоступен из части сетей» — по нему его узнаём среди «Похоже на блокировку». */
 export const PARTIAL_MARK = 'Недоступен из части сетей:';
 /** Статистика действий на вкладке «Автопочинка» — за последние N дней. */
@@ -102,9 +123,19 @@ export class IncidentsService {
     return Boolean(a?.enabled && a.permissions.analysis && a.permissions.autoAnalysis);
   }
 
-  /** Просроченные оплаты сервера — факты для «Сервер недоступен». */
-  async overdueFor(serverId: string): Promise<string[]> {
-    return this.billing.overdueForServer(serverId).catch(() => []);
+  /**
+   * Оплаты сервера в окне оплаты (срок прошёл или наступит в ближайшие сутки) — факты для текста дела.
+   * null — «Биллинг» не ответил: дело заводится без них, и про оплату панель ничего не утверждает.
+   */
+  async paymentWindowFor(serverId: string): Promise<PaymentFacts | null> {
+    return this.billing
+      .paymentWindowForServer(serverId)
+      .then((w) => ({
+        overdue: w.overdue.map((f) => ({ kind: f.kind, text: f.text })),
+        dueSoon: w.dueSoon.map((f) => ({ kind: f.kind, text: f.text })),
+        paying: w.paying,
+      }))
+      .catch(() => null);
   }
 
   toDto(row: IncidentRow): Incident {
@@ -151,7 +182,12 @@ export class IncidentsService {
 
   async list(
     status: 'all' | 'open' | 'resolved',
-    opts?: { openedFrom?: string | undefined; page?: number; pageSize?: number },
+    opts?: {
+      openedFrom?: string | undefined;
+      page?: number;
+      pageSize?: number;
+      offset?: number | undefined;
+    },
   ): Promise<IncidentsListResponse> {
     // Вид, которого в контракте уже нет (после переименований), не должен ломать страницу целиком.
     const known = new Set<string>(INCIDENT_KINDS);
@@ -162,6 +198,7 @@ export class IncidentsService {
           openedFrom: opts.openedFrom,
           page: opts.page ?? 1,
           pageSize: opts.pageSize ?? INCIDENTS_PAGE_SIZE_DEFAULT,
+          offset: opts.offset,
         })
       : await (async () => {
           const rows = await this.repo.list(status);
@@ -474,10 +511,15 @@ export class IncidentsService {
     // С панели не достучаться — это ещё не «сервер лёг»: панель смотрит из одной сети. Спрашиваем по
     // серверу парка в каждой стране; открыт хоть откуда-то — сервер жив, закрыт путь из части сетей.
     const reach = suspect ? await this.countryReachCached(server) : null;
-    const partial = Boolean(reach?.some((r) => r.open));
-    const serverDown = suspect && !partial;
+    const seen = reach?.results ?? [];
+    const anyOpen = seen.some((r) => r.open);
+    // Открыт отовсюду, включая саму панель, — сервер жив и дорога к нему есть: это не «часть сетей», а
+    // обычные «Агент не в сети» и «SSH недоступен».
+    const allOpen = anyOpen && !hostDown && seen.every((r) => r.open);
+    const partial = anyOpen && !allOpen;
+    const serverDown = suspect && !anyOpen;
     const open = await this.repo.findOpen(server.id, 'server_down');
-    await this.evalPartialReach(server, partial, reach ?? [], !hostDown);
+    await this.evalPartialReach(server, partial, seen, !hostDown);
     if (partial) {
       if (open && !open.attempts.some((a) => a.status === 'running'))
         await this.autoResolve(
@@ -487,31 +529,46 @@ export class IncidentsService {
       return;
     }
     if (serverDown) {
+      // Порт SSH с панели открывается — сервер включён: «выключен» и «проверьте оплату» тут были бы неправдой.
       const why = hostDown
-        ? `Сервер не отвечает: агент молчит, порт SSH ${server.host}:${server.port} не открывается.`
-        : 'Сервер не отвечает: агент молчит, по SSH панель зайти не может.';
-      const overdue = open ? [] : await this.overdueFor(server.id);
+        ? `Сервер не отвечает: агент молчит, порт SSH ${server.host}:${server.port} не открывается. Обычно это значит, что сервер выключен, завис или отрезан у хостера — проверьте в панели хостера и оплату. Агент и SSH — следствие, переустанавливать агента бессмысленно.`
+        : `Сервер не отвечает панели: агент молчит и по SSH панель зайти не может, хотя порт SSH ${server.host}:${server.port} с панели открывается. Сервер включён — скорее всего, он завис или не пускает панель по SSH (сменился ключ или пароль, доступ закрыт файрволом). Проверьте сервер в панели хостера; переустанавливать агента бессмысленно, пока панель не может зайти по SSH.`;
+      const pay = (open ? null : await this.paymentWindowFor(server.id)) ?? NO_PAYMENT_FACTS;
+      // Об оплате — только когда порт не открывается и с панели. Сбой сразу у нескольких серверов — общая
+      // причина вероятнее. Из других стран порт не проверен — сервер не отвечает только самой панели:
+      // причину не называем, оплату просим проверить.
+      let picture: PaymentPicture | null = null;
+      if (hostDown && !open)
+        picture =
+          (await this.fleetTrouble({ serverId: server.id, names: [server.name] })) > 0
+            ? 'fleet-down'
+            : seen.length > 0
+              ? 'down'
+              : 'panel-only';
+      const payHint = picture ? paymentConclusion(pay, picture) : null;
+      const reachBlock = !reach
+        ? []
+        : seen.length > 0
+          ? [
+              '',
+              hostDown
+                ? `Порт SSH ${server.port} — ни из одной страны:`
+                : `Порт SSH ${server.port} — с серверов парка не отвечает, с сервера панели открыт:`,
+              ...countryReachLines(seen, !hostDown),
+            ]
+          : ['', COUNTRY_BLIND[reach.blind ?? 'no_probers']];
       const detail = [
-        `${why} Обычно это значит, что сервер выключен, завис или отрезан у хостера — проверьте в панели хостера и оплату. Агент и SSH — следствие, переустанавливать агента бессмысленно.`,
-        ...(reach && reach.length > 0
-          ? ['', `Порт SSH ${server.port} — ни из одной страны:`, ...countryReachLines(reach, false)]
-          : reach
-            ? [
-                '',
-                'Проверить из других стран не с чего: нет серверов парка с известной страной и рабочим SSH.',
-              ]
-            : []),
-        ...overdue.map((o) => `💳 Просрочена оплата: ${o}. Самая вероятная причина — отключили за неоплату.`),
+        why,
+        ...reachBlock,
+        ...(picture && payHint ? ['', ...paymentLines(pay, picture), payHint] : []),
       ].join('\n');
       let main = open;
       if (!main) {
         const earlier =
           (await this.repo.findOpen(server.id, 'agent_offline')) ??
           (await this.repo.findOpen(server.id, 'ssh_down'));
-        main = earlier
-          ? await this.refineToServerDown(earlier, server, detail, overdue.length > 0)
-          : undefined;
-        const label = overdue.length > 0 ? 'Сервер недоступен — просрочена оплата' : undefined;
+        const label = picture ? serverDownLabel(pay, picture) : undefined;
+        main = earlier ? await this.refineToServerDown(earlier, server, detail, label) : undefined;
         if (!main) await this.openIncident(server, 'server_down', detail, label);
         main ??= await this.repo.findOpen(server.id, 'server_down');
       }
@@ -550,16 +607,49 @@ export class IncidentsService {
     await this.evalBinary(server, 'ssh_down', sshDown);
   }
 
-  private readonly reachCache = new Map<string, { at: number; value: CountryReach[] }>();
+  /**
+   * С чем ещё случился сбой за последние полчаса, кроме этого сервера: серверы, у которых замолчал агент,
+   * и открытые за это время дела «Сервер недоступен» и дела о падении онлайна. Больше нуля — сбой не у
+   * одного сервера: общая причина (сеть, хостер, общий счёт) вероятнее, чем неоплата именно этого. Считают
+   * этим и детекция связи, и проверка онлайна — иначе на вопрос «упало сразу у нескольких?» они отвечали
+   * бы по-разному.
+   */
+  async fleetTrouble(me: {
+    serverId: string | null;
+    /** Имена самого сервера и его ноды: своё прежнее дело «другим» не считается. */
+    names: ReadonlyArray<string | null | undefined>;
+  }): Promise<number> {
+    const since = Date.now() - FLEET_WINDOW_MS;
+    const mine = new Set(me.names.filter((n): n is string => Boolean(n)));
+    const others = new Set<string>();
+    for (const s of await this.serversRepo.list().catch(() => []))
+      if (
+        s.id !== me.serverId &&
+        !mine.has(s.name) &&
+        s.agentStatus === 'offline' &&
+        s.agentLastSeenAt &&
+        s.agentLastSeenAt.getTime() >= since
+      )
+        others.add(s.id);
+    for (const i of await this.repo.list('open').catch(() => [])) {
+      if (i.openedAt.getTime() < since) continue;
+      if (i.kind !== 'server_down' && !ONLINE_DROP_RE.test(i.detail)) continue;
+      if ((i.serverId !== null && i.serverId === me.serverId) || mine.has(i.serverName)) continue;
+      others.add(i.serverId ?? `node:${i.serverName}`);
+    }
+    return others.size;
+  }
+
+  private readonly reachCache = new Map<string, { at: number; value: CountryReachResult }>();
 
   /** Проверка «из каждой страны» — не чаще раза в 3 минуты на сервер (каждая — SSH на несколько машин). */
-  private async countryReachCached(server: ServerRow): Promise<CountryReach[]> {
+  private async countryReachCached(server: ServerRow): Promise<CountryReachResult> {
     const hit = this.reachCache.get(server.id);
     if (hit && Date.now() - hit.at < REACH_TTL_MS) return hit.value;
     const all = await this.servers.list().catch(() => []);
     const value = await this.blockCheck
       .countryReach(server.host, server.port, server.id, all)
-      .catch(() => [] as CountryReach[]);
+      .catch((): CountryReachResult => ({ results: [], blind: 'no_answer' }));
     this.reachCache.set(server.id, { at: Date.now(), value });
     return value;
   }
@@ -634,7 +724,8 @@ export class IncidentsService {
     row: IncidentRow,
     server: ServerRow,
     detail: string,
-    overdue = false,
+    /** Своя подпись вместо вида: «Сервер недоступен — проверьте оплату». */
+    label?: string,
   ): Promise<IncidentRow | undefined> {
     const meta = INCIDENT_KIND_META.server_down;
     const dropped = row.proposal
@@ -643,7 +734,7 @@ export class IncidentsService {
     const updated = await this.repo.update(row.id, {
       kind: 'server_down',
       severity: meta.severity,
-      title: `${overdue ? 'Сервер недоступен — просрочена оплата' : meta.label} · ${server.name}`,
+      title: `${label ?? meta.label} · ${server.name}`,
       detail,
       proposal: null,
       // Прежний разбор был про агента или SSH — пусть Джарвис разберёт уже «Сервер недоступен».
@@ -660,7 +751,7 @@ export class IncidentsService {
     if (!updated) return undefined;
     await this.notifications.push({
       severity: 'crit',
-      title: incidentTitleToken(meta.label),
+      title: incidentTitleToken(label ?? meta.label),
       server: { id: server.id, name: server.name, host: server.host },
       telegram: {
         event: 'incident_crit',
@@ -765,7 +856,8 @@ export class IncidentsService {
     if (decision === 'waiting' || decision === 'none')
       await this.notifications.push({
         severity: meta.severity === 'crit' ? 'crit' : 'warn',
-        title: incidentTitleToken(meta.label),
+        // Своя подпись («Сервер недоступен — проверьте оплату») должна быть и в уведомлении, не только в списке.
+        title: incidentTitleToken(label ?? meta.label),
         server: { id: server.id, name: server.name, host: server.host },
         telegram: {
           event: meta.severity === 'crit' ? 'incident_crit' : 'incident_warn',
@@ -802,11 +894,15 @@ export class IncidentsService {
   }
 
   private async autoResolve(row: IncidentRow, reason?: string): Promise<void> {
+    // Закрытие называем так же, как открывали дело («Резко упал онлайн — проверьте оплату»), а не видом:
+    // иначе ответ на своё же сообщение приходил под чужим заголовком «Похоже на блокировку».
+    // Имя сервера или ноды стоит в конце заголовка после « · » — и само может содержать « · ».
+    const suffix = ` · ${row.serverName}`;
+    const cut = row.title.endsWith(suffix) ? row.title.length - suffix.length : row.title.lastIndexOf(' · ');
+    const label = cut > 0 ? row.title.slice(0, cut) : INCIDENT_KIND_META[row.kind as IncidentKind].label;
     await this.notifications.push({
       severity: 'ok',
-      title: reason
-        ? `${incidentTitleToken(INCIDENT_KIND_META[row.kind as IncidentKind].label)} — закрыт`
-        : `${incidentTitleToken(INCIDENT_KIND_META[row.kind as IncidentKind].label)} — проблема исчезла`,
+      title: `${incidentTitleToken(label)} — ${reason ? 'закрыт' : 'проблема исчезла'}`,
       ...(row.serverId ? { server: { id: row.serverId, name: row.serverName } } : {}),
       body: reason ?? 'Инцидент закрыт автоматически.',
       link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },

@@ -7,6 +7,7 @@ import {
   formatRub,
 } from '@nodeservice/shared';
 
+import { zoneLabel } from '../../common/local-time.js';
 import { esc } from '../notifications/telegram/telegram.format.js';
 import { dueInWords } from './billing.logic.js';
 
@@ -27,19 +28,6 @@ export interface BillingMessageInput {
   note: string | null;
   now: Date;
   timeZone?: string;
-}
-
-/** Подпись часового пояса: «МСК» для Москвы, иначе «UTC+6» — чтобы время в Telegram не читалось как местное. */
-export function zoneLabel(at: Date, timeZone: string): string {
-  if (timeZone === 'Europe/Moscow') return 'МСК';
-  try {
-    const part = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' })
-      .formatToParts(at)
-      .find((p) => p.type === 'timeZoneName')?.value;
-    return part ? part.replace('GMT', 'UTC').replace(/^UTC$/, 'UTC+0') : timeZone;
-  } catch {
-    return timeZone;
-  }
 }
 
 const when = (at: Date, timeZone: string) =>

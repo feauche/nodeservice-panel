@@ -342,7 +342,8 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
           id: d.id,
           title: d.title,
           // Дата и происхождение нужны, чтобы отличать проверенное вручную и свежее от старого и написанного Джарвисом.
-          updated: d.updatedAt.toISOString().slice(0, 10),
+          // Полная отметка, а не обрезанная до дня по UTC: в разборе её переводят в пояс панели вместе с остальными.
+          updated: d.updatedAt.toISOString(),
           ageDays: Math.max(0, Math.floor((Date.now() - d.updatedAt.getTime()) / 86_400_000)),
           origin: KB_SOURCE_LABELS[d.source as KbSource] ?? d.source,
           tags: d.tags,

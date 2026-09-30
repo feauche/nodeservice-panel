@@ -8,11 +8,24 @@ import {
   BLOCK_VERDICT_LABELS,
   type BlockCheckResult,
   type BlockProbeResult,
+  type BlockUncheckedReason,
   type BlockVerdict,
   type Server,
 } from '@nodeservice/shared';
 
+import { lowerFirst } from '../../common/text.js';
 import { SH } from './actions.registry.js';
+import {
+  NO_PAYMENT_FACTS,
+  ONLINE_DROP_PAYMENT_TITLE,
+  type PaymentFacts,
+  type PaymentPicture,
+  paymentConclusion,
+  paymentLines,
+  paymentTitled,
+  rentalGuess,
+  serverDownLabel,
+} from './payment-hint.js';
 
 /**
  * J10: проверка блокировки одной ноды (ТСПУ / «блок 16–20 КБ») с ДРУГОГО сервера парка. Три шага
@@ -211,8 +224,16 @@ function isRawBlockOutput(v: unknown): v is RawBlockOutput {
   );
 }
 
-/** Разобрать вывод одного прогона в понятный человеку результат пробы. */
-export function parseBlockCheckOutput(from: string, stdout: string): BlockProbeResult {
+/**
+ * Разобрать вывод одного прогона в понятный человеку результат пробы. `portOnlyByDesign` — проверка только
+ * порта по замыслу (встречная из-за рубежа, вход): оговорка «неизвестно имя маскировки» там была бы
+ * неправдой — имя известно, его просто не используют.
+ */
+export function parseBlockCheckOutput(
+  from: string,
+  stdout: string,
+  portOnlyByDesign = false,
+): BlockProbeResult {
   const line = stdout
     .split('\n')
     .map((l) => l.trim())
@@ -243,7 +264,9 @@ export function parseBlockCheckOutput(from: string, stdout: string): BlockProbeR
     return {
       from,
       verdict: 'ok',
-      detail: 'Порт отвечает. Проверить блокировку ТСПУ и «16–20 КБ» нельзя: неизвестно имя маскировки ноды.',
+      detail: portOnlyByDesign
+        ? 'Порт отвечает.'
+        : 'Порт отвечает. Проверить блокировку ТСПУ и «16–20 КБ» нельзя: неизвестно имя маскировки ноды.',
       stalledAtKb: null,
       error: null,
     };
@@ -277,64 +300,218 @@ export function parseBlockCheckOutput(from: string, stdout: string): BlockProbeR
 }
 
 /**
- * Итог по всем пробам вместе: если хоть одна проба уверенно назвала блокировку — это и есть вердикт
- * (единичное «ok» с соседнего сервера не отменяет находку — блокировка может быть избирательной по
- * маршруту/провайдеру, это ожидаемо и не противоречие). Иначе — самый частый вердикт по пробам.
+ * Проба что-то увидела у цели. Сбой входа на проверяющий сервер и ответ, который не удалось разобрать
+ * (команда на проверяющем не отработала), о цели ничего не говорят — «порт закрыт» по ним сказать нельзя.
+ */
+export const probeSaw = (p: BlockProbeResult): boolean => p.error === null;
+
+/** Почему ни одна проба ничего не увидела: панель не зашла ни на один проверяющий или проверка не отработала. */
+export const blindReason = (probes: BlockProbeResult[]): 'ssh' | 'no_answer' =>
+  probes.every((p) => p.error === 'ssh') ? 'ssh' : 'no_answer';
+
+/** Вердикты, которые называет и одна проба: блокировка избирательна по маршруту и провайдеру. */
+const BLOCK_FIRST: readonly BlockVerdict[] = ['block_16_20', 'tspu', 'ip_block'];
+
+/**
+ * Итог по пробам с РАЗНЫХ серверов. Блокировку по протоколу («16–20 КБ», ТСПУ) называет и одна проба:
+ * единичное «ok» с соседнего сервера находку не отменяет — блокировка избирательна. А вот «порт не
+ * отвечает» одного проверяющего ответивших не перевешивает: часть дошла, часть нет — это `partial`
+ * («порт отвечает с перебоями»), а не «сервер недоступен» и не «блокировка IP из России». Проверяющий,
+ * который сам подключался не каждый раз (его итог — `partial`), считается и ответившим, и молчавшим.
  */
 export function combineVerdicts(probes: BlockProbeResult[]): BlockVerdict {
   if (probes.length === 0) return 'unreachable';
-  const priority: BlockVerdict[] = ['block_16_20', 'tspu', 'ip_block', 'unreachable', 'ok'];
-  for (const v of priority) if (probes.some((p) => p.verdict === v)) return v;
+  for (const v of BLOCK_FIRST) if (probes.some((p) => p.verdict === v)) return v;
+  const answered = probes.some((p) => p.verdict === 'ok' || p.verdict === 'partial');
+  const silent = probes.some((p) => p.verdict !== 'ok');
+  if (answered && silent) return 'partial';
+  return answered ? 'ok' : 'unreachable';
+}
+
+/** Ничья между попытками ОДНОГО сервера: худший вердикт по порядку (блокировка → не отвечает → в норме). */
+function worstOf(attempts: BlockProbeResult[]): BlockVerdict {
+  for (const v of [...BLOCK_FIRST, 'unreachable'] as const)
+    if (attempts.some((a) => a.verdict === v)) return v;
   return 'ok';
 }
 
 /**
  * Итог нескольких попыток с ОДНОГО сервера. Ложных выводов быть не должно (требование владельца):
- * - попытка, в которой панель не зашла на сам проверяющий сервер, о цели ничего не говорит — не считается;
+ * - попытка, в которой панель не зашла на сам проверяющий сервер или получила неразборчивый ответ, о цели
+ *   ничего не говорит — не считается;
  * - проверка только порта: одно удачное подключение — доказательство, что порт открыт (сбой одной попытки
  *   не делает его «закрытым»);
- * - полная проверка (TLS и данные): большинство попыток, ничья — по приоритету combineVerdicts.
+ * - полная проверка (TLS и данные): большинство попыток, ничья — худший вердикт (см. worstOf);
+ * - та же точка то подключается, то нет: «порт не отвечает совсем» про неё сказать нельзя — она же только что
+ *   подключилась. Итог такой точки — «отвечает не каждый раз» (`partial`), а не закрытый порт.
  * null — ни одна попытка не дошла до цели (проверить не удалось).
  */
 export function settleAttempts(attempts: BlockProbeResult[], portOnly: boolean): BlockProbeResult | null {
-  const valid = attempts.filter((a) => a.error !== 'ssh');
+  const valid = attempts.filter(probeSaw);
   if (valid.length === 0) return null;
   if (portOnly) return valid.find((a) => a.verdict === 'ok') ?? (valid[0] as BlockProbeResult);
   const counts = new Map<BlockVerdict, number>();
   for (const a of valid) counts.set(a.verdict, (counts.get(a.verdict) ?? 0) + 1);
   const top = Math.max(...counts.values());
   const leaders = valid.filter((a) => counts.get(a.verdict) === top);
-  const verdict = combineVerdicts(leaders);
+  const verdict = worstOf(leaders);
+  const answered = counts.get('ok') ?? 0;
+  if (verdict === 'unreachable' && answered > 0)
+    return {
+      from: (valid[0] as BlockProbeResult).from,
+      verdict: 'partial',
+      detail: `Порт отвечает не каждый раз: удачных попыток ${answered} из ${valid.length}.`,
+      stalledAtKb: null,
+      error: null,
+    };
   return leaders.find((a) => a.verdict === verdict) ?? (valid[0] as BlockProbeResult);
+}
+
+/**
+ * Итог проверки входа (только порт, без ложных выводов): проверяющий, на который панель не зашла, о входе
+ * ничего не говорит — не считается; одно удачное подключение — вход открыт (отключённый вход не ответил бы
+ * никому). Никто не дошёл — проб нет: «проверить не удалось», а не «вход молчит».
+ */
+export function settleEntry(probes: BlockProbeResult[]): {
+  probes: BlockProbeResult[];
+  verdict: BlockVerdict;
+} {
+  const valid = probes.filter(probeSaw);
+  return { probes: valid, verdict: valid.some((p) => p.verdict === 'ok') ? 'ok' : 'unreachable' };
 }
 
 /** «Порт не отвечает совсем.» → «порт не отвечает совсем» — для строки списка. */
 const probeLine = (p: BlockProbeResult): string => {
   const d = p.detail.trim().replace(/\.+$/, '');
   // Строчная первая буква — только у обычного слова: «TLS-подключение» так и остаётся.
-  const lower = /^[А-ЯЁA-Z][а-яёa-z]/.test(d) ? `${d.charAt(0).toLowerCase()}${d.slice(1)}` : d;
-  return `• ${p.from} — ${lower}`;
+  return `• ${p.from} — ${lowerFirst(d)}`;
 };
 
-/** Чья сторона сломалась, если проверяли и вход: вход жив, а выход нет — и наоборот. */
-export function entrySide(result: BlockCheckResult): string | null {
+const BLOCKED: ReadonlySet<BlockVerdict> = new Set(['ip_block', 'tspu', 'block_16_20']);
+
+/**
+ * Почему проверка порта ноды не состоялась — настоящая причина, а не одна на все случаи. `portKnown` —
+ * подсказка для результата без записанной причины: порт ноды в Remnawave нашёлся.
+ */
+export function uncheckedReason(
+  result: Pick<BlockCheckResult, 'unchecked'>,
+  portKnown = true,
+): BlockUncheckedReason {
+  return result.unchecked ?? (portKnown ? 'no_probers' : 'no_port');
+}
+
+const UNCHECKED_WHY: Record<BlockUncheckedReason, string> = {
+  no_port: 'в Remnawave не нашёлся порт подключения этой ноды',
+  bad_address: 'адрес, порт или имя маскировки этой ноды записаны в Remnawave с недопустимыми знаками',
+  no_probers: 'нет ни одного российского сервера парка с рабочим SSH для встречной проверки',
+  ssh: 'панель не зашла по SSH ни на один российский проверяющий сервер',
+  no_answer: 'команда проверки на российских проверяющих серверах не вернула результата',
+};
+
+/** Что помешало проверке — с маленькой буквы, без точки: вставляется в середину фразы. */
+export function uncheckedWhy(result: Pick<BlockCheckResult, 'unchecked'>, portKnown = true): string {
+  return UNCHECKED_WHY[uncheckedReason(result, portKnown)];
+}
+
+/** Строка дела «проверить не удалось» с настоящей причиной. */
+export function uncheckedLine(result: Pick<BlockCheckResult, 'unchecked'>, portKnown = true): string {
+  return `Проверить не удалось: ${uncheckedWhy(result, portKnown)}.`;
+}
+
+/**
+ * Строка о входе, который не проверяли: панель зашла на российский проверяющий (иначе не было бы проверки
+ * выхода), поэтому «не зашла ни на один» — правда только когда проверяющие для входа были и не пустили.
+ */
+export function entryUncheckedLine(entry: NonNullable<BlockCheckResult['entry']>): string {
+  const head = `${entry.label} (${entry.address})`;
+  switch (entry.unchecked) {
+    case 'bad_address':
+      return `${head}: проверить нельзя — адрес входа в профиле сервера записан не как домен или IP-адрес с портом.`;
+    case 'ssh':
+      return `${head}: проверить не удалось — панель не зашла ни на один российский проверяющий сервер.`;
+    case 'no_answer':
+      return `${head}: проверить не удалось — команда проверки на российских проверяющих серверах не вернула результата.`;
+    default:
+      return `${head}: проверить не с чего — других российских серверов парка с рабочим SSH нет.`;
+  }
+}
+
+const FOREIGN_WHY: Record<BlockUncheckedReason, string> = {
+  no_port: 'проверить из-за рубежа нечем',
+  bad_address: 'проверить из-за рубежа нечем',
+  no_probers: 'проверить из-за рубежа нечем — нет зарубежных серверов парка с рабочим SSH',
+  ssh: 'проверить из-за рубежа не удалось — панель не зашла ни на один зарубежный сервер парка',
+  no_answer:
+    'проверить из-за рубежа не удалось — команда проверки на зарубежных серверах парка не вернула результата',
+};
+
+/** Почему нет встречной проверки из-за рубежа — настоящая причина; для вставки в середину фразы. */
+export function foreignWhy(result: Pick<BlockCheckResult, 'foreignUnchecked'>): string {
+  return FOREIGN_WHY[result.foreignUnchecked ?? 'no_probers'];
+}
+
+/**
+ * Чья сторона сломалась, если проверяли и вход: вход жив, а выход нет — и наоборот. `serverAlive` — агент
+ * на связи: сервер работает, молчит только порт ноды. `bare` — только факт «выход отвечает, а вход нет»,
+ * без совета «пишите арендодателю»: следом идёт вывод об оплате аренды (совет спорил бы с «проверьте оплату»)
+ * либо текст читает Джарвис, которому, что советовать, говорят правила разбора. null — входа нет,
+ * проверить его не удалось или сказать нечего.
+ */
+export function entrySide(
+  result: BlockCheckResult,
+  opts: { serverAlive?: boolean | undefined; bare?: boolean | undefined } = {},
+): string | null {
   const entry = result.entry;
   if (!entry || entry.probes.length === 0) return null;
   const entryOk = entry.verdict === 'ok';
   const exitOk = result.verdict === 'ok';
-  const who = entry.owner ? ` — напишите: ${entry.owner}` : '';
-  if (entryOk && !exitOk) return 'Вход отвечает, не отвечает выход — дело в этом сервере или его хостере.';
-  if (!entryOk && exitOk) return `Выход отвечает, а вход — нет: похоже, лёг вход${who}.`;
-  // Вход арендодателя обычно просто пересылает соединения на этот выход: пока лежит выход, молчит и вход.
-  // Винить вход по этому нельзя — начинаем с выхода, а к арендодателю — если выход поднимется, а вход нет.
-  if (!entryOk && !exitOk)
-    return `Не отвечают ни выход, ни вход. Вход, скорее всего, пересылает трафик на этот сервер и молчит, потому что лежит выход, — начните с выхода (хостер, оплата). Если выход поднимется, а вход нет — пишите арендодателю${entry.owner ? ` (${entry.owner})` : ''}.`;
-  return null;
+  if (entryOk && exitOk) return null;
+  // К кому идти, если дело во входе: арендованный — к арендодателю, свой мост — чинить самим.
+  const toEntry = entry.rented
+    ? `пишите арендодателю${entry.owner ? ` (${entry.owner})` : ''}`
+    : 'проверьте сам мост';
+  if (exitOk)
+    return opts.bare
+      ? 'Выход отвечает, а вход — нет.'
+      : `Выход отвечает, а вход — нет: похоже, лёг вход — ${toEntry}.`;
+  // Выход жив, но из России его режет блокировка: порт отвечает, дело не в сервере.
+  if (BLOCKED.has(result.verdict))
+    return entryOk
+      ? 'Вход отвечает, а выход из России режет блокировка — дело не в сервере и не в хостере: помогает смена IP или маскировки выхода.'
+      : `Выход из России режет блокировка, и вход не отвечает. Начните с выхода: смена IP или маскировки; если вход после этого не ответит — ${toEntry}.`;
+  // Выход отвечает с перебоями: сервер работает, о входе при исправном входе добавить нечего.
+  if (result.verdict === 'partial')
+    return entryOk
+      ? null
+      : `Вход не отвечает, а выход отвечает с перебоями. Вход может молчать потому, что до выхода не достаёт и он, — начните с выхода; если выход заработает без перебоев, а вход нет — ${toEntry}.`;
+  const alive = Boolean(opts.serverAlive);
+  // Из-за рубежа не проверяли: блокировку IP из России от сбоя на самом сервере панель отличить не может.
+  if (result.foreign.length === 0) {
+    if (entryOk)
+      return alive
+        ? 'Вход отвечает, а порт ноды на выходе из России — нет; из-за рубежа порт не проверен: это либо блокировка IP выхода из России, либо нода не слушает порт.'
+        : 'Вход отвечает, а выход из России — нет; из-за рубежа порт не проверен: это либо блокировка IP выхода из России, либо выход недоступен целиком.';
+    return alive
+      ? `Не отвечают ни порт ноды на выходе (из России), ни вход; из-за рубежа порт не проверен. Сервер работает (агент на связи): это либо блокировка IP выхода из России, либо нода не слушает порт. Вход, скорее всего, молчит по той же причине — начните с выхода; если порт заработает, а вход нет — ${toEntry}.`
+      : `Не отвечают ни выход (из России), ни вход; из-за рубежа порт не проверен. Вход, скорее всего, молчит потому, что не достаёт до выхода, — начните с выхода: работает ли сервер (кабинет хостера) и не закрыт ли его IP из России. Если выход поднимется, а вход нет — ${toEntry}.`;
+  }
+  if (entryOk)
+    return alive
+      ? 'Вход отвечает, а порт ноды на выходе — нет: сервер работает, дело в самой ноде — она не слушает порт или его закрыл файрвол.'
+      : 'Вход отвечает, не отвечает выход — дело в этом сервере или его хостере.';
+  // Вход обычно просто пересылает соединения на этот выход: пока лежит выход, молчит и вход.
+  // Винить вход по этому нельзя — начинаем с выхода, а ко входу — если выход поднимется, а вход нет.
+  return alive
+    ? `Не отвечают ни порт ноды на выходе, ни вход. Вход, скорее всего, молчит потому, что нода на выходе не принимает соединения, — начните с ноды на этом сервере. Если она заработает, а вход нет — ${toEntry}.`
+    : `Не отвечают ни выход, ни вход. Вход, скорее всего, пересылает трафик на этот сервер и молчит, потому что лежит выход, — начните с выхода (хостер, оплата). Если выход поднимется, а вход нет — ${toEntry}.`;
 }
 
 /**
  * Заголовок и текст инцидента «резко упал онлайн» блоками (витрина `telegram-messages-variants.html`, 1A):
  * цифры онлайна, откуда проверяли и что увидели, вывод. Тот же текст — в карточке инцидента и в Telegram.
+ * Оплата в окне (см. payment-hint.ts) — вероятная причина, пока блокировка не подтверждена: сервер
+ * недоступен целиком, молчит арендованный вход или просто ничего другого не нашлось. Там, где панель
+ * проверила не всё или уже нашла другое объяснение, она просит проверить оплату, но причиной её не называет.
  */
 export function describeAnomaly(input: {
   nodeName: string;
@@ -343,41 +520,101 @@ export function describeAnomaly(input: {
   windowMin: number;
   result: BlockCheckResult;
   portKnown: boolean;
-  /** Просроченные оплаты сервера из «Биллинга» (факты, см. BillingService.overdueForServer). */
-  overdue?: readonly string[];
+  /**
+   * Оплаты сервера из «Биллинга», у которых срок прошёл или наступит в ближайшие сутки. null — «Биллинг»
+   * не спрашивали (ноды нет среди серверов панели) или он не ответил: про оплату панель тогда не знает.
+   */
+  payment?: PaymentFacts | null | undefined;
+  /** Агент на связи: сервер работает, даже если порт ноды не отвечает ниоткуда. */
+  serverAlive?: boolean | undefined;
+  /** У скольких ещё нод онлайн упал в то же время: общая причина вероятнее оплаты одного сервера. */
+  othersDown?: number | undefined;
 }): { title: string; detail: string; confirmed: boolean; kind: 'node_blocked' | 'server_down' } {
   const { nodeName, before, after, windowMin, result } = input;
+  const payment = input.payment ?? null;
+  const facts = payment ?? NO_PAYMENT_FACTS;
   const pct = before > 0 ? Math.round(((before - after) / before) * 100) : 0;
   const lines = [`Онлайн: ${before} → ${after} (−${pct} %) за ${windowMin} минут`];
   const confirmed = result.probes.length > 0 && result.verdict !== 'ok';
   const rental = /аренд|rent/i.test(nodeName);
-  let title: string;
+  const agentOn = Boolean(input.serverAlive);
+  const others = (input.othersDown ?? 0) > 0;
+  /** Строки оплаты и вывод для картины; пусто — подходящей оплаты в окне нет. */
+  const hintFor = (picture: PaymentPicture | null): string[] => {
+    const text = picture ? paymentConclusion(facts, picture) : null;
+    return picture && text ? ['', ...paymentLines(facts, picture), text] : [];
+  };
   if (result.probes.length === 0) {
-    title = `Резко упал онлайн, проверить не удалось · ${nodeName}`;
-    lines.push(
-      '',
-      input.portKnown
-        ? 'Проверить не удалось: нет ни одного российского сервера парка с рабочим SSH для встречной проверки.'
-        : 'Проверить не удалось: в Remnawave не нашёлся порт подключения этой ноды.',
-    );
-    return { title, detail: lines.join('\n'), confirmed, kind: 'node_blocked' };
+    lines.push('', uncheckedLine(result, input.portKnown));
+    // Проверки нет — причину не называем, но оплату в окне просим посмотреть. Агент на связи — сервер
+    // работает, хостер его не отключал: остаётся аренда.
+    const picture: PaymentPicture = others
+      ? agentOn
+        ? 'fleet'
+        : 'fleet-dark'
+      : agentOn
+        ? 'unchecked-alive'
+        : 'unchecked';
+    lines.push(...hintFor(picture));
+    return {
+      title: `${paymentTitled(facts, picture) ? ONLINE_DROP_PAYMENT_TITLE : 'Резко упал онлайн, проверить не удалось'} · ${nodeName}`,
+      detail: lines.join('\n'),
+      confirmed,
+      kind: 'node_blocked',
+    };
   }
   const entry = result.entry;
   lines.push('', entry ? 'Выход — этот сервер, из России:' : 'Из России:', ...result.probes.map(probeLine));
   if (result.foreign.length > 0) lines.push('Из-за рубежа:', ...result.foreign.map(probeLine));
   if (entry && entry.probes.length > 0)
     lines.push('', `${entry.label} (${entry.address}), из России:`, ...entry.probes.map(probeLine));
+  else if (entry) lines.push('', entryUncheckedLine(entry));
   const portOnly = result.sniUsed === null;
+  const unreachable = result.verdict === 'unreachable';
+  const partial = result.verdict === 'partial';
+  // Порт ноды молчит, а агент на связи: сервер работает — это не отключение и не неоплата.
+  const alive = unreachable && agentOn;
+  const abroad = result.foreign.length > 0;
+  const entryChecked = Boolean(entry && entry.probes.length > 0);
+  // Сервер отвечает, а вход — нет: причина уже видна, и это не «сбой у провайдеров пользователей».
+  const entryDown = result.verdict === 'ok' && entryChecked && entry?.verdict !== 'ok';
+  // Свой мост проверить не удалось: возможная причина не проверена — «другой причины не нашлось» сказать нельзя.
+  const ownEntryUnknown = Boolean(entry && !entryChecked && !entry.rented);
+  // Итог «в норме», но у какой-то пробы соединение оборвалось на небольшом объёме (вне признака «16–20 КБ»):
+  // это тоже находка, и «другой причины панель не нашла» при ней сказать нельзя.
+  const stalled = result.verdict === 'ok' && result.probes.some((p) => p.stalledAtKb !== null);
+  // Оплата — возможная причина, только пока блокировка не подтверждена. Молчит свой мост — причина в нём,
+  // а не в оплате этого сервера; молчит арендованный вход — так и выглядит неоплаченная аренда.
+  let picture: PaymentPicture | null = null;
+  if (unreachable) picture = alive ? null : others ? 'fleet-dark' : abroad ? 'down' : 'ru-only';
+  else if (partial) picture = others ? 'fleet' : 'partial';
+  else if (result.verdict === 'ok') {
+    if (entryDown) picture = entry?.rented ? 'entry' : null;
+    else if (others) picture = 'fleet';
+    else if (stalled) picture = 'stalled';
+    else if (ownEntryUnknown) picture = 'entry-unchecked';
+    else picture = portOnly ? 'port-only' : 'nothing';
+  }
+  const hint = hintFor(picture);
+  const titled = picture !== null && paymentTitled(facts, picture);
   let verdict: string;
   switch (result.verdict) {
     case 'ip_block':
       verdict = 'Похоже: блокировка IP на стороне России — сервер жив. Обычно помогает только смена IP.';
       break;
     case 'unreachable':
-      verdict =
-        result.foreign.length > 0
+      if (alive)
+        verdict = abroad
+          ? 'Похоже: сервер работает (агент на связи), а порт ноды не отвечает ни из России, ни из-за рубежа — нода не слушает порт или его закрыл файрвол.'
+          : `Похоже: сервер работает (агент на связи), а порт ноды из России не отвечает; ${foreignWhy(result)}.`;
+      else
+        verdict = abroad
           ? 'Похоже: сервер выключен, отключён хостером или арендодателем, либо закрыт firewall.'
-          : 'Похоже: из России порт не отвечает; проверить из-за рубежа нечем — нет зарубежных серверов парка с рабочим SSH.';
+          : `Похоже: из России порт не отвечает; ${foreignWhy(result)}.`;
+      break;
+    case 'partial':
+      verdict =
+        'Похоже: порт ноды отвечает с перебоями — не со всех российских проверяющих серверов или не каждый раз. Сервер работает, но из части сетей до него не достучаться: блокировка у части провайдеров или сбой маршрута.';
       break;
     case 'tspu':
       verdict = 'Похоже: блокировка ТСПУ — подключение с именем маскировки обрывается без ответа.';
@@ -388,35 +625,41 @@ export function describeAnomaly(input: {
     default:
       verdict = portOnly
         ? 'Вывод: порт отвечает. Блокировку ТСПУ и «16–20 КБ» проверить нельзя: в Remnawave нет имени маскировки этой ноды.'
-        : 'Вывод: блокировка не подтвердилась — возможно, сбой у провайдеров пользователей.';
+        : stalled
+          ? 'Вывод: признаков блокировки ТСПУ и «16–20 КБ» нет, но соединение с нодой обрывается на небольшом объёме данных — возможны помехи на пути.'
+          : entryDown || titled
+            ? 'Вывод: блокировка не подтвердилась.'
+            : 'Вывод: блокировка не подтвердилась — возможно, сбой у провайдеров пользователей.';
   }
   lines.push('', verdict);
-  const side = entrySide(result);
+  const side = entrySide(result, {
+    serverAlive: alive,
+    bare: picture === 'entry' && hint.length > 0,
+  });
   if (side) lines.push(side);
-  const overdue = input.overdue ?? [];
+  if (hint.length > 0) lines.push(...hint);
+  else if (rental && unreachable && !alive) {
+    const guess = rentalGuess(payment);
+    if (guess) lines.push(guess);
+  }
   // Сервер не отвечает ни из России, ни из-за рубежа — это не блокировка, а недоступность целиком.
-  const wholeDown = result.verdict === 'unreachable' && result.foreign.length > 0;
-  if (result.verdict === 'unreachable' && overdue.length > 0)
-    lines.push(
-      '',
-      ...overdue.map((o) => `💳 Просрочена оплата: ${o}.`),
-      'Самая вероятная причина — отключили за неоплату: продлите у провайдера и отметьте продление в «Биллинге».',
-    );
-  else if (rental && result.verdict === 'unreachable')
-    lines.push(
-      'Сервер арендован: если он недоступен целиком, возможно, не оплачена аренда (в «Биллинге» просрочки нет).',
-    );
-  if (wholeDown)
+  if (unreachable && abroad && !alive)
     return {
-      title: `${overdue.length > 0 ? 'Сервер недоступен — просрочена оплата' : 'Сервер недоступен'} · ${nodeName}`,
+      title: `${(picture ? serverDownLabel(facts, picture) : undefined) ?? 'Сервер недоступен'} · ${nodeName}`,
       detail: lines.join('\n'),
       confirmed,
       kind: 'server_down',
     };
-  title = confirmed
-    ? `${BLOCK_VERDICT_LABELS[result.verdict]} · ${nodeName}`
-    : portOnly
-      ? `Резко упал онлайн, порт отвечает · ${nodeName}`
-      : `Резко упал онлайн, блокировка не подтвердилась · ${nodeName}`;
-  return { title, detail: lines.join('\n'), confirmed, kind: 'node_blocked' };
+  let title: string;
+  if (alive) title = 'Резко упал онлайн, порт ноды не отвечает';
+  // Из-за рубежа порт не проверен: оплату в заголовок ставим, но сервер «недоступным» не называем — это
+  // может быть и блокировка IP из России.
+  else if (unreachable)
+    title = titled ? ONLINE_DROP_PAYMENT_TITLE : 'Резко упал онлайн, порт из России не отвечает';
+  else if (partial) title = 'Резко упал онлайн, порт отвечает с перебоями';
+  else if (confirmed) title = BLOCK_VERDICT_LABELS[result.verdict];
+  else if (titled) title = ONLINE_DROP_PAYMENT_TITLE;
+  else
+    title = portOnly ? 'Резко упал онлайн, порт отвечает' : 'Резко упал онлайн, блокировка не подтвердилась';
+  return { title: `${title} · ${nodeName}`, detail: lines.join('\n'), confirmed, kind: 'node_blocked' };
 }

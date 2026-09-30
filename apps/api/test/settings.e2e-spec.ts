@@ -14,8 +14,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module.js';
 import { setupHttp } from '../src/common/http/setup-http.js';
+import { panelTimeZone } from '../src/common/panel-time-zone.js';
 import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
+import { NotificationsService } from '../src/modules/notifications/notifications.service.js';
 import { SettingsService } from '../src/modules/settings/settings.service.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -72,6 +74,40 @@ describe('settings e2e', () => {
     expect(await svc.updateAppearance({ logoUrl: null, brandName: APPEARANCE_DEFAULTS.brandName })).toEqual(
       APPEARANCE_DEFAULTS,
     );
+  });
+
+  it('пояс панели: сохранение логотипа его не закрепляет, выбор — закрепляет; без входа пояс из «Уведомлений» не виден', async () => {
+    const svc = app.get(SettingsService);
+    const db = app.get<Db>(DB);
+    const stored = async () =>
+      JSON.parse(
+        (
+          await db.execute<{ value: string }>(
+            sql`select value from app_meta where key = 'settings.appearance'`,
+          )
+        ).rows[0]?.value ?? '{}',
+      ) as Record<string, unknown>;
+    // «Уведомления» сохранены из браузера в Омске; во «Внешнем виде» пояс ещё не выбирали.
+    await db.execute(sql`delete from app_meta where key = 'settings.appearance'`);
+    await db.execute(
+      sql`insert into app_meta (key, value) values ('settings.telegram', ${JSON.stringify({
+        quiet: { enabled: false, from: '23:00', to: '08:00', timeZone: 'Asia/Omsk' },
+      })}) on conflict (key) do update set value = excluded.value`,
+    );
+    // Открытое чтение отдаёт пояс по умолчанию: пояс браузера владельца из «Уведомлений» наружу не уходит.
+    expect((await svc.getAppearance()).timeZone).toBe(APPEARANCE_DEFAULTS.timeZone);
+    // Сохранили логотип — пояс в записи не появился: «не выбран», время идёт по поясу из «Уведомлений».
+    await svc.updateAppearance({ logoUrl: 'https://example.com/logo.svg' });
+    expect(await stored()).not.toHaveProperty('timeZone');
+    expect(await panelTimeZone(db)).toBeNull();
+    expect(await app.get(NotificationsService).timeZone()).toBe('Asia/Omsk');
+    // Выбрали пояс явно — он записан и больше от «Уведомлений» не зависит.
+    expect((await svc.updateAppearance({ timeZone: 'Europe/Berlin' })).timeZone).toBe('Europe/Berlin');
+    expect((await stored()).timeZone).toBe('Europe/Berlin');
+    expect((await svc.updateAppearance({ logoUrl: null })).timeZone).toBe('Europe/Berlin');
+    expect(await app.get(NotificationsService).timeZone()).toBe('Europe/Berlin');
+    await db.execute(sql`delete from app_meta where key in ('settings.appearance', 'settings.telegram')`);
+    expect((await svc.getAppearance()).timeZone).toBe(APPEARANCE_DEFAULTS.timeZone);
   });
 
   it('сниппеты терминала: пусто по умолчанию, сохраняются целиком, многострочная команда отклоняется', async () => {

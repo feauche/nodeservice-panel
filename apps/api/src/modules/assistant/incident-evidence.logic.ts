@@ -1,5 +1,13 @@
-import { INCIDENT_KIND_META, type Incident, type IncidentKind, type Server } from '@nodeservice/shared';
+import {
+  INCIDENT_KIND_META,
+  type Incident,
+  type IncidentKind,
+  PANEL_TIME_ZONE_DEFAULT,
+  type Server,
+} from '@nodeservice/shared';
 
+import { localDateTime, localDay } from '../../common/local-time.js';
+import { lowerFirst } from '../../common/text.js';
 import type { CountryReach } from '../incidents/block-check.logic.js';
 
 /**
@@ -16,14 +24,8 @@ export const CONNECTIVITY_KINDS: ReadonlySet<IncidentKind> = new Set<IncidentKin
   'node_down',
 ]);
 
-const hm = (ms: number) =>
-  new Date(ms).toLocaleString('ru-RU', {
-    day: 'numeric',
-    month: 'long',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Europe/Moscow',
-  });
+/** «29 сентября, 15:37» в поясе панели. */
+const hm = (ms: number, timeZone: string) => localDateTime(new Date(ms), timeZone);
 
 /** «12 мин назад», «3 ч назад», «2 дн назад». */
 export function ago(iso: string | null, nowMs = Date.now()): string {
@@ -70,9 +72,9 @@ export function onlineText(nodeName: string, s: OnlineSummary): string {
     s.dropPct === null
       ? ''
       : s.dropPct >= 50
-        ? ` Падение на ${s.dropPct}% — люди массово не могут подключиться.`
+        ? ` Падение на ${s.dropPct}% — так выглядит массовая потеря подключений.`
         : s.dropPct >= 15
-          ? ` Падение на ${s.dropPct}% — часть людей отвалилась.`
+          ? ` Падение на ${s.dropPct}% — отвалилась часть пользователей.`
           : ' Заметного падения онлайна нет — пользователи, скорее всего, не пострадали.';
   const back =
     s.before !== null && s.now !== null && s.before > 0 && s.now >= s.before * 0.8 && (s.dropPct ?? 0) >= 15
@@ -115,7 +117,13 @@ const reachLine = (r: ReachLine): string => {
   return `• ${r.from} — ${r.open ? 'порт открыт' : 'порт не отвечает'}${extra.length ? ` (${extra.join(', ')})` : ''}`;
 };
 
-export function reachText(port: number, reach: readonly ReachLine[], panelOpen: boolean | null): string {
+export function reachText(
+  port: number,
+  reach: readonly ReachLine[],
+  panelOpen: boolean | null,
+  /** Агент на связи и SSH с панели работает: «искать внутри» тогда нечего — связь с сервером в порядке. */
+  linkOk = false,
+): string {
   if (reach.length === 0)
     return `Порт SSH ${port} из других стран проверить не с чего: нет серверов парка с известной страной и рабочим SSH.${
       panelOpen === null ? '' : ` С сервера панели порт ${panelOpen ? 'открыт' : 'не отвечает'}.`
@@ -124,15 +132,33 @@ export function reachText(port: number, reach: readonly ReachLine[], panelOpen: 
   if (panelOpen !== null) lines.push(`• Сервер панели — ${panelOpen ? 'порт открыт' : 'порт не отвечает'}`);
   const open = reach.filter((r) => r.open);
   const closed = reach.filter((r) => !r.open);
-  const ruClosed = closed.some((r) => r.country === 'RU');
+  const ru = reach.filter((r) => r.country === 'RU');
+  const ruOpen = ru.filter((r) => r.open);
+  const ruClosed = ru.filter((r) => !r.open);
+  const abroadClosed = closed.some((r) => r.country !== 'RU');
   let meaning: string;
   if (closed.length === 0 && panelOpen !== false)
-    meaning =
-      'Открыт отовсюду: сервер включён и сеть до него в порядке — искать внутри (агент, служба, SSH-вход).';
-  else if (open.length === 0)
-    meaning = 'Не отвечает ни из одной страны: сервер выключен, завис или отрезан у хостера.';
-  else if (ruClosed && closed.every((r) => r.country === 'RU') && panelOpen !== false)
+    meaning = `Открыт отовсюду: сервер включён, с этих точек сеть до него в порядке${
+      linkOk ? '' : ' — искать внутри (агент, служба, SSH-вход)'
+    }.`;
+  else if (open.length === 0) {
+    // С серверов парка закрыт, а сам сервер заведомо работает — «выключен» сказать нельзя.
+    if (panelOpen === true || linkOk)
+      meaning =
+        'С серверов парка порт не отвечает, но сервер работает (порт открыт с сервера панели или агент на связи): SSH пускает не все адреса (файрвол) либо путь закрыт из сетей проверяющих.';
+    else if (panelOpen === null && new Set(reach.map((r) => r.country)).size === 1)
+      meaning =
+        'Не отвечает ни с одного проверяющего, но все они из одной страны: выключен сервер или закрыт путь из этой страны, по такой проверке не отличить.';
+    else meaning = 'Не отвечает ни из одной страны: сервер выключен, завис или отрезан у хостера.';
+  } else if (!abroadClosed && ruClosed.length > 0 && ruOpen.length === 0 && panelOpen !== false)
     meaning = 'Закрыт только из России, из-за рубежа открыт: признак блокировки IP в России (ТСПУ).';
+  else if (!abroadClosed && ruClosed.length > 0 && ruOpen.length > 0 && panelOpen !== false)
+    // Российские проверяющие расходятся: «закрыт из России» сказать нельзя — из части России он открыт.
+    meaning = `Из России — частично: открыт с ${ruOpen.map((r) => r.from).join(', ')}, закрыт с ${ruClosed
+      .map((r) => r.from)
+      .join(
+        ', ',
+      )}; из-за рубежа открыт. Это не блокировка IP по всей России — похоже на блокировку у части провайдеров или сбой маршрута.`;
   else
     meaning = `Открыт из ${open.map((r) => r.from).join(', ')}, закрыт из ${closed.map((r) => r.from).join(', ')}${
       panelOpen === false ? ' и с сервера панели' : ''
@@ -154,21 +180,25 @@ export function fleetText(
       Math.abs(Date.parse(i.openedAt) - at) <= 30 * 60_000,
   );
   if (near.length === 0)
-    return 'Другие серверы в это время: похожих сбоев нет — проблема именно у этого сервера.';
+    return 'Другие серверы в это время: похожих сбоев нет — сбой касается только этого сервера или пути к нему.';
   const names = [
-    ...new Set(near.map((i) => `${i.serverName} (${INCIDENT_KIND_META[i.kind].label.toLowerCase()})`)),
+    ...new Set(near.map((i) => `${i.serverName} (${lowerFirst(INCIDENT_KIND_META[i.kind].label)})`)),
   ];
   return `Другие серверы в это время (±30 мин): ${names.slice(0, 6).join(', ')}${names.length > 6 ? ` и ещё ${names.length - 6}` : ''}. Сбой у нескольких серверов сразу — вероятна общая причина (сеть у нас, у хостера или блокировка).`;
 }
 
 /** Прошлые дела этого сервера за 30 дней: повторяется ли, как заканчивалось. */
-export function historyText(inc: Pick<Incident, 'id'>, past: readonly Incident[]): string {
+export function historyText(
+  inc: Pick<Incident, 'id'>,
+  past: readonly Incident[],
+  timeZone: string = PANEL_TIME_ZONE_DEFAULT,
+): string {
   const mine = past.filter((i) => i.id !== inc.id);
   if (mine.length === 0) return 'Прошлые дела этого сервера за 30 дней: не было.';
   const byKind = new Map<string, number>();
   for (const i of mine)
     byKind.set(INCIDENT_KIND_META[i.kind].label, (byKind.get(INCIDENT_KIND_META[i.kind].label) ?? 0) + 1);
-  const kinds = [...byKind].map(([k, n]) => `${k.toLowerCase()} — ${n}`).join(', ');
+  const kinds = [...byKind].map(([k, n]) => `${lowerFirst(k)} — ${n}`).join(', ');
   const last = mine.slice(0, 4).map((i) => {
     const how =
       i.status === 'open'
@@ -176,30 +206,37 @@ export function historyText(inc: Pick<Incident, 'id'>, past: readonly Incident[]
         : `закрыто ${i.resolvedBy === 'manual' ? 'вручную' : 'само'}${
             i.resolvedAt ? ` через ${ago(i.openedAt, Date.parse(i.resolvedAt)).replace(' назад', '')}` : ''
           }`;
-    return `• ${hm(Date.parse(i.openedAt))} — ${i.title}; ${how}${i.analysis?.verdict ? `; вывод тогда: ${i.analysis.verdict}` : ''}`;
+    return `• ${hm(Date.parse(i.openedAt), timeZone)} — ${i.title}; ${how}${i.analysis?.verdict ? `; вывод тогда: ${i.analysis.verdict}` : ''}`;
   });
   return `Прошлые дела этого сервера за 30 дней: ${kinds}.\n${last.join('\n')}`;
 }
 
 /** Изменения в панели по серверу за сутки (Журнал): не сломал ли что-то сам администратор или шаг. */
-export function changesText(items: ReadonlyArray<{ at: string; action: string; result: string }>): string {
+export function changesText(
+  items: ReadonlyArray<{ at: string; action: string; result: string }>,
+  timeZone: string = PANEL_TIME_ZONE_DEFAULT,
+): string {
   if (items.length === 0) return 'Изменения по серверу в Журнале за сутки: не было.';
   return `Изменения по серверу в Журнале за сутки:\n${items
     .slice(0, 8)
-    .map((e) => `• ${hm(Date.parse(e.at))} — ${e.action}${e.result === 'success' ? '' : ` (${e.result})`}`)
+    .map(
+      (e) =>
+        `• ${hm(Date.parse(e.at), timeZone)} — ${e.action}${e.result === 'success' ? '' : ` (${e.result})`}`,
+    )
     .join('\n')}`;
 }
 
 /** Статьи базы знаний по теме дела: короткая выдержка, дата и происхождение. */
 export function kbText(
   docs: ReadonlyArray<{ title: string; content: string; updatedAt: Date; source: string }>,
+  timeZone: string = PANEL_TIME_ZONE_DEFAULT,
 ): string {
   if (docs.length === 0) return 'База знаний: статей по этой теме нет.';
   return `База знаний, статьи по теме (ссылайтесь на дату; написанное Джарвисом — «не проверено человеком»):\n${docs
     .slice(0, 3)
     .map(
       (d) =>
-        `• «${d.title}» (${d.updatedAt.toISOString().slice(0, 10)}, ${d.source}): ${d.content.replace(/\s+/g, ' ').slice(0, 400)}`,
+        `• «${d.title}» (${localDay(d.updatedAt, timeZone)}, ${d.source}): ${d.content.replace(/\s+/g, ' ').slice(0, 400)}`,
     )
     .join('\n')}`;
 }

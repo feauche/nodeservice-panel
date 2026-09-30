@@ -513,6 +513,19 @@ export const incidentsHandlers = [
     const pageSize = Number(url.searchParams.get('pageSize') ?? 30);
     const total = filtered.length;
     const totalPages = Math.max(0, Math.ceil(total / pageSize));
+    // Как в настоящем API: со смещением строка задана точно, за концом списка — пусто.
+    const offset = url.searchParams.get('offset');
+    if (offset !== null) {
+      const from = Number(offset);
+      return HttpResponse.json({
+        items: filtered.slice(from, from + pageSize),
+        counts: counts(),
+        page: Math.floor(from / pageSize) + 1,
+        pageSize,
+        total,
+        totalPages,
+      });
+    }
     const page = totalPages === 0 ? 1 : Math.min(Number(url.searchParams.get('page') ?? 1), totalPages);
     const items = filtered.slice((page - 1) * pageSize, page * pageSize);
     return HttpResponse.json({ items, counts: counts(), page, pageSize, total, totalPages });

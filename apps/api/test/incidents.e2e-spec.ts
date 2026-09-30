@@ -16,7 +16,7 @@ import type { Redis } from 'ioredis';
 import { generate } from 'otplib';
 import request from 'supertest';
 import TestAgent from 'supertest/lib/agent.js';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { AppModule } from '../src/app.module.js';
 import { setupHttp } from '../src/common/http/setup-http.js';
@@ -58,7 +58,7 @@ describe('incidents e2e', () => {
     const db = app.get<Db>(DB);
     await runMigrations(db);
     await db.execute(
-      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents cascade`,
+      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents, billing_items, notifications cascade`,
     );
     await db.execute(sql`delete from app_meta where key like 'settings.%' or key = 'panel.ssh-key'`);
     await app.get<Redis>(VALKEY).flushdb();
@@ -219,6 +219,125 @@ describe('incidents e2e', () => {
     }
   });
 
+  it('окно оплаты: сервер недоступен, а срок оплаты через пару часов → «Сервер недоступен — проверьте оплату», в тексте и в уведомлении', async () => {
+    const db = app.get<Db>(DB);
+    const svc = app.get(IncidentsService);
+    const repo = app.get(IncidentsRepository);
+    const probe = svc.probeHost;
+    const open = async () =>
+      incidentsListResponseSchema
+        .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
+        .items.filter((i) => i.serverName === 'inc-host');
+    // Срок в «Биллинге» ещё не прошёл, но до него меньше суток — окно оплаты. Сертификат рядом — не в счёт.
+    await db.execute(
+      sql`insert into billing_items (kind, title, server_ids, amount_minor, currency, period_unit, period_count, paid_until)
+          values ('server', 'inc-host VPS', ${JSON.stringify([serverId])}::jsonb, 45100, 'RUB', 'month', 1, now() + interval '3 hours'),
+                 ('cert', 'certwarden', ${JSON.stringify([serverId])}::jsonb, 90000, 'RUB', 'year', 1, now() - interval '1 day')`,
+    );
+    const hostCache = (svc as unknown as { hostCache: Map<string, unknown> }).hostCache;
+    const back = async () => {
+      await db.execute(sql`update servers set agent_status = 'online', ssh_ok = true where id = ${serverId}`);
+      await svc.evaluate(noMetrics);
+    };
+    const lose = async () => {
+      hostCache.clear();
+      await db.execute(
+        sql`update servers set agent_status = 'offline', ssh_ok = false where id = ${serverId}`,
+      );
+      await svc.evaluate(noMetrics);
+    };
+    try {
+      // Агент молчит и SSH не пускает, но порт SSH с панели открывается: сервер включён — хостер его не
+      // отключал, и оплата тут ни при чём.
+      await lose();
+      const [alive] = await open();
+      expect(alive?.kind).toBe('server_down');
+      expect(alive?.title).toBe('Сервер недоступен · inc-host');
+      expect(alive?.detail).toMatch(/хотя порт SSH 127\.0\.0\.1:\d+ с панели открывается\. Сервер включён/);
+      for (const s of ['💳', 'оплат', 'выключен']) expect(alive?.detail, s).not.toContain(s);
+      await back();
+
+      // Порт SSH не открывается — сервер не отвечает совсем.
+      svc.probeHost = async () => false;
+      await lose();
+      const [down] = await open();
+      expect(down?.kind).toBe('server_down');
+      expect(down?.title).toBe('Сервер недоступен — проверьте оплату · inc-host');
+      // Срок — датой в поясе панели; относительного «через 3 часа» в хранимом тексте нет.
+      expect(down?.detail).toMatch(
+        /\n\n💳 Срок оплаты близко: Сервер «inc-host VPS»: 451 ₽, оплачено до \d{1,2} [а-я]+( \d{4})?, \d{2}:\d{2} \((МСК|UTC[+-]\d+)\)\.\n/,
+      );
+      // Других серверов парка нет — из других стран проверить не с чего: панель просит проверить оплату,
+      // но причиной её не называет.
+      expect(down?.detail).toContain(
+        'Проверить из других стран не с чего: нет серверов парка с известной страной и рабочим SSH.',
+      );
+      expect(down?.detail).toContain(
+        'Проверьте оплату: из других стран порт не проверен, а срок оплаты близко — возможно, сервер отключили чуть раньше срока.',
+      );
+      expect(down?.detail).not.toContain('Вероятнее всего');
+      // Просроченный сертификат сервер не выключает — в дело не попал и заголовок не стал «просрочена оплата».
+      expect(down?.detail).not.toContain('certwarden');
+      // В колокольчике заголовок тот же, что у дела, а не просто «Сервер недоступен».
+      const bell = (await agent.get('/api/notifications').expect(200)).body as {
+        items: Array<{ title: string }>;
+      };
+      expect(bell.items.map((n) => n.title)).toContain('Сервер недоступен — проверьте оплату · inc-host');
+
+      // Сервер вернулся — дело закрыто; закрытие (оно уходит в Telegram ответом на открытие) названо так же,
+      // как само дело, а не просто видом «Сервер недоступен».
+      const pushed = vi.spyOn(app.get(NotificationsService), 'push');
+      await back();
+      expect(await repo.findOpen(serverId, 'server_down')).toBeUndefined();
+      expect(pushed.mock.calls.map(([n]) => n.title)).toContain(
+        'Сервер недоступен — проверьте оплату · {server} — закрыт',
+      );
+      pushed.mockRestore();
+
+      // Связь пропала сразу с несколькими серверами — общая причина вероятнее неоплаты одного из них:
+      // оплату просим проверить, но в заголовок не ставим и причиной не называем.
+      await db.execute(
+        sql`insert into servers (name, host, port, ssh_user, agent_status, agent_last_seen_at)
+            values ('inc-neighbour', '10.255.255.1', 22, 'root', 'offline', now() - interval '3 minutes')`,
+      );
+      await lose();
+      const [fleet] = await open();
+      expect(fleet?.title).toBe('Сервер недоступен · inc-host');
+      expect(fleet?.detail).toContain('💳 Срок оплаты близко: Сервер «inc-host VPS»');
+      expect(fleet?.detail).toContain(
+        'Заодно проверьте оплату: срок оплаты этого сервера близко. Сбой сразу у нескольких серверов — это больше похоже на общую причину; если они у одного хостера, ею может быть и оплата.',
+      );
+      expect(fleet?.detail).not.toContain('Вероятнее всего');
+      await db.execute(sql`delete from incidents where server_name = 'inc-neighbour'`);
+      await db.execute(sql`delete from servers where name = 'inc-neighbour'`);
+      await back();
+
+      // Тот же случай через уточнение: сначала «Агент не в сети», потом порт SSH перестал открываться.
+      svc.probeHost = probe;
+      hostCache.clear();
+      await db.execute(
+        sql`update servers set agent_status = 'offline', ssh_ok = true where id = ${serverId}`,
+      );
+      await svc.evaluate(noMetrics);
+      const first = await repo.findOpen(serverId, 'agent_offline');
+      expect(first).toBeTruthy();
+      svc.probeHost = async () => false;
+      hostCache.clear();
+      await svc.evaluate(noMetrics);
+      const [refined] = await open();
+      expect(refined?.id).toBe(first?.id);
+      expect(refined?.title).toBe('Сервер недоступен — проверьте оплату · inc-host');
+      expect(refined?.detail).toContain('💳 Срок оплаты близко: Сервер «inc-host VPS»');
+    } finally {
+      svc.probeHost = probe;
+      hostCache.clear();
+      await db.execute(sql`delete from billing_items where title in ('inc-host VPS', 'certwarden')`);
+      await db.execute(sql`delete from incidents where server_name = 'inc-neighbour'`);
+      await db.execute(sql`delete from servers where name = 'inc-neighbour'`);
+      await back();
+    }
+  });
+
   it('куда сервер может выйти: заходим через другой сервер парка; «Ожидает агента» объясняется словами', async () => {
     const db = app.get<Db>(DB);
     const jumpRes = await agent
@@ -295,12 +414,35 @@ describe('incidents e2e', () => {
       await svc.evaluate(noMetrics);
       expect(await repo.findOpen(serverId, 'agent_offline')).toBeDefined();
 
+      // Порт открыт отовсюду, включая саму панель, а SSH не пускает: дорога к серверу есть — это не
+      // «часть сетей» и не «сервер недоступен», а обычные «Агент не в сети» и «SSH недоступен».
+      await db.execute(sql`update servers set ssh_ok = false where id = ${serverId}`);
+      bc.countryReach = async () => ({
+        results: [
+          { from: 'Мост', country: 'RU', open: true },
+          { from: 'Германия-1', country: 'DE', open: true },
+        ],
+        blind: null,
+      });
+      clear();
+      await svc.evaluate(noMetrics);
+      const everywhere = incidentsListResponseSchema
+        .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
+        .items.filter((i) => i.serverName === 'inc-host');
+      expect(everywhere.map((i) => i.kind).sort()).toEqual(['agent_offline', 'ssh_down']);
+      await db.execute(sql`update servers set ssh_ok = true where id = ${serverId}`);
+      clear();
+      await svc.evaluate(noMetrics);
+
       svc.probeHost = async () => false;
-      bc.countryReach = async () => [
-        { from: 'Мост', country: 'RU', open: false },
-        { from: 'Германия-1', country: 'DE', open: true },
-        { from: 'Нидерланды', country: 'NL', open: true },
-      ];
+      bc.countryReach = async () => ({
+        results: [
+          { from: 'Мост', country: 'RU', open: false },
+          { from: 'Германия-1', country: 'DE', open: true },
+          { from: 'Нидерланды', country: 'NL', open: true },
+        ],
+        blind: null,
+      });
       clear();
       await svc.evaluate(noMetrics);
       const open = incidentsListResponseSchema
@@ -326,10 +468,13 @@ describe('incidents e2e', () => {
       expect(again.map((i) => i.kind)).toEqual(['node_blocked']);
 
       // Закрыт отовсюду → дело становится «Сервер недоступен», частичное закрывается.
-      bc.countryReach = async () => [
-        { from: 'Мост', country: 'RU', open: false },
-        { from: 'Германия-1', country: 'DE', open: false },
-      ];
+      bc.countryReach = async () => ({
+        results: [
+          { from: 'Мост', country: 'RU', open: false },
+          { from: 'Германия-1', country: 'DE', open: false },
+        ],
+        blind: null,
+      });
       clear();
       await svc.evaluate(noMetrics);
       const down = incidentsListResponseSchema
@@ -337,6 +482,21 @@ describe('incidents e2e', () => {
         .items.filter((i) => i.serverName === 'inc-host');
       expect(down.map((i) => i.kind)).toEqual(['server_down']);
       expect(down[0]?.detail).toMatch(/ни из одной страны/);
+
+      // Серверы парка есть, но панель не зашла ни на один: это не «проверить не с чего» — возможно, связь
+      // пропала у самой панели. Текст уже открытого дела не переписывается — смотрим на новом.
+      await db.execute(sql`delete from incidents where server_id = ${serverId}`);
+      bc.countryReach = async () => ({ results: [], blind: 'ssh' });
+      clear();
+      await svc.evaluate(noMetrics);
+      const blind = incidentsListResponseSchema
+        .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
+        .items.filter((i) => i.serverName === 'inc-host');
+      expect(blind.map((i) => i.kind)).toEqual(['server_down']);
+      expect(blind[0]?.detail).toContain(
+        'Проверить из других стран не удалось: панель не зашла ни на один сервер парка — возможно, связь пропала у самой панели.',
+      );
+      expect(blind[0]?.detail).not.toContain('не с чего');
 
       // Агент вернулся — всё закрыто.
       svc.probeHost = probe;
@@ -905,6 +1065,46 @@ describe('incidents e2e', () => {
     expect(after.attempts[0]).toMatchObject({ status: 'failed' });
     expect(after.attempts[0]?.steps[1]?.note).toContain('зависло');
     await agent.post(`/api/incidents/${id}/resolve`).set(CSRF_HEADER, csrf);
+  });
+
+  it('список решённых по смещению: строки с нужного места, за концом списка — пусто, а не «последняя страница»', async () => {
+    const db = app.get<Db>(DB);
+    // Двенадцать решённых с шагом в минуту, все новее остальных дел этого набора: «Сбой 1» — самый свежий.
+    for (let i = 1; i <= 12; i += 1)
+      await db.execute(
+        sql`insert into incidents (server_name, kind, severity, status, title, opened_at, resolved_at, resolved_by)
+            values ('offset-host', 'cpu_high', 'warn', 'resolved', ${`Сбой ${i} · offset-host`}, now() + (${13 - i} || ' minutes')::interval, now(), 'auto')`,
+      );
+    try {
+      const get = async (query: string) => {
+        const res = incidentsListResponseSchema.parse(
+          (await agent.get(`/api/incidents?status=resolved&${query}`).expect(200)).body,
+        );
+        return { ...res, mine: res.items.filter((i) => i.serverName === 'offset-host').map((i) => i.title) };
+      };
+      const all = await get('pageSize=100');
+      expect(all.mine).toHaveLength(12);
+      expect(all.items.slice(0, 3).map((i) => i.title)).toEqual([
+        'Сбой 1 · offset-host',
+        'Сбой 2 · offset-host',
+        'Сбой 3 · offset-host',
+      ]);
+      // Страницы реестра разной длины: следующая начинается ровно с той строки, где кончилась показанная.
+      const mid = await get('offset=3&pageSize=5');
+      expect(mid.items.map((i) => i.title)).toEqual([4, 5, 6, 7, 8].map((n) => `Сбой ${n} · offset-host`));
+      expect(mid.total).toBe(all.total);
+      // За концом списка — пусто и общее число: клиент сам решает, куда вернуться.
+      const past = await get(`offset=${all.total + 5}&pageSize=5`);
+      expect(past.items).toEqual([]);
+      expect(past.total).toBe(all.total);
+      // По номеру страницы — как раньше: за концом отдаётся последняя существующая.
+      const paged = await get('page=999&pageSize=5');
+      expect(paged.items.length).toBeGreaterThan(0);
+      expect(paged.page).toBe(paged.totalPages);
+      await agent.get('/api/incidents?status=resolved&offset=-1&pageSize=5').expect(400);
+    } finally {
+      await db.execute(sql`delete from incidents where server_name = 'offset-host'`);
+    }
   });
 
   it('удаление: открытый с идущей попыткой — попытка обрывается и запись исчезает; DELETE resolved чистит историю', async () => {

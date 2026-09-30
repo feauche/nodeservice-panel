@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Поднять версию панели везде сразу: package.json (корень, api, web, shared) и SHARED_VERSION.
 // Использование: node scripts/bump-version.mjs patch | minor | 0.11.0
-import { readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,3 +35,14 @@ for (const f of files) {
 const idx = readFileSync(sharedIndex, 'utf8');
 writeFileSync(sharedIndex, idx.replace(/(SHARED_VERSION = ')[^']+(')/, `$1${next}$2`));
 console.log(`${current} → ${next}`);
+
+// Локальный отчёт аудита (папка _dev, в репозиторий не входит) показывает текущую версию панели —
+// пересобираем его, если он есть, чтобы версия в нём не отставала. Не вышло — поднятию версии не мешает.
+const auditReport = join(root, '_dev/scripts/audit-report.mjs');
+if (existsSync(auditReport)) {
+  try {
+    execFileSync(process.execPath, [auditReport], { stdio: 'inherit' });
+  } catch {
+    console.warn('Отчёт аудита не пересобрался — запустите node _dev/scripts/audit-report.mjs вручную.');
+  }
+}

@@ -78,8 +78,8 @@ export const appearanceSettingsSchema = z.object({
   /** Название с цветовыми кодами, см. parseBrandName. */
   brandName: brandNameSchema.default(BRAND_NAME_DEFAULT),
   /**
-   * Часовой пояс панели: время в сообщениях Telegram, расписание резервных копий, «сегодня» в отчётах.
-   * Экран сам по себе показывает время по браузеру.
+   * Часовой пояс панели: время в сообщениях Telegram, в тексте инцидентов и разборах Джарвиса, расписание
+   * резервных копий, «сегодня» в отчётах. Экран сам по себе показывает время по браузеру.
    */
   timeZone: timeZoneSchema.default(PANEL_TIME_ZONE_DEFAULT),
 });

@@ -279,7 +279,8 @@ export class TelegramService {
           title: m.title,
           body: m.body ?? null,
           server: m.server ?? null,
-          footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, s.quiet.timeZone)}`,
+          // Время — по поясу панели, как и в тексте сообщения (срок оплаты): иначе в одном сообщении два пояса.
+          footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, await this.timeZone())}`,
         });
       const buttons = this.buttons(m.link, m.incidentId ?? null);
       let anyFirst = false;
@@ -409,9 +410,8 @@ export class TelegramService {
     if (items.length === 0) return;
     await this.store.setDigest([]);
     if (s.destinations.length === 0) return;
-    const lines = items
-      .slice(-20)
-      .map((i) => `• ${localTime(new Date(i.at), s.quiet.timeZone)} — ${esc(i.title)}`);
+    const timeZone = await this.timeZone();
+    const lines = items.slice(-20).map((i) => `• ${localTime(new Date(i.at), timeZone)} — ${esc(i.title)}`);
     const text = `🌅 <b>Пока были тихие часы</b>\n\n${lines.join('\n')}${
       items.length > 20 ? `\n…и ещё ${items.length - 20}` : ''
     }\n\n<i>Подробности — в «Инцидентах» и колокольчике панели.</i>`;

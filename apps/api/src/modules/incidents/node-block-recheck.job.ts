@@ -8,6 +8,7 @@ import {
   NODE_ONLINE_RECOVER_PCT,
 } from '@nodeservice/shared';
 
+import { lowerFirst } from '../../common/text.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import { IncidentsRepository } from './incidents.repository.js';
@@ -94,6 +95,8 @@ export class NodeBlockRecheckJob {
       if (open.length === 0) return;
       const status = await this.remnawave.status();
       if (!status.connected || !status.checkedAt) return;
+      // Опрос Remnawave не удался: числа в снимке прежние — «три проверки в норме» на них набирать нельзя.
+      if (status.error) return;
       const allServers = await this.servers.list();
       for (const row of open) {
         const w = this.watch.get(row.id) ?? { checkedAt: null, up: 0, said: null, probedAt: 0 };
@@ -160,7 +163,7 @@ export class NodeBlockRecheckJob {
             w.said = 'blocked';
             await this.note(
               row.id,
-              `Онлайн в норме (${online}), но проверка порта по-прежнему показывает: ${BLOCK_VERDICT_LABELS[result.verdict].toLowerCase()}. Оставляю открытым — решите сами.`,
+              `Онлайн в норме (${online}), но проверка порта по-прежнему показывает: ${lowerFirst(BLOCK_VERDICT_LABELS[result.verdict])}. Оставляю открытым — решите сами.`,
             );
           }
           continue;
@@ -170,10 +173,16 @@ export class NodeBlockRecheckJob {
             ? 'Порт с серверов парка проверить не удалось, ориентируюсь на онлайн.'
             : result.verdict === 'ok'
               ? 'Порт открыт.'
-              : 'Порт с серверов парка не ответил, но пользователи подключаются — ориентируюсь на онлайн.';
+              : result.verdict === 'partial'
+                ? 'Порт отвечает с перебоями, но пользователи подключаются — ориентируюсь на онлайн.'
+                : 'Порт с серверов парка не ответил, но пользователи подключаются — ориентируюсь на онлайн.';
+        // Дело открыто с подсказкой об оплате — «перезапуск или сбой у хостера» спорил бы с ней.
+        const why = row.detail.includes('💳')
+          ? 'Если вы продлили оплату — отметьте продление в «Биллинге».'
+          : 'Похоже, была короткая просадка — например, перезапуск сервера или сбой у хостера.';
         await this.incidents.autoResolveById(
           row.id,
-          `Онлайн ${NODE_ONLINE_RECOVER_CHECKS} проверки подряд в норме: ${online}${was}. ${probe} Похоже, была короткая просадка — например, перезапуск сервера или сбой у хостера.`,
+          `Онлайн ${NODE_ONLINE_RECOVER_CHECKS} проверки подряд в норме: ${online}${was}. ${probe} ${why}`,
         );
         this.watch.delete(row.id);
       }

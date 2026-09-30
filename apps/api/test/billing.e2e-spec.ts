@@ -264,21 +264,82 @@ describe('billing e2e', () => {
 
   it('просрочено, сервер лежит: колокольчик, Telegram со звуком и подсказкой; повтор — не раньше суток', async () => {
     const svc = app.get(BillingService);
+    /** Напоминание о просрочке заново, будто прошлого не было; возвращает текст сообщения в Telegram. */
+    const remind = async (): Promise<string> => {
+      await db.execute(
+        sql`update billing_items set notified_state = null, notified_at = null where id = ${itemId}`,
+      );
+      const n = tg.sent.length;
+      expect(await svc.runReminders()).toBe(1);
+      for (let i = 0; i < 30 && tg.sent.length === n; i += 1) await new Promise((r) => setTimeout(r, 100));
+      return String(tg.sent.at(-1)?.text);
+    };
     await db.execute(
       sql`update billing_items set paid_until = now() - interval '1 day' where id = ${itemId}`,
     );
+    // «SSH недоступен» — сервер работает, панель просто не может зайти: неоплатой это не объясняется.
     await db.execute(
       sql`insert into incidents (server_id, server_name, kind, severity, title) values (${serverId}, 'DE-1', 'ssh_down', 'crit', 'SSH недоступен')`,
     );
-    expect(await svc.runReminders()).toBe(1);
-    for (let i = 0; i < 30 && tg.sent.length === 0; i += 1) await new Promise((r) => setTimeout(r, 100));
+    const working = await remind();
+    expect(working).toContain('Оплата просрочена на 1 день');
+    expect(working).not.toContain('из-за неоплаты');
+    // «Сервер недоступен», но само дело об оплате молчит (сбой сразу у нескольких серверов, порт с панели
+    // открыт): напоминание не должно быть увереннее дела.
+    await db.execute(
+      sql`update incidents set kind = 'server_down', title = 'Сервер недоступен · DE-1' where server_id = ${serverId}`,
+    );
+    expect(await remind()).not.toContain('из-за неоплаты');
+    // Дело само называет оплату — вот тогда и напоминание говорит о вероятной причине.
+    await db.execute(
+      sql`update incidents set title = 'Сервер недоступен — просрочена оплата · DE-1' where server_id = ${serverId}`,
+    );
+    // …но только для оплаты самого сервера: просроченный сертификат сервер не выключает.
+    await db.execute(sql`update billing_items set kind = 'cert' where id = ${itemId}`);
+    expect(await remind()).not.toContain('из-за неоплаты');
+    await db.execute(sql`update billing_items set kind = 'server' where id = ${itemId}`);
+    const text = await remind();
     const msg = tg.sent.at(-1);
-    expect(String(msg?.text)).toContain('Оплата просрочена на 1 день');
-    expect(String(msg?.text)).toContain('DE-1 недоступен</b> — вероятно, из-за неоплаты');
+    expect(text).toContain('Оплата просрочена на 1 день');
+    expect(text).toContain('DE-1 недоступен</b> — вероятно, из-за неоплаты');
     expect(msg?.disable_notification).toBeFalsy();
     expect(await svc.runReminders()).toBe(0);
-    const risk = await svc.paymentRiskForServer(serverId);
-    expect(risk[0]).toContain('просрочено на 1 день');
+    // Дело возвращаем в «SSH недоступен»: по нему ниже считается доступность парка.
+    await db.execute(
+      sql`update incidents set kind = 'ssh_down', title = 'SSH недоступен' where server_id = ${serverId}`,
+    );
+    // Окно оплаты для текста инцидента и разбора: просрочка — фактом, срок — в поясе панели, а не штампом UTC.
+    const win = await svc.paymentWindowForServer(serverId);
+    expect([win.total, win.paying]).toEqual([1, 1]);
+    expect(win.dueSoon).toEqual([]);
+    expect(win.overdue).toHaveLength(1);
+    expect(win.overdue[0]).toMatchObject({ kind: 'server', when: 'просрочено на 1 день', autoCharge: false });
+    // В текст дела идёт только срок (он хранится и не должен устаревать); «просрочено на…» — отдельно.
+    expect(win.overdue[0]?.text).toMatch(
+      /^Сервер «DE-1 Falkenstein» у Hetzner: .+, оплачено до \d{1,2} [а-я]+( \d{4})?, \d{2}:\d{2} \((МСК|UTC[+-]\d+)\)$/,
+    );
+    expect(win.overdue[0]?.text).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+    // Ссылка из напоминания ведёт на страницу биллинга с окном этой оплаты (раньше — на несуществующую).
+    const bell = (await agent.get('/api/notifications').expect(200)).body as {
+      items: Array<{ title: string; link: { to: string } | null }>;
+    };
+    expect(bell.items.find((n) => n.title.startsWith('Оплата просрочена'))?.link?.to).toBe(
+      `/servers/billing?item=${itemId}`,
+    );
+    // У сервера без оплат в «Биллинге» окно пустое, и панель это знает: total = 0.
+    expect(await svc.paymentWindowForServer('00000000-0000-7000-8000-000000000000')).toEqual({
+      overdue: [],
+      dueSoon: [],
+      autoRenewed: [],
+      next: null,
+      total: 0,
+      paying: 0,
+    });
+    // К серверу привязан только сертификат: оплата есть, но срока оплаты самого сервера панель не знает.
+    await db.execute(sql`update billing_items set kind = 'cert' where id = ${itemId}`);
+    const certOnly = await svc.paymentWindowForServer(serverId);
+    expect([certOnly.total, certOnly.paying]).toEqual([1, 0]);
+    await db.execute(sql`update billing_items set kind = 'server' where id = ${itemId}`);
     const forJarvis = await svc.forAssistant();
     expect(forJarvis.items[0]).toMatchObject({
       title: 'DE-1 Falkenstein',
@@ -297,12 +358,31 @@ describe('billing e2e', () => {
     for (let i = 0; i < 30 && tg.sent.length === n; i += 1) await new Promise((r) => setTimeout(r, 100));
     expect(String(tg.sent.at(-1)?.text)).toContain('Скоро оплата — через 2 дня');
     expect(await svc.runReminders()).toBe(0);
+    // Срок через двое суток — в окно оплаты не входит, но ближайший срок назван.
+    const far = await svc.paymentWindowForServer(serverId);
+    expect([far.overdue, far.dueSoon, far.autoRenewed]).toEqual([[], [], []]);
+    expect(far.next).toContain('через 2 дня');
+    // Срок через несколько часов — уже окно: «ещё не просрочено» неоплату не исключает.
+    await db.execute(
+      sql`update billing_items set paid_until = now() + interval '5 hours' where id = ${itemId}`,
+    );
+    const soon = await svc.paymentWindowForServer(serverId);
+    expect(soon.overdue).toEqual([]);
+    expect(soon.dueSoon).toHaveLength(1);
+    expect(soon.dueSoon[0]?.when).toMatch(/^через (4 часа|5 часов)$/);
+    expect(soon.next).toBeNull();
     await db.execute(
       sql`update billing_items set paid_until = now() - interval '1 hour', auto_charge = true where id = ${itemId}`,
     );
     expect(await svc.runAutoCharge()).toBe(1);
     const item = billingItemSchema.parse((await agent.get('/api/billing/items').expect(200)).body.items[0]);
     expect(item.dueState).not.toBe('overdue');
+    // Автоплатёж продлил срок час назад: панель не знает, прошло ли списание, — это тоже окно оплаты.
+    const auto = await svc.paymentWindowForServer(serverId);
+    expect([auto.overdue, auto.dueSoon]).toEqual([[], []]);
+    expect(auto.autoRenewed).toHaveLength(1);
+    expect(auto.autoRenewed[0]).toContain('автоплатёж, срок продлён');
+    expect(auto.autoRenewed[0]).toContain('прошло ли списание у провайдера, панель не знает');
   });
 
   it('статистика парка: доступность по инцидентам, стоимость из биллинга; без хранилища метрик — честно vmOk=false', async () => {

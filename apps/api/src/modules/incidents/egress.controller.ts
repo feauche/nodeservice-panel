@@ -48,7 +48,7 @@ export class EgressController {
     const openFrom =
       server.sshOk === true
         ? []
-        : (await this.blockCheck.countryReach(server.host, server.port, server.id, all))
+        : (await this.blockCheck.countryReach(server.host, server.port, server.id, all)).results
             .filter((r) => r.open)
             .map((r) => r.from);
     const report = await this.egress.check(server, all, openFrom, { force: true });

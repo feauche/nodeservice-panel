@@ -445,7 +445,8 @@ describe('search_kb: свежесть и происхождение', () => {
     const items = JSON.parse(r.content);
     expect(items[0]).toMatchObject({ id: 'k1', origin: 'Джарвис', tags: ['conntrack'] });
     expect(items[0].ageDays).toBeGreaterThanOrEqual(399);
-    expect(items[0].updated).toBe(old.toISOString().slice(0, 10));
+    // Полная отметка: в разборе её переводят в пояс панели; обрезанная до дня по UTC дата могла отличаться на день.
+    expect(items[0].updated).toBe(old.toISOString());
     expect(items[1]).toMatchObject({ origin: 'Вручную', ageDays: 0 });
     expect(r.citations.map((c) => c.id)).toEqual(['k1', 'k2']);
   });

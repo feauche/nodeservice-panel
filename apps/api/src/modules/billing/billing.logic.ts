@@ -153,6 +153,13 @@ export function occurrenceDates(
   return out;
 }
 
+/** Примерная длина периода оплаты, мс (месяц — 30 дней, год — 365); разовая — null. */
+export function periodMs(unit: BillingPeriodUnit, count: number): number | null {
+  if (unit === 'once') return null;
+  const days = unit === 'day' ? 1 : unit === 'week' ? 7 : unit === 'month' ? 30 : 365;
+  return days * count * DAY_MS;
+}
+
 /** Сколько раз в год платится оплата с таким периодом; разовая — 0. */
 export function timesPerYear(unit: BillingPeriodUnit, count: number): number {
   if (unit === 'once') return 0;

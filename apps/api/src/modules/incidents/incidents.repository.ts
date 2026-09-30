@@ -55,6 +55,8 @@ export class IncidentsRepository {
     openedFrom?: string | undefined;
     page: number;
     pageSize: number;
+    /** С какой строки начать (с нуля); задано — `page` не учитывается и к последней странице не подгоняется. */
+    offset?: number | undefined;
   }): Promise<IncidentsPage> {
     const where = this.where(query.status, query.openedFrom);
     if (query.status === 'open') {
@@ -70,14 +72,21 @@ export class IncidentsRepository {
     const [countRow] = await this.db.select({ n: sql<number>`count(*)::int` }).from(incidents).where(where);
     const total = countRow?.n ?? 0;
     const totalPages = Math.max(0, Math.ceil(total / query.pageSize));
-    const page = totalPages === 0 ? 1 : Math.min(query.page, totalPages);
+    // По смещению строка задана точно: за концом списка — пусто, а не «последняя страница» (клиент сам
+    // решает, куда вернуться). Номер страницы в ответе — та, куда попадает первая строка.
+    const page =
+      query.offset !== undefined
+        ? Math.floor(query.offset / query.pageSize) + 1
+        : totalPages === 0
+          ? 1
+          : Math.min(query.page, totalPages);
     const rows = await this.db
       .select()
       .from(incidents)
       .where(where)
       .orderBy(desc(incidents.openedAt), desc(incidents.id))
       .limit(query.pageSize)
-      .offset((page - 1) * query.pageSize);
+      .offset(query.offset ?? (page - 1) * query.pageSize);
     return { items: rows, page, pageSize: query.pageSize, total, totalPages };
   }
 
