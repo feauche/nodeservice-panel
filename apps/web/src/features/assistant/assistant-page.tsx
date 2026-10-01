@@ -2,6 +2,7 @@ import {
   ASSISTANT_MESSAGE_MAX,
   ASSISTANT_SUGGESTIONS,
   type AssistantCitation,
+  type AssistantConversation,
   type AssistantMessage,
 } from '@nodeservice/shared';
 import { Link } from '@tanstack/react-router';
@@ -9,13 +10,17 @@ import {
   AlertTriangleIcon,
   BookOpenIcon,
   FileClockIcon,
+  HistoryIcon,
   Loader2Icon,
   MessageSquarePlusIcon,
   SendIcon,
   ServerIcon,
+  XIcon,
 } from 'lucide-react';
+import { Dialog as DialogPrimitive } from 'radix-ui';
 import {
   type ComponentType,
+  type ReactNode,
   type SVGProps,
   useEffect,
   useLayoutEffect,
@@ -30,6 +35,7 @@ import { openServer } from '@/features/servers/server-modal-store';
 import { useServers } from '@/features/servers/servers-api';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
+import { useMediaQuery } from '@/lib/use-media';
 import { cn } from '@/lib/utils';
 import { ActivityRow, useActivityStore, useLiveActivity } from './activity';
 import {
@@ -88,6 +94,11 @@ function AssistantDisabled() {
  */
 const PAGE =
   'grid -mb-11 h-[calc(100dvh-90px)] min-h-[440px] gap-4 md:-mb-9 md:h-[calc(100dvh-124px)] lg:min-h-[460px] lg:grid-cols-[236px_minmax(0,1fr)]';
+/**
+ * С этой ширины список бесед стоит колонкой слева. Запрос тот же, что у «lg:» в Tailwind (64rem), чтобы логика
+ * и раскладка не разошлись. Уже — телефон и планшет: «Новый чат» и «История» в шапке чата.
+ */
+const WIDE = '(min-width: 64rem)';
 
 function AssistantChat() {
   const [conversationId, setConversationId] = useState<string | null>(() => {
@@ -99,6 +110,9 @@ function AssistantChat() {
   });
   const conversations = useConversations();
   const history = useConversationHistory(conversationId);
+  // В jsdom matchMedia нет — считаем экран широким.
+  const wide = useMediaQuery(WIDE, true);
+  const currentTitle = conversations.data?.items.find((c) => c.id === conversationId)?.title ?? null;
   const serversQuery = useServers();
   const healthById = useMemo(() => {
     const map: Record<string, ServerHealth> = {};
@@ -234,54 +248,35 @@ function AssistantChat() {
 
   return (
     <div className={PAGE}>
-      {/* История бесед */}
-      <aside className="hidden min-h-0 flex-col gap-3 rounded-2xl border border-border bg-surface p-3.5 lg:flex">
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-[13px] font-bold">Джарвис</span>
-          <span className="inline-flex flex-none items-center gap-1.5 rounded-full bg-ok-soft px-2 py-0.5 text-[10px] font-semibold text-ok">
-            <span className="size-1.5 rounded-full bg-ok" aria-hidden="true" />
-            Включён
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => setConversationId(null)}
-          className="inline-flex items-center justify-center gap-1.5 rounded-[10px] bg-brand-soft px-3 py-2 text-[12.5px] font-semibold text-brand transition-[filter] hover:brightness-105"
-        >
-          <MessageSquarePlusIcon className="size-4" aria-hidden="true" />
-          Новый чат
-        </button>
-        <div className="px-1 text-[10.5px] font-semibold tracking-[0.05em] text-text-3 uppercase">
-          История
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <ul className="flex flex-col gap-0.5">
-            {(conversations.data?.items ?? []).map((c) => (
-              <li key={c.id}>
-                <button
-                  type="button"
-                  onClick={() => setConversationId(c.id)}
-                  className={cn(
-                    'flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-left text-[12.5px] transition-colors',
-                    conversationId === c.id
-                      ? 'bg-brand-soft text-brand'
-                      : 'text-text-2 hover:bg-surface-2 hover:text-foreground',
-                  )}
-                >
-                  <FileClockIcon className="size-3.5 flex-none text-text-3" aria-hidden="true" />
-                  <span className="truncate">{c.title}</span>
-                </button>
-              </li>
-            ))}
-            {(conversations.data?.items.length ?? 0) === 0 && (
-              <li className="px-2 py-3 text-[12px] text-text-3">Бесед пока нет.</li>
-            )}
-          </ul>
-        </div>
-      </aside>
+      {/* История бесед: на широком экране колонкой слева, на узком — в шапке чата */}
+      {wide && (
+        <aside className="hidden min-h-0 flex-col gap-3 rounded-2xl border border-border bg-surface p-3.5 lg:flex">
+          <ConversationsPanel
+            items={conversations.data?.items}
+            current={conversationId}
+            onSelect={setConversationId}
+          />
+        </aside>
+      )}
 
       {/* Диалог */}
       <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-surface">
+        {!wide && (
+          <div className="flex flex-none items-center gap-2 border-b border-border px-3 py-2.5">
+            <HistorySheet
+              items={conversations.data?.items}
+              current={conversationId}
+              onSelect={setConversationId}
+            />
+            <span
+              data-testid={currentTitle ? 'assistant-conversation-title' : undefined}
+              className="min-w-0 flex-1 truncate text-[12.5px] text-text-2"
+            >
+              {currentTitle}
+            </span>
+            <NewChatButton onClick={() => setConversationId(null)} />
+          </div>
+        )}
         <div
           ref={chatRef}
           data-testid="assistant-messages"
@@ -393,6 +388,108 @@ function AssistantChat() {
         </div>
       </div>
     </div>
+  );
+}
+
+function NewChatButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex flex-none items-center justify-center gap-1.5 rounded-[10px] bg-brand-soft px-3 py-2 text-[12.5px] font-semibold text-brand transition-[filter] hover:brightness-105"
+    >
+      <MessageSquarePlusIcon className="size-4" aria-hidden="true" />
+      Новый чат
+    </button>
+  );
+}
+
+interface ConversationsProps {
+  items: AssistantConversation[] | undefined;
+  current: string | null;
+  /** Выбор беседы; null — новый чат. */
+  onSelect: (id: string | null) => void;
+}
+
+/** Колонка бесед: «Новый чат» и «История». Одна и та же слева на широком экране и в выезжающей панели на узком. */
+function ConversationsPanel({ items, current, onSelect, close }: ConversationsProps & { close?: ReactNode }) {
+  return (
+    <>
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 flex-1 truncate text-[13px] font-bold">Джарвис</span>
+        <span className="inline-flex flex-none items-center gap-1.5 rounded-full bg-ok-soft px-2 py-0.5 text-[10px] font-semibold text-ok">
+          <span className="size-1.5 rounded-full bg-ok" aria-hidden="true" />
+          Включён
+        </span>
+        {close}
+      </div>
+      <NewChatButton onClick={() => onSelect(null)} />
+      <div className="px-1 text-[10.5px] font-semibold tracking-[0.05em] text-text-3 uppercase">История</div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <ul className="flex flex-col gap-0.5">
+          {(items ?? []).map((c) => (
+            <li key={c.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(c.id)}
+                aria-current={current === c.id ? 'true' : undefined}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-left text-[12.5px] transition-colors',
+                  current === c.id
+                    ? 'bg-brand-soft text-brand'
+                    : 'text-text-2 hover:bg-surface-2 hover:text-foreground',
+                )}
+              >
+                <FileClockIcon className="size-3.5 flex-none text-text-3" aria-hidden="true" />
+                <span className="truncate">{c.title}</span>
+              </button>
+            </li>
+          ))}
+          {(items?.length ?? 0) === 0 && (
+            <li className="px-2 py-3 text-[12px] text-text-3">Бесед пока нет.</li>
+          )}
+        </ul>
+      </div>
+    </>
+  );
+}
+
+/** Узкий экран: «История» открывает ту же колонку бесед, выезжающую слева, как меню разделов на телефоне. */
+function HistorySheet({ items, current, onSelect }: ConversationsProps) {
+  const [open, setOpen] = useState(false);
+  const pick = (id: string | null) => {
+    onSelect(id);
+    setOpen(false);
+  };
+  return (
+    <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
+      <DialogPrimitive.Trigger className="inline-flex flex-none cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-3 py-[7px] text-[12.5px] font-semibold text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-2">
+        <HistoryIcon className="size-4" aria-hidden="true" />
+        История
+      </DialogPrimitive.Trigger>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-100 bg-black/45 backdrop-blur-[2px] duration-200 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          className="fixed inset-y-0 left-0 z-100 flex w-[272px] max-w-[85vw] flex-col gap-3 border-r border-border-2 bg-surface p-3.5 shadow-float outline-none duration-200 data-open:animate-in data-open:slide-in-from-left data-closed:animate-out data-closed:slide-out-to-left"
+        >
+          <DialogPrimitive.Title className="sr-only">История бесед</DialogPrimitive.Title>
+          <ConversationsPanel
+            items={items}
+            current={current}
+            onSelect={pick}
+            close={
+              <DialogPrimitive.Close
+                aria-label="Закрыть историю"
+                className="grid size-8 flex-none cursor-pointer place-items-center rounded-[8px] text-text-3 transition-colors hover:bg-surface-2 hover:text-foreground [&_svg]:size-4"
+              >
+                <XIcon aria-hidden="true" />
+              </DialogPrimitive.Close>
+            }
+          />
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 

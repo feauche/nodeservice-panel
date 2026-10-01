@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatBillingMessage } from './billing.format.js';
+import { formatBillingMessage, formatBillingRichMessage } from './billing.format.js';
 
 describe('сообщение биллинга в Telegram', () => {
   const base = {
@@ -57,5 +57,32 @@ describe('сообщение биллинга в Telegram', () => {
       ],
     });
     expect(t).toContain('Развёрнут на: DE-1, NL-2');
+  });
+
+  it('расширенное оформление передаёт сумму, срок и серверы настоящей таблицей', () => {
+    const blocks = formatBillingRichMessage({ ...base, state: 'soon', timeZone: 'Asia/Omsk' });
+    expect(blocks[0]).toEqual({ type: 'heading', size: 3, text: '💳 Скоро оплата — через 2 дня' });
+    const table = blocks.find((block) => block.type === 'table');
+    expect(table).toMatchObject({ type: 'table', is_bordered: true, is_striped: true, is_compact: true });
+    if (table?.type !== 'table') throw new Error('нет таблицы');
+    expect(table.cells.map((row) => row[0]?.text)).toEqual(['Сумма', 'Оплатить до', 'Период', 'Сервер']);
+    expect(JSON.stringify(table.cells)).toContain('€4.51');
+    expect(JSON.stringify(table.cells)).toContain('1 октября, 15:00 (UTC+6)');
+    expect(JSON.stringify(table.cells)).toContain('DE-1');
+    expect(blocks.at(-1)).toEqual({
+      type: 'footer',
+      text: 'Биллинг · после оплаты отметьте продление в панели',
+    });
+  });
+
+  it('rich сообщение о просрочке отдельно выделяет недоступный сервер', () => {
+    const blocks = formatBillingRichMessage({
+      ...base,
+      state: 'overdue',
+      paidUntil: new Date('2026-09-28T09:00:00Z'),
+      servers: [{ name: 'DE-1', down: true }],
+    });
+    expect(JSON.stringify(blocks)).toContain('DE-1 недоступен');
+    expect(JSON.stringify(blocks)).toContain('вероятно, из-за неоплаты');
   });
 });

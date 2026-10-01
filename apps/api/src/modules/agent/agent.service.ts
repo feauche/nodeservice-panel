@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   AGENT_HEARTBEAT_SECONDS,
@@ -31,7 +31,6 @@ const agentActor = (serverName: string, serverId: string): AuditActor => ({
  */
 @Injectable()
 export class AgentService {
-  private readonly log = new Logger(AgentService.name);
   /** Серверы, которым прямо сейчас возвращаем «в сети»: сигнал и метрика приходят почти разом, запись в Журнале — одна. */
   private readonly reviving = new Set<string>();
 
@@ -140,7 +139,7 @@ export class AgentService {
    */
   async markOffline(server: ServerRow, reason: string, staleBefore?: Date): Promise<void> {
     const fresh = await this.servers.findById(server.id);
-    if (!fresh || fresh.agentStatus !== 'online') return;
+    if (fresh?.agentStatus !== 'online') return;
     if (staleBefore && fresh.agentLastSeenAt && fresh.agentLastSeenAt >= staleBefore) return;
     await this.servers.update(server.id, { agentStatus: 'offline' });
     await this.audit.record({

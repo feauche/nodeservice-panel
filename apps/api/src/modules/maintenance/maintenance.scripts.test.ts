@@ -47,7 +47,7 @@ function run(script: string, opts: { bin: string; env?: Record<string, string> }
 
 /** Заглушки, общие для всех сценариев: timeout просто запускает команду, systemctl всегда active. */
 function baseStubs(bin: string): void {
-  stub('' + bin, 'timeout', 'shift 3; exec "$@"');
+  stub(bin, 'timeout', 'shift 3; exec "$@"');
   stub(bin, 'systemctl', 'case "$1" in is-active) echo active ;; *) exit 0 ;; esac');
   stub(bin, 'sha256sum', 'exec shasum -a 256 "$@"');
 }

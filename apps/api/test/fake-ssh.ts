@@ -59,6 +59,13 @@ export class FakeSsh {
   forwards = 0;
   /** Установка агента панелью (ns-agent:install): что «печатает» скрипт и с каким кодом завершается. */
   agentInstall = { code: 0, output: '' };
+  /** Сторож панели (ns-watchdog): стоит ли он, что печатает установка и что — проверка сторожа. */
+  watchdog = {
+    installed: false,
+    installInput: '',
+    install: { code: 0, output: '@@installed=1\n' },
+    test: '@@panel=ok\n@@sent=1\n',
+  };
 
   async start(port = 0): Promise<void> {
     this.hostKey ??= toOpenSshPrivate(generateKeyPairSync('ed25519').privateKey, 'fake-host');
@@ -117,6 +124,30 @@ export class FakeSsh {
                 const kind = /# ns-inspect:([a-z-]+(?::[a-z]+)?)/.exec(info.command)?.[1] ?? '';
                 stream.write(INSPECT_OUTPUT[kind] ?? `неизвестная метка ${kind}\n`);
                 stream.exit(0);
+              } else if (info.command.includes('# ns-watchdog:')) {
+                // Сторож панели: установка, снятие, проверка — по метке в первой строке.
+                const kind = /# ns-watchdog:([a-z]+)/.exec(info.command)?.[1] ?? '';
+                const w = this.watchdog;
+                if (kind === 'install') {
+                  w.installInput = '';
+                  stream.on('data', (chunk: Buffer) => {
+                    w.installInput += chunk.toString('utf8');
+                  });
+                  stream.on('end', () => {
+                    stream.write(w.install.output);
+                    if (w.install.code === 0) w.installed = true;
+                    stream.exit(w.install.code);
+                    stream.end();
+                  });
+                  return;
+                } else if (kind === 'remove') {
+                  w.installed = false;
+                  stream.write('@@removed=1\n');
+                  stream.exit(0);
+                } else {
+                  stream.write(w.installed ? w.test : '@@missing=1\n');
+                  stream.exit(w.installed ? 0 : 3);
+                }
               } else if (info.command.includes('@@ctmax')) {
                 // Ёмкость: сетевая карта маршрута по умолчанию.
                 stream.write(this.linkProbe);

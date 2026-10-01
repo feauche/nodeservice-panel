@@ -1,7 +1,7 @@
 import { HttpStatus, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import {
+  SERVER_CHECK_AUTO_KEYS,
   SERVER_CHECK_INTERVAL_HOURS,
-  SERVER_CHECK_KEYS,
   SERVER_CHECK_META,
   SERVER_CHECK_PROBLEM,
   SERVER_CHECK_RETRY_FAILED_HOURS,
@@ -19,6 +19,7 @@ import { CLS_USER } from '../auth/cls-keys.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import { SshService, type SshSession } from '../servers/ssh.service.js';
+import { AutochecksStore } from '../settings/autochecks.store.js';
 import { ServerChecksRepository, toCheckRun } from './server-checks.repository.js';
 import {
   capOutput,
@@ -26,6 +27,7 @@ import {
   cleanOutput,
   exitReason,
   reportComplete,
+  runStatus,
   SERVER_CHECK_TIMEOUT_MS,
   stripNoise,
 } from './server-checks.scripts.js';
@@ -60,6 +62,7 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
     private readonly audit: AuditService,
     private readonly cls: ClsService,
     private readonly notifications: NotificationsService,
+    private readonly autochecks: AutochecksStore,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -74,10 +77,13 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
   async list(serverId: string): Promise<ServerChecksResponse> {
     await this.servers.get(serverId);
     const rows = await this.repo.latest(serverId);
-    const light = rows.filter((r) => !SERVER_CHECK_META[r.check].heavy);
-    const earliest = light.length > 0 ? Math.min(...light.map((r) => r.startedAt.getTime())) : null;
+    const autoEnabled = (await this.autochecks.get()).serverChecksEnabled;
+    // Срок — только у того, что панель повторяет сама: свои команды и лишь при включённом тумблере.
+    const auto = autoEnabled ? rows.filter((r) => SERVER_CHECK_AUTO_KEYS.includes(r.check)) : [];
+    const earliest = auto.length > 0 ? Math.min(...auto.map((r) => r.startedAt.getTime())) : null;
     return {
       items: rows.map(toCheckRun),
+      autoEnabled,
       nextAutoAt:
         earliest === null ? null : new Date(earliest + SERVER_CHECK_INTERVAL_HOURS * 3_600_000).toISOString(),
     };
@@ -123,8 +129,12 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
     return (await this.repo.history(serverId, check, limit)).map(toCheckRun);
   }
 
-  /** Суточный запуск (джоба): занято — просто пропуск; ждём конца, чтобы идти по серверам по одному. */
+  /**
+   * Суточный запуск (джоба): занято — просто пропуск; ждём конца, чтобы идти по серверам по одному.
+   * Только свои команды: сторонний скрипт по расписанию не запускается, даже если его сюда передали.
+   */
   async scheduled(serverId: string, check: ServerCheckKey): Promise<void> {
+    if (!SERVER_CHECK_AUTO_KEYS.includes(check)) return;
     if (this.active.has(serverId)) return;
     const { done } = await this.launch(serverId, check, 'auto', SYSTEM_ACTOR);
     await done;
@@ -175,6 +185,7 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
     const startedAt = Date.now();
     let raw = '';
     let error: string | null = null;
+    let status: 'ok' | 'failed' | 'cancelled' = 'ok';
     let session: SshSession | null = null;
     let timer: NodeJS.Timeout | null = null;
     let chain: Promise<void> = Promise.resolve();
@@ -196,15 +207,19 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
           timer ??= setTimeout(flush, OUTPUT_FLUSH_MS);
         },
       });
-      if (res.code !== 0 && !reportComplete(row.check, cleanOutput(raw))) error = exitReason(res.code);
+      if (res.code !== 0 && !reportComplete(row.check, cleanOutput(raw))) {
+        error = exitReason(res.code);
+        status = runStatus(res.code);
+      }
     } catch (err) {
       error = errorText(err).slice(0, 500);
+      status = 'failed';
     } finally {
       session?.end();
       if (timer) clearTimeout(timer);
       await chain;
     }
-    await this.repo.finish(row.id, error ? 'failed' : 'ok', text(), error);
+    await this.repo.finish(row.id, status, text(), error);
     await this.repo.prune(row.serverId, row.check).catch(() => undefined);
     // Только суточные запуски: по ручному вы и так смотрите на экран.
     if (error && row.trigger === 'auto')
@@ -221,7 +236,8 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
         action: 'server.check.run',
         actor,
         source: row.trigger === 'auto' ? 'auto' : 'manual',
-        result: error ? 'failed' : 'ok',
+        // Отменённый запуск — отказ панели запустить изменившийся скрипт, а не сбой на сервере.
+        result: status === 'cancelled' ? 'denied' : error ? 'failed' : 'ok',
         severity: error ? 'warn' : 'info',
         target: { type: 'server', id: row.serverId, display: serverName },
         durationMs: Date.now() - startedAt,
@@ -230,7 +246,7 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
       .catch(() => undefined);
   }
 
-  /** Лёгкие проверки, которые пора повторить (или ещё не запускались), по серверам. */
+  /** Свои проверки, которые пора повторить (или ещё не запускались), по серверам. Сторонние сюда не входят. */
   async dueLightChecks(serverIds: string[]): Promise<Array<{ serverId: string; check: ServerCheckKey }>> {
     const last = new Map((await this.repo.lastStarts()).map((r) => [`${r.serverId}:${r.check}`, r]));
     const deadline = Date.now() - SERVER_CHECK_INTERVAL_HOURS * 3_600_000;
@@ -239,8 +255,7 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
     const failedDeadline = Date.now() - SERVER_CHECK_RETRY_FAILED_HOURS * 3_600_000;
     const out: Array<{ serverId: string; check: ServerCheckKey }> = [];
     for (const serverId of serverIds)
-      for (const check of SERVER_CHECK_KEYS) {
-        if (SERVER_CHECK_META[check].heavy) continue;
+      for (const check of SERVER_CHECK_AUTO_KEYS) {
         const r = last.get(`${serverId}:${check}`);
         const at = r?.at.getTime();
         if (!r || at === undefined || at < deadline || (r.status === 'failed' && at < failedDeadline))

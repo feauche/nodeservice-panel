@@ -39,7 +39,7 @@ export class ServerCountryService {
     this.running.add(id);
     try {
       const row = await this.repo.findById(id);
-      if (!row || row.countrySource !== 'auto') return;
+      if (row?.countrySource !== 'auto') return;
       if (!opts.scheduled && row.countryStatus !== 'detecting')
         await this.repo.update(id, { countryStatus: 'detecting' });
       const got = await this.geo.detect(row.host);
@@ -48,7 +48,7 @@ export class ServerCountryService {
         : decideCountry(got.answers);
       // За время запроса человек мог выбрать страну вручную или удалить сервер.
       const fresh = await this.repo.findById(id);
-      if (!fresh || fresh.countrySource !== 'auto') return;
+      if (fresh?.countrySource !== 'auto') return;
       await this.apply(fresh, decision, opts.scheduled);
     } catch (err) {
       const fresh = await this.repo.findById(id).catch(() => undefined);

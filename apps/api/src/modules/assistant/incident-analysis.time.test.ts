@@ -100,6 +100,10 @@ function setup(timeZone: (() => Promise<string>) | undefined) {
     {} as never,
     {} as never,
     {} as never,
+    // Связь нод с серверами — в этих сценариях не нужна.
+    {} as never,
+    // Настройки окружения: адрес панели для подсказок Джарвиса.
+    { get: () => 'https://panel.test' } as never,
   );
   const done = async () => {
     for (let i = 0; i < 100 && store.inc.analysis?.status === 'running'; i += 1)

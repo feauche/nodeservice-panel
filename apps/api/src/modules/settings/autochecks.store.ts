@@ -51,7 +51,9 @@ export class AutochecksStore {
     const row = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, KEY) });
     if (!row) return AUTOCHECKS_DEFAULTS;
     try {
-      return autochecksSettingsSchema.parse(JSON.parse(row.value));
+      // Запись прежней версии не знает новых тумблеров: они берутся по умолчанию, а не весь раздел
+      // целиком сбрасывается как «повреждённый».
+      return autochecksSettingsSchema.parse({ ...AUTOCHECKS_DEFAULTS, ...JSON.parse(row.value) });
     } catch {
       this.log.warn('Настройки «Автопроверки» повреждены, использую значения по умолчанию');
       return AUTOCHECKS_DEFAULTS;

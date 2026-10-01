@@ -37,7 +37,7 @@ import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CLS_USER } from '../auth/cls-keys.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
-import { formatBillingMessage } from './billing.format.js';
+import { formatBillingMessage, formatBillingRichMessage } from './billing.format.js';
 import {
   dueInWords,
   dueStateOf,
@@ -992,7 +992,7 @@ export class BillingService {
       const ids = it.serverIds.filter((id) => sName.has(id));
       const down = await this.downServers(ids, it.kind as BillingKind);
       const rate = await this.rates.rate(it.currency, now);
-      const html = formatBillingMessage({
+      const message = {
         state: kind,
         kind: it.kind,
         title: it.title,
@@ -1008,7 +1008,9 @@ export class BillingService {
         note: it.note,
         now,
         timeZone,
-      });
+      } as const;
+      const html = formatBillingMessage(message);
+      const rich = formatBillingRichMessage(message);
       const downNames = ids.filter((id) => down.has(id)).map((id) => sName.get(id));
       await this.notifications.push({
         severity: kind === 'overdue' ? 'crit' : 'warn',
@@ -1023,7 +1025,12 @@ export class BillingService {
         }`,
         // Страница биллинга — подпункт «Серверы»; ?item открывает окно «Продлить» у этой оплаты.
         link: { to: `/servers/billing?item=${it.id}`, label: 'Открыть биллинг' },
-        telegram: { event: kind === 'overdue' ? 'billing_overdue' : 'billing_soon', html, serverKey: null },
+        telegram: {
+          event: kind === 'overdue' ? 'billing_overdue' : 'billing_soon',
+          html,
+          rich,
+          serverKey: null,
+        },
       });
       await this.db
         .update(billingItems)

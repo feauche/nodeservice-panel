@@ -3,6 +3,7 @@ import { createRootRouteWithContext, Link, Outlet, useRouter } from '@tanstack/r
 import { Loader2Icon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
+import { SessionHosts } from '@/components/layout/session-hosts';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useSessionWatch } from '@/features/auth/queries';
@@ -26,6 +27,8 @@ function RootLayout() {
   return (
     <TooltipProvider delayDuration={250}>
       <Outlet />
+      {/* Терминал, окно сервера и запрос пароля — над разделами: переход по меню их не пересоздаёт */}
+      <SessionHosts />
       <Toaster position="bottom-right" richColors theme={theme === 'light' ? 'light' : 'dark'} />
     </TooltipProvider>
   );

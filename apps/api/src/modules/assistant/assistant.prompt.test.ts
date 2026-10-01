@@ -25,11 +25,19 @@ describe('системный промпт Джарвиса', () => {
     expect(s).toContain('add_glossary_terms');
     expect(s).toContain('Говори «сохранил» или «добавил» только по ответу инструмента');
   });
+  it('список «проблема: решение» — статья, а строки вывода команды — не термины', () => {
+    const s = buildSystem('intermediate', P());
+    expect(s).toContain('Список «проблема: решение»');
+    expect(s).toContain('сохраняй его через save_kb_article, пункты в глоссарий не добавляй');
+    expect(s).toContain('его строки «ключ: значение» не термины');
+  });
   it('справочник и карта панели на месте', () => {
     const s = buildSystem('intermediate', P());
     expect(s).toContain('get_reference');
     expect(s).toContain('КАРТА ПАНЕЛИ');
     expect(s).toContain('ТЕКУЩЕЕ ВРЕМЯ СЕРВЕРА');
+    // На телефоне колонки бесед нет: Джарвис не должен отправлять владельца «слева».
+    expect(s).toContain('на телефоне и планшете обе кнопки стоят над чатом');
   });
   it('инструменты чтения по SSH называются только при включённых разрешениях', () => {
     const off = buildSystem('intermediate', P({ reach: false, processes: false, nodeLogs: false }));
@@ -80,5 +88,12 @@ describe('системный промпт Джарвиса', () => {
     expect(s).toContain('profileFilled=false');
     expect(s).toContain('задавай короткие вопросы по одному блоку');
     expect(s).toContain('Саму статью ты не меняешь');
+  });
+
+  it('адрес панели попадает в подсказку и без него не выдумывается', () => {
+    const s = buildSystem('intermediate', P(), { panelUrl: 'https://panel.test' });
+    expect(s).toContain('АДРЕС ЭТОЙ ПАНЕЛИ NODESERVICE: https://panel.test');
+    expect(s).toContain('не подставляй примеры вроде panel.example.com');
+    expect(buildSystem('intermediate', P())).not.toContain('АДРЕС ЭТОЙ ПАНЕЛИ');
   });
 });

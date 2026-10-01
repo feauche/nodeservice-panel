@@ -176,7 +176,7 @@ export function actionSteps(kind: Exclude<MaintenanceKind, 'check'>, agentRepo: 
             `BASE="https://github.com/${agentRepo}/releases/latest/download"`,
             'FILE="nodeservice-agent_linux_$ARCH"',
             // NS_TMP/NS_BIN переопределяются только в тестах (реальный шелл, временная папка).
-            'DIR="${NS_TMP:-/tmp}/ns-agent-update"',
+            'DIR="$' + '{NS_TMP:-/tmp}/ns-agent-update"',
             'rm -rf "$DIR" && mkdir -p "$DIR" && cd "$DIR"',
             'curl -fsSL --max-time 120 -o "$FILE" "$BASE/$FILE"',
             'curl -fsSL --max-time 60 -o checksums.txt "$BASE/checksums.txt"',
@@ -193,9 +193,9 @@ export function actionSteps(kind: Exclude<MaintenanceKind, 'check'>, agentRepo: 
             '# ns-maint:agent_update:install',
             'set -e',
             'case "$(uname -m)" in x86_64|amd64) ARCH=amd64 ;; *) ARCH=arm64 ;; esac',
-            'DIR="${NS_TMP:-/tmp}/ns-agent-update"',
+            'DIR="$' + '{NS_TMP:-/tmp}/ns-agent-update"',
             'NEW="$DIR/nodeservice-agent_linux_$ARCH"',
-            'BIN="${NS_BIN:-/usr/local/bin/nodeservice-agent}"',
+            'BIN="$' + '{NS_BIN:-/usr/local/bin/nodeservice-agent}"',
             '[ -x "$NEW" ] || { echo "нет скачанного бинаря $NEW"; exit 1; }',
             // Старый агент работает до самого rename: копия рядом, потом атомарная замена.
             'cp "$NEW" "$BIN.new" && chmod 0755 "$BIN.new" && mv -f "$BIN.new" "$BIN"',

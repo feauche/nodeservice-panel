@@ -453,7 +453,6 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
   };
 
   return (
-    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: клик по карточке — ярлык, доступный путь есть в меню «Изменить»
     // biome-ignore lint/a11y/useKeyWithClickEvents: с клавиатуры настройки открываются через меню карточки, ручка перетаскивания фокусируема
     <article
       ref={sortable.setNodeRef}

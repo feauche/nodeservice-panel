@@ -77,7 +77,9 @@ export type TerminalSessionsResponse = z.infer<typeof terminalSessionsResponseSc
 /**
  * Сессия с записью вывода (ANSI-последовательности сохранены, клиент убирает их при показе).
  * `transcript` — кусок начиная с `offset` (символы), `length` — полная длина записи: живую сессию
- * клиент догружает по смещению, а не перекачивает целиком.
+ * клиент догружает по смещению, а не перекачивает целиком. `offset` и `length` — в символах записи,
+ * как их считает Postgres, а не в единицах UTF-16 строки JavaScript (эмодзи — один символ, хотя
+ * `'🎉'.length === 2`): смещение для догрузки — прошлый `length`, а не длина полученного текста.
  */
 export const terminalSessionDetailSchema = terminalSessionSchema.extend({
   transcript: z.string(),

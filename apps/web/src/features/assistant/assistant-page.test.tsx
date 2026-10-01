@@ -1,14 +1,15 @@
-import { ASSISTANT_MESSAGE_MAX } from '@nodeservice/shared';
+import { ASSISTANT_MESSAGE_MAX, type AssistantMessage } from '@nodeservice/shared';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useServerModalStore } from '@/features/servers/server-modal-store';
 import { mockAssistant } from '@/test/msw/assistant-mock';
 import { resetMockState } from '@/test/msw/handlers';
 import { server } from '@/test/msw/server';
 import { mockServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
+import { LAST_CONV_KEY } from './assistant-api';
 import { AssistantPage } from './assistant-page';
 
 describe('AssistantPage', () => {
@@ -324,6 +325,121 @@ describe('AssistantPage', () => {
           timeout: 4000,
         },
       );
+    });
+  });
+
+  describe('узкий экран (телефон и планшет): «Новый чат» и «История» в шапке чата', () => {
+    const iso = new Date().toISOString();
+    const say = (id: string, role: 'user' | 'assistant', content: string): AssistantMessage => ({
+      id,
+      role,
+      content,
+      citations: [],
+      proposals: [],
+      reachability: [],
+      activity: [],
+      createdAt: iso,
+    });
+    const OLD = '0192f000-0000-7000-8000-000000000b01';
+    const OTHER = '0192f000-0000-7000-8000-000000000b02';
+    const seed = () => {
+      mockAssistant.enabled = true;
+      mockAssistant.conversations = [
+        { id: OLD, title: 'Нагрузка на серверах вечером', createdAt: iso },
+        { id: OTHER, title: 'Почему упал de-fra-01', createdAt: iso },
+      ];
+      mockAssistant.messages = {
+        [OLD]: [
+          say('0192f000-0000-7000-8000-000000000c01', 'user', 'Нагрузка на серверах вечером'),
+          say('0192f000-0000-7000-8000-000000000c02', 'assistant', 'Под нагрузкой один сервер из трёх.'),
+        ],
+        [OTHER]: [
+          say('0192f000-0000-7000-8000-000000000c03', 'user', 'Почему упал de-fra-01'),
+          say('0192f000-0000-7000-8000-000000000c04', 'assistant', 'Нода остановилась после обновления.'),
+        ],
+      };
+    };
+    const media = window.matchMedia;
+    beforeEach(() => {
+      // Окно уже 1024 px: запрос «от ширины lg» не совпадает — как на телефоне 390 px и планшете до 1023 px.
+      window.matchMedia = ((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      })) as unknown as typeof window.matchMedia;
+    });
+    afterEach(() => {
+      window.matchMedia = media;
+    });
+    /** Tailwind-класс hidden без префикса — display: none на узком экране (jsdom стилей не считает). */
+    const hiddenOnPhone = (el: HTMLElement) => el.closest('.hidden') !== null;
+
+    it('обе кнопки на виду, а боковой колонки со списком бесед нет', async () => {
+      seed();
+      renderPage(AssistantPage, '/assistant');
+      await screen.findByLabelText('Сообщение Джарвису');
+      const newChat = screen.getByRole('button', { name: 'Новый чат' });
+      expect(hiddenOnPhone(newChat)).toBe(false);
+      const history = screen.getByRole('button', { name: 'История' });
+      expect(hiddenOnPhone(history)).toBe(false);
+      expect(screen.queryByRole('button', { name: 'Нагрузка на серверах вечером' })).toBeNull();
+    });
+
+    it('«История» открывает список бесед; выбор беседы открывает её и закрывает список', async () => {
+      seed();
+      renderPage(AssistantPage, '/assistant');
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole('button', { name: 'История' }));
+      const sheet = await screen.findByRole('dialog', { name: 'История бесед' });
+      expect(within(sheet).getByRole('button', { name: 'Нагрузка на серверах вечером' })).toBeInTheDocument();
+      await user.click(within(sheet).getByRole('button', { name: 'Почему упал de-fra-01' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      const list = screen.getByTestId('assistant-messages');
+      expect(await within(list).findByText('Нода остановилась после обновления.')).toBeInTheDocument();
+      // Открытая беседа подписана в шапке и отмечена в списке.
+      expect(screen.getByTestId('assistant-conversation-title')).toHaveTextContent('Почему упал de-fra-01');
+      await user.click(screen.getByRole('button', { name: 'История' }));
+      const again = await screen.findByRole('dialog', { name: 'История бесед' });
+      expect(within(again).getByRole('button', { name: 'Почему упал de-fra-01' })).toHaveAttribute(
+        'aria-current',
+        'true',
+      );
+    });
+
+    it('«Новый чат» уводит из прошлой беседы, открытой при входе, к чистому листу', async () => {
+      seed();
+      localStorage.setItem(LAST_CONV_KEY, OLD);
+      renderPage(AssistantPage, '/assistant');
+      const list = await screen.findByTestId('assistant-messages');
+      expect(await within(list).findByText('Под нагрузкой один сервер из трёх.')).toBeInTheDocument();
+      // В шапке видно, что открыта прошлая беседа, а не новый чат.
+      expect(screen.getByTestId('assistant-conversation-title')).toHaveTextContent(
+        'Нагрузка на серверах вечером',
+      );
+      const user = userEvent.setup();
+      const newChat = screen.getByRole('button', { name: 'Новый чат' });
+      expect(hiddenOnPhone(newChat)).toBe(false);
+      await user.click(newChat);
+      expect(
+        await screen.findByText('Спросите об инцидентах, серверах или о том, как что-то починить'),
+      ).toBeInTheDocument();
+      expect(within(list).queryByText('Под нагрузкой один сервер из трёх.')).toBeNull();
+      expect(screen.queryByTestId('assistant-conversation-title')).toBeNull();
+      expect(localStorage.getItem(LAST_CONV_KEY)).toBeNull();
+    });
+
+    it('на широком экране всё как раньше: список бесед слева, шапки с «Историей» нет', async () => {
+      window.matchMedia = media;
+      seed();
+      renderPage(AssistantPage, '/assistant');
+      expect(await screen.findByRole('button', { name: 'Нагрузка на серверах вечером' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Новый чат' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'История' })).toBeNull();
     });
   });
 

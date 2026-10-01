@@ -109,6 +109,9 @@ export function ServerModal({ server, ...rest }: Props) {
 /** Вкладки, где что-то меняют: у них общая панель «Сохранить» внизу. */
 const EDIT_TABS: ReadonlySet<ServerModalTab> = new Set(['profile', 'connection']);
 
+/** Где Escape свой и окно сервера не закрывает: маленькие поля вкладок и окно терминала. */
+const ESCAPE_LOCAL = '[data-escape-local], [data-terminal-window]';
+
 function ServerModalView({ server: s, initialTab, onClose }: Props & { server: Server }) {
   const check = useCheckServer();
   const duplicate = useDuplicateServer();
@@ -393,8 +396,10 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
       <DialogContent
         showCloseButton={false}
         // Escape в маленьком поле внутри вкладки закрывает только поле, а не всю карточку с несохранённым.
+        // Escape в окне терминала принадлежит терминалу (vim, less, mc): карточку он не закрывает и не
+        // спрашивает «Закрыть без сохранения?» — иначе следующий Enter «в терминал» выбросил бы правки.
         onEscapeKeyDown={(e) => {
-          if (e.target instanceof HTMLElement && e.target.closest('[data-escape-local]')) e.preventDefault();
+          if (e.target instanceof HTMLElement && e.target.closest(ESCAPE_LOCAL)) e.preventDefault();
         }}
         onPointerDownOutside={(e) => e.preventDefault()}
         onInteractOutside={(e) => e.preventDefault()}

@@ -131,7 +131,7 @@ export function useSessionWatch(router: SessionExpiryRouter): void {
     refetchIntervalInBackground: false,
   });
   const expired = authenticated && data !== undefined && !data.authenticated;
-  const lockedOnServer = authenticated && data !== undefined && data.authenticated && data.locked;
+  const lockedOnServer = authenticated && data?.authenticated && data.locked;
   useEffect(() => {
     if (!expired) return;
     dropSession(qc);

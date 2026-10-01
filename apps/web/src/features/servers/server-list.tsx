@@ -101,13 +101,20 @@ export function ServerList({
           const provider = providerOf(s);
           return (
             <li key={s.id} className="border-t border-border first:border-t-0">
-              <button
-                type="button"
+              {/* biome-ignore lint/a11y/useSemanticElements: строка содержит отдельную кнопку страны; вложенные button недопустимы */}
+              <div
+                role="button"
+                tabIndex={0}
                 data-testid="server-row"
                 onClick={() => onOpen(s)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  onOpen(s);
+                }}
                 className={cn(
                   COLS,
-                  'w-full cursor-pointer px-4 py-2.5 text-left text-[12.5px] transition-colors hover:bg-surface-2',
+                  'w-full cursor-pointer px-4 py-2.5 text-left text-[12.5px] transition-colors hover:bg-surface-2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
                 )}
               >
                 <HealthDot health={health} />
@@ -141,7 +148,7 @@ export function ServerList({
                   )}
                 </span>
                 <ChevronRightIcon className="size-4 text-text-3" aria-hidden="true" />
-              </button>
+              </div>
             </li>
           );
         })}

@@ -8,6 +8,7 @@ import { HttpTelegramClient, TELEGRAM_CLIENT } from './telegram/telegram.client.
 import { TelegramController } from './telegram/telegram.controller.js';
 import { TelegramService } from './telegram/telegram.service.js';
 import { TelegramDigestJob } from './telegram/telegram-digest.job.js';
+import { TelegramOutboxJob } from './telegram/telegram-outbox.job.js';
 import { TelegramSettingsStore } from './telegram/telegram-settings.store.js';
 
 /**
@@ -23,6 +24,7 @@ import { TelegramSettingsStore } from './telegram/telegram-settings.store.js';
     TelegramSettingsStore,
     TelegramService,
     TelegramDigestJob,
+    TelegramOutboxJob,
     DeferredTelegramJob,
     { provide: TELEGRAM_CLIENT, useClass: HttpTelegramClient },
   ],

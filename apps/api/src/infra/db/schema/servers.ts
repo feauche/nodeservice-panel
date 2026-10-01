@@ -216,7 +216,8 @@ export const serverChecks = pgTable(
       .notNull()
       .references(() => servers.id, { onDelete: 'cascade' }),
     check: text('check').$type<ServerCheckKey>().notNull(),
-    status: text('status').$type<'running' | 'ok' | 'failed'>().notNull().default('running'),
+    /** cancelled — скачанный сторонний скрипт не совпал с закреплённым, запуск отменён (текст, без миграции). */
+    status: text('status').$type<'running' | 'ok' | 'failed' | 'cancelled'>().notNull().default('running'),
     trigger: text('trigger').$type<'auto' | 'manual'>().notNull(),
     actorDisplay: text('actor_display'),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),

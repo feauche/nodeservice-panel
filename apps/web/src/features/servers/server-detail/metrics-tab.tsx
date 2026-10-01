@@ -57,8 +57,11 @@ export function MetricsTab({
   const metrics = useServerMetrics(serverId, range);
   const d = metrics.data;
   const series = d?.series;
-  const net =
-    series && series.netRxBps.map((p, i) => ({ t: p.t * 1000, rx: p.v, tx: series.netTxBps[i]?.v ?? null }));
+  const net = series?.netRxBps.map((p, i) => ({
+    t: p.t * 1000,
+    rx: p.v,
+    tx: series.netTxBps[i]?.v ?? null,
+  }));
   const memPct =
     series?.memUsedMb.map((p, i) => {
       const total = series.memTotalMb[i]?.v;

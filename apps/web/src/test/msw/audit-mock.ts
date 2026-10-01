@@ -5,6 +5,7 @@ import {
   type AuditListResponse,
   auditActionLabel,
   auditListQuerySchema,
+  SHARED_VERSION,
 } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
 
@@ -53,7 +54,8 @@ const TEMPLATES: Array<Partial<AuditEntry> & { action: string }> = [
     actorType: 'system',
     actorDisplay: 'NodeService',
     source: 'auto',
-    metadata: { version: '0.1.0' },
+    // Как на сервере: версия самой панели (раньше в Журнале всегда стояло 0.1.0).
+    metadata: { version: SHARED_VERSION },
   },
   {
     action: 'auth.login.throttled',

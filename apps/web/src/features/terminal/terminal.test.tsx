@@ -1,12 +1,17 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { createMemoryHistory, createRouter, RouterProvider } from '@tanstack/react-router';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useAuthStore } from '@/features/auth/store';
+import { openServer, useServerModalStore } from '@/features/servers/server-modal-store';
+import { routeTree } from '@/routeTree.gen';
 import { mockAssistant } from '@/test/msw/assistant-mock';
-import { mockSnippets, resetMockState } from '@/test/msw/handlers';
+import { MOCK, mockSnippets, mockState, resetMockState } from '@/test/msw/handlers';
 import { server } from '@/test/msw/server';
+import { mockServers } from '@/test/msw/servers-mock';
 import { TerminalHost } from './terminal-host';
 import { useTerminalStore } from './terminal-store';
 
@@ -171,6 +176,28 @@ describe('TerminalHost / TerminalWindow', () => {
     expect(screen.getByRole('button', { name: 'Открыть заново' })).toBeInTheDocument();
   });
 
+  it('Escape не закрывает терминал: ни в меню «Сниппеты», ни после «На весь экран»', async () => {
+    preflightOk();
+    renderHost();
+    act(() => useTerminalStore.getState().open(TARGET));
+    const win = await screen.findByRole('dialog', { name: 'Терминал de-fra-01' });
+    await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
+    const ws = MockWebSocket.instances[0] as MockWebSocket;
+    act(() => ws.emit({ t: 'y' }));
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Сниппеты' }));
+    expect(await screen.findByRole('menu')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'На весь экран' }));
+    await user.keyboard('{Escape}');
+
+    expect(screen.getByRole('dialog', { name: 'Терминал de-fra-01' })).toBe(win);
+    expect(useTerminalStore.getState().server?.id).toBe('srv-1');
+    expect(ws.readyState).toBe(1);
+  });
+
   it('кнопка «Закрыть» убирает окно (очищает store)', async () => {
     preflightOk();
     renderHost();
@@ -194,5 +221,257 @@ describe('TerminalHost / TerminalWindow', () => {
     act(() => useTerminalStore.getState().open(TARGET));
     expect(await screen.findByText('Терминал не открылся')).toBeInTheDocument();
     expect(screen.getByText('SSH недоступен')).toBeInTheDocument();
+  });
+});
+
+/** Настоящее дерево маршрутов: у каждого раздела свой AppShell, окна поверх — как в приложении. */
+function renderApp(path: string) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const router = createRouter({
+    routeTree,
+    history: createMemoryHistory({ initialEntries: [path] }),
+    context: { queryClient },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  return router;
+}
+
+/** Открыть терминал к первому серверу мока и дождаться готовой сессии. */
+async function openLiveTerminal(): Promise<{ win: HTMLElement; ws: MockWebSocket; name: string }> {
+  const first = mockServers.items[0];
+  if (!first) throw new Error('в моке нет серверов');
+  act(() =>
+    useTerminalStore.getState().open({
+      id: first.id,
+      name: first.name,
+      host: first.host,
+      port: first.port,
+      sshUser: first.sshUser,
+    }),
+  );
+  const name = `Терминал ${first.name}`;
+  const win = await screen.findByRole('dialog', { name });
+  await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
+  const ws = MockWebSocket.instances[0] as MockWebSocket;
+  act(() => ws.emit({ t: 'y' }));
+  return { win, ws, name };
+}
+
+describe('терминал поверх разделов (настоящие маршруты)', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    useAuthStore.setState({ me: null, hydrated: false, locked: false });
+    resetMockState({ authenticated: true });
+    MockWebSocket.instances = [];
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    preflightOk();
+  });
+  afterEach(() => {
+    useTerminalStore.getState().close();
+    useServerModalStore.getState().close();
+    vi.unstubAllGlobals();
+  });
+
+  it('переход в другой раздел не закрывает SSH-сессию и не пересоздаёт окно', async () => {
+    const router = renderApp('/servers');
+    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const { win, ws, name } = await openLiveTerminal();
+
+    await act(() => router.navigate({ to: '/incidents' }));
+    await screen.findByRole('heading', { level: 1, name: 'Инциденты' });
+    await act(() => router.navigate({ to: '/servers/billing' }));
+    await screen.findByRole('heading', { level: 1, name: 'Биллинг' });
+
+    // То же окно и тот же сокет: сессия на сервере не закрывалась и не открывалась заново.
+    expect(screen.getByRole('dialog', { name })).toBe(win);
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(ws.readyState).toBe(1);
+  });
+
+  it('блокировка экрана прячет терминал, но не закрывает сессию; после разблокировки окно на месте', async () => {
+    const router = renderApp('/servers');
+    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const { win, ws, name } = await openLiveTerminal();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Учётная запись' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Заблокировать экран' }));
+    await screen.findByRole('heading', { name: 'Экран заблокирован' });
+    expect(router.state.location.pathname).toBe('/lock');
+    // Под экраном блокировки окна не видно и до него не дотянуться, но сессия жива.
+    expect(win).toBeInTheDocument();
+    expect(win).not.toBeVisible();
+    expect(win.closest('[inert]')).not.toBeNull();
+    expect(screen.queryByRole('dialog', { name })).toBeNull();
+    expect(ws.readyState).toBe(1);
+
+    await user.type(screen.getByLabelText('Пароль'), MOCK.password);
+    await user.click(screen.getByRole('button', { name: 'Разблокировать' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/'));
+    expect(await screen.findByRole('dialog', { name })).toBe(win);
+    expect(win).toBeVisible();
+    expect(win.closest('[inert]')).toBeNull();
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(ws.readyState).toBe(1);
+  });
+
+  it('меню и настройка сниппетов, открытые в момент блокировки, не остаются над экраном блокировки', async () => {
+    const router = renderApp('/servers');
+    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const { win, ws } = await openLiveTerminal();
+    const user = userEvent.setup();
+    // Блокировка по бездействию (или из другой вкладки) — без клика по меню учётной записи.
+    const lockNow = () =>
+      act(() => {
+        useAuthStore.getState().lock();
+        void router.navigate({ to: '/lock' });
+      });
+
+    await user.click(within(win).getByRole('button', { name: 'Сниппеты' }));
+    expect(await screen.findByRole('menu')).toBeInTheDocument();
+    lockNow();
+    await screen.findByRole('heading', { name: 'Экран заблокирован' });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    // Открытое меню блокирует клики по странице — экран блокировки должен остаться рабочим.
+    expect(document.body.style.pointerEvents).not.toBe('none');
+
+    act(() => {
+      useAuthStore.getState().unlock();
+      void router.navigate({ to: '/servers' });
+    });
+    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    await user.click(within(win).getByRole('button', { name: 'Сниппеты' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Настроить сниппеты' }));
+    expect(await screen.findByRole('dialog', { name: 'Сниппеты терминала' })).toBeInTheDocument();
+    lockNow();
+    await screen.findByRole('heading', { name: 'Экран заблокирован' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Сниппеты терминала' })).toBeNull());
+    expect(ws.readyState).toBe(1);
+  });
+
+  it('выход из учётной записи закрывает терминал: сессия панели кончилась', async () => {
+    const router = renderApp('/servers');
+    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const { ws } = await openLiveTerminal();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Учётная запись' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Выйти' }));
+    await user.click(await screen.findByRole('button', { name: 'Да, выйти' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+    expect(screen.queryByRole('dialog', { name: /^Терминал/ })).toBeNull();
+    expect(ws.readyState).toBe(3);
+  });
+
+  it('сессия истекла по бездействию: терминал закрывается вместе с ней, как и сказано в «Политике»', async () => {
+    const router = renderApp('/servers');
+    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const { ws } = await openLiveTerminal();
+
+    // Сервер сессию уже не знает; панель узнаёт об этом очередным опросом статуса.
+    mockState.authenticated = false;
+    await act(() => router.options.context.queryClient.invalidateQueries({ queryKey: ['auth', 'status'] }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+    expect(screen.queryByRole('dialog', { name: /^Терминал/ })).toBeNull();
+    expect(ws.readyState).toBe(3);
+  });
+
+  it('Escape в окне сервера закрывает только окно сервера, терминал остаётся', async () => {
+    renderApp('/servers');
+    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const first = mockServers.items[0];
+    if (!first) throw new Error('в моке нет серверов');
+    act(() => openServer(first.id));
+    const modal = await screen.findByRole('dialog', { name: first.name });
+    const user = userEvent.setup();
+    await user.click(within(modal).getByRole('button', { name: 'SSH-терминал' }));
+    const win = await screen.findByRole('dialog', { name: `Терминал ${first.name}` });
+    await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
+    const ws = MockWebSocket.instances[0] as MockWebSocket;
+    act(() => ws.emit({ t: 'y' }));
+
+    await user.click(within(modal).getByRole('button', { name: 'Журнал' }));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: first.name })).toBeNull());
+    expect(screen.getByRole('dialog', { name: `Терминал ${first.name}` })).toBe(win);
+    expect(ws.readyState).toBe(1);
+  });
+
+  it('Escape внутри терминала не закрывает окно сервера и не спрашивает про несохранённое', async () => {
+    renderApp('/servers');
+    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const first = mockServers.items[0];
+    if (!first) throw new Error('в моке нет серверов');
+    act(() => openServer(first.id, 'connection'));
+    const modal = await screen.findByRole('dialog', { name: first.name });
+    const user = userEvent.setup();
+    // Несохранённая правка: раньше Escape из терминала открывал «Закрыть без сохранения?» с фокусом
+    // на «Да, закрыть», и следующий Enter «в терминал» выбрасывал правки.
+    await user.clear(within(modal).getByLabelText('Название'));
+    await user.type(within(modal).getByLabelText('Название'), 'de-fra-01-new');
+    await user.click(within(modal).getByRole('button', { name: 'SSH-терминал' }));
+    const win = await screen.findByRole('dialog', { name: `Терминал ${first.name}` });
+    await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
+    const ws = MockWebSocket.instances[0] as MockWebSocket;
+    act(() => ws.emit({ t: 'y' }));
+
+    // Фокус в рамке терминала (кнопка шапки) — Escape остаётся терминалу.
+    within(win).getByRole('button', { name: 'Очистить' }).focus();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog', { name: first.name })).toBe(modal);
+    expect(screen.queryByRole('alertdialog', { name: 'Закрыть без сохранения?' })).toBeNull();
+    expect(within(modal).getByLabelText('Название')).toHaveValue('de-fra-01-new');
+    expect(screen.getByRole('dialog', { name: `Терминал ${first.name}` })).toBe(win);
+    expect(ws.readyState).toBe(1);
+  });
+
+  it('ссылка внутри окна сервера («Открыть в Журнале») не пересоздаёт окно и не рвёт терминал', async () => {
+    const router = renderApp('/servers');
+    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const first = mockServers.items[0];
+    if (!first) throw new Error('в моке нет серверов');
+    act(() => openServer(first.id, 'journal'));
+    const modal = await screen.findByRole('dialog', { name: first.name });
+    const user = userEvent.setup();
+    await user.click(within(modal).getByRole('button', { name: 'SSH-терминал' }));
+    const win = await screen.findByRole('dialog', { name: `Терминал ${first.name}` });
+    await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
+    const ws = MockWebSocket.instances[0] as MockWebSocket;
+    act(() => ws.emit({ t: 'y' }));
+
+    await user.click(await within(modal).findByRole('link', { name: 'Открыть в Журнале' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/audit'));
+    await screen.findByRole('heading', { level: 1, name: 'Журнал' });
+    expect(screen.getByRole('dialog', { name: first.name })).toBe(modal);
+    expect(screen.getByRole('dialog', { name: `Терминал ${first.name}` })).toBe(win);
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(ws.readyState).toBe(1);
+  });
+
+  it('жест «назад» не пересоздаёт окно сервера: несохранённые правки остаются', async () => {
+    const router = renderApp('/incidents');
+    await screen.findByRole('heading', { level: 1, name: 'Инциденты' });
+    await act(() => router.navigate({ to: '/servers' }));
+    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const first = mockServers.items[0];
+    if (!first) throw new Error('в моке нет серверов');
+    act(() => openServer(first.id, 'connection'));
+    const modal = await screen.findByRole('dialog', { name: first.name });
+    const user = userEvent.setup();
+    await user.clear(within(modal).getByLabelText('Название'));
+    await user.type(within(modal).getByLabelText('Название'), 'de-fra-01-new');
+
+    act(() => router.history.back());
+    await waitFor(() => expect(router.state.location.pathname).toBe('/incidents'));
+    await screen.findByRole('heading', { level: 1, name: 'Инциденты' });
+    expect(screen.getByRole('dialog', { name: first.name })).toBe(modal);
+    expect(within(modal).getByLabelText('Название')).toHaveValue('de-fra-01-new');
   });
 });

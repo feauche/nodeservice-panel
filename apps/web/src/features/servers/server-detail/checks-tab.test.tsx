@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { mockAutochecks } from '@/test/msw/autochecks-mock';
 import { resetMockState } from '@/test/msw/handlers';
 import { mockServerChecks, seedServerChecks } from '@/test/msw/server-checks-mock';
 import { mockServers } from '@/test/msw/servers-mock';
@@ -41,6 +42,67 @@ describe('ChecksTab', () => {
     await waitFor(() => expect(within(cpu).getAllByText('Готово').length).toBeGreaterThan(0), {
       timeout: 4000,
     });
+  });
+
+  it('само раз в сутки — только процессор; сторонние скрипты отдельно и только по кнопке', async () => {
+    seedServerChecks(server().id);
+    renderPage(() => <ChecksTab server={server()} />, '/');
+    await screen.findByTestId('check-cpu');
+    expect(screen.getByText(/Процессор панель замеряет сама/)).toHaveTextContent(
+      /раз в сутки, следующий замер — через .*Остальные проверки — сторонние скрипты: по расписанию панель их не запускает\./,
+    );
+    const auto = screen.getByRole('list', { name: 'Каждый день, автоматически' });
+    expect(
+      within(auto)
+        .getAllByRole('listitem')
+        .map((li) => li.dataset.testid),
+    ).toEqual(['check-cpu']);
+    const scripts = screen.getByRole('list', { name: 'Сторонние скрипты — по кнопке' });
+    expect(
+      within(scripts)
+        .getAllByRole('listitem')
+        .map((li) => li.dataset.testid),
+    ).toEqual(['check-ip_region', 'check-geoblock', 'check-dpi', 'check-ip_quality']);
+    expect(screen.getByText('версия закреплена и сверяется перед запуском')).toBeInTheDocument();
+  });
+
+  it('суточный замер выключен в настройках — так и сказано, «автоматически» не обещаем', async () => {
+    mockAutochecks.value = { ...mockAutochecks.value, serverChecksEnabled: false };
+    seedServerChecks(server().id);
+    renderPage(() => <ChecksTab server={server()} />, '/');
+    await screen.findByTestId('check-cpu');
+    expect(
+      screen.getByText(/Суточный замер процессора выключен в «Настройки → Автопроверки»/),
+    ).toHaveTextContent('все проверки запускаются по кнопке');
+    expect(screen.queryByText('Каждый день, автоматически')).not.toBeInTheDocument();
+    expect(screen.getByRole('list', { name: 'Своя проверка — по кнопке' })).toBeInTheDocument();
+  });
+
+  it('запуск отменён: скачанный скрипт не совпал с проверенным — «Отменена», а не «Ошибка», и причина словами', async () => {
+    const id = server().id;
+    mockServerChecks.runs.push({
+      id: '0192c000-cccc-7000-8000-00000000abcd',
+      serverId: id,
+      check: 'ip_region',
+      status: 'cancelled',
+      trigger: 'manual',
+      actorDisplay: 'admin',
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      finishedAt: new Date().toISOString(),
+      output: 'Скачанный скрипт не совпал с проверенной версией — запуск отменён.\n',
+      error:
+        'Скачанный скрипт не совпал с проверенной версией, записанной в панели, — запуск отменён, на сервере он не запускался. Файл могли подменить по дороге к серверу или на сайте, где он хранится.',
+      explanation: null,
+    });
+    renderPage(() => <ChecksTab server={server()} />, '/');
+    const region = await screen.findByTestId('check-ip_region');
+    expect(within(region).getAllByText('Отменена').length).toBeGreaterThan(0);
+    expect(within(region).queryByText('Ошибка')).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(within(region).getByRole('button', { name: /Подробнее/ }));
+    expect(
+      within(region).getByText(/^Скачанный скрипт не совпал с проверенной версией, записанной в панели,/),
+    ).toBeInTheDocument();
   });
 
   it('тяжёлая проверка — только после подтверждения', async () => {

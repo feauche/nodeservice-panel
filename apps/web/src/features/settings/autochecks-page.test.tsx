@@ -13,13 +13,13 @@ describe('AutochecksPage', () => {
     resetMockState({ authenticated: true });
   });
 
-  it('показывает четыре автопроверки со значениями по умолчанию, «Сохранить» задизейблена', async () => {
+  it('показывает автопроверки со значениями по умолчанию, «Сохранить» задизейблена', async () => {
     renderPage(AutochecksPage, '/settings/autochecks');
     expect(await screen.findByRole('textbox', { name: 'Серверы без агента' })).toHaveValue('15');
     expect(screen.getByRole('textbox', { name: 'Серверы с агентом' })).toHaveValue('60');
     expect(screen.getByRole('textbox', { name: 'Агент не в сети' })).toHaveValue('30');
     expect(screen.getByRole('textbox', { name: 'Метрики агента' })).toHaveValue('10');
-    expect(screen.getAllByRole('switch')).toHaveLength(4);
+    expect(screen.getAllByRole('switch')).toHaveLength(5);
     for (const s of screen.getAllByRole('switch')) expect(s).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
   });
@@ -89,6 +89,27 @@ describe('AutochecksPage', () => {
       expect(screen.getByRole('textbox', { name: 'Серверы без агента' })).toHaveValue('15'),
     );
     expect(screen.getByRole('button', { name: 'По умолчанию' })).toBeDisabled();
+  });
+
+  it('«Проверки серверов раз в сутки»: подпись — что идёт само, а что только по кнопке; выключение сохраняется', async () => {
+    renderPage(AutochecksPage, '/settings/autochecks');
+    const toggle = await screen.findByRole('switch', { name: 'Проверки серверов раз в сутки' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    // Что будет при каждом значении и что сторонние скрипты сами не запускаются никогда.
+    expect(
+      screen.getByText(
+        /Включено — раз в сутки панель сама замеряет процессор каждого сервера своей командой/,
+      ),
+    ).toHaveTextContent('Выключено — замер только по кнопке.');
+    expect(
+      screen.getByText(/Регион IP, геоблок, DPI до России и качество IP — сторонние скрипты/),
+    ).toHaveTextContent(
+      /по расписанию не запускаются.*только по кнопке во вкладке «Проверки» сервера или Джарвисом по вашей просьбе/,
+    );
+    const user = userEvent.setup();
+    await user.click(toggle);
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(mockAutochecks.value.serverChecksEnabled).toBe(false));
   });
 
   it('на дефолтах «По умолчанию» задизейблена', async () => {

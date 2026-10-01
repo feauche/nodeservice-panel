@@ -99,6 +99,7 @@ function deps(over: Partial<Record<keyof ReadDeps, unknown>> = {}): ReadDeps {
     },
     checks: {
       list: async () => ({
+        autoEnabled: true,
         nextAutoAt: '2026-09-29T10:00:00.000Z',
         items: [
           {
@@ -322,6 +323,15 @@ describe('get_server_checks', () => {
     expect(r.notRunYet).toContain('Процессор');
     expect(r.notRunYet).not.toContain('Геоблок');
   });
+  it('говорит, включён ли суточный замер: пустой срок без этого не отличить от «ещё не запускался»', async () => {
+    const d = deps();
+    const base = await d.checks.list('');
+    const off = deps({
+      checks: { ...d.checks, list: async () => ({ ...base, autoEnabled: false, nextAutoAt: null }) },
+    });
+    const r = (await call('get_server_checks', { serverId: 'de-1' }, off)).json();
+    expect(r).toMatchObject({ autoEnabled: false, nextAutoAt: null });
+  });
 });
 
 describe('run_server_check', () => {
@@ -349,6 +359,34 @@ describe('run_server_check', () => {
     const d = deps({ permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT, checksRun: false } });
     const { out } = await call('run_server_check', { serverId: 'de-1', check: 'cpu' }, d);
     expect(out.content).toContain('Настройки → Джарвис → Разрешения');
+  });
+  it('автоматический разбор (администратора рядом нет): сторонний скрипт не запускает, свою проверку — да', async () => {
+    const started: string[] = [];
+    const checks = {
+      ...(deps().checks as object),
+      startForJarvis: async (serverId: string, check: string) => {
+        started.push(check);
+        return { id: 'run-1', serverId, check };
+      },
+    };
+    const d = deps({ unattended: true, checks });
+    for (const check of ['ip_region', 'geoblock', 'dpi', 'ip_quality']) {
+      const { out } = await call('run_server_check', { serverId: 'de-1', check }, d);
+      expect(out.content, check).toContain('сторонний скрипт');
+      expect(out.content, check).toContain('get_server_checks');
+    }
+    expect(started).toEqual([]);
+    expect((await call('run_server_check', { serverId: 'de-1', check: 'cpu' }, d)).json()).toMatchObject({
+      check: 'Процессор',
+      ranJustNow: true,
+    });
+    expect(started).toEqual(['cpu']);
+    // В чате, по вопросу администратора, — как раньше.
+    await call('run_server_check', { serverId: 'de-1', check: 'ip_quality' }, deps({ checks }));
+    expect(started).toEqual(['cpu', 'ip_quality']);
+    // Модель знает правило заранее и не тратит на отказ ход.
+    const def = READ_TOOL_DEFS.find((t) => t.name === 'run_server_check');
+    expect(def?.description).toContain('В автоматическом разборе');
   });
 });
 

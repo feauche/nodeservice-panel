@@ -70,9 +70,19 @@ function xtermTheme(): Record<string, string> {
 
 /**
  * Плавающее окно веб-терминала — хром 1:1 с демо (#term): react-rnd, шапка-ручка,
- * кнопки очистить / на весь экран / закрыть; тело — xterm. Esc закрывает.
+ * кнопки очистить / на весь экран / закрыть; тело — xterm. Закрывается только кнопкой: Escape нужен
+ * программам в терминале (vim, less, mc), а закрытие окна обрывает SSH-сессию вместе с командой.
+ * `hidden` — окно спрятано под экраном блокировки (см. TerminalHost), сессия при этом живёт.
  */
-export function TerminalWindow({ server, onClose }: { server: TerminalTarget; onClose: () => void }) {
+export function TerminalWindow({
+  server,
+  onClose,
+  hidden = false,
+}: {
+  server: TerminalTarget;
+  onClose: () => void;
+  hidden?: boolean;
+}) {
   const socket = useTerminalSocket(server);
   const { status, error, bindSink, sendInput, sendResize, reopen } = socket;
 
@@ -83,6 +93,7 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
   const [fullscreen, setFullscreen] = useState(false);
   const prevGeom = useRef<Geom | null>(null);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
+  const [snippetsMenuOpen, setSnippetsMenuOpen] = useState(false);
   const [hintsOpen, setHintsOpen] = useState(false);
   /** На сколько окно расширили под панель подсказок, чтобы при закрытии вернуть прежнюю ширину. */
   const hintsGrow = useRef({ w: 0, h: 0 });
@@ -226,14 +237,13 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
     }
   }, [connected]);
 
-  // Esc закрывает окно.
+  // Экран заблокирован: окно спрятано вместе с сессией, но меню сниппетов и их настройка рисуются
+  // своими слоями поверх страницы — закрываем их, чтобы они не остались над экраном блокировки.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    if (!hidden) return;
+    setSnippetsMenuOpen(false);
+    setSnippetsOpen(false);
+  }, [hidden]);
 
   const toggleFullscreen = useCallback(() => {
     setFullscreen((f) => {
@@ -299,7 +309,7 @@ export function TerminalWindow({ server, onClose }: { server: TerminalTarget; on
             >
               <JarvisIcon className="size-3.5" aria-hidden="true" />
             </button>
-            <DropdownMenu>
+            <DropdownMenu open={snippetsMenuOpen} onOpenChange={setSnippetsMenuOpen}>
               <DropdownMenuTrigger
                 title="Сниппеты"
                 aria-label="Сниппеты"

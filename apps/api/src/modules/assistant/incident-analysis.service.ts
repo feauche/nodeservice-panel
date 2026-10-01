@@ -268,7 +268,7 @@ export class IncidentAnalysisService implements OnModuleInit {
         target: { type: 'incident', id, display: inc.title },
         metadata: { kind: inc.kind, server: inc.serverName, model: cfg.model, by },
       });
-      void this.execute(id, inc, cfg, base, run.signal).finally(release);
+      void this.execute(id, inc, cfg, base, run.signal, by).finally(release);
       return await this.incidents.get(id);
     } catch (err) {
       release();
@@ -314,6 +314,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     cfg: NonNullable<Awaited<ReturnType<AssistantSettingsStore['config']>>>,
     base: IncidentAnalysis,
     signal: AbortSignal,
+    by: 'manual' | 'auto',
   ): Promise<void> {
     const steps = [...base.steps];
     let cur = base;
@@ -330,7 +331,8 @@ export class IncidentAnalysisService implements OnModuleInit {
     };
     const deadline = Date.now() + TOTAL_MS;
     try {
-      const deps = this.readDeps(cfg);
+      // Автоматический разбор идёт без администратора: сторонние скрипты проверок в нём не запускаются.
+      const deps: ReadDeps = { ...this.readDeps(cfg), unattended: by === 'auto' };
       const fleetRules = await this.knowledge.fleetRules().catch(() => null);
       const book = playbookForKind(inc.kind);
       const playbook = book ? renderPlaybook(book) : null;
@@ -645,7 +647,7 @@ export class IncidentAnalysisService implements OnModuleInit {
           pageSize: 10,
         }),
       );
-      checked['Журнал'] = Boolean(log);
+      checked.Журнал = Boolean(log);
       if (log)
         out.push(
           changesText(
@@ -677,7 +679,7 @@ export class IncidentAnalysisService implements OnModuleInit {
       );
 
     // «Проверено» — только если «Биллинг» действительно ответил по этому серверу.
-    checked['биллинг'] = billingChecked;
+    checked.биллинг = billingChecked;
     checked[
       node
         ? 'проверка порта ноды из России (блокировка)'

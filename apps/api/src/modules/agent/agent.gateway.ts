@@ -1,5 +1,6 @@
 import { createPublicKey, verify as edVerify, randomBytes, randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
+import { isIP } from 'node:net';
 import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import {
   AGENT_MSG,
@@ -14,8 +15,16 @@ import {
 import { WebSocket, WebSocketServer } from 'ws';
 
 import type { ServerRow } from '../../infra/db/schema/index.js';
+import {
+  closePreAuth,
+  holdPreAuth,
+  ownOrReject,
+  PreAuthLimiter,
+  rejectUpgrade,
+} from '../../infra/ws/ws-preauth.js';
 import { WsUpgradeService } from '../../infra/ws/ws-upgrade.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { throttleIp } from '../auth/throttle.schedule.js';
 import { ServersService } from '../servers/servers.service.js';
 import { AgentService } from './agent.service.js';
 
@@ -24,6 +33,12 @@ export const AGENT_WS_PATH = '/api/agent/v1/ws';
 const AUTH_TIMEOUT_MS = 10_000;
 const PING_INTERVAL_MS = 30_000;
 const MAX_MESSAGE_BYTES = 64 * 1024;
+/**
+ * До входа агент шлёт ровно два коротких сообщения — hello (~300 байт), затем auth: больше этого до входа
+ * не принимаем. Крупное, второе до ответа на первое или не то по шагу — разрыв: иначе без ключа можно
+ * было бы до таймаута входа слать панели сколько угодно сообщений по 64 КБ и гонять поиск сервера.
+ */
+const PREAUTH_MAX_MESSAGE_BYTES = 4 * 1024;
 /**
  * Код закрытия «сервер удалён из панели». Отдельный от отказа входа (4403): агенту здесь больше нечего
  * делать, и переподключаться не нужно — следующая версия агента по этому коду сможет остановиться совсем.
@@ -37,6 +52,11 @@ const AUTH_FAILED_LOG_EVERY_MS = 60 * 60_000;
 /** Сколько серверов помним по отдельности. Шлюз открыт всему интернету: сверх этого отказы считаем вместе. */
 const AUTH_FAILED_TRACK_MAX = 500;
 const AUTH_FAILED_OTHERS = '*';
+/**
+ * Список адресов серверов парка старше этого перечитываем, прежде чем отказать незнакомому адресу при
+ * занятой прихожей: сервер могли только что добавить.
+ */
+const KNOWN_TTL_MS = 5_000;
 
 /** DER-префикс SPKI для ed25519: раскодированный base64-ключ агента (32 байта) собираем в KeyObject. */
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
@@ -47,6 +67,10 @@ interface ConnState {
   version?: string;
   pubkey?: string;
   nonce?: Buffer;
+  /** До входа: сообщение ещё проверяется — следующее ждать не будем. */
+  pending?: boolean;
+  /** Освободить место среди соединений без входа. */
+  release?: () => void;
 }
 
 /**
@@ -62,6 +86,11 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
   private readonly active = new Map<string, WebSocket>();
   /** Когда по серверу последний раз писали отказ в Журнал и сколько отказов с тех пор промолчали. */
   private readonly authFailures = new Map<string, { loggedAt: number; skipped: number }>();
+  /** Соединения, ещё не прошедшие вход: не больше 5 с адреса и 50 всего (infra/ws/ws-preauth). */
+  private readonly preAuth = new PreAuthLimiter();
+  /** Адреса серверов парка (ключ как у предела: IPv6 — сеть /64) и когда список прочитан. */
+  private known: { keys: Set<string>; at: number } = { keys: new Set(), at: 0 };
+  private knownLoad: Promise<void> | null = null;
 
   constructor(
     private readonly agents: AgentService,
@@ -78,7 +107,19 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
     // Сообщения агента — несколько сотен байт; без предела библиотека принимает до 100 МБ ещё до входа.
     this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
     this.wsUpgrade.register(AGENT_WS_PATH, (req, socket, head) => {
-      this.wss?.handleUpgrade(req, socket, head, (ws) => this.handle(ws, req));
+      const ip = this.wsUpgrade.clientIp(req);
+      const open = (release: () => void) =>
+        this.wss?.handleUpgrade(req, socket, head, (ws) => this.handle(ws, req, release));
+      const release = holdPreAuth(this.preAuth, ip, socket);
+      if (release) return open(release);
+      // Прихожая занята: агента с адреса сервера парка пускаем сверх общего предела (но не больше пяти с
+      // адреса) — иначе поток соединений без входа с нескольких адресов не давал бы парку переподключиться.
+      void ownOrReject(socket, () => this.knownAddress(ip)).then((own) => {
+        if (!own) return;
+        const extra = holdPreAuth(this.preAuth, ip, socket, true);
+        if (extra) open(extra);
+        else rejectUpgrade(socket);
+      });
     });
     this.ping = setInterval(() => {
       for (const ws of this.wss?.clients ?? []) {
@@ -100,21 +141,35 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
     for (const ws of this.wss?.clients ?? []) ws.terminate();
   }
 
-  private handle(ws: WebSocket, _req: IncomingMessage): void {
-    const state: ConnState = { stage: 'hello' };
+  /** release — освободить место соединения без входа: зовём, когда агент вошёл (закрытие освобождает само). */
+  private handle(ws: WebSocket, _req: IncomingMessage, release: () => void): void {
+    const state: ConnState = { stage: 'hello', release };
     (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
     ws.on('pong', () => {
       (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
     });
     const authTimer = setTimeout(() => {
-      if (state.stage !== 'ready') ws.close(4401, 'auth timeout');
+      if (state.stage !== 'ready') closePreAuth(ws, 4401, 'auth timeout');
     }, AUTH_TIMEOUT_MS);
 
     ws.on('message', (raw) => {
-      void this.onMessage(ws, state, raw as Buffer).catch((err) => {
-        this.log.warn(`Ошибка обработки сообщения агента: ${(err as Error).message}`);
-        this.sendError(ws, 'protocol', 'Внутренняя ошибка обработки сообщения');
-      });
+      // Закрытие уже начато (отказ, нарушение порядка): библиотека ещё отдаёт сообщения до ответа клиента,
+      // но обрабатывать их незачем — иначе без входа можно было бы слать дальше, не отвечая на закрытие.
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const data = raw as Buffer;
+      if (state.stage !== 'ready') {
+        if (state.pending || data.length > PREAUTH_MAX_MESSAGE_BYTES)
+          return this.protocolClose(ws, 'До входа — одно короткое сообщение на шаг');
+        state.pending = true;
+      }
+      void this.onMessage(ws, state, data)
+        .catch((err) => {
+          this.log.warn(`Ошибка обработки сообщения агента: ${(err as Error).message}`);
+          this.sendError(ws, 'protocol', 'Внутренняя ошибка обработки сообщения');
+        })
+        .finally(() => {
+          state.pending = false;
+        });
     });
     ws.on('close', () => {
       clearTimeout(authTimer);
@@ -133,7 +188,8 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
       env = agentEnvelopeSchema.parse(JSON.parse(raw.toString('utf8')));
     } catch {
       this.sendError(ws, 'bad-envelope', 'Сообщение не соответствует конверту протокола v1');
-      ws.close(4400, 'bad envelope');
+      if (state.stage === 'ready') ws.close(4400, 'bad envelope');
+      else closePreAuth(ws, 4400, 'bad envelope');
       return;
     }
 
@@ -172,6 +228,8 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
       const ok = edVerify(null, nonce, key, Buffer.from(auth.data.signature, 'base64'));
       if (!ok) return this.fail(ws, 'auth-failed', 'Подпись nonce не сошлась');
       state.stage = 'ready';
+      // Вошёл — место среди соединений без входа больше не занимает.
+      state.release?.();
       // Переподключение вытесняет старое соединение этого же сервера (без ложного offline).
       const prev = this.active.get(server.id);
       this.active.set(server.id, ws);
@@ -198,7 +256,44 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    // До входа ждём только hello, затем auth: не то по шагу — разрыв, а не вежливая ошибка без конца.
+    if (state.stage !== 'ready')
+      return this.protocolClose(ws, `Сообщение «${env.type}» не ожидается на этой стадии`);
     this.sendError(ws, 'protocol', `Сообщение «${env.type}» не ожидается на этой стадии`);
+  }
+
+  /** Нарушение порядка до входа: причина агенту (видна в его журнале) и разрыв. */
+  private protocolClose(ws: WebSocket, message: string): void {
+    this.sendError(ws, 'protocol', message);
+    closePreAuth(ws, 4400, 'protocol');
+  }
+
+  /**
+   * Адрес сервера парка: SSH-адрес или внешний адрес на его интерфейсах (IPv6 — сеть /64, как у предела).
+   * Незнакомый адрес — перечитываем список, если он старше KNOWN_TTL_MS.
+   */
+  private async knownAddress(ip: string): Promise<boolean> {
+    const key = throttleIp(ip);
+    if (!this.known.keys.has(key) && Date.now() - this.known.at > KNOWN_TTL_MS) {
+      this.knownLoad ??= this.loadKnown().finally(() => {
+        this.knownLoad = null;
+      });
+      await this.knownLoad;
+    }
+    return this.known.keys.has(key);
+  }
+
+  private async loadKnown(): Promise<void> {
+    try {
+      const keys = new Set<string>();
+      for (const s of await this.servers.list())
+        for (const a of [s.host, ...(s.facts.addresses ?? [])]) if (isIP(a)) keys.add(throttleIp(a));
+      this.known = { keys, at: Date.now() };
+    } catch (err) {
+      // База не ответила — остаётся прежний список; следующая попытка не раньше, чем через KNOWN_TTL_MS.
+      this.known = { ...this.known, at: Date.now() };
+      this.log.warn(`Не удалось прочитать адреса серверов: ${(err as Error).message}`);
+    }
   }
 
   /** Сервер удалили из панели: соединение его агента закрываем сразу, а не ждём, пока оно оборвётся само. */
@@ -247,9 +342,10 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
       .catch(() => undefined);
   }
 
+  /** Отказ во входе (чужой сервер, другой ключ, неверная подпись): причина агенту и разрыв. */
   private fail(ws: WebSocket, code: AgentErrorPayload['code'], message: string): void {
     this.sendError(ws, code, message);
-    ws.close(4403, code);
+    closePreAuth(ws, 4403, code);
   }
 
   private sendError(ws: WebSocket, code: AgentErrorPayload['code'], message: string): void {

@@ -1,7 +1,7 @@
 import { SERVER_CHECK_OUTPUT_MAX, type ServerCheckKey } from '@nodeservice/shared';
 
 /**
- * Команды реестра проверок (R5/J9). Выполняются по SSH от root через bash (нужна подстановка `<(…)`).
+ * Команды реестра проверок (R5/J9). Выполняются по SSH от root через bash.
  * Чужие скрипты берутся только по https — те же, что вызывает multitest, но без него самого: сам multitest
  * лишь обёртка с меню, и тянуть её значит доверять ещё одному источнику, который может поменяться.
  * Маркер `# ns-check:<ключ>` в первой строке — по нему тестовый sshd и логи узнают команду.
@@ -51,11 +51,94 @@ const NEED = [
   '}',
 ].join('\n');
 
-/** Запуск чужого скрипта по https без ввода с клавиатуры (любой вопрос скрипта получит пустой ответ). */
-const remote = (key: ServerCheckKey, url: string, args = '') =>
-  `timeout -k 20 ${SERVER_TIMEOUT_SEC[key]} bash <(curl -fsSL --proto '=https' --max-time 60 ${url})${args ? ` ${args}` : ''} </dev/null`;
+/** Закреплённая версия стороннего скрипта: raw-адрес с коммитом и sha256 самого файла. */
+export interface ScriptPin {
+  url: string;
+  sha256: string;
+  /**
+   * Скрипт во время работы сам качает свои файлы из ветки автора: в скачанном файле `from` меняется на
+   * `to` (тот же коммит, что в url), и запускается только переписанный файл с суммой `sha256`.
+   */
+  refs?: { from: string; to: string; sha256: string };
+}
 
-const BODY: Record<ServerCheckKey, string[]> = {
+/**
+ * Сторонние скрипты — только проверенная версия. Адрес с коммитом, а не с веткой: новая версия у автора
+ * (или взломанный репозиторий) сама на серверы не попадёт. Сумму сверяем ещё и на сервере — подменённый
+ * по дороге файл не запустится. IP.Check.Place и yabs.sh — лишь переадресации на main/master этих же
+ * репозиториев, поэтому качаем сразу закреплённый файл из GitHub.
+ * Обновить версию: прочитать изменения в новом коммите, скачать файл, `sha256sum`, заменить обе строки. Если
+ * скрипт сам докачивает что-то из ветки (`grep -n 'main/\|master/'`), — ещё refs и сумма переписанного файла:
+ * `curl -fsSL <адрес> | sed 's|<from>|<to>|g' | sha256sum`.
+ * Версии и суммы сняты 01.10.2026 — файлы совпадали с тем, что тогда отдавали ветки и адреса.
+ */
+export const SCRIPT_PINS = {
+  ipregion: {
+    url: 'https://raw.githubusercontent.com/Davoyan/ipregion/a85abbf739e07b1162bee066d756be1e4b9bfcc0/ipregion.sh',
+    sha256: '17eb73e776f7ab292e30f12223a78c8f25a0ed6808e8204434d122f06e4b4b0e',
+  },
+  censorcheck: {
+    url: 'https://raw.githubusercontent.com/vernette/censorcheck/42a688b855b37bc6e97eace1897df38897b8d9fe/censorcheck.sh',
+    sha256: 'e8e2d3a364d1e92087e1571f8bf5bad529884c79375c9002916f40be5855b9b8',
+  },
+  ipquality: {
+    url: 'https://raw.githubusercontent.com/xykt/IPQuality/2384a67c756eb35231f5982b34731e522be3653e/ip.sh',
+    sha256: 'b30df5a3c2204276c54e99dcc5080b46f8a627667730aee7de63b109b8ecaecf',
+    // Список DNSBL (его строки скрипт подставляет в команды bash), куки, справочник стран и рекламу ip.sh
+    // качает из ветки main («${rawgithub}main/ref/…»): берём их из того же коммита.
+    refs: {
+      from: '}main/',
+      to: '}2384a67c756eb35231f5982b34731e522be3653e/',
+      sha256: '1b9c0476559741323337a3c13c8e59986df34eb1d30e3b7021fcb29d027709cc',
+    },
+  },
+  iperf3ru: {
+    url: 'https://raw.githubusercontent.com/itdoginfo/russian-iperf3-servers/87abe95057f5e43f96640b22ea145c12be38a867/speedtest.sh',
+    sha256: '068d37703beab0ec7e44a24ed45f6e911af51511ea6476a85add7250fab3d3dc',
+  },
+  yabs: {
+    url: 'https://raw.githubusercontent.com/masonr/yet-another-bench-script/ad1af039ce5d6e0091a35f87f1fa71ae2d411bf2/yabs.sh',
+    sha256: '54d23e3b17d36d1f4e40895c6a9929601e664ff1cf1a9217b034a60076ac504f',
+  },
+} satisfies Record<string, ScriptPin>;
+export type ScriptPins = Record<keyof typeof SCRIPT_PINS, ScriptPin>;
+
+/**
+ * Коды выхода обёртки: скрипт не скачался / скачанный не совпал с закреплённым (тогда он не запускается) /
+ * переписанный под закреплённые файлы не совпал с проверенным (сбой на сервере, скрипт тоже не запускается).
+ * Сами закреплённые скрипты выходят с 0–11, 40, 60 и 130, curl — до 99, timeout — 124–137.
+ */
+export const SCRIPT_FETCH_FAILED_EXIT = 111;
+export const SCRIPT_CHANGED_EXIT = 112;
+export const SCRIPT_PREPARE_FAILED_EXIT = 113;
+
+/**
+ * Запуск чужого скрипта без ввода с клавиатуры (любой вопрос скрипта получит пустой ответ): скачать во
+ * временный файл, сверить sha256 с закреплённой, только тогда запустить. Качает скрипт что-то своё из ветки
+ * автора — сначала переписать эти адреса на закреплённый коммит и сверить уже переписанный файл. Файлы
+ * удаляются при выходе.
+ */
+const remote = (key: ServerCheckKey, pin: ScriptPin, args = '') =>
+  [
+    'f=$(mktemp) || exit 1',
+    `trap 'rm -f "$f" "$f.pin"' EXIT`,
+    `curl -fsSL --proto '=https' --max-time 60 -o "$f" ${pin.url} || { echo "Не удалось скачать скрипт проверки."; exit ${SCRIPT_FETCH_FAILED_EXIT}; }`,
+    'sum=$(sha256sum < "$f")',
+    `[ "\${sum%% *}" = "${pin.sha256}" ] || { echo "Скачанный скрипт не совпал с проверенной версией — запуск отменён."; exit ${SCRIPT_CHANGED_EXIT}; }`,
+    ...(pin.refs
+      ? [
+          `sed 's|${pin.refs.from}|${pin.refs.to}|g' "$f" > "$f.pin"`,
+          'sum=$(sha256sum < "$f.pin")',
+          `[ "\${sum%% *}" = "${pin.refs.sha256}" ] || { echo "Не удалось подготовить скрипт проверки к запуску."; exit ${SCRIPT_PREPARE_FAILED_EXIT}; }`,
+        ]
+      : []),
+    `timeout -k 20 ${SERVER_TIMEOUT_SEC[key]} bash ${pin.refs ? '"$f.pin"' : '"$f"'}${args ? ` ${args}` : ''} </dev/null`,
+  ].join('\n');
+
+/** Сумму считает sha256sum (coreutils): без него сверить нельзя — честный отказ need, а не «не совпал». */
+const NEED_SUM = 'need sha256sum coreutils';
+
+const body = (pins: ScriptPins): Record<ServerCheckKey, string[]> => ({
   cpu: [
     'need sysbench sysbench',
     'echo "== Одно ядро"',
@@ -66,51 +149,49 @@ const BODY: Record<ServerCheckKey, string[]> = {
   ip_region: [
     'need jq jq',
     'need column bsdextrautils util-linux',
-    remote('ip_region', 'https://raw.githubusercontent.com/Davoyan/ipregion/main/ipregion.sh'),
+    NEED_SUM,
+    remote('ip_region', pins.ipregion),
   ],
   // censorcheck сам проверяет curl, dig, jq и column и без них выходит с «Missing dependencies».
   geoblock: [
     'need dig dnsutils bind9-dnsutils',
     'need jq jq',
     'need column bsdextrautils util-linux',
-    remote(
-      'geoblock',
-      'https://raw.githubusercontent.com/vernette/censorcheck/master/censorcheck.sh',
-      '--mode geoblock',
-    ),
+    NEED_SUM,
+    remote('geoblock', pins.censorcheck, '--mode geoblock'),
   ],
   dpi: [
     'need dig dnsutils bind9-dnsutils',
     'need jq jq',
     'need column bsdextrautils util-linux',
-    remote(
-      'dpi',
-      'https://raw.githubusercontent.com/vernette/censorcheck/master/censorcheck.sh',
-      '--mode dpi',
-    ),
+    NEED_SUM,
+    remote('dpi', pins.censorcheck, '--mode dpi'),
   ],
   // -E: английский и полный прогон без меню; -n: не ставить зависимости молча.
-  ip_quality: [remote('ip_quality', 'https://IP.Check.Place', '-E -n')],
+  ip_quality: [NEED_SUM, remote('ip_quality', pins.ipquality, '-E -n')],
   iperf3_ru: [
     'need iperf3 iperf3',
     'need jq jq',
     'need ping iputils-ping',
-    remote(
-      'iperf3_ru',
-      'https://raw.githubusercontent.com/itdoginfo/russian-iperf3-servers/main/speedtest.sh',
-    ),
+    NEED_SUM,
+    remote('iperf3_ru', pins.iperf3ru),
   ],
-  // -4: только IPv4 (у многих серверов нет IPv6, иначе сетевой замер тратит время на таймауты).
-  yabs: [remote('yabs', 'https://yabs.sh', '-4')],
-};
+  // fio и iperf3 — из пакетов системы: найдя их, YABS свои сборки не качает (без -b), а иначе брал бы
+  // последний выпуск из релизов автора и запускал его от root без сверки.
+  // -4 — Geekbench 4 вместо шестого (не «только IPv4»: IPv6 YABS проверяет сам): проходит и при 1 ГБ памяти,
+  // где шестой может упасть; на ARM его нет. Баллы с шестым не сравнимы — правило у Джарвиса (check-explain).
+  // Сам Geekbench скрипт качает с сайта Primate Labs без сверки — так и сказано у проверки.
+  yabs: ['need fio fio', 'need iperf3 iperf3', NEED_SUM, remote('yabs', pins.yabs, '-4')],
+});
 
 /** Одинарные кавычки для `bash -c` — тот же приём, что и SH() у действий. */
 const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
-export function checkCommand(key: ServerCheckKey): string {
-  const body = [`# ns-check:${key}`, ENV, 'need curl curl', ...BODY[key]].join('\n');
+/** pins — только для тестов (свой «скрипт» с известной суммой); на серверы идут SCRIPT_PINS. */
+export function checkCommand(key: ServerCheckKey, pins: ScriptPins = SCRIPT_PINS): string {
+  const script = [`# ns-check:${key}`, ENV, 'need curl curl', ...body(pins)[key]].join('\n');
   // NEED объявляется раньше первого вызова; маркер остаётся первой строкой самой команды.
-  return `# ns-check:${key}\nbash -c ${q([NEED, body].join('\n'))}`;
+  return `# ns-check:${key}\nbash -c ${q([NEED, script].join('\n'))}`;
 }
 
 /** Цветовые и управляющие последовательности терминала — в хранимом выводе они только мусор. */
@@ -170,9 +251,24 @@ export function stripNoise(key: ServerCheckKey, text: string): string {
   return at > 0 ? text.slice(at) : text;
 }
 
-/** Понятная причина по коду выхода. */
+/** Итог запуска по коду выхода: скрипт, не совпавший с закреплённым, — отмена, а не ошибка. */
+export function runStatus(code: number): 'failed' | 'cancelled' {
+  return code === SCRIPT_CHANGED_EXIT ? 'cancelled' : 'failed';
+}
+
+/**
+ * Понятная причина по коду выхода. Несовпавший скрипт — не «изменился у автора»: адрес закреплён по коммиту,
+ * и новая версия у автора сюда не попадает. Такое бывает при подмене файла — это и сказано, как предположение.
+ * До скачивания need мог поставить недостающие программы, поэтому «ничего не запускалось» не говорим.
+ */
 export function exitReason(code: number): string {
   if (code === 124 || code === 137) return 'Проверка не уложилась в отведённое время и была остановлена.';
   if (code === 3) return 'Не удалось установить нужный пакет — смотрите вывод.';
+  if (code === SCRIPT_FETCH_FAILED_EXIT)
+    return 'Не удалось скачать скрипт проверки — сам скрипт на сервере не запускался. Причина — в выводе.';
+  if (code === SCRIPT_CHANGED_EXIT)
+    return 'Скачанный скрипт не совпал с проверенной версией, записанной в панели, — запуск отменён, на сервере он не запускался. Файл могли подменить по дороге к серверу или на сайте, где он хранится.';
+  if (code === SCRIPT_PREPARE_FAILED_EXIT)
+    return 'Не удалось подготовить скрипт проверки к запуску — сам скрипт на сервере не запускался. Причина — в выводе.';
   return `Скрипт проверки завершился с ошибкой (код ${code}). Причина — в выводе.`;
 }

@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
 import {
   type ActionKey,
   AUTOFIX_GRACE_SECONDS,
@@ -118,7 +118,6 @@ const ev = (by: 'auto' | 'manual', action: string, result: IncidentEvent['result
 /** Инциденты: жизненный цикл, детекция правил с гистерезисом, реестр действий (исполнение — IncidentRunnerService). */
 @Injectable()
 export class IncidentsService {
-  private readonly log = new Logger(IncidentsService.name);
   /** Момент первого превышения порога (server:kind) — для «времени реакции» без флаппинга. */
   private readonly exceededSince = new Map<string, number>();
   /** С какой неудачной проверки SSH у сервера идёт серия неудач (без единого успеха). */

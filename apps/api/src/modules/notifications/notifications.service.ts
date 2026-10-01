@@ -22,6 +22,7 @@ import type { NotificationRow } from '../../infra/db/schema/index.js';
 import { EventsService } from '../events/events.service.js';
 import { NotificationsRepository, type PendingTelegram } from './notifications.repository.js';
 import { shortOutageMessage } from './telegram/telegram.format.js';
+import type { RichBlock } from './telegram/telegram.rich.js';
 import { type TelegramDispatch, TelegramService } from './telegram/telegram.service.js';
 
 /**
@@ -51,8 +52,10 @@ export interface PushInput {
     serverKey?: string | null;
     /** Показать в Telegram другой сервер, чем в колокольчике (например, ноду, которой нет в NodeService). */
     server?: { name: string; host?: string | null } | null;
-    /** Готовый HTML для Telegram (биллинг) вместо обычного блочного формата. */
+    /** Готовый HTML для Telegram (например, биллинг) — запасной формат для обычного сообщения. */
     html?: string | null;
+    /** Те же данные настоящими блоками Telegram: заголовки, таблицы и подпись. */
+    rich?: RichBlock[] | null;
     /**
      * Инцидент сейчас разберёт Джарвис: в Telegram отправляем после разбора — уже с выводом
      * (releaseAfterAnalysis). Не дождались за ANALYSIS_WAIT_MS — уходит как есть. Колокольчик — сразу.
@@ -387,6 +390,7 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
           t.server ?? (input.server ? { name: input.server.name, host: input.server.host ?? null } : null),
         link: input.link ?? null,
         html: t.html ?? null,
+        rich: t.rich ?? null,
         severity: t.severity ?? input.severity,
       };
       // Сообщения по делу идут по очереди дела (см. route): ждём только решения, сама отправка — в фоне.

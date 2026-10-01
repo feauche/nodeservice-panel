@@ -41,7 +41,12 @@ export class ServerChecksRepository {
     await this.db.update(serverChecks).set({ output }).where(eq(serverChecks.id, id));
   }
 
-  async finish(id: string, status: 'ok' | 'failed', output: string, error: string | null): Promise<void> {
+  async finish(
+    id: string,
+    status: 'ok' | 'failed' | 'cancelled',
+    output: string,
+    error: string | null,
+  ): Promise<void> {
     await this.db
       .update(serverChecks)
       .set({ status, output, error, finishedAt: new Date() })

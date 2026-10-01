@@ -6,7 +6,10 @@ import { z } from 'zod';
  * скрипты напрямую и только по https — три варианта multitest, которые качают код по незашифрованному http
  * (censorcheck.tlab.pw, bench.tlab.pw, bench.sh), в реестр не вошли.
  *
- * Лёгкие проверки (heavy: false) идут сами раз в сутки; тяжёлые — только по кнопке, с предупреждением.
+ * Чужие скрипты закреплены на проверенной версии (коммит и сумма — в server-checks.scripts.ts у api): новая
+ * версия у автора сама на серверы не попадёт. Сама по расписанию панель запускает только свои команды
+ * (SERVER_CHECK_AUTO_KEYS); сторонние лёгкие — по кнопке (или Джарвисом по просьбе администратора, но не в
+ * автоматическом разборе), тяжёлые — только по кнопке, с предупреждением.
  * Вывод хранится сырым текстом: его читает и объясняет Джарвис, отдельных разборщиков под каждый скрипт нет.
  */
 export const SERVER_CHECK_KEYS = [
@@ -31,6 +34,11 @@ export interface ServerCheckMeta {
   duration: string;
   /** Чей скрипт запускается — показываем честно. */
   source: string;
+  /**
+   * Сторонний скрипт, а не своя команда панели. Такой по расписанию не запускается: взлом чужого
+   * репозитория не должен сам доходить до root на всех серверах.
+   */
+  thirdParty: boolean;
 }
 
 export const SERVER_CHECK_META: Record<ServerCheckKey, ServerCheckMeta> = {
@@ -40,6 +48,7 @@ export const SERVER_CHECK_META: Record<ServerCheckKey, ServerCheckMeta> = {
     heavy: false,
     duration: 'около 30 секунд',
     source: 'sysbench (ставится из пакетов системы, если его нет)',
+    thirdParty: false,
   },
   ip_region: {
     label: 'Регион IP',
@@ -47,6 +56,7 @@ export const SERVER_CHECK_META: Record<ServerCheckKey, ServerCheckMeta> = {
     heavy: false,
     duration: '1–2 минуты',
     source: 'github.com/Davoyan/ipregion',
+    thirdParty: true,
   },
   geoblock: {
     label: 'Геоблок',
@@ -54,6 +64,7 @@ export const SERVER_CHECK_META: Record<ServerCheckKey, ServerCheckMeta> = {
     heavy: false,
     duration: '1–3 минуты',
     source: 'github.com/vernette/censorcheck (режим geoblock)',
+    thirdParty: true,
   },
   dpi: {
     label: 'DPI до России',
@@ -61,13 +72,15 @@ export const SERVER_CHECK_META: Record<ServerCheckKey, ServerCheckMeta> = {
     heavy: false,
     duration: '1–3 минуты',
     source: 'github.com/vernette/censorcheck (режим dpi)',
+    thirdParty: true,
   },
   ip_quality: {
     label: 'Качество IP',
     what: 'Репутация IP: тип адреса (хостинг или домашний), риск-оценки, чёрные списки, доступ к стримингам и ИИ-сервисам.',
     heavy: false,
     duration: '2–4 минуты',
-    source: 'IP.Check.Place (github.com/xykt/IPQuality)',
+    source: 'github.com/xykt/IPQuality (он же IP.Check.Place)',
+    thirdParty: true,
   },
   iperf3_ru: {
     label: 'Скорость до России',
@@ -75,19 +88,27 @@ export const SERVER_CHECK_META: Record<ServerCheckKey, ServerCheckMeta> = {
     heavy: true,
     duration: '5–10 минут, гоняет сотни мегабайт трафика',
     source: 'github.com/itdoginfo/russian-iperf3-servers',
+    thirdParty: true,
   },
   yabs: {
     label: 'Полный замер (YABS)',
     what: 'Диск, сеть до серверов по миру и Geekbench — полная картина производительности сервера.',
     heavy: true,
     duration: '10–20 минут, нагружает диск и процессор, тратит трафик',
-    source: 'yabs.sh (github.com/masonr/yet-another-bench-script)',
+    source:
+      'github.com/masonr/yet-another-bench-script (он же yabs.sh); fio и iPerf3 ставятся из пакетов системы, а Geekbench 4 скрипт скачивает с сайта Primate Labs — его панель не сверяет',
+    thirdParty: true,
   },
 };
 
-/** Лёгкие проверки повторяются не чаще раза в столько часов. */
+/** Что панель запускает сама по расписанию: лёгкие проверки своими командами, без сторонних скриптов. */
+export const SERVER_CHECK_AUTO_KEYS: readonly ServerCheckKey[] = SERVER_CHECK_KEYS.filter(
+  (k) => !SERVER_CHECK_META[k].heavy && !SERVER_CHECK_META[k].thirdParty,
+);
+
+/** Проверки по расписанию повторяются не чаще раза в столько часов. */
 export const SERVER_CHECK_INTERVAL_HOURS = 24;
-/** Упавшая лёгкая проверка повторяется сама через столько часов. */
+/** Упавшая проверка по расписанию повторяется сама через столько часов. */
 export const SERVER_CHECK_RETRY_FAILED_HOURS = 1;
 /** Больше этого вывода не храним: начало и конец остаются, середина вырезается. */
 export const SERVER_CHECK_OUTPUT_MAX = 48 * 1024;
@@ -101,8 +122,12 @@ export const serverCheckRunSchema = z.object({
   id: z.string().uuid(),
   serverId: z.string().uuid(),
   check: serverCheckKeySchema,
-  status: z.enum(['running', 'ok', 'failed']),
-  /** auto — суточный запуск панели, manual — по кнопке. */
+  /**
+   * cancelled — панель сама отменила запуск: скачанный сторонний скрипт не совпал с закреплённой версией,
+   * на сервере он не запускался. Это не ошибка сервера и не ошибка проверки.
+   */
+  status: z.enum(['running', 'ok', 'failed', 'cancelled']),
+  /** auto — суточный запуск панели (только свои команды), manual — по кнопке или Джарвисом. */
   trigger: z.enum(['auto', 'manual']),
   actorDisplay: z.string().nullable(),
   startedAt: z.string(),
@@ -118,7 +143,12 @@ export type ServerCheckRun = z.infer<typeof serverCheckRunSchema>;
 /** Последний запуск каждой проверки сервера; проверки, которые ещё не запускались, отсутствуют. */
 export const serverChecksResponseSchema = z.object({
   items: z.array(serverCheckRunSchema),
-  /** Когда панель сама повторит лёгкие проверки (самая ранняя из них); null — ещё не запускались. */
+  /** Суточный запуск своих проверок включён (Настройки → Автопроверки). */
+  autoEnabled: z.boolean(),
+  /**
+   * Когда панель сама повторит свои проверки (самая ранняя из них); null — ещё не запускались или суточный
+   * запуск выключен.
+   */
   nextAutoAt: z.string().nullable(),
 });
 export type ServerChecksResponse = z.infer<typeof serverChecksResponseSchema>;

@@ -197,7 +197,6 @@ export function Combobox({
             <div className="mx-2 mt-2 mb-1 flex h-[34px] shrink-0 items-center gap-2 rounded-[9px] border border-border bg-surface-2 px-2.5 focus-within:border-brand/50">
               <SearchIcon className="size-[15px] flex-none text-text-3" aria-hidden="true" />
               <input
-                // biome-ignore lint/a11y/noAutofocus: поиск должен принимать ввод сразу после открытия списка
                 autoFocus
                 type="text"
                 role="searchbox"
@@ -217,7 +216,6 @@ export function Combobox({
               />
             </div>
           )}
-          {/* biome-ignore lint/a11y/useSemanticElements: listbox с подсветкой и прокруткой, нативный select здесь не подходит */}
           <div
             ref={listRef}
             id={listId}
@@ -252,7 +250,6 @@ export function Combobox({
                       {opt.group}
                     </div>
                   )}
-                  {/* biome-ignore lint/a11y/useKeyWithClickEvents: клавиатура обрабатывается на listbox и в поле поиска */}
                   <div
                     id={optId(i)}
                     role="option"
@@ -293,7 +290,6 @@ export function Combobox({
                 </span>
               )}
               {action && (
-                // biome-ignore lint/a11y/useSemanticElements: пункт-действие входит в общую навигацию стрелками
                 <div
                   id={optId(entries.length - 1)}
                   role="button"

@@ -18,6 +18,7 @@ export const TELEGRAM_EVENT_ICON: Record<TelegramEvent, string> = {
   login: '🔐',
   billing_soon: '💳',
   billing_overdue: '🔴',
+  panel_health: '🖥',
 };
 
 export interface TelegramMessageInput {

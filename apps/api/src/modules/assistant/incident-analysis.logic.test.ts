@@ -198,6 +198,14 @@ describe('pickAutoAnalysis', () => {
 describe('правила парка в разборе', () => {
   it('без правил блока нет, с правилами он добавляется после плейбука', () => {
     expect(analysisSystem('intermediate', null, null)).not.toContain('ПРАВИЛА ПАРКА');
+    // Адрес панели — чтобы в советах не было выдуманных доменов; T3 — команда, а не кнопка.
+    expect(analysisSystem('intermediate', null, null, 'https://panel.test')).toContain(
+      'АДРЕС ЭТОЙ ПАНЕЛИ NODESERVICE: https://panel.test',
+    );
+    expect(analysisSystem('intermediate', null, null)).not.toContain('АДРЕС ЭТОЙ ПАНЕЛИ');
+    const ask = askSystem('novice', { verdict: 'x', confidence: 'high' } as never, 'https://panel.test');
+    expect(ask).toContain('https://panel.test');
+    expect(ask).toContain('«Копировать команду» и «Открыть терминал»');
     const s = analysisSystem('intermediate', 'ПЛЕЙБУК «Диск»', '## Нормы\nCPU до 60 %.');
     expect(s).toContain('ПРАВИЛА ПАРКА');
     expect(s).toContain('CPU до 60 %.');

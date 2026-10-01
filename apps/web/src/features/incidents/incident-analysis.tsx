@@ -18,7 +18,7 @@ import {
   SendIcon,
   XIcon,
 } from 'lucide-react';
-import { type FormEvent, type ReactNode, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 import { JarvisIcon } from '@/components/jarvis-icon';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -298,6 +298,15 @@ function DoneBlock({
   const canAsk = status.data ? status.data.permissions.analysis : true;
   const [question, setQuestion] = useState('');
   const [pending, setPending] = useState<string | null>(null);
+  // Беседа по делу открывается на последнем ответе: после долгого разговора владелец иначе листал бы её вниз
+  // при каждом заходе; новый ответ тоже показывается сразу.
+  const threadRef = useRef<HTMLDivElement>(null);
+  const threadLength = a.thread.length;
+  useEffect(() => {
+    if (threadLength === 0 && !pending) return;
+    const el = threadRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [threadLength, pending]);
   // На телефоне доказательства свёрнуты: вывод и шаг с кнопкой должны помещаться на первый экран.
   const [open, setOpen] = useState(
     () => typeof window.matchMedia !== 'function' || window.matchMedia('(min-width: 768px)').matches,
@@ -453,6 +462,7 @@ function DoneBlock({
 
       {(a.thread.length > 0 || pending) && (
         <div
+          ref={threadRef}
           role="log"
           aria-label="Вопросы по разбору"
           className="mx-4 mt-3 flex max-h-[300px] flex-col gap-2 overflow-y-auto"

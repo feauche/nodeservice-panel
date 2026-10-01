@@ -27,7 +27,6 @@ export function SnippetsDialog({ open, onOpenChange }: Props) {
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // При открытии — копия сохранённого списка; правки живут в диалоге до «Сохранить».
-  // biome-ignore lint/correctness/useExhaustiveDependencies: только при открытии
   useEffect(() => {
     if (open) {
       setRows(snippets.data?.items.map((i) => ({ ...i })) ?? []);

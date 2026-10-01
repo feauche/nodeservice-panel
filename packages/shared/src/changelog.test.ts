@@ -15,7 +15,10 @@ describe('история версий', () => {
     for (let i = 1; i < CHANGELOG.length; i += 1) {
       const a = parts((CHANGELOG[i - 1] as { version: string }).version);
       const b = parts((CHANGELOG[i] as { version: string }).version);
-      const newer = a[0]! !== b[0]! ? a[0]! > b[0]! : a[1]! !== b[1]! ? a[1]! > b[1]! : a[2]! > b[2]!;
+      const [aMajor = 0, aMinor = 0, aPatch = 0] = a;
+      const [bMajor = 0, bMinor = 0, bPatch = 0] = b;
+      const newer =
+        aMajor !== bMajor ? aMajor > bMajor : aMinor !== bMinor ? aMinor > bMinor : aPatch > bPatch;
       expect(newer, `${CHANGELOG[i - 1]?.version} должна быть новее ${CHANGELOG[i]?.version}`).toBe(true);
     }
     for (const e of CHANGELOG) {

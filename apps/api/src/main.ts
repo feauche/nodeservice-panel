@@ -39,8 +39,7 @@ import { DB, type Db } from './infra/db/db.module.js';
 import { runMigrations } from './infra/db/migrate.js';
 import { WsUpgradeService } from './infra/ws/ws-upgrade.service.js';
 import { AgentGateway } from './modules/agent/agent.gateway.js';
-import { SYSTEM_ACTOR } from './modules/audit/audit.context.js';
-import { AuditService } from './modules/audit/audit.service.js';
+import { PanelLifecycleService } from './modules/health/panel-lifecycle.service.js';
 import { TerminalGateway } from './modules/terminal/terminal.gateway.js';
 
 async function bootstrap(): Promise<void> {
@@ -101,16 +100,7 @@ async function bootstrap(): Promise<void> {
   app.get(WsUpgradeService).attach(app.getHttpServer() as HttpServer);
   started = true;
   new NestLogger('Bootstrap').log(`NodeService API слушает :${port} (${config.get('NODE_ENV')})`);
-  await app.get(AuditService).record({
-    action: 'system.started',
-    actor: SYSTEM_ACTOR,
-    source: 'auto',
-    metadata: {
-      version: process.env.npm_package_version ?? '0.1.0',
-      node: process.version,
-      env: config.get('NODE_ENV'),
-    },
-  });
+  await app.get(PanelLifecycleService).started();
 }
 
 bootstrap().catch((err: unknown) => {

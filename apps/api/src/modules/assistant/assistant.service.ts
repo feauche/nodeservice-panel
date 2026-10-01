@@ -1,4 +1,5 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   type AssistantActivity,
   type AssistantChatResponse,
@@ -10,6 +11,7 @@ import {
 } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
+import type { Env } from '../../config/env.schema.js';
 import type { AssistantMessageRow } from '../../infra/db/schema/index.js';
 import { AuditRepository } from '../audit/audit.repository.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -40,7 +42,7 @@ import { AssistantSettingsStore } from './assistant-settings.store.js';
 import { ChangesService } from './changes/changes.service.js';
 import { mergeReach, sameReachTarget } from './fleet-probe.logic.js';
 import { FleetProbeService } from './fleet-probe.service.js';
-import { extractDefinitions, glossaryImportReply, isPureGlossary } from './glossary-import.js';
+import { autoGlossary, glossaryImportReply } from './glossary-import.js';
 import { IncidentAnalysisService } from './incident-analysis.service.js';
 import {
   describeLlmError,
@@ -104,6 +106,7 @@ export class AssistantService {
     private readonly events: EventsService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
     private readonly links: NodeLinkService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   status(): Promise<AssistantStatus> {
@@ -194,23 +197,30 @@ export class AssistantService {
     const conv = existing ?? (await this.repo.createConversation(message.slice(0, 60)));
     // Правила парка пишет владелец; ошибка чтения не должна ронять чат.
     const fleetRules = await this.knowledge.fleetRules().catch(() => null);
-    const system = buildSystem(level, permissions, { fleetRules });
+    const system = buildSystem(level, permissions, { fleetRules, panelUrl: this.config.get('PUBLIC_URL') });
 
     await this.repo.addMessage({ conversationId: conv.id, role: 'user', content: message });
 
-    // Строки-определения из присланного текста сервер дописывает в «Пояснения» сам, не полагаясь на модель.
-    // Если весь текст словарь, статья не нужна и модель не зовётся; если это инструкция с терминами, модель
-    // строит статью из остального и знает, что термины уже добавлены.
+    // Термины из словаря, который автор сам пометил («Термины», «Глоссарий», таблица терминов), сервер
+    // дописывает в «Пояснения» сам, не полагаясь на модель. Если весь текст словарь и сервер взял из него всё,
+    // статья не нужна и модель не зовётся; иначе модель строит статью из остального, знает, какие термины уже
+    // добавлены, и решает по строкам словаря, которые сервер не взял. Вопрос, вывод команды и список
+    // «проблема: решение» разбирает модель.
     let glossaryLine: string | null = null;
     let glossaryCitation: AssistantCitation | null = null;
     let glossaryHint: string | null = null;
-    const defs = extractDefinitions(message);
-    if (defs) {
+    const auto = autoGlossary(message);
+    if (auto) {
+      const defs = auto.terms;
       const res = await this.knowledge.appendGlossary(defs, { auditSource: 'auto' });
-      if (isPureGlossary(message)) return this.finishGlossaryImport(conv, message, model, defs.length, res);
+      if (auto.pure) return this.finishGlossaryImport(conv, message, model, defs.length, res);
       glossaryLine = `Термины из строк-определений: найдено ${defs.length}, добавлено новых в «Пояснения» ${res.added}, уже были ${res.skipped.length}.`;
       glossaryCitation = { type: 'kb', id: res.id, label: 'Пояснения' };
-      glossaryHint = `СЕРВЕР УЖЕ ДОБАВИЛ в глоссарий «Пояснения» термины из строк-определений этого текста (найдено ${defs.length}, новых ${res.added}). Не добавляй их повторно и не включай эти определения в статьи. Если это была инструкция, строй статью из остального содержания; другие термины и аббревиатуры, которые есть в тексте не в виде строк-определений, добавь через add_glossary_terms.`;
+      // Термины названы поимённо: иначе модель выбросит из статьи и соседние строки «проблема: решение».
+      glossaryHint = `СЕРВЕР УЖЕ ДОБАВИЛ в глоссарий «Пояснения» термины из раздела-словаря этого текста (найдено ${defs.length}, новых ${res.added}): ${defs.map((d) => d.term).join(', ')}. Не добавляй их повторно и не включай эти определения в статьи. Остальное содержание (шаги, команды, списки «проблема: решение») разбирай как обычно; если это была инструкция, строй статью из него. Другие термины и аббревиатуры, которые есть в тексте не в виде этих определений, добавь через add_glossary_terms.`;
+      // Строки словаря, которые сервер не взял, молча не пропадают: по ним решает модель и говорит владельцу.
+      if (auto.rejected.length > 0)
+        glossaryHint += ` Строки раздела-словаря, которые сервер не взял (в пояснении точка с запятой, путь, дата или хэш, мало русских букв или это совет «сделайте…»): ${auto.rejected.join(', ')}. Реши по каждой: настоящее определение добавь через add_glossary_terms, а вывод команды, настройки и пункты «проблема: решение» в глоссарий не добавляй. В ответе назови, какие из этих строк добавил, а какие нет и почему.`;
     }
 
     // История беседы → сообщения модели (только текст; предыдущий tool-контекст не тащим).

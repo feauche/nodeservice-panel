@@ -29,6 +29,7 @@ import {
   uncheckedWhy,
 } from '../incidents/block-check.logic.js';
 import { fleetRulesBlock } from '../knowledge/fleet-rules.js';
+import { panelAddressLine } from './assistant.prompt.js';
 import { READ_TOOL_DEFS } from './assistant.read-tools.js';
 import { ASSISTANT_TOOLS } from './assistant.tools.js';
 import type { LlmToolDef } from './llm.provider.js';
@@ -168,7 +169,9 @@ export const analysisSystem = (
   level: string,
   playbook: string | null = null,
   fleetRules: string | null = null,
+  panelUrl: string | null = null,
 ): string => `${ANALYSIS_MARKER} Ты разбираешь один инцидент в панели NodeService (парк VPN и прокси-серверов, единственный администратор).
+${panelAddressLine(panelUrl)}
 Задача: по данным дела назвать вероятную причину и, если в цепочке правил дела есть подходящий шаг, предложить его.
 ПРАВИЛА:
 - Опирайся только на данные дела и результаты инструментов. Каждый факт в evidence должен прямо следовать из данных. Не выдумывай числа, файлы, процессы и причины.
@@ -192,8 +195,11 @@ ${UNTRUSTED}${playbook ? `\n\n${playbook}` : ''}${fleetRules ? `\n\n${fleetRules
 export const askSystem = (
   level: string,
   analysis: IncidentAnalysis,
+  panelUrl: string | null = null,
 ): string => `${ASK_MARKER} Администратор задаёт уточняющий вопрос по разбору инцидента в панели NodeService.
+${panelAddressLine(panelUrl)}
 Ваш разбор: «${analysis.verdict ?? ''}». Уверенность: ${analysis.confidence ?? 'не задана'}.
+- Шаги «только вручную» (T3) панель не запускает: в деле показана команда с кнопками «Копировать команду» и «Открыть терминал» — так и говорите, а не «нажмите шаг».
 ПРАВИЛА:
 - Отвечайте по-русски, на «вы», кратко, по данным дела и инструментов. Если данных нет, скажите об этом и не выдумывайте.
 - Ничего не запускайте и не меняйте. Если нужно действие, назовите его и напомните, что запускает администратор кнопкой.

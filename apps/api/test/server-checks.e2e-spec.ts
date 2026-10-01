@@ -113,14 +113,15 @@ describe('server checks e2e', () => {
   });
 
   it('до запусков пусто; ручной запуск лёгкой проверки пишет очищенный вывод и итог в Журнал', async () => {
-    expect(await list()).toEqual({ items: [], nextAutoAt: null });
+    expect(await list()).toEqual({ items: [], autoEnabled: true, nextAutoAt: null });
     await run('geoblock');
     const res = await waitIdle();
     const geo = res.items.find((r) => r.check === 'geoblock');
     expect(geo).toMatchObject({ status: 'ok', trigger: 'manual', actorDisplay: LOGIN, error: null });
     // Цвета вырезаны, от индикатора прогресса осталось последнее состояние.
     expect(geo?.output).toBe('проверка geoblock\n100%\nготово\n');
-    expect(res.nextAutoAt).not.toBeNull();
+    // Геоблок — сторонний скрипт: сама панель его не повторяет, срока следующего запуска нет.
+    expect(res.nextAutoAt).toBeNull();
     expect(ssh.execLog.some((c) => c.startsWith('# ns-check:geoblock'))).toBe(true);
     const audit = await agent.get('/api/audit?action=server.check.run').expect(200);
     expect(JSON.stringify(audit.body)).toContain('Геоблок');
@@ -151,19 +152,49 @@ describe('server checks e2e', () => {
     await run('rm-rf', {}, 422);
   });
 
-  it('суточная джоба запускает только лёгкие проверки, которые ещё не шли, и не трогает тяжёлые', async () => {
+  it('суточная джоба запускает только свои команды: сторонние скрипты и тяжёлые — только по кнопке', async () => {
     const { ServerChecksJob } = await import('../src/modules/server-checks/server-checks.job.js');
+    const before = ssh.execLog.length;
     await app.get(ServerChecksJob).run();
     const res = await waitIdle();
     const keys = res.items.map((r) => r.check).sort();
-    expect(keys).toEqual(['cpu', 'dpi', 'geoblock', 'ip_quality', 'ip_region', 'yabs'].sort());
-    expect(
-      res.items
-        .filter((r) => r.trigger === 'auto')
-        .map((r) => r.check)
-        .sort(),
-    ).toEqual(['cpu', 'ip_quality', 'ip_region'].sort());
-    expect(res.items.some((r) => r.check === 'iperf3_ru')).toBe(false);
+    // Регион IP и качество IP ещё не запускались, но это сторонние скрипты — джоба их не трогает.
+    expect(keys).toEqual(['cpu', 'dpi', 'geoblock', 'yabs'].sort());
+    expect(res.items.filter((r) => r.trigger === 'auto').map((r) => r.check)).toEqual(['cpu']);
+    const ran = ssh.execLog.slice(before).map((c) => c.split('\n')[0]);
+    expect(ran).toEqual(['# ns-check:cpu']);
+    // Следующий суточный запуск — через сутки после замера процессора.
+    const cpu = res.items.find((r) => r.check === 'cpu');
+    expect(res.autoEnabled).toBe(true);
+    expect(Date.parse(res.nextAutoAt ?? '') - Date.parse(cpu?.startedAt ?? '')).toBe(24 * 3_600_000);
+  });
+
+  it('тумблер «Проверки серверов раз в сутки» выключен — джоба ничего не запускает, срока нет', async () => {
+    const { ServerChecksJob } = await import('../src/modules/server-checks/server-checks.job.js');
+    await agent
+      .put('/api/settings/autochecks')
+      .set(CSRF_HEADER, csrf)
+      .send({ serverChecksEnabled: false })
+      .expect(200);
+    try {
+      const db = app.get<Db>(DB);
+      await db.execute(
+        sql`update server_checks set started_at = now() - interval '2 days' where server_id = ${serverId} and "check" = 'cpu'`,
+      );
+      const before = ssh.execLog.length;
+      await app.get(ServerChecksJob).run();
+      await waitIdle();
+      expect(ssh.execLog.length).toBe(before);
+      const res = await list();
+      expect(res.autoEnabled).toBe(false);
+      expect(res.nextAutoAt).toBeNull();
+    } finally {
+      await agent
+        .put('/api/settings/autochecks')
+        .set(CSRF_HEADER, csrf)
+        .send({ serverChecksEnabled: true })
+        .expect(200);
+    }
   });
 
   it('«Объяснить»: без настроенного Джарвиса — 409; с ним — пересказ сохраняется у запуска и второй раз модель не зовётся', async () => {
@@ -187,16 +218,54 @@ describe('server checks e2e', () => {
     );
   });
 
-  it('упавшую лёгкую проверку джоба повторяет через час, а не через сутки', async () => {
+  it('упавшую свою проверку джоба повторяет через час, а не через сутки; упавший сторонний скрипт — нет', async () => {
+    ssh.checks.code.cpu = 1;
+    await run('cpu');
+    expect((await waitIdle()).items.find((r) => r.check === 'cpu')?.status).toBe('failed');
     const db = app.get<Db>(DB);
     await db.execute(
-      sql`update server_checks set started_at = now() - interval '2 hours' where server_id = ${serverId} and "check" = 'dpi'`,
+      sql`update server_checks set started_at = now() - interval '2 hours' where server_id = ${serverId} and "check" in ('cpu', 'dpi')`,
     );
-    ssh.checks.code.dpi = 0;
-    ssh.checks.output.dpi = 'Total: 31 OK, 0 failed\n';
+    ssh.checks.code.cpu = 0;
     const { ServerChecksJob } = await import('../src/modules/server-checks/server-checks.job.js');
     await app.get(ServerChecksJob).run();
     const res = await waitIdle();
-    expect(res.items.find((r) => r.check === 'dpi')).toMatchObject({ status: 'ok', trigger: 'auto' });
+    expect(res.items.find((r) => r.check === 'cpu')).toMatchObject({ status: 'ok', trigger: 'auto' });
+    // DPI упал раньше (таймаут), но это сторонний скрипт: повтор — только по кнопке.
+    expect(res.items.find((r) => r.check === 'dpi')).toMatchObject({ status: 'failed', trigger: 'manual' });
+  });
+
+  it('скачанный скрипт не совпал с закреплённым — итог «отменена», причина честная, в Журнале отказ', async () => {
+    const { SCRIPT_CHANGED_EXIT } = await import('../src/modules/server-checks/server-checks.scripts.js');
+    ssh.checks.code.ip_region = SCRIPT_CHANGED_EXIT;
+    ssh.checks.output.ip_region = 'Скачанный скрипт не совпал с проверенной версией — запуск отменён.\n';
+    try {
+      await run('ip_region');
+      const res = await waitIdle();
+      const region = res.items.find((r) => r.check === 'ip_region');
+      expect(region?.status).toBe('cancelled');
+      expect(region?.error).toMatch(
+        /^Скачанный скрипт не совпал с проверенной версией, записанной в панели,/,
+      );
+      expect(region?.error).not.toMatch(/ошибк|у автора/i);
+      const audit = await agent.get('/api/audit?action=server.check.run').expect(200);
+      const entry = (audit.body.items as Array<{ result: string; metadata: { check?: string } }>).find(
+        (e) => e.metadata.check === 'Регион IP',
+      );
+      expect(entry?.result).toBe('denied');
+      // «Объяснить»: Джарвису итог передаётся как отмена, а не как ошибка.
+      await agent
+        .post(`/api/servers/${serverId}/checks/runs/${region?.id}/explain`)
+        .set(CSRF_HEADER, csrf)
+        .expect(200);
+      const prompt = JSON.stringify(llmCalls.at(-1)?.messages);
+      expect(prompt).toContain('Итог: запуск отменён');
+      expect(prompt).not.toContain('Итог: ошибка');
+      // Правило пересказа: подмена — предположение, «у автора обновилось» причиной не называется.
+      expect(llmCalls.at(-1)?.system).toContain('файл могли подменить по дороге к серверу');
+    } finally {
+      ssh.checks.code.ip_region = 0;
+      delete ssh.checks.output.ip_region;
+    }
   });
 });

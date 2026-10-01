@@ -97,3 +97,190 @@ OOM: ситуация, когда память кончилась и систе�
 
 /** Сколько терминов в тексте выше (по строкам «термин: объяснение»). */
 export const GLOSSARY_TEXT_TERMS = 68;
+
+/**
+ * Строки словаря, которые сервер сам в «Пояснения» не берёт: в пояснении путь, «;» и дата, как у вывода команд.
+ * Их термины (до двоеточия) — в том же порядке в `MACHINE_LIKE_TERMS`.
+ */
+export const MACHINE_LIKE_LINES = [
+  'Конфиг Xray: файл /usr/local/etc/xray/config.json, в котором описаны входы и выходы ноды.',
+  'Обновление ядра: выходит примерно раз в месяц; что поменялось, видно в журнале изменений.',
+  'Снимок сервера: копия диска на 2026-09-20, из которой сервер можно поднять заново.',
+];
+export const MACHINE_LIKE_TERMS = ['Конфиг Xray', 'Обновление ядра', 'Снимок сервера'];
+
+/** Вопрос с выводом lscpu (находка аудита: раньше 15 «терминов» и шаблонный ответ без модели). */
+export const LSCPU_QUESTION = `Почему процессор слабый? Вот lscpu:
+Architecture:             x86_64
+  CPU op-mode(s):         32-bit, 64-bit
+  Address sizes:          40 bits physical, 48 bits virtual
+  Byte Order:             Little Endian
+CPU(s):                   2
+  On-line CPU(s) list:    0,1
+Vendor ID:                GenuineIntel
+  Model name:             Intel Xeon Processor (Skylake, IBRS)
+    CPU family:           6
+    Model:                85
+    Thread(s) per core:   1
+    Core(s) per socket:   1
+    Socket(s):            2
+    Stepping:             4
+    BogoMIPS:             4199.99
+    Flags:                fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault invpcid_single pti ssbd ibrs ibpb stibp fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm mpx avx512f avx512dq rdseed adx smap clflushopt clwb avx512cd avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves arat pku ospke md_clear
+Virtualization features:
+  Hypervisor vendor:      KVM
+  Virtualization type:    full
+Caches (sum of all):
+  L1d:                    64 KiB (2 instances)
+  L1i:                    64 KiB (2 instances)
+  L2:                     8 MiB (2 instances)
+  L3:                     32 MiB (2 instances)
+NUMA:
+  NUMA node(s):           1
+  NUMA node0 CPU(s):      0,1
+Vulnerabilities:
+  Gather data sampling:   Unknown: Dependent on hypervisor status
+  Itlb multihit:          KVM: Mitigation: VMX unsupported
+  L1tf:                   Mitigation; PTE Inversion
+  Mds:                    Mitigation; Clear CPU buffers; SMT Host state unknown
+  Meltdown:               Mitigation; PTI
+  Mmio stale data:        Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown
+  Retbleed:               Mitigation; IBRS
+  Spec rstack overflow:   Not affected
+  Spec store bypass:      Mitigation; Speculative Store Bypass disabled via prctl and seccomp
+  Spectre v1:             Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+  Spectre v2:             Mitigation; IBRS, IBPB conditional, STIBP disabled, RSB filling, PBRSB-eIBRS Not affected
+  Srbds:                  Not affected
+  Tsx async abort:        Mitigation; Clear CPU buffers; SMT Host state unknown`;
+
+/** Вывод docker inspect: ключи в кавычках, хэши, пути, даты. */
+export const DOCKER_INSPECT = `docker inspect remnanode
+[
+    {
+        "Id": "3f4e8a0c2b1d9e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f",
+        "Created": "2026-09-20T08:14:03.512345678Z",
+        "Path": "/usr/local/bin/docker-entrypoint.sh",
+        "Args": [
+            "node",
+            "dist/src/main"
+        ],
+        "State": {
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 1234,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2026-09-20T08:14:04.001234567Z",
+            "FinishedAt": "0001-01-01T00:00:00Z"
+        },
+        "Image": "sha256:9b2c4d6e8f0a1b3c5d7e9f1a3b5c7d9e1f3a5b7c9d1e3f5a7b9c1d3e5f7a9b1c",
+        "ResolvConfPath": "/var/lib/docker/containers/3f4e8a0c2b1d9e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f/resolv.conf",
+        "HostnamePath": "/var/lib/docker/containers/3f4e8a0c2b1d9e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f/hostname",
+        "HostsPath": "/var/lib/docker/containers/3f4e8a0c2b1d9e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f/hosts",
+        "LogPath": "/var/lib/docker/containers/3f4e8a0c2b1d9e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f/3f4e8a0c2b1d9e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f-json.log",
+        "Name": "/remnanode",
+        "RestartCount": 0,
+        "Driver": "overlay2",
+        "Platform": "linux",
+        "MountLabel": "",
+        "ProcessLabel": "",
+        "AppArmorProfile": "docker-default",
+        "HostConfig": {
+            "NetworkMode": "host",
+            "RestartPolicy": {
+                "Name": "always",
+                "MaximumRetryCount": 0
+            },
+            "LogConfig": {
+                "Type": "json-file",
+                "Config": {
+                    "max-size": "50m"
+                }
+            }
+        },
+        "Config": {
+            "Hostname": "de-fra-01",
+            "Image": "remnawave/node:latest",
+            "WorkingDir": "/opt/app",
+            "Entrypoint": [
+                "/usr/local/bin/docker-entrypoint.sh"
+            ]
+        }
+    }
+]`;
+
+/** Вывод docker info: «ключ: значение» на английском. */
+export const DOCKER_INFO = `Client: Docker Engine - Community
+ Version:    27.3.1
+ Context:    default
+ Debug Mode: false
+ Plugins:
+  buildx: Docker Buildx (Docker Inc.)
+    Version:  v0.17.1
+    Path:     /usr/libexec/docker/cli-plugins/docker-buildx
+  compose: Docker Compose (Docker Inc.)
+    Version:  v2.29.7
+    Path:     /usr/libexec/docker/cli-plugins/docker-compose
+
+Server:
+ Containers: 3
+  Running: 3
+  Paused: 0
+  Stopped: 0
+ Images: 5
+ Server Version: 27.3.1
+ Storage Driver: overlay2
+  Backing Filesystem: extfs
+  Supports d_type: true
+  Using metacopy: false
+  Native Overlay Diff: true
+  userxattr: false
+ Logging Driver: json-file
+ Cgroup Driver: systemd
+ Cgroup Version: 2
+ Plugins:
+  Volume: local
+  Network: bridge host ipvlan macvlan null overlay
+  Log: awslogs fluentd gcplogs gelf journald json-file local splunk syslog
+ Swarm: inactive
+ Runtimes: io.containerd.runc.v2 runc
+ Default Runtime: runc
+ Init Binary: docker-init
+ containerd version: 7f7fdf5fed64eb6a7caf99b3e12efcf9d60e311c
+ runc version: v1.1.14-0-g2c9f560
+ init version: de40ad0
+ Security Options:
+  apparmor
+  seccomp
+   Profile: builtin
+  cgroupns
+ Kernel Version: 5.15.0-122-generic
+ Operating System: Ubuntu 22.04.5 LTS
+ OSType: linux
+ Architecture: x86_64
+ CPUs: 2
+ Total Memory: 1.918GiB
+ Name: de-fra-01
+ ID: 5b1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e
+ Docker Root Dir: /var/lib/docker
+ Debug Mode: false
+ Experimental: false
+ Insecure Registries:
+  127.0.0.0/8
+ Live Restore Enabled: false`;
+
+/** Статья «проблема: решение»: не словарь, её нужно сохранять статьёй. */
+export const FAQ_TEXT = `Частые проблемы клиентов
+Не подключается по мобильному интернету: переключите транспорт на XHTTP и включите мультиплекс, если оператор режет длинные соединения.
+Подключается, но сайты не открываются: проверьте, что в подписке выбран живой сервер, и обновите подписку в приложении.
+Медленно работает YouTube: включите в приложении «Автовыбор» и выберите ноду с наименьшим пингом.
+Отваливается через пару минут: смените порт на 443 и проверьте, не включён ли у клиента режим экономии батареи.
+Не работает на iPhone после обновления: удалите профиль и заново импортируйте подписку по ссылке из бота.
+Пишет «истекла подписка»: продлите оплату в боте, доступ вернётся в течение минуты после оплаты.
+Не открывается Telegram: обновите приложение и проверьте, что в маршрутизации Telegram идёт через VPN.
+Высокий пинг в играх: выберите ближайшую ноду и отключите мультиплекс для игрового профиля.
+Приложение пишет «нет интернета»: перезапустите приложение, а если не помогло — перезагрузите телефон.`;

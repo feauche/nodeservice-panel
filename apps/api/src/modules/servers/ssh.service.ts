@@ -39,9 +39,18 @@ export interface SshExecStreamOptions {
   label?: string;
 }
 
+export interface SshExecOptions {
+  /** Данные для stdin команды. Секреты можно передать сюда, не добавляя их в видимую командную строку. */
+  input?: string;
+  /** Свой таймаут для редких команд, которые штатно работают дольше общего предела. */
+  timeoutMs?: number;
+  /** Безопасное имя команды для ошибки вместо начала команды. */
+  label?: string;
+}
+
 export interface SshSession {
   hostKeyFp: string;
-  exec(command: string): Promise<{ code: number; stdout: string; stderr: string }>;
+  exec(command: string, opts?: SshExecOptions): Promise<{ code: number; stdout: string; stderr: string }>;
   /** Команда от имени самого пользователя, без sudo (например, свой ~/.ssh). */
   execAsUser(command: string): Promise<{ code: number; stdout: string; stderr: string }>;
   /** Долгая команда с живым выводом; сам вывод не копится — только код завершения. */
@@ -145,7 +154,13 @@ export class SshService {
       const session = await this.connectDirect(target, sock);
       if (!jump) return session;
       const j = jump;
-      return { ...session, end: () => (session.end(), j.end()) };
+      return {
+        ...session,
+        end: () => {
+          session.end();
+          j.end();
+        },
+      };
     } catch (err) {
       jump?.end();
       throw err;
@@ -272,12 +287,13 @@ export class SshService {
             stream.on('close', (code: number | null) => finish(() => resolve({ code: code ?? -1 })));
           });
         }),
-      exec: (command) => runPlain(asRoot(command), commandHead(command)),
+      exec: (command, opts = {}) => runPlain(asRoot(command), opts.label ?? commandHead(command), opts),
       execAsUser: (command) => runPlain(command, commandHead(command)),
     };
     function runPlain(
       command: string,
       name: string,
+      opts: SshExecOptions = {},
     ): Promise<{ code: number; stdout: string; stderr: string }> {
       return new Promise((resolve, reject) => {
         const done = () => {
@@ -292,7 +308,7 @@ export class SshService {
           pending.delete(lost);
           client.end();
           reject(serverProblems.sshCommand(name, 'таймаут выполнения'));
-        }, EXEC_TIMEOUT_MS);
+        }, opts.timeoutMs ?? EXEC_TIMEOUT_MS);
         pending.add(lost);
         client.exec(command, (err, stream) => {
           if (err) {
@@ -308,6 +324,7 @@ export class SshService {
           stream.stderr.on('data', (d: Buffer) => {
             if (stderr.length < OUTPUT_MAX) stderr += d.toString('utf8');
           });
+          if (opts.input !== undefined) stream.end(opts.input);
           stream.on('close', (code: number | null) => {
             done();
             resolve({ code: code ?? -1, stdout, stderr });

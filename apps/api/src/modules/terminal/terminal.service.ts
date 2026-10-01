@@ -22,7 +22,8 @@ export interface TerminalHooks {
 export interface TerminalSession {
   write(data: string): void;
   resize(cols: number, rows: number): void;
-  close(): void;
+  /** reason — для истории и Журнала; по умолчанию терминал закрыл сам пользователь. */
+  close(reason?: string): void;
 }
 
 /**
@@ -53,13 +54,8 @@ export class TerminalService {
         detail: `Слишком много открытых терминалов (лимит ${TERMINAL_MAX_SESSIONS}). Закрой один и повтори.`,
       });
     const { target, name } = await this.servers.sshTargetFor(serverId);
-    let shell: SshShell;
-    try {
-      shell = await this.ssh.openShell(target, size);
-    } catch (err) {
-      // Ошибку отдадим шлюзу текстом — она уйдёт клиенту как {t:'e'}.
-      throw err;
-    }
+    // Ошибку шлюз отдаст клиенту текстом как {t:'e'}.
+    const shell: SshShell = await this.ssh.openShell(target, size);
     this.active += 1;
     const openedAt = Date.now();
 
@@ -158,7 +154,7 @@ export class TerminalService {
         shell.resize(cols, rows);
         if (recordId) void this.history.resize(recordId, cols, rows).catch(() => undefined);
       },
-      close: () => finish(null, 'закрыт пользователем'),
+      close: (reason) => finish(null, reason ?? 'закрыт пользователем'),
     };
   }
 }

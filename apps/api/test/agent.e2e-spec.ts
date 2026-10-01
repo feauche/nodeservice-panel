@@ -46,8 +46,8 @@ class WsAgent {
   private waiters: Array<(env: AgentEnvelope) => void> = [];
   closed = false;
 
-  async connect(url: string): Promise<void> {
-    this.ws = new WebSocket(url);
+  async connect(url: string, headers: Record<string, string> = {}): Promise<void> {
+    this.ws = new WebSocket(url, { headers });
     this.ws.on('message', (raw) => {
       const env = JSON.parse(String(raw)) as AgentEnvelope;
       const waiter = this.waiters.shift();
@@ -268,10 +268,15 @@ describe('agent e2e', () => {
       expect(audit.items.some((e) => e.action === action)).toBe(true);
   });
 
-  /** Вошедший агент: hello → challenge → auth → welcome. */
-  const login = async (id: string, pub: string, sign: (nonce: string) => string): Promise<WsAgent> => {
+  /** Вошедший агент: hello → challenge → auth → welcome. headers — например, адрес «клиента» за Caddy. */
+  const login = async (
+    id: string,
+    pub: string,
+    sign: (nonce: string) => string,
+    headers: Record<string, string> = {},
+  ): Promise<WsAgent> => {
     const ws = new WsAgent();
-    await ws.connect(wsBase);
+    await ws.connect(wsBase, headers);
     ws.send(AGENT_MSG.hello, { serverId: id, pubkey: pub, version: '0.5.0-test' });
     const challenge = await ws.next();
     ws.send(AGENT_MSG.auth, { signature: sign((challenge.payload as { nonce: string }).nonce) });
@@ -327,6 +332,100 @@ describe('agent e2e', () => {
     await knock();
     expect(await denied()).toHaveLength(2);
     expect((await denied())[0]?.metadata).toMatchObject({ attempts: 3 });
+  });
+
+  it('без входа с одного адреса — не больше пяти соединений: шестое закрывается сразу; другой адрес и вошедшие агенты не в счёт', async () => {
+    // Адрес клиента панель берёт из X-Forwarded-For от Caddy (TRUST_PROXY=1), как у HTTP-запросов.
+    const from = (ip: string) => ({ 'x-forwarded-for': ip });
+    const opened: WebSocket[] = [];
+    /** Соединение открылось и молчит: вход не начат. */
+    const silent = (ip: string) =>
+      new Promise<WebSocket>((resolve, reject) => {
+        const ws = new WebSocket(wsBase, { headers: from(ip) });
+        ws.once('open', () => {
+          opened.push(ws);
+          resolve(ws);
+        });
+        ws.once('error', reject);
+      });
+    /** Отказ до рукопожатия: текст ошибки клиента (в нём код ответа). */
+    const refused = (ip: string) =>
+      new Promise<string>((resolve, reject) => {
+        const ws = new WebSocket(wsBase, { headers: from(ip) });
+        ws.once('open', () => {
+          ws.terminate();
+          reject(new Error('соединение открылось'));
+        });
+        ws.once('error', (err) => resolve(err.message));
+      });
+    const A = '198.51.100.20';
+    try {
+      // Агент с того же адреса вошёл — его соединение в счёт не идёт.
+      const confirmed = await login(serverId, pubkeyB64, signNonce, from(A));
+      for (let i = 0; i < 5; i += 1) await silent(A);
+      expect(await refused(A)).toContain('429');
+      expect(await refused(A)).toContain('429');
+      await silent('198.51.100.21');
+      // Закрыли одно молчащее — место освободилось.
+      opened[0]?.close();
+      await expect
+        .poll(
+          () =>
+            silent(A).then(
+              () => true,
+              () => false,
+            ),
+          { timeout: 5_000 },
+        )
+        .toBe(true);
+      // Вошедший агент работает как прежде.
+      confirmed.send(AGENT_MSG.heartbeat, {});
+      await new Promise((r) => setTimeout(r, 200));
+      expect(confirmed.closed).toBe(false);
+      confirmed.ws.close();
+    } finally {
+      for (const ws of opened) ws.terminate();
+    }
+  });
+
+  it('до входа — одно короткое сообщение на шаг: не то по шагу закрывает соединение', async () => {
+    const ws = new WsAgent();
+    await ws.connect(wsBase);
+    const closed = new Promise<number>((resolve) => ws.ws.once('close', (code) => resolve(code)));
+    ws.send(AGENT_MSG.heartbeat, {});
+    const err = await ws.next();
+    expect(err.type).toBe(AGENT_MSG.error);
+    expect((err.payload as { code: string }).code).toBe('protocol');
+    expect(await closed).toBe(4400);
+  });
+
+  it('прихожая занята с десяти адресов — агент сервера парка всё равно входит, чужой адрес получает 429', async () => {
+    const from = (ip: string) => ({ 'x-forwarded-for': ip });
+    const opened: WebSocket[] = [];
+    /** Соединение открылось и молчит: вход не начат. */
+    const silent = (ip: string) =>
+      new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(wsBase, { headers: from(ip) });
+        opened.push(ws);
+        ws.on('error', () => {});
+        ws.once('open', () => resolve());
+        ws.once('unexpected-response', (_req, res) => {
+          ws.terminate();
+          reject(new Error(`HTTP ${res.statusCode}`));
+        });
+      });
+    try {
+      for (let a = 1; a <= 10; a += 1) for (let i = 0; i < 5; i += 1) await silent(`198.51.100.${100 + a}`);
+      await expect(silent('198.51.100.120')).rejects.toThrow('HTTP 429');
+      // «agent-host» заведён с адресом 127.0.0.1 — его агент входит и при занятой прихожей.
+      const confirmed = await login(serverId, pubkeyB64, signNonce, from('127.0.0.1'));
+      confirmed.send(AGENT_MSG.heartbeat, {});
+      await new Promise((r) => setTimeout(r, 200));
+      expect(confirmed.closed).toBe(false);
+      confirmed.ws.close();
+    } finally {
+      for (const ws of opened) ws.terminate();
+    }
   });
 
   it('настройки автопроверок управляют welcome: метрики выключены → metricsSeconds 0', async () => {

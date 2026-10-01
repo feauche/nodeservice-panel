@@ -48,7 +48,7 @@ export function renderPage(
       <TooltipProvider delayDuration={0}>
         {/* biome-ignore lint/suspicious/noExplicitAny: тестовый роутер не регистрируется глобально */}
         <RouterProvider router={router as any} />
-        {/* в приложении смонтирован в AppShell — тесты страниц получают его здесь */}
+        {/* в приложении смонтирован в корневом маршруте — тесты страниц получают его здесь */}
         <StepUpHost />
       </TooltipProvider>
     </QueryClientProvider>,

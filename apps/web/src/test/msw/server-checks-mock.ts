@@ -1,4 +1,5 @@
 import {
+  SERVER_CHECK_AUTO_KEYS,
   SERVER_CHECK_INTERVAL_HOURS,
   SERVER_CHECK_META,
   SERVER_CHECK_PROBLEM,
@@ -7,6 +8,8 @@ import {
   serverCheckKeySchema,
 } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
+
+import { mockAutochecks } from './autochecks-mock';
 
 /**
  * Мок реестра проверок: запуски в памяти, «идущая» проверка дописывает вывод по таймеру и завершается —
@@ -79,10 +82,13 @@ const latest = (serverId: string) => {
 export const serverChecksHandlers = [
   http.get('/api/servers/:id/checks', ({ params }) => {
     const items = latest(String(params.id));
-    const light = items.filter((r) => !SERVER_CHECK_META[r.check].heavy);
-    const earliest = light.length ? Math.min(...light.map((r) => Date.parse(r.startedAt))) : null;
+    // Как в api: срок — только у своих проверок и только при включённом тумблере в «Автопроверках».
+    const autoEnabled = mockAutochecks.value.serverChecksEnabled;
+    const auto = autoEnabled ? items.filter((r) => SERVER_CHECK_AUTO_KEYS.includes(r.check)) : [];
+    const earliest = auto.length ? Math.min(...auto.map((r) => Date.parse(r.startedAt))) : null;
     return HttpResponse.json({
       items,
+      autoEnabled,
       nextAutoAt:
         earliest === null ? null : new Date(earliest + SERVER_CHECK_INTERVAL_HOURS * 3_600_000).toISOString(),
     });

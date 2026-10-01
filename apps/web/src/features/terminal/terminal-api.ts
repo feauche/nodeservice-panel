@@ -45,17 +45,21 @@ export function useTerminalSession(serverId: string, id: string | null) {
   return useQuery({
     queryKey: key,
     queryFn: async ({ signal }) => {
+      const load = (offset: number) =>
+        api.get(
+          `/servers/${serverId}/terminal/sessions/${id}?offset=${offset}`,
+          terminalSessionDetailSchema,
+          signal,
+        );
       const prev = qc.getQueryData<TerminalSessionDetail>(key);
-      const offset = prev?.transcript.length ?? 0;
-      const res = await api.get(
-        `/servers/${serverId}/terminal/sessions/${id}?offset=${offset}`,
-        terminalSessionDetailSchema,
-        signal,
-      );
-      // Запись могли усечь/пересоздать — если сервер знает меньше, чем у нас, начинаем заново.
-      if (!prev || res.length < offset) {
-        return offset === 0 ? res : { ...res, transcript: '', offset: 0 };
-      }
+      // Смещение — из прошлого ответа сервера, а не из длины полученного текста: сервер считает символы
+      // записи, а строка JavaScript — единицы UTF-16, и каждый эмодзи сдвигал смещение на единицу
+      // (запись через раз пустела, в живой сессии пропадали куски).
+      const offset = prev?.length ?? 0;
+      const res = await load(offset);
+      if (!prev) return res;
+      // Запись могли усечь/пересоздать — если сервер знает меньше, чем у нас, перечитываем её целиком.
+      if (res.length < offset) return load(0);
       return { ...res, transcript: prev.transcript + res.transcript, offset: 0 };
     },
     enabled: id !== null,

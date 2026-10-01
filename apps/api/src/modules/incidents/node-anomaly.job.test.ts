@@ -85,6 +85,7 @@ function setup(
   }> = [];
   /** С какими исключёнными серверами запускалась проверка порта ноды и входа. */
   const checks: Array<{ excluded: string[] }> = [];
+  const checkFailure = { value: false };
   const billingAsked: string[] = [];
   const srv = (over: Record<string, unknown>) => ({
     nodeLink: 'auto',
@@ -136,6 +137,7 @@ function setup(
     {
       check: async (_n: string, _a: string, _p: number, _s: string, exclude: string[]) => {
         checks.push({ excluded: [...exclude].sort() });
+        if (checkFailure.value) throw new Error('встречная проверка временно недоступна');
         return structuredClone(check);
       },
       checkEntry: async () => null,
@@ -185,6 +187,7 @@ function setup(
     events,
     vmCalls,
     checks,
+    checkFailure,
     billingAsked,
     job,
     rerun: () => job.run(),
@@ -495,6 +498,21 @@ describe('падение онлайна ноды', () => {
     expect(opened).toEqual([]);
     await snap(node({ usersOnline: 0 }));
     expect(opened).toHaveLength(1);
+  });
+
+  it('ошибка диагностики не скрывает подтверждённое падение: открывается честное дело для Джарвиса', async () => {
+    const { snap, opened, checkFailure } = setup();
+    checkFailure.value = true;
+    await snap(node({ usersOnline: 200 }));
+    for (let i = 0; i < 3; i += 1) await snap(node({ usersOnline: 0 }));
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({
+      title: 'Резко упал онлайн, причину проверить не удалось · guardora (Аренда)',
+      kind: 'node_blocked',
+      severity: 'warn',
+    });
+    expect(opened[0]?.detail).toContain('Падение подтверждено тремя свежими снимками Remnawave');
+    expect(opened[0]?.detail).toContain('встречная проверка временно недоступна');
   });
 
   it('сбой сразу у нескольких серверов — общая причина: «вероятнее всего… отключили» не пишем', async () => {

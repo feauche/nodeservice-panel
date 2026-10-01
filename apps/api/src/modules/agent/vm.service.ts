@@ -3,18 +3,34 @@ import { ConfigService } from '@nestjs/config';
 import type { AgentMetrics } from '@nodeservice/shared';
 
 import type { Env } from '../../config/env.schema.js';
+import { PanelAlertsService } from '../health/panel-alerts.service.js';
+
+/** Запись не удаётся дольше этого подряд — владельцу пора сказать: в логе этого никто не увидит. */
+export const METRICS_DOWN_AFTER_MS = 10 * 60_000;
 
 /**
  * Запись метрик агентов в VictoriaMetrics (import в формате Prometheus exposition).
  * Fire-and-forget: недоступная VM не должна ронять WebSocket-поток — ошибки в лог с антиспамом.
+ * Неудачи подряд дольше METRICS_DOWN_AFTER_MS — оповещение «Метрики не записываются», первая удачная
+ * запись после него — «снова записываются».
  */
 @Injectable()
 export class VmWriterService {
   private readonly log = new Logger(VmWriterService.name);
   private readonly url: string;
   private lastErrorAt = 0;
+  /** С какого момента запись не удаётся подряд; null — последняя запись удалась. */
+  private failingSince: number | null = null;
+  /**
+   * Сказали ли «не записываются». null — неизвестно: панель только запустилась, а сказать могли и до
+   * перезапуска, — первая удачная запись сверится с отметкой в базе.
+   */
+  private raised: boolean | null = null;
 
-  constructor(config: ConfigService<Env, true>) {
+  constructor(
+    config: ConfigService<Env, true>,
+    private readonly alerts: PanelAlertsService,
+  ) {
     this.url = config.get('VM_URL');
   }
 
@@ -51,6 +67,27 @@ export class VmWriterService {
         this.lastErrorAt = Date.now();
         this.log.warn(`Метрики не записались в VictoriaMetrics (${this.url}): ${(err as Error).message}`);
       }
+      this.failed();
+      return;
     }
+    this.succeeded();
+  }
+
+  /** Неудача записи: подряд дольше порога — одно оповещение на сбой (повторы в сутки гасит само оповещение). */
+  private failed(): void {
+    const now = Date.now();
+    this.failingSince ??= now;
+    if (this.raised === true || now - this.failingSince < METRICS_DOWN_AFTER_MS) return;
+    this.raised = true;
+    const since = new Date(this.failingSince);
+    this.alerts.quietly('метрики не записываются', () => this.alerts.metricsDown(since));
+  }
+
+  /** Удачная запись обнуляет счёт; после сказанного «не записываются» — «снова записываются». */
+  private succeeded(): void {
+    this.failingSince = null;
+    if (this.raised === false) return;
+    this.raised = false;
+    this.alerts.quietly('метрики снова записываются', () => this.alerts.metricsUp());
   }
 }

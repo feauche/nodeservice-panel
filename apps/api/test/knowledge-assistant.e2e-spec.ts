@@ -23,7 +23,16 @@ import { setupHttp } from '../src/common/http/setup-http.js';
 import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
-import { GLOSSARY_TEXT, GLOSSARY_TEXT_TERMS } from '../src/modules/assistant/glossary-import.fixture.js';
+import {
+  DOCKER_INFO,
+  DOCKER_INSPECT,
+  FAQ_TEXT,
+  GLOSSARY_TEXT,
+  GLOSSARY_TEXT_TERMS,
+  LSCPU_QUESTION,
+  MACHINE_LIKE_LINES,
+  MACHINE_LIKE_TERMS,
+} from '../src/modules/assistant/glossary-import.fixture.js';
 import { KbReviewService } from '../src/modules/assistant/kb-review.service.js';
 import {
   LLM_PROVIDER,
@@ -48,6 +57,8 @@ class FakeLlm implements LlmProvider {
   calls = 0;
   /** Сколько раз вообще спрашивали модель: словарь терминов должен разбираться без неё. */
   runs = 0;
+  /** Весь текст пользователя из последнего вызова, вместе с подсказками сервера. */
+  lastUserText = '';
   async run(input: LlmRunInput): Promise<LlmResp> {
     this.runs += 1;
     const done = input.messages.some((m) => m.content.some((b) => b.type === 'tool_result'));
@@ -56,6 +67,7 @@ class FakeLlm implements LlmProvider {
       .flatMap((m) => m.content)
       .map((b) => (b.type === 'text' ? b.text : ''))
       .join(' ');
+    this.lastUserText = userText;
     // Сценарий глоссария: по маркеру в сообщении зовём add_glossary_terms с нужным термином.
     if (userText.includes('ГЛОССАРИЙ')) {
       if (!done) {
@@ -144,6 +156,29 @@ class FakeLlm implements LlmProvider {
         blocks: [{ type: 'text', text: 'Добавил термин в глоссарий «Пояснения».' }],
       };
     }
+    // Вывод команды или словарь с вопросом: отвечает сама модель, текстом.
+    if (userText.includes('ОТВЕТ-МОДЕЛИ'))
+      return { stopReason: 'end', blocks: [{ type: 'text', text: 'Разобрал присланное.' }] };
+    // Статья «проблема: решение»: модель сохраняет её статьёй.
+    if (userText.includes('FAQ-СТАТЬЯ')) {
+      if (!done)
+        return {
+          stopReason: 'tool_use',
+          blocks: [
+            {
+              type: 'tool_use',
+              id: 'f1',
+              name: 'save_kb_article',
+              input: { title: 'Частые проблемы клиентов', content: FAQ_TEXT, tags: ['клиенты'] },
+            },
+          ],
+        };
+      const seen = input.messages
+        .flatMap((m) => m.content)
+        .map((b) => (b.type === 'tool_result' ? String(b.content) : ''))
+        .join(' ');
+      return { stopReason: 'end', blocks: [{ type: 'text', text: `Ответ инструмента: ${seen}` }] };
+    }
     if (userText.includes('СЛОВАРЬ-СТАТЬЯ')) {
       if (!done)
         return {
@@ -157,6 +192,33 @@ class FakeLlm implements LlmProvider {
                 title: 'Глоссарий терминов VPN',
                 content: GLOSSARY_TEXT,
                 tags: ['ai'],
+              },
+            },
+          ],
+        };
+      const seen = input.messages
+        .flatMap((m) => m.content)
+        .map((b) => (b.type === 'tool_result' ? String(b.content) : ''))
+        .join(' ');
+      return {
+        stopReason: 'end',
+        blocks: [{ type: 'text', text: `Ответ инструмента: ${seen.slice(0, 120)}` }],
+      };
+    }
+    // Тот же словарь без заголовка и под нейтральным названием: защита не зависит от слов «Глоссарий», «Термины».
+    if (userText.includes('СЛОВАРЬ-ОСНОВЫ')) {
+      if (!done)
+        return {
+          stopReason: 'tool_use',
+          blocks: [
+            {
+              type: 'tool_use',
+              id: 'a10',
+              name: 'save_kb_article',
+              input: {
+                title: 'Основы VPN',
+                content: GLOSSARY_TEXT.split('\n').slice(1).join('\n'),
+                tags: [],
               },
             },
           ],
@@ -595,6 +657,82 @@ describe('knowledge + assistant e2e', () => {
     expect(doc2.content.match(/\| DPI \(Deep Packet Inspection\) \|/g)).toHaveLength(1);
   });
 
+  describe('вывод команды, «проблема: решение» и вопрос со словарём разбирает модель', () => {
+    const glossary = async () => {
+      const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
+      const gloss = list.items.find((d) => d.title === 'Пояснения');
+      return kbDocSchema.parse((await agent.get(`/api/knowledge/${gloss?.id}`).expect(200)).body).content;
+    };
+    const chat = async (message: string) =>
+      assistantChatResponseSchema.parse(
+        (await agent.post('/api/assistant/chat').set(CSRF_HEADER, csrf).send({ message }).expect(200)).body,
+      );
+
+    it('вопрос с выводом lscpu, docker inspect и docker info: отвечает модель, «Пояснения» не пополняются', async () => {
+      for (const [name, text] of Object.entries({ LSCPU_QUESTION, DOCKER_INSPECT, DOCKER_INFO })) {
+        const before = await glossary();
+        const runs = fake.runs;
+        const res = await chat(`${text}\nОТВЕТ-МОДЕЛИ`);
+        expect(fake.runs, name).toBeGreaterThan(runs);
+        expect(res.message.content, name).toBe('Разобрал присланное.');
+        expect(res.message.citations, name).toEqual([]);
+        expect(await glossary(), name).toBe(before);
+      }
+      const after = await glossary();
+      for (const junk of ['Spectre', 'Flags', 'ResolvConfPath', 'sha256', 'Docker Buildx'])
+        expect(after, junk).not.toContain(junk);
+    });
+
+    it('статья «проблема: решение»: пункты не становятся терминами, модель сохраняет её статьёй', async () => {
+      const before = await glossary();
+      const runs = fake.runs;
+      const res = await chat(`${FAQ_TEXT}\nFAQ-СТАТЬЯ`);
+      expect(fake.runs).toBeGreaterThan(runs);
+      expect(res.message.content).toContain('Статья сохранена в базе знаний: «Частые проблемы клиентов»');
+      expect(res.message.content).not.toContain('Статья-глоссарий не создана');
+      expect(await glossary()).toBe(before);
+      const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
+      const faq = list.items.find((d) => d.title === 'Частые проблемы клиентов');
+      expect(faq?.source).toBe('ai');
+    });
+
+    it('инструкция с разделом «Термины»: сервер берёт только его, пункты «проблема: решение» остаются модели', async () => {
+      const terms = GLOSSARY_TEXT.split('\n').slice(8, 20).join('\n');
+      const guide = `# Установка ноды\n\nСначала подготовьте сервер и откройте порт 443.\n\n## Частые проблемы\n${FAQ_TEXT.split('\n').slice(1).join('\n')}\n\n## Термины\n${terms}\n\nОТВЕТ-МОДЕЛИ`;
+      const before = await glossary();
+      const res = await chat(guide);
+      expect(res.message.content).toContain('Разобрал присланное.');
+      // Термины раздела уже были в «Пояснения» после прошлого теста: сервер их нашёл и не задвоил.
+      expect(res.message.content).toContain('найдено 10, добавлено новых в «Пояснения» 0, уже были 10');
+      expect(await glossary()).toBe(before);
+      expect(fake.lastUserText).toContain('СЕРВЕР УЖЕ ДОБАВИЛ');
+      expect(fake.lastUserText).toMatch(/\(найдено 10, новых 0\): ТСПУ, РКН, /);
+      expect(fake.lastUserText).toContain('списки «проблема: решение»');
+    });
+
+    it('словарь с вопросом: сервер не отвечает шаблоном, отвечает модель', async () => {
+      const runs = fake.runs;
+      const res = await chat(`Что думаете, всё ли тут верно? ОТВЕТ-МОДЕЛИ\n\n${GLOSSARY_TEXT}`);
+      expect(fake.runs).toBeGreaterThan(runs);
+      expect(res.message.content).toBe('Разобрал присланное.');
+      expect(res.message.content).not.toContain('отдельную статью я не создавал');
+    });
+
+    it('строки словаря, которые сервер не взял, молча не пропадают: модель получает их поимённо', async () => {
+      const runs = fake.runs;
+      const res = await chat(`${GLOSSARY_TEXT}\n${MACHINE_LIKE_LINES.join('\n')}\nОТВЕТ-МОДЕЛИ`);
+      expect(fake.runs).toBeGreaterThan(runs);
+      // Шаблон «Все новые термины добавлены» здесь был бы неправдой: три строки сервер не добавил.
+      expect(res.message.content).not.toContain('Все новые термины добавлены');
+      expect(res.message.content).toContain('Разобрал присланное.');
+      expect(res.message.content).toContain(`найдено ${GLOSSARY_TEXT_TERMS}`);
+      expect(fake.lastUserText).toContain(`сервер не взял`);
+      expect(fake.lastUserText).toContain(MACHINE_LIKE_TERMS.join(', '));
+      const after = await glossary();
+      for (const t of MACHINE_LIKE_TERMS) expect(after, t).not.toContain(t);
+    });
+  });
+
   it('попытка сохранить словарь отдельной статьёй отклоняется, модель получает подсказку про «Пояснения»', async () => {
     const res = assistantChatResponseSchema.parse(
       (
@@ -608,6 +746,21 @@ describe('knowledge + assistant e2e', () => {
     expect(res.message.content).toContain('Статья-глоссарий не создана');
     const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
     expect(list.items.some((d) => /Глоссарий терминов/.test(d.title))).toBe(false);
+  });
+
+  it('словарь статьёй не сохраняется и под нейтральным названием без слов «Глоссарий» и «Термины»', async () => {
+    const res = assistantChatResponseSchema.parse(
+      (
+        await agent
+          .post('/api/assistant/chat')
+          .set(CSRF_HEADER, csrf)
+          .send({ message: 'Собери статью, СЛОВАРЬ-ОСНОВЫ' })
+          .expect(200)
+      ).body,
+    );
+    expect(res.message.content).toContain('Статья-глоссарий не создана');
+    const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
+    expect(list.items.some((d) => d.title === 'Основы VPN')).toBe(false);
   });
 
   it('модель написала «добавил», не вызвав инструмент: после толчка запись действительно происходит', async () => {

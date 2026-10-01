@@ -77,6 +77,10 @@ function setup(count: number, llmRun: (input: LlmRunInput) => Promise<LlmResp>) 
     {} as never,
     {} as never,
     {} as never,
+    // Связь нод с серверами — в этих сценариях не нужна.
+    {} as never,
+    // Настройки окружения: адрес панели для подсказок Джарвиса.
+    { get: () => 'https://panel.test' } as never,
   );
   return { svc, store, released, incidents, broken };
 }

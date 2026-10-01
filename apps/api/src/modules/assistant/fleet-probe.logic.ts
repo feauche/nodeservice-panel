@@ -107,7 +107,8 @@ export function buildReachCommand(host: string, ports: number[]): string {
       'done',
       'getent hosts $h | { read -r a _; echo "dns $a"; }',
       // Пинг — дополнительно к порту: многие хосты ICMP режут, поэтому «нет пинга» ещё не «недоступен».
-      'if command -v ping >/dev/null 2>&1; then r=$(ping -c 2 -W 2 $h 2>/dev/null | tail -1 | cut -d/ -f5); echo "ping ${r:-none}"; fi',
+      'if command -v ping >/dev/null 2>&1; then r=$(ping -c 2 -W 2 $h 2>/dev/null | tail -1 | cut -d/ -f5); echo "ping $' +
+        '{r:-none}"; fi',
     ].join('\n'),
   );
 }

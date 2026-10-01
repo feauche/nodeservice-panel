@@ -21,12 +21,14 @@ import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
+import { formatBillingMessage, formatBillingRichMessage } from '../src/modules/billing/billing.format.js';
 import { IncidentReminderJob } from '../src/modules/incidents/incident-reminder.job.js';
 import { IncidentsRepository } from '../src/modules/incidents/incidents.repository.js';
 import { IncidentsService } from '../src/modules/incidents/incidents.service.js';
 import { NotificationsService } from '../src/modules/notifications/notifications.service.js';
 import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications/telegram/telegram.client.js';
 import { TelegramService } from '../src/modules/notifications/telegram/telegram.service.js';
+import { TelegramSettingsStore } from '../src/modules/notifications/telegram/telegram-settings.store.js';
 import { SettingsService } from '../src/modules/settings/settings.service.js';
 import { FakeSsh, SSH_PASSWORD, SSH_USER } from './fake-ssh.js';
 
@@ -52,6 +54,10 @@ class FakeTelegram {
    * не принимает разметку (400); связь оборвалась (исход неизвестен).
    */
   richMode: 'ok' | 'old-server' | 'bad-markup' | 'network' = 'ok';
+  /** Полный обрыв для обычных и rich сообщений; служебные getMe/getChat продолжают отвечать. */
+  networkDown = false;
+  /** Следующие N отправок оборвутся; нужно для проверки порядка адресной очереди. */
+  sendFailuresRemaining = 0;
   async call<T>(
     token: string,
     method: string,
@@ -59,6 +65,12 @@ class FakeTelegram {
     proxy?: string | null,
   ): Promise<TelegramCall<T>> {
     this.calls.push({ token, method, body, proxy: proxy ?? null });
+    if (this.networkDown && (method === 'sendMessage' || method === 'sendRichMessage'))
+      throw new Error('socket hang up');
+    if (this.sendFailuresRemaining > 0 && (method === 'sendMessage' || method === 'sendRichMessage')) {
+      this.sendFailuresRemaining -= 1;
+      throw new Error('socket hang up');
+    }
     if (method === 'sendRichMessage' && this.richMode === 'old-server')
       return { ok: false, status: 404, description: 'Not Found: method not found' };
     if (method === 'sendRichMessage' && this.richMode === 'bad-markup')
@@ -405,12 +417,18 @@ describe('telegram e2e', () => {
       (await app.get<Db>(DB).execute<{ n: number }>(sql`select count(*)::int as n from telegram_pending`))
         .rows[0]?.n ?? 0,
     );
+  const outboxCount = async () =>
+    Number(
+      (await app.get<Db>(DB).execute<{ n: number }>(sql`select count(*)::int as n from telegram_outbox`))
+        .rows[0]?.n ?? 0,
+    );
   /** Чистый лист: дел нет, сервер на связи, сводка пуста, один рабочий чат, всё включено. */
   const fresh = async (extra: Record<string, unknown> = {}) => {
     const db = app.get<Db>(DB);
     await app.get(NotificationsService).settle();
     await db.execute(sql`update incidents set status = 'resolved' where status <> 'resolved'`);
     await db.execute(sql`delete from telegram_pending`);
+    await db.execute(sql`delete from telegram_outbox`);
     await db.execute(sql`update servers set agent_status = 'online', ssh_ok = true where id = ${serverId}`);
     await db.execute(sql`delete from app_meta where key = 'telegram.digest'`);
     (app.get(IncidentsService) as unknown as { hostCache: Map<string, unknown> }).hostCache.clear();
@@ -781,6 +799,40 @@ describe('telegram e2e', () => {
       expect(blocks.at(-1)?.type).toBe('footer');
     });
 
+    it('биллинг тоже уходит rich таблицей, а готовый HTML остаётся запасным вариантом', async () => {
+      tg.richMode = 'ok';
+      await fresh({ delivery: RICH_ON });
+      const input = {
+        state: 'soon' as const,
+        kind: 'server' as const,
+        title: 'DE-1 Falkenstein',
+        provider: 'Hetzner',
+        domain: null,
+        amountMinor: 451,
+        currency: 'EUR' as const,
+        amountRubMinor: 46_800,
+        periodUnit: 'month' as const,
+        periodCount: 1,
+        paidUntil: new Date('2026-10-05T09:00:00Z'),
+        servers: [{ name: 'DE-1', down: false }],
+        note: null,
+        now: new Date('2026-10-03T09:00:00Z'),
+        timeZone: 'Asia/Omsk',
+      };
+      const plainBefore = tg.sent().length;
+      await app.get(TelegramService).dispatch({
+        event: 'billing_soon',
+        title: 'Скоро оплата: DE-1 Falkenstein',
+        html: formatBillingMessage(input),
+        rich: formatBillingRichMessage(input),
+      });
+      expect(tg.sent()).toHaveLength(plainBefore);
+      const blocks = blocksOf(tg.rich().at(-1));
+      expect(blocks[0]).toMatchObject({ type: 'heading', text: '💳 Скоро оплата — через 2 дня' });
+      const table = blocks.find((block) => block.type === 'table');
+      expect(table?.cells?.map((row) => row[0]?.text)).toEqual(['Сумма', 'Оплатить до', 'Период', 'Сервер']);
+    });
+
     it('Telegram не знает метода (старый сервер) — то же сообщение сразу обычным; час в этот чат — сразу обычным', async () => {
       tg.richMode = 'old-server';
       await fresh({ delivery: RICH_ON });
@@ -852,6 +904,74 @@ describe('telegram e2e', () => {
       expect(((await test(false)).body as { detail: string }).detail).toBe('Тест доставлен');
       expect(tg.rich().length).toBe(before);
     });
+  });
+
+  it('обрыв Telegram: сообщение остаётся в адресной очереди и после восстановления уходит один раз', async () => {
+    await fresh();
+    const tgs = app.get(TelegramService);
+    const deliveredBefore = tg.ids.length;
+    tg.networkDown = true;
+    await tgs.dispatch({ event: 'maintenance', title: 'Не потерять после обрыва' });
+    expect(tg.ids).toHaveLength(deliveredBefore);
+    expect(await outboxCount()).toBe(1);
+
+    tg.networkDown = false;
+    await app.get<Db>(DB).execute(sql`update telegram_outbox set next_attempt_at = now()`);
+    expect(await tgs.retryOutbox()).toBe(1);
+    expect(tg.ids).toHaveLength(deliveredBefore + 1);
+    expect(await outboxCount()).toBe(0);
+    expect(await tgs.retryOutbox()).toBe(0);
+    expect(tg.ids).toHaveLength(deliveredBefore + 1);
+  });
+
+  it('обрыв при утренней сводке не теряет накопленное за тихие часы', async () => {
+    await fresh();
+    const tgs = app.get(TelegramService);
+    await app.get(TelegramSettingsStore).addToDigest({
+      event: 'incident_warn',
+      title: 'Ночная проверка',
+      at: new Date().toISOString(),
+    });
+    const deliveredBefore = tg.ids.length;
+    tg.networkDown = true;
+    await tgs.flushDigest();
+    expect(await digest()).toEqual([]);
+    expect(await outboxCount()).toBe(1);
+
+    tg.networkDown = false;
+    await app.get<Db>(DB).execute(sql`update telegram_outbox set next_attempt_at = now()`);
+    expect(await tgs.retryOutbox()).toBe(1);
+    expect(tg.ids).toHaveLength(deliveredBefore + 1);
+    expect(textOf(tg.sent().at(-1))).toContain('Ночная проверка');
+    expect(await outboxCount()).toBe(0);
+  });
+
+  it('очередь одного чата сохраняет порядок: следующая весть не обгоняет недоставленную тревогу', async () => {
+    await fresh();
+    const tgs = app.get(TelegramService);
+    tg.networkDown = true;
+    await tgs.dispatch({ event: 'maintenance', title: 'Первая тревога' });
+    await tgs.dispatch({ event: 'maintenance', title: 'Вторая весть' });
+    expect(await outboxCount()).toBe(2);
+
+    tg.networkDown = false;
+    tg.sendFailuresRemaining = 1;
+    const attemptsBefore = tg.calls.length;
+    await app.get<Db>(DB).execute(sql`update telegram_outbox set next_attempt_at = now()`);
+    expect(await tgs.retryOutbox()).toBe(0);
+    // После повторной неудачи первой записи вторая даже не отправляется.
+    expect(tg.calls).toHaveLength(attemptsBefore + 1);
+    expect(await outboxCount()).toBe(2);
+
+    await app.get<Db>(DB).execute(sql`update telegram_outbox set next_attempt_at = now()`);
+    expect(await tgs.retryOutbox()).toBe(2);
+    const delivered = tg
+      .sent()
+      .slice(-2)
+      .map((call) => String(call.body.text));
+    expect(delivered[0]).toContain('Первая тревога');
+    expect(delivered[1]).toContain('Вторая весть');
+    expect(await outboxCount()).toBe(0);
   });
 
   it('группа стала супергруппой: номер чата обновляется сам, сообщение доходит со второй попытки', async () => {

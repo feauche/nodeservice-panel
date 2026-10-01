@@ -59,7 +59,6 @@ describe('KnowledgePage', () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: /Лимит conntrack/ }));
     await screen.findByRole('heading', { name: 'Лимит conntrack' });
-    console.log('DBG2', JSON.stringify(Object.keys(mockKnowledge.versions)));
     await user.click(screen.getByRole('button', { name: 'Удалить (в архив)' }));
     const dialog = await screen.findByRole('alertdialog');
     await user.click(within(dialog).getByRole('button', { name: 'В архив' }));

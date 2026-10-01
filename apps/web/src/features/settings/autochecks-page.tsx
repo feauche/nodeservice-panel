@@ -27,6 +27,7 @@ const toDraft = (s: AutochecksSettings) => ({
   sshAgentEnabled: s.sshAgentEnabled,
   agentOfflineEnabled: s.agentOfflineEnabled,
   metricsEnabled: s.metricsEnabled,
+  serverChecksEnabled: s.serverChecksEnabled,
   sshIntervalMinutes: String(s.sshIntervalMinutes),
   sshAgentIntervalMinutes: String(s.sshAgentIntervalMinutes),
   agentOfflineAfterSeconds: String(s.agentOfflineAfterSeconds),
@@ -92,6 +93,14 @@ const CHECKS: ReadonlyArray<{
   },
 ];
 
+/**
+ * Проверки серверов: у тумблера нет интервала (раз в сутки), поэтому строка отдельная. Подпись — что будет при
+ * каждом значении и что сторонние скрипты по расписанию не идут никогда.
+ */
+const SERVER_CHECKS_LABEL = 'Проверки серверов раз в сутки';
+const SERVER_CHECKS_HINT =
+  'Включено — раз в сутки панель сама замеряет процессор каждого сервера своей командой. Выключено — замер только по кнопке. Регион IP, геоблок, DPI до России и качество IP — сторонние скрипты: по расписанию не запускаются при любом значении, только по кнопке во вкладке «Проверки» сервера или Джарвисом по вашей просьбе, если это разрешено в его настройках.';
+
 const isDefaults = (s: AutochecksSettings) =>
   (Object.keys(AUTOCHECKS_DEFAULTS) as Array<keyof AutochecksSettings>).every(
     (k) => s[k] === AUTOCHECKS_DEFAULTS[k],
@@ -150,11 +159,11 @@ export function AutochecksPage() {
         title="Автопроверки"
         description="Фоновые проверки панели и агента: что проверяем и как часто. Действуют сразу после сохранения."
       />
-      <SettingsCard title="Проверки" hint="Выключенная проверка не запускается совсем.">
+      <SettingsCard title="Проверки" hint="Выключенная проверка сама не запускается.">
         {autochecks.isPending && (
           <div className="flex flex-col gap-3 py-3">
-            {CHECKS.map((c) => (
-              <Skeleton key={c.id} className="h-[52px] rounded-[10px]" />
+            {[...CHECKS.map((c) => c.id), 'ac-server-checks'].map((id) => (
+              <Skeleton key={id} className="h-[52px] rounded-[10px]" />
             ))}
           </div>
         )}
@@ -211,6 +220,20 @@ export function AutochecksPage() {
               </SettingsRow>
             );
           })}
+        {draft && (
+          <SettingsRow
+            label={SERVER_CHECKS_LABEL}
+            htmlFor="ac-server-checks-toggle"
+            hint={SERVER_CHECKS_HINT}
+          >
+            <Toggle
+              id="ac-server-checks-toggle"
+              aria-label={SERVER_CHECKS_LABEL}
+              checked={draft.serverChecksEnabled}
+              onChange={(v) => setDraft({ ...draft, serverChecksEnabled: v })}
+            />
+          </SettingsRow>
+        )}
       </SettingsCard>
       <SaveBar
         dirty={dirty}

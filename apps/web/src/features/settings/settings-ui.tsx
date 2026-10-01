@@ -421,7 +421,6 @@ export function Segmented<K extends string>({
     if (next) onChange(next.key);
   };
   return (
-    // biome-ignore lint/a11y/useSemanticElements: группа кнопок-переключателей со своей раскладкой
     <div
       role="radiogroup"
       aria-label={label}

@@ -34,7 +34,7 @@ if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
 const LOGIN = 'admin';
 const PASSWORD = 'correct horse battery staple';
 
-type Script = 'ok' | 'off-chain' | 'invalid-then-valid' | 'no-submit' | 'throws' | 'gated';
+type Script = 'ok' | 'off-chain' | 'invalid-then-valid' | 'no-submit' | 'throws' | 'gated' | 'ip-quality';
 
 const submit = (input: Record<string, unknown>, id = 's1'): LlmResp => ({
   stopReason: 'tool_use',
@@ -72,6 +72,19 @@ class FakeLlm implements LlmProvider {
     if (this.script === 'gated') await this.gate;
     if (this.script === 'invalid-then-valid')
       return submitted === 0 ? submit({ verdict: '', confidence: 'high', evidence: [] }) : submit(GOOD, 's2');
+    // Разбору понадобилась свежая репутация IP — сторонний скрипт «Качество IP».
+    if (this.script === 'ip-quality' && !done)
+      return {
+        stopReason: 'tool_use',
+        blocks: [
+          {
+            type: 'tool_use',
+            id: 'c1',
+            name: 'run_server_check',
+            input: { serverId: 'ana-host', check: 'ip_quality' },
+          },
+        ],
+      };
     if (!done)
       return {
         stopReason: 'tool_use',
@@ -494,4 +507,55 @@ describe('разбор инцидента Джарвисом e2e', () => {
     expect(String(tg.sent[1]?.text)).not.toContain('Разбор Джарвиса');
     fake.script = 'ok';
   });
+
+  it('автоматический разбор сторонние скрипты проверок не запускает; разбор по кнопке администратора — может', async () => {
+    const db = app.get<Db>(DB);
+    const analysis = app.get(IncidentAnalysisService);
+    await agent
+      .put('/api/settings/assistant')
+      .set(CSRF_HEADER, csrf)
+      .send({
+        apiKey: 'sk-test-0123456789',
+        model: 'anthropic/claude-sonnet-4-5',
+        permissions: { analysis: true, autoAnalysis: true, checksRun: true },
+      })
+      .expect(200);
+    const launched = () => ssh.execLog.filter((c) => c.startsWith('# ns-check:ip_quality'));
+    const done = (id: string) =>
+      expect.poll(async () => (await get(id)).analysis?.status, { timeout: 20_000 }).toBe('done');
+    const answer = () =>
+      JSON.stringify(
+        fake.seen
+          .at(-1)
+          ?.messages.flatMap((m) => m.content)
+          .filter((b) => b.type === 'tool_result'),
+      );
+    fake.script = 'ip-quality';
+    try {
+      // Сам, без администратора: модель просит «Качество IP» — отказ с причиной, на сервер ничего не уходит.
+      const auto = await openIncident('Диск держится на 94% дольше 5 мин (порог 90%).');
+      await db.execute(
+        sql`update incidents set opened_at = now() - interval '90 seconds' where id = ${auto}`,
+      );
+      const before = launched().length;
+      expect(await analysis.autoRun()).toEqual([auto]);
+      await done(auto);
+      expect(launched()).toHaveLength(before);
+      expect(answer()).toContain('сторонний скрипт');
+
+      // Разбор запустил администратор кнопкой — он рядом и сам попросил: проверка идёт.
+      const manual = await openIncident('Диск держится на 96% дольше 5 мин (порог 90%).');
+      await run(manual).expect(202);
+      await done(manual);
+      expect(launched()).toHaveLength(before + 1);
+      expect(answer()).not.toContain('сторонний скрипт');
+    } finally {
+      fake.script = 'ok';
+      await agent
+        .put('/api/settings/assistant')
+        .set(CSRF_HEADER, csrf)
+        .send({ permissions: { autoAnalysis: false } })
+        .expect(200);
+    }
+  }, 60_000);
 });

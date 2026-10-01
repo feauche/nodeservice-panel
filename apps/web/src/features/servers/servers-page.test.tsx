@@ -55,6 +55,9 @@ describe('ServersPage', () => {
     await user.click(screen.getByRole('button', { name: 'Список' }));
     const rows = screen.getAllByTestId('server-row');
     expect(rows).toHaveLength(2);
+    // Флаг страны — отдельная кнопка с подсказкой; строка не должна быть кнопкой вокруг неё.
+    expect(rows[0]?.tagName).toBe('DIV');
+    expect(rows[0]?.querySelector('button button')).toBeNull();
     expect(screen.queryAllByRole('article')).toHaveLength(0);
     // nl-ams-02: агента нет, SSH не пустил — связаться с сервером панели нечем.
     expect(

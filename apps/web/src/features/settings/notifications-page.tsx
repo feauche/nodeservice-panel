@@ -28,6 +28,7 @@ import { cn } from '@/lib/utils';
 import { SaveBar, SectionHeader, SettingsCard, SettingsRow, Toggle } from './settings-ui';
 import { useTelegramSettings, useTestTelegram, useUpdateTelegram } from './telegram-api';
 import { timeZoneLabel } from './time-zones';
+import { WatchdogCard } from './watchdog-card';
 
 /** Строка чата: сохранённая (по id, токен только маской) или новая (ссылка целиком, пока не сохранили). */
 type Row = { key: string; saved: TelegramDestination } | { key: string; url: string };
@@ -391,6 +392,8 @@ export function NotificationsPage() {
           />
         </SettingsRow>
       </SettingsCard>
+
+      <WatchdogCard />
 
       <SettingsCard title="Что присылать" hint="Одинаково для всех чатов.">
         {TELEGRAM_EVENT_GROUPS.map((g) => (

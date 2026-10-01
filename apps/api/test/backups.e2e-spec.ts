@@ -50,6 +50,7 @@ import {
 import { envValues, parseMeta } from '../src/modules/backups/backups.logic.js';
 import { BackupsService } from '../src/modules/backups/backups.service.js';
 import { internalSignature } from '../src/modules/backups/backups-internal.controller.js';
+import { PANEL_LIFE_KEY, PanelLifecycleService } from '../src/modules/health/panel-lifecycle.service.js';
 import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications/telegram/telegram.client.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -426,6 +427,21 @@ describe('резервные копии e2e', () => {
     } finally {
       tools.restore = orig;
     }
+  });
+
+  it('после восстановления панель перезапускается сама — с отметкой штатной остановки, а не «после сбоя»', async () => {
+    // Как main.ts при запуске: отметка запуска, штатной остановки ещё нет.
+    await app.get(PanelLifecycleService).started();
+    const valkey = app.get<Redis>(VALKEY);
+    const mark = async () =>
+      JSON.parse((await valkey.get(PANEL_LIFE_KEY)) ?? '{}') as { stoppedAt?: unknown };
+    expect((await mark()).stoppedAt).toBeNull();
+    await sleep(1100);
+    await agent.post('/api/backups/run').set(CSRF_HEADER, csrf).send({ sendTelegram: false }).expect(202);
+    const name = (await waitIdle()).items.find((i) => i.kind === 'manual')?.name ?? '';
+    await sleep(1100);
+    await restore(name).expect(202);
+    expect((await mark()).stoppedAt).toEqual(expect.any(String));
   });
 
   it('загрузка файла с компьютера и удаление; чужое имя — 404', async () => {

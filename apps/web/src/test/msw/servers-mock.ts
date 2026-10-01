@@ -105,7 +105,7 @@ export const MOCK_DETECTED = { code: 'PL', agree: 6, total: 7 } as const;
 export function finishCountryDetection(id: string): void {
   const idx = mockServers.items.findIndex((x) => x.id === id);
   const cur = mockServers.items[idx];
-  if (!cur || cur.country.status !== 'detecting') return;
+  if (cur?.country.status !== 'detecting') return;
   mockServers.items[idx] = {
     ...cur,
     country: {
@@ -495,8 +495,15 @@ export const terminalHistoryHandlers = [
   http.get('/api/servers/:id/terminal/sessions/:sid', ({ params, request }) => {
     const s = mockTerminalSessions.items.find((x) => x.id === params.sid && x.serverId === params.id);
     if (!s) return problem(404, 'about:blank', 'Сессия терминала не найдена');
-    const full = mockTerminalSessions.transcripts[s.id] ?? '';
+    // Как Postgres (substr/length): смещение и длина — в символах, а не в единицах UTF-16, как у строк
+    // JavaScript. Эмодзи — один символ, хотя в JS его длина 2: иначе мок прятал бы расхождение с сервером.
+    const full = Array.from(mockTerminalSessions.transcripts[s.id] ?? '');
     const offset = Number(new URL(request.url).searchParams.get('offset') ?? 0) || 0;
-    return HttpResponse.json({ ...s, transcript: full.slice(offset), offset, length: full.length });
+    return HttpResponse.json({
+      ...s,
+      transcript: full.slice(offset).join(''),
+      offset,
+      length: full.length,
+    });
   }),
 ];

@@ -49,6 +49,7 @@ import { DB, type Db } from '../../infra/db/db.module.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CLS_USER } from '../auth/cls-keys.js';
+import { PanelLifecycleService } from '../health/panel-lifecycle.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { esc } from '../notifications/telegram/telegram.format.js';
 import { TelegramService } from '../notifications/telegram/telegram.service.js';
@@ -135,6 +136,7 @@ export class BackupsService implements OnModuleInit {
     private readonly notifications: NotificationsService,
     private readonly audit: AuditService,
     private readonly cls: ClsService,
+    private readonly lifecycle: PanelLifecycleService,
   ) {
     this.dir = resolve(config.get('BACKUPS_DIR'));
     this.hostRoot = config.get('HOST_ROOT');
@@ -920,6 +922,9 @@ export class BackupsService implements OnModuleInit {
       })
       .catch(() => undefined);
     this.log.warn(`Панель восстановлена из ${name} — перезапуск`);
+    // Панель выходит сама, минуя обработчики остановки: отметку штатной остановки ставим здесь, иначе после
+    // перезапуска она сообщила бы, что упала.
+    await this.lifecycle.markStopped().catch(() => undefined);
     if (process.env.NODE_ENV !== 'test') setTimeout(() => process.exit(0), 1500).unref();
     else this.runState = { stage: null, startedAt: null, mode: null, lastError: null };
   }

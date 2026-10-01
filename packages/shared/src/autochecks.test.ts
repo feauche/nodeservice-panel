@@ -28,6 +28,13 @@ describe('настройки «Автопроверки»', () => {
     expect(AUTOCHECKS_DEFAULTS.agentOfflineAfterSeconds).toBeGreaterThanOrEqual(AGENT_OFFLINE_MIN_SECONDS);
   });
 
+  it('суточные проверки серверов — тумблер, по умолчанию включён; меняется отдельно от остального', () => {
+    expect(AUTOCHECKS_DEFAULTS.serverChecksEnabled).toBe(true);
+    expect(autochecksSettingsUpdateSchema.parse({ serverChecksEnabled: false })).toEqual({
+      serverChecksEnabled: false,
+    });
+  });
+
   it('ошибка у поля — по-русски', () => {
     expect(firstMessage({ agentOfflineAfterSeconds: 10 })).toBe('Не меньше 30');
     expect(firstMessage({ agentOfflineAfterSeconds: 601 })).toBe('Не больше 600');

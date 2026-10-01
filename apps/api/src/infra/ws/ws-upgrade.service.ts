@@ -1,6 +1,10 @@
 import type { Server as HttpServer, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+import type { Env } from '../../config/env.schema.js';
+import { upgradeClientIp } from './ws-preauth.js';
 
 export type UpgradeHandler = (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
 
@@ -12,6 +16,13 @@ export type UpgradeHandler = (req: IncomingMessage, socket: Duplex, head: Buffer
 export class WsUpgradeService {
   private readonly log = new Logger(WsUpgradeService.name);
   private readonly routes = new Map<string, UpgradeHandler>();
+
+  constructor(private readonly config: ConfigService<Env, true>) {}
+
+  /** Адрес клиента за Caddy — по тому же TRUST_PROXY, что и req.ip у HTTP-запросов. */
+  clientIp(req: IncomingMessage): string {
+    return upgradeClientIp(req, this.config.get('TRUST_PROXY'));
+  }
 
   register(path: string, handler: UpgradeHandler): void {
     this.routes.set(path, handler);

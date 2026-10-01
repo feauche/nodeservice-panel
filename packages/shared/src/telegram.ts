@@ -23,6 +23,7 @@ export const TELEGRAM_EVENTS = [
   'login',
   'billing_soon',
   'billing_overdue',
+  'panel_health',
 ] as const;
 export const telegramEventSchema = z.enum(TELEGRAM_EVENTS);
 export type TelegramEvent = z.infer<typeof telegramEventSchema>;
@@ -41,6 +42,7 @@ export const TELEGRAM_EVENT_LABELS: Record<TelegramEvent, string> = {
   login: 'Вход в панель с нового устройства',
   billing_soon: 'Скоро оплата',
   billing_overdue: 'Оплата просрочена',
+  panel_health: 'Сбои самой панели',
 };
 export const TELEGRAM_EVENT_HINTS: Record<TelegramEvent, string> = {
   incident_crit: 'Сервер или агент недоступен, нода упала, похоже на блокировку.',
@@ -60,6 +62,8 @@ export const TELEGRAM_EVENT_HINTS: Record<TelegramEvent, string> = {
     'Без звука, за столько дней до срока, сколько указано в карточке (по умолчанию за 3 дня). Один раз на срок.',
   billing_overdue:
     'Со звуком, в день срока и раз в сутки, пока не продлите. Если сервер из этой оплаты недоступен — скажем об этом.',
+  panel_health:
+    'Панель перезапустилась после сбоя, метрики серверов перестали записываться (и снова записываются), на сервере панели мало места. По каждому поводу — не чаще раза в сутки. Если панель не отвечает совсем, она сама ничего не пришлёт — для этого есть «Сторож панели» на этой странице.',
 };
 /** Метка важности рядом с названием (как в витрине K1); null — без метки. */
 export const TELEGRAM_EVENT_TONE: Record<TelegramEvent, 'crit' | 'warn' | 'ok' | null> = {
@@ -76,6 +80,7 @@ export const TELEGRAM_EVENT_TONE: Record<TelegramEvent, 'crit' | 'warn' | 'ok' |
   login: null,
   billing_soon: 'warn',
   billing_overdue: 'crit',
+  panel_health: 'warn',
 };
 export const TELEGRAM_EVENT_GROUPS: ReadonlyArray<{ title: string; keys: readonly TelegramEvent[] }> = [
   {
@@ -85,6 +90,7 @@ export const TELEGRAM_EVENT_GROUPS: ReadonlyArray<{ title: string; keys: readonl
   { title: 'Серверы и Джарвис', keys: ['maintenance', 'check_failed', 'jarvis_card'] },
   { title: 'Биллинг', keys: ['billing_soon', 'billing_overdue'] },
   { title: 'Безопасность', keys: ['login'] },
+  { title: 'Сама панель', keys: ['panel_health'] },
 ];
 
 export type TelegramEvents = Record<TelegramEvent, boolean>;
@@ -102,6 +108,7 @@ export const TELEGRAM_EVENTS_DEFAULT: TelegramEvents = {
   login: true,
   billing_soon: true,
   billing_overdue: true,
+  panel_health: true,
 };
 
 /** Виды инцидентов по группам для тумблеров «Какие инциденты» (витрина `telegram-messages-variants.html`, 2A). */

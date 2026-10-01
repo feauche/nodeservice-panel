@@ -1,4 +1,5 @@
 import {
+  SERVER_CHECK_AUTO_KEYS,
   SERVER_CHECK_KEYS,
   SERVER_CHECK_META,
   type Server,
@@ -16,7 +17,11 @@ import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useExplainServerCheck, useRunServerCheck, useServerChecks } from '../server-checks-api';
 
-const LIGHT = SERVER_CHECK_KEYS.filter((k) => !SERVER_CHECK_META[k].heavy);
+/** Сама раз в сутки — только своя команда; сторонние лёгкие и тяжёлые — по кнопке. */
+const AUTO = SERVER_CHECK_AUTO_KEYS;
+const SCRIPTS = SERVER_CHECK_KEYS.filter(
+  (k) => !SERVER_CHECK_META[k].heavy && SERVER_CHECK_META[k].thirdParty,
+);
 const HEAVY = SERVER_CHECK_KEYS.filter((k) => SERVER_CHECK_META[k].heavy);
 
 function StatusBadge({ run }: { run: ServerCheckRun | undefined }) {
@@ -26,7 +31,10 @@ function StatusBadge({ run }: { run: ServerCheckRun | undefined }) {
       ? ['bg-brand-soft text-brand', 'Идёт']
       : run.status === 'ok'
         ? ['bg-ok-soft text-ok', 'Готово']
-        : ['bg-crit-soft text-crit', 'Ошибка'];
+        : // Скрипт не совпал с проверенной версией: панель его не запускала — это не ошибка проверки.
+          run.status === 'cancelled'
+          ? ['bg-warn-soft text-warn', 'Отменена']
+          : ['bg-crit-soft text-crit', 'Ошибка'];
   return (
     <span
       className={cn(
@@ -115,7 +123,11 @@ function CheckRow({
       </div>
       {open && run && (
         <div className="mt-3 flex flex-col gap-2.5">
-          {run.error && <p className="m-0 text-[12.5px] text-crit">{run.error}</p>}
+          {run.error && (
+            <p className={cn('m-0 text-[12.5px]', run.status === 'cancelled' ? 'text-warn' : 'text-crit')}>
+              {run.error}
+            </p>
+          )}
           {!running && (
             <div className="rounded-[10px] border border-ai/30 bg-ai-soft px-3 py-2.5 text-[12.5px]">
               <div className="mb-1 flex items-center gap-1.5 text-[11.5px] font-semibold text-ai">
@@ -160,9 +172,10 @@ function CheckRow({
 }
 
 /**
- * Вкладка «Проверки» (R5/J9, витрина `server-checks-variants.html`, вариант A): лёгкие проверки
- * панель повторяет сама раз в сутки, тяжёлые — только по кнопке с подтверждением. Вывод сырой;
- * пересказ простыми словами — по кнопке «Объяснить» у Джарвиса, сохраняется у запуска.
+ * Вкладка «Проверки» (R5/J9, витрина `server-checks-variants.html`, вариант A): свою команду (процессор)
+ * панель повторяет сама раз в сутки, если это не выключено в «Автопроверках»; сторонние скрипты — только по
+ * кнопке, тяжёлые — ещё и с подтверждением. Вывод сырой; пересказ простыми словами — по кнопке «Объяснить»
+ * у Джарвиса, сохраняется у запуска.
  */
 export function ChecksTab({ server }: { server: Server }) {
   const checks = useServerChecks(server.id);
@@ -220,21 +233,46 @@ export function ChecksTab({ server }: { server: Server }) {
     />
   );
   const next = checks.data.nextAutoAt;
+  const autoOn = checks.data.autoEnabled;
+  const autoTitle = autoOn ? 'Каждый день, автоматически' : 'Своя проверка — по кнопке';
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="m-0 mb-2 text-[12.5px] text-text-2">
-        Лёгкие проверки панель повторяет сама <b className="text-foreground">раз в сутки</b>
-        {next
-          ? `, следующая — ${formatIn(next) === 'уже истекла' ? 'в ближайшие минуты' : formatIn(next)}`
-          : ', первая — в ближайшее время'}
-        . На одном сервере одновременно идёт одна проверка.
-      </p>
+      {autoOn ? (
+        <p className="m-0 mb-2 text-[12.5px] text-text-2">
+          Процессор панель замеряет сама <b className="text-foreground">раз в сутки</b>
+          {next
+            ? `, следующий замер — ${formatIn(next) === 'уже истекла' ? 'в ближайшие минуты' : formatIn(next)}`
+            : ', первый — в ближайшее время'}
+          . Остальные проверки — сторонние скрипты: по расписанию панель их не запускает. На одном сервере
+          одновременно идёт одна проверка.
+        </p>
+      ) : (
+        <p className="m-0 mb-2 text-[12.5px] text-text-2">
+          Суточный замер процессора выключен в «Настройки → Автопроверки» — все проверки запускаются по
+          кнопке. На одном сервере одновременно идёт одна проверка.
+        </p>
+      )}
       <h3 className="m-0 px-0.5 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
-        Каждый день, автоматически
+        {autoTitle}
       </h3>
-      <ul className="m-0 list-none overflow-hidden rounded-2xl border border-border bg-surface p-0">
-        {LIGHT.map(row)}
+      <ul
+        aria-label={autoTitle}
+        className="m-0 list-none overflow-hidden rounded-2xl border border-border bg-surface p-0"
+      >
+        {AUTO.map(row)}
+      </ul>
+      <h3 className="m-0 mt-3 flex items-baseline gap-2 px-0.5 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
+        Сторонние скрипты — по кнопке
+        <span className="text-[11.5px] font-normal tracking-normal normal-case">
+          версия закреплена и сверяется перед запуском
+        </span>
+      </h3>
+      <ul
+        aria-label="Сторонние скрипты — по кнопке"
+        className="m-0 list-none overflow-hidden rounded-2xl border border-border bg-surface p-0"
+      >
+        {SCRIPTS.map(row)}
       </ul>
       <h3 className="m-0 mt-3 flex items-baseline gap-2 px-0.5 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
         Тяжёлые — только вручную

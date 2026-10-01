@@ -35,6 +35,11 @@ export const autochecksSettingsSchema = z.object({
   /** Сбор и отправка метрик агентом (частота уходит агенту при подключении). */
   metricsEnabled: z.boolean(),
   metricsIntervalSeconds: interval(5, 120),
+  /**
+   * Проверки серверов раз в сутки — только свои команды панели (SERVER_CHECK_AUTO_KEYS). Сторонние скрипты
+   * по расписанию не идут при любом значении.
+   */
+  serverChecksEnabled: z.boolean(),
 });
 export type AutochecksSettings = z.infer<typeof autochecksSettingsSchema>;
 
@@ -47,6 +52,7 @@ export const AUTOCHECKS_DEFAULTS: AutochecksSettings = {
   agentOfflineAfterSeconds: 30,
   metricsEnabled: true,
   metricsIntervalSeconds: 10,
+  serverChecksEnabled: true,
 };
 
 /** Update-схема собрана из полей без дефолтов: .partial() поверх default подставил бы значения (см. урок этапа 3). */

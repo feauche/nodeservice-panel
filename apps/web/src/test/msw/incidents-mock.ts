@@ -601,7 +601,7 @@ export const incidentsHandlers = [
     if (inc.status === 'resolved') return problem(409, 'Инцидент уже закрыт.');
     const key = String(params.action) as ActionKey;
     const a = INCIDENT_ACTIONS.find((x) => x.key === key);
-    if (!a || !a.kinds.includes(inc.kind)) return problem(400, 'Это действие не подходит к инциденту.');
+    if (!a?.kinds.includes(inc.kind)) return problem(400, 'Это действие не подходит к инциденту.');
     if (a.terminal)
       return problem(400, 'Действие уровня T3 панель не выполняет — только вручную в терминале.');
     if (inc.attempts.some((x) => x.status === 'running'))

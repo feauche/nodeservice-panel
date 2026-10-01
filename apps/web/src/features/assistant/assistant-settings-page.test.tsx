@@ -105,6 +105,12 @@ describe('AssistantSettingsPage', () => {
     expect(screen.getByText('Проверки сервера')).toBeInTheDocument();
     expect(screen.getByText('Запуск лёгких проверок')).toBeInTheDocument();
     expect(screen.getByText('Предложение тяжёлых проверок')).toBeInTheDocument();
+    // Сторонние скрипты без администратора не идут: в автоматическом разборе — только процессор.
+    expect(
+      screen.getByText(
+        /в автоматическом разборе — только процессор: сторонние скрипты без вас он не запускает/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it('«Изменения по подтверждению»: отдельная группа «Изменения» под «Инциденты», подсказка, метка риска, наборы и сохранение', async () => {

@@ -11,11 +11,11 @@ import {
   type TelegramTestRequest,
   type TelegramTestResponse,
 } from '@nodeservice/shared';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, lte, sql } from 'drizzle-orm';
 import { panelTimeZone } from '../../../common/panel-time-zone.js';
 import type { Env } from '../../../config/env.schema.js';
 import { DB, type Db } from '../../../infra/db/db.module.js';
-import { telegramMessages } from '../../../infra/db/schema/index.js';
+import { telegramMessages, telegramOutbox } from '../../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../../audit/audit.context.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { describeTelegramError, TELEGRAM_CLIENT, type TelegramClient } from './telegram.client.js';
@@ -46,8 +46,10 @@ export interface TelegramDispatch {
   incidentId?: string | null;
   /** Кнопка-ссылка в панель: путь внутри панели и подпись. */
   link?: { to: string; label: string } | null;
-  /** Готовое HTML-сообщение (биллинг): форматирование по блокам не применяется. */
+  /** Готовое HTML-сообщение: обычный вариант и запасной формат при отказе rich API. */
   html?: string | null;
+  /** Готовые rich блоки для специальных сообщений, структура которых не выводится из body. */
+  rich?: RichBlock[] | null;
   /**
    * Важность сбоя, о котором сообщение. Судим по ней, а не по типу события: первое сообщение о критичном
    * деле — его открытие, даже если оно пришло как «ждёт подтверждения» (панель сразу предложила шаг).
@@ -111,6 +113,17 @@ const RICH_RETRY_MS = 60 * 60_000;
 /** Итог отправки. `plain` — сообщение ушло по-старому, потому что Telegram не принял расширенное оформление. */
 type SendResult = { ok: true; messageId: number; plain?: string } | { ok: false; error: string };
 
+/** Уже подготовленное сообщение одному чату: правила и тихие часы второй раз к нему не применяются. */
+interface TelegramOutboxPayload {
+  text: string;
+  buttons: Array<{ text: string; url: string }>;
+  replyTo: number | null;
+  silent: boolean;
+  rich: RichBlock[] | null;
+  incidentId: string | null;
+  event: TelegramEvent;
+}
+
 @Injectable()
 export class TelegramService {
   private readonly log = new Logger(TelegramService.name);
@@ -124,6 +137,8 @@ export class TelegramService {
   private readonly serverTurns = new Map<string, Promise<void>>();
   /** Когда Telegram в последний раз не принял расширенное оформление, по чатам (см. RICH_RETRY_MS). */
   private readonly richRejectedAt = new Map<string, number>();
+  /** Минутная задача и ручной вызов не должны одновременно отправить одну запись outbox. */
+  private outboxBusy = false;
   /**
    * Куда сказать владельцу, что сообщения не доходят: колокольчик панели. Задаёт центр уведомлений — сам
    * Telegram от него не зависит (иначе круг: центр уведомлений шлёт через Telegram).
@@ -543,17 +558,19 @@ export class TelegramService {
           // Время — по поясу панели, как и в тексте сообщения (срок оплаты): иначе в одном сообщении два пояса.
           footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, zone)}`,
         });
-      // Расширенное оформление — для сообщений, которые панель собирает сама; готовый HTML (биллинг) — как есть.
-      const rich =
-        s.delivery.rich && !m.html
-          ? richMessageBlocks({
-              event: m.event,
-              title: m.title,
-              body: m.body ?? null,
-              server: m.server ?? null,
-              footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, zone)}`,
-            })
-          : null;
+      // Специальное сообщение может передать готовую таблицу; для остальных блоки строятся из title/body.
+      const rich = s.delivery.rich
+        ? (m.rich ??
+          (!m.html
+            ? richMessageBlocks({
+                event: m.event,
+                title: m.title,
+                body: m.body ?? null,
+                server: m.server ?? null,
+                footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, zone)}`,
+              })
+            : null))
+        : null;
       const buttons = this.buttons(m.link, m.incidentId ?? null);
       let anyFirst = false;
       const undelivered: DeliveryTrouble[] = [];
@@ -566,6 +583,15 @@ export class TelegramService {
         if (trouble) undelivered.push(trouble);
         if (!res.ok) {
           this.log.warn(`Telegram (${d.chatId}): ${res.error}`);
+          await this.enqueueDelivery(d.id, {
+            text,
+            buttons,
+            replyTo,
+            silent,
+            rich,
+            incidentId: m.incidentId ?? null,
+            event: m.event,
+          });
           continue;
         }
         if (m.incidentId && own === null && m.event !== 'resolved') {
@@ -586,6 +612,121 @@ export class TelegramService {
       await this.warnUndelivered(undelivered);
     } catch (err) {
       this.log.warn(`Telegram: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /** Неудача одного чата не влияет на уже доставленные: повторяется только этот адресат. */
+  private async enqueueDelivery(destinationId: string, payload: TelegramOutboxPayload): Promise<void> {
+    await this.db
+      .insert(telegramOutbox)
+      .values({
+        destinationId,
+        payload: payload as unknown as Record<string, unknown>,
+        nextAttemptAt: new Date(Date.now() + 30_000),
+      })
+      .catch((err: unknown) =>
+        this.log.warn(
+          `Telegram: сообщение не поставлено на повтор: ${err instanceof Error ? err.message : err}`,
+        ),
+      );
+  }
+
+  /**
+   * Повторить накопленные доставки по порядку. Очередь хранится в PostgreSQL, поэтому переживает рестарт.
+   * Интервал растёт от минуты до шести часов; записи не удаляются по числу попыток — тревога не теряется.
+   */
+  async retryOutbox(now = new Date()): Promise<number> {
+    if (this.outboxBusy) return 0;
+    this.outboxBusy = true;
+    try {
+      const rows = await this.db
+        .select()
+        .from(telegramOutbox)
+        .where(lte(telegramOutbox.nextAttemptAt, now))
+        .orderBy(asc(telegramOutbox.createdAt))
+        .limit(20);
+      if (rows.length === 0) return 0;
+      const settings = await this.store.load();
+      const destinations = new Map(
+        this.store.live(settings).map((destination) => [destination.id, destination]),
+      );
+      const troubles: DeliveryTrouble[] = [];
+      // Если старшая доставка одного чата снова не прошла, младшие в этом же запуске не обгоняют её.
+      // Иначе «Починилось» могло прийти раньше самой тревоги.
+      const blockedDestinations = new Set<string>();
+      let delivered = 0;
+      for (const row of rows) {
+        if (blockedDestinations.has(row.destinationId)) continue;
+        const destination = destinations.get(row.destinationId);
+        if (!destination) {
+          // Чат удалён владельцем: отправлять токеном из старых настроек уже нельзя.
+          await this.db.delete(telegramOutbox).where(eq(telegramOutbox.id, row.id));
+          continue;
+        }
+        // В выборку попадают только записи, срок повтора которых наступил. Более старая запись этого чата
+        // может ждать своего backoff; пока она есть, отправлять следующую нельзя.
+        const older = await this.db.execute<{ present: boolean }>(sql`
+          select exists (
+            select 1
+            from telegram_outbox as previous
+            where previous.destination_id = ${row.destinationId}
+              and (
+                previous.created_at < ${row.createdAt}
+                or (previous.created_at = ${row.createdAt} and previous.id < ${row.id})
+              )
+          ) as present
+        `);
+        if (older.rows[0]?.present) {
+          blockedDestinations.add(row.destinationId);
+          continue;
+        }
+        const payload = row.payload as unknown as TelegramOutboxPayload;
+        if (!payload || typeof payload.text !== 'string' || !Array.isArray(payload.buttons)) {
+          this.log.warn(`Telegram: повреждённая запись очереди ${row.id} удалена`);
+          await this.db.delete(telegramOutbox).where(eq(telegramOutbox.id, row.id));
+          continue;
+        }
+        // Если исходная тревога тем временем дошла другим повтором, последующие события отвечают уже на неё.
+        const own = payload.incidentId
+          ? await this.firstMessage(payload.incidentId, destination.id).catch(() => null)
+          : null;
+        const replyTo = own ?? payload.replyTo;
+        const result = await this.send(
+          destination,
+          payload.text,
+          payload.buttons,
+          replyTo,
+          payload.silent,
+          payload.rich,
+        );
+        const trouble = await this.noteDelivery(destination, result);
+        if (trouble) troubles.push(trouble);
+        if (result.ok) {
+          if (payload.incidentId && own === null && payload.event !== 'resolved')
+            await this.db
+              .insert(telegramMessages)
+              .values({
+                incidentId: payload.incidentId,
+                destinationId: destination.id,
+                messageId: result.messageId,
+              })
+              .catch(() => undefined);
+          await this.db.delete(telegramOutbox).where(eq(telegramOutbox.id, row.id));
+          delivered += 1;
+          continue;
+        }
+        const attempts = row.attempts + 1;
+        const waitMs = Math.min(6 * 60 * 60_000, 30_000 * 2 ** Math.min(attempts, 9));
+        await this.db
+          .update(telegramOutbox)
+          .set({ attempts, lastError: result.error, nextAttemptAt: new Date(now.getTime() + waitMs) })
+          .where(eq(telegramOutbox.id, row.id));
+        blockedDestinations.add(row.destinationId);
+      }
+      await this.warnUndelivered(troubles);
+      return delivered;
+    } finally {
+      this.outboxBusy = false;
     }
   }
 
@@ -615,6 +756,14 @@ export class TelegramService {
         : null;
     }
     return this.store.live(s).find((d) => d.id === target.destinationId) ?? null;
+  }
+
+  /**
+   * Все сохранённые чаты с токенами и общим прокси — для сторожа панели: он пишет в Telegram сам, когда панели
+   * нет. Наружу не отдаётся.
+   */
+  async destinations(): Promise<LiveDestination[]> {
+    return this.store.live(await this.store.load());
   }
 
   /** Текст в указанный чат (без правил «что присылать»: это служебные сообщения о копиях). */
@@ -714,19 +863,26 @@ export class TelegramService {
           Math.max(0, items.length - 20),
         )
       : null;
+    const buttons = this.buttons({ to: '/incidents', label: 'Открыть инциденты' });
     const undelivered: DeliveryTrouble[] = [];
     for (const d of this.store.live(s)) {
-      const res = await this.send(
-        d,
-        text,
-        this.buttons({ to: '/incidents', label: 'Открыть инциденты' }),
-        null,
-        false,
-        rich,
-      );
+      const res = await this.send(d, text, buttons, null, false, rich);
       const trouble = await this.noteDelivery(d, res);
       if (trouble) undelivered.push(trouble);
-      if (!res.ok) this.log.warn(`Telegram (${d.chatId}): ${res.error}`);
+      if (!res.ok) {
+        this.log.warn(`Telegram (${d.chatId}): ${res.error}`);
+        // Сводка уже атомарно снята из app_meta. Сохраняем готовую адресную доставку в PostgreSQL,
+        // иначе обрыв ровно после тихих часов удалил бы всю ночь событий без повторной попытки.
+        await this.enqueueDelivery(d.id, {
+          text,
+          buttons,
+          replyTo: null,
+          silent: false,
+          rich,
+          incidentId: null,
+          event: 'maintenance',
+        });
+      }
     }
     await this.warnUndelivered(undelivered);
   }

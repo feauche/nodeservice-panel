@@ -52,6 +52,7 @@ interface Drop {
   node: RemnawaveNode;
   before: number;
   after: number;
+  baselineAt: number;
   /** За сколько минут упал: от последнего снимка с прежним онлайном до подтверждения. */
   minutes: number;
 }
@@ -120,11 +121,31 @@ export class NodeAnomalyJob {
       }
       if (due.length === 0) return;
       for (const drop of due) {
-        await this.investigate(drop, status.nodes, due.length - 1).catch((err) =>
+        try {
+          await this.investigate(drop, status.nodes, due.length - 1);
+          this.cooldownUntil.set(drop.node.uuid, Date.now() + COOLDOWN_MIN * 60_000);
+        } catch (err) {
           this.log.warn(
             `Проверка блокировки ноды «${drop.node.name}»: ${err instanceof Error ? err.message : err}`,
-          ),
-        );
+          );
+          // Сама диагностика не должна быть единственной точкой отказа: падение уже подтверждено тремя
+          // независимыми снимками. Регистрируем честное предупреждение без выдуманной причины.
+          const recorded = await this.recordUnexplained(drop, err).catch((fallbackErr) => {
+            this.log.warn(
+              `Запись падения онлайна «${drop.node.name}»: ${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
+            );
+            return false;
+          });
+          if (recorded) this.cooldownUntil.set(drop.node.uuid, Date.now() + COOLDOWN_MIN * 60_000);
+          // Даже база могла кратко не ответить. Следующий свежий снимок повторит регистрацию с прежней
+          // базой, вместо того чтобы навсегда принять уже упавший онлайн за норму.
+          else
+            this.pending.set(drop.node.uuid, {
+              baselineOnline: drop.before,
+              baselineAt: drop.baselineAt,
+              seen: NODE_ONLINE_DROP_CONFIRM_CHECKS - 1,
+            });
+        }
       }
     } catch (err) {
       this.log.warn(`Тик аномалии онлайна: ${err instanceof Error ? err.message : err}`);
@@ -183,11 +204,11 @@ export class NodeAnomalyJob {
       if (stillDown) {
         const until = this.cooldownUntil.get(node.uuid) ?? 0;
         if (Date.now() < until) return null;
-        this.cooldownUntil.set(node.uuid, Date.now() + COOLDOWN_MIN * 60_000);
         return {
           node,
           before: candidate.baselineOnline,
           after: online,
+          baselineAt: candidate.baselineAt,
           minutes: Math.max(1, Math.round((at - candidate.baselineAt) / 60_000)),
         };
       }
@@ -200,6 +221,53 @@ export class NodeAnomalyJob {
     // Не открываем сразу — ждём подтверждения следующим снимком (см. коммент к классу).
     this.pending.set(node.uuid, { baselineOnline: baseline.online, baselineAt: baseline.at, seen: 1 });
     return null;
+  }
+
+  /** Минимальное дело, если встречная проверка сломалась: факт падения сохраняется, причина не выдумывается. */
+  private async recordUnexplained(drop: Drop, error: unknown): Promise<boolean> {
+    const pct = Math.max(0, Math.round(((drop.before - drop.after) / Math.max(1, drop.before)) * 100));
+    const reason = error instanceof Error ? error.message : String(error);
+    const title = `Резко упал онлайн, причину проверить не удалось · ${drop.node.name}`;
+    const detail = [
+      `Онлайн: ${drop.before} → ${drop.after} (−${pct} %) за ${drop.minutes} мин.`,
+      '',
+      'Падение подтверждено тремя свежими снимками Remnawave. Проверка причины завершилась ошибкой, поэтому панель не утверждает, что это блокировка или неисправность сервера.',
+      `Ошибка диагностики: ${reason.slice(0, 300)}`,
+      'Проверьте ноду и сервер вручную; Джарвис разберёт доступные данные этого дела.',
+    ].join('\n');
+    const row = await this.incidents.open({
+      serverId: null,
+      serverName: drop.node.name,
+      kind: 'node_blocked',
+      severity: 'warn',
+      title,
+      detail,
+      timeline: [
+        {
+          at: new Date().toISOString(),
+          by: 'auto',
+          action: 'Падение подтверждено, диагностика причины не завершилась',
+          result: 'failed',
+        },
+      ],
+    });
+    // null означает, что репозиторий уже нашёл открытое дело того же вида: событие не потеряно.
+    if (!row) return true;
+    await this.notifications.push({
+      severity: 'warn',
+      title,
+      body: detail,
+      link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
+      telegram: {
+        event: 'incident_warn',
+        incidentId: row.id,
+        kind: 'node_blocked',
+        awaitAnalysis: await this.incidentsService.analysisWillFollow(),
+        serverKey: `node:${drop.node.uuid}`,
+        server: { name: drop.node.name, host: drop.node.address },
+      },
+    });
+    return true;
   }
 
   private async investigate(

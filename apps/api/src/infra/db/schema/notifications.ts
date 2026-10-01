@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { bigint, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { bigint, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 import { incidents } from './incidents.js';
 
@@ -55,3 +55,25 @@ export const telegramPending = pgTable('telegram_pending', {
   queued: jsonb('queued').$type<Array<Record<string, unknown>>>().notNull().default([]),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Доставка Telegram, на которую сеть или API не ответили (миграция 0052). Запись создаётся отдельно для
+ * каждого чата: успешные адресаты не получают дубль, неуспешные повторяются после перезапуска панели.
+ */
+export const telegramOutbox = pgTable(
+  'telegram_outbox',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    destinationId: text('destination_id').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('telegram_outbox_due_idx').on(t.nextAttemptAt, t.createdAt),
+    index('telegram_outbox_destination_idx').on(t.destinationId, t.createdAt, t.id),
+  ],
+);
+export type TelegramOutboxRow = typeof telegramOutbox.$inferSelect;
