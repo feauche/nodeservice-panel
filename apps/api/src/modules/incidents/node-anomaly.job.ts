@@ -75,6 +75,16 @@ interface Drop {
 }
 
 /**
+ * Тяжесть определяет влияние на пользователей, а не то, удалось ли панели доказать
+ * конкретную причину. Нулевой онлайн или устойчивая потеря не менее 90 % от значимой
+ * базы — уже критичный сбой, даже если порт отвечает и блокировка не подтвердилась.
+ */
+const criticalOnlineImpact = ({ before, after }: Pick<Drop, 'before' | 'after'>): boolean =>
+  after === 0 ||
+  (before >= NODE_ONLINE_COLLAPSE_MIN_BASELINE &&
+    ((before - after) / Math.max(1, before)) * 100 >= NODE_ONLINE_COLLAPSE_PCT);
+
+/**
  * J10: аномалия онлайна ноды Remnawave (решения владельца 27.09.2026, уточнение 28.09.2026, поправка
  * 28.09.2026 про короткие просадки). Раз в минуту берёт свежий снимок Remnawave и сравнивает онлайн каждой
  * ноды с наибольшим за последние пять минут (решение владельца 30.09.2026: сравнение только с предыдущей
@@ -382,11 +392,12 @@ export class NodeAnomalyJob {
       `Ошибка диагностики: ${reason.slice(0, 300)}`,
       'Проверьте ноду и сервер вручную; Джарвис разберёт доступные данные этого дела.',
     ].join('\n');
+    const severity = criticalOnlineImpact(drop) ? 'crit' : 'warn';
     const row = await this.incidents.open({
       serverId: null,
       serverName: drop.node.name,
       kind: 'node_blocked',
-      severity: 'warn',
+      severity,
       title,
       detail,
       timeline: [
@@ -401,12 +412,12 @@ export class NodeAnomalyJob {
     // null означает, что репозиторий уже нашёл открытое дело того же вида: событие не потеряно.
     if (!row) return true;
     await this.notifications.push({
-      severity: 'warn',
+      severity,
       title,
       body: detail,
       link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
       telegram: {
-        event: 'incident_warn',
+        event: severity === 'crit' ? 'incident_crit' : 'incident_warn',
         incidentId: row.id,
         kind: 'node_blocked',
         awaitAnalysis: await this.incidentsService.analysisWillFollow(),
@@ -551,11 +562,13 @@ export class NodeAnomalyJob {
       });
       return;
     }
+    const severity =
+      confirmed || kind === 'server_down' || criticalOnlineImpact({ before, after }) ? 'crit' : 'warn';
     const row = await this.incidents.open({
       serverId: matched?.id ?? null,
       serverName: matched?.name ?? node.name,
       kind,
-      severity: confirmed || kind === 'server_down' ? 'crit' : 'warn',
+      severity,
       title,
       detail,
       timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
@@ -563,14 +576,14 @@ export class NodeAnomalyJob {
     // Раньше такой инцидент писался только в базу: ни колокольчика, ни Telegram. Сообщаем как обычный.
     if (row)
       await this.notifications.push({
-        severity: confirmed || kind === 'server_down' ? 'crit' : 'warn',
+        severity,
         title,
         body: detail,
         // Сервер привязываем, только если нода есть в NodeService: у уведомления ссылка на запись сервера.
         server: matched ? { id: matched.id, name: matched.name, host: node.address } : null,
         link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
         telegram: {
-          event: confirmed || kind === 'server_down' ? 'incident_crit' : 'incident_warn',
+          event: severity === 'crit' ? 'incident_crit' : 'incident_warn',
           incidentId: row.id,
           kind,
           awaitAnalysis: await this.incidentsService.analysisWillFollow(),

@@ -84,6 +84,7 @@ function setup(
     serverName: string;
     snapshot?: IncidentSnapshot;
   }> = [];
+  const pushed: Array<{ severity: string; telegram?: { event: string } }> = [];
   /** С какими исключёнными серверами запускалась проверка порта ноды и входа. */
   const checks: Array<{ excluded: string[] }> = [];
   const checkFailure = { value: false };
@@ -143,7 +144,11 @@ function setup(
       },
       checkEntry: async () => null,
     } as never,
-    { push: async () => undefined } as never,
+    {
+      push: async (message: { severity: string; telegram?: { event: string } }) => {
+        pushed.push(message);
+      },
+    } as never,
     {
       paymentWindowFor: async (id: string) => {
         billingAsked.push(id);
@@ -180,6 +185,7 @@ function setup(
   return {
     snap,
     opened,
+    pushed,
     trouble,
     sshOpen,
     serverDown,
@@ -543,7 +549,7 @@ describe('падение онлайна ноды', () => {
   });
 
   it('ошибка диагностики не скрывает подтверждённое падение: открывается честное дело для Джарвиса', async () => {
-    const { snap, opened, checkFailure } = setup();
+    const { snap, opened, pushed, checkFailure } = setup();
     checkFailure.value = true;
     await snap(node({ usersOnline: 200 }));
     for (let i = 0; i < 3; i += 1) await snap(node({ usersOnline: 0 }));
@@ -551,10 +557,27 @@ describe('падение онлайна ноды', () => {
     expect(opened[0]).toMatchObject({
       title: 'Резко упал онлайн, причину проверить не удалось · guardora (Аренда)',
       kind: 'node_blocked',
-      severity: 'warn',
+      severity: 'crit',
     });
     expect(opened[0]?.detail).toContain('Падение подтверждено тремя свежими снимками Remnawave');
     expect(opened[0]?.detail).toContain('встречная проверка временно недоступна');
+    expect(pushed[0]).toMatchObject({ severity: 'crit', telegram: { event: 'incident_crit' } });
+  });
+
+  it('полное падение онлайна критично, даже если порт отвечает и блокировка не подтвердилась', async () => {
+    const { snap, opened, pushed } = setup(
+      result({ verdict: 'ok', probes: [probe('ok', 'Мост')], foreign: [probe('ok', 'Германия - 1')] }),
+      null,
+    );
+    await snap(node({ usersOnline: 473 }));
+    for (let i = 0; i < 3; i += 1) await snap(node({ usersOnline: 0 }));
+
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({
+      title: 'Резко упал онлайн, блокировка не подтвердилась · guardora (Аренда)',
+      severity: 'crit',
+    });
+    expect(pushed[0]).toMatchObject({ severity: 'crit', telegram: { event: 'incident_crit' } });
   });
 
   it('сбой сразу у нескольких серверов — общая причина: «вероятнее всего… отключили» не пишем', async () => {

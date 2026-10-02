@@ -611,18 +611,20 @@ export class TelegramService {
       const s = await this.store.load();
       if (s.destinations.length === 0) return;
       if (m.kind && !s.kinds[m.kind]) return;
+      const previousMessageAt = m.incidentId ? await this.lastMessageAt(m.incidentId) : null;
       // Первое сообщение о деле — его открытие, каким бы событием оно ни пришло. Панель сразу предложила
       // шаг — открытие приходит как «ждёт подтверждения», но решает его важность, а не тип события.
       const crit = m.event === 'incident_crit' || m.severity === 'crit';
-      const opening =
-        Boolean(m.incidentId) &&
-        OPENING.has(m.event) &&
-        (await this.lastMessageAt(m.incidentId as string)) === null;
+      const opening = Boolean(m.incidentId) && OPENING.has(m.event) && previousMessageAt === null;
       // Тумблер «Нужно ваше „Да“» не глушит само открытие инцидента: за него отвечает тумблер его важности.
       // Прошло только как открытие — и звук у него как у открытия: предупреждение остаётся тихим.
       const asOpening: TelegramEvent | null = opening ? (crit ? 'incident_crit' : 'incident_warn') : null;
       const soundAs = asOpening && !s.events[m.event] ? asOpening : m.event;
       if (!s.events[soundAs] && !(m.replaces && s.events[m.replaces])) return;
+      // Обычное «Починилось» имеет смысл только после доставленной тревоги. Если открытие
+      // отсеяли настройки, тихие часы или оно не было доставлено, закрытие не должно приходить
+      // одиноким. `replaces` — отдельный сценарий: одно тихое сообщение о коротком сбое вместо пары.
+      if (m.event === 'resolved' && m.incidentId && !m.replaces && previousMessageAt === null) return;
       const now = new Date();
       if (m.event === 'resolved' && m.incidentId) {
         // Починилось — следующий сбой этого сервера уже новая беда: со звуком, не ответом на старую.
@@ -638,10 +640,7 @@ export class TelegramService {
       // в панель. Остальное копится в утреннюю сводку.
       // Если ночную тревогу уже доставили, её закрытие приходит сразу, ответом и без звука: владелец не
       // должен до утра разбираться с уже восстановившимся сервером.
-      const nightResolved =
-        m.event === 'resolved' &&
-        Boolean(m.incidentId) &&
-        (await this.lastMessageAt(m.incidentId as string)) !== null;
+      const nightResolved = m.event === 'resolved' && Boolean(m.incidentId) && previousMessageAt !== null;
       const urgent =
         m.event === 'incident_crit' || (opening && crit) || NIGHT_NOW.has(m.event) || nightResolved;
       if (s.quiet.enabled && !urgent && inQuietHours(now, s.quiet.from, s.quiet.to, zone)) {
@@ -694,6 +693,9 @@ export class TelegramService {
       for (const d of this.store.live(s)) {
         // Всё после первого сообщения по инциденту — ответом на него; первое — ответом на сбой-соседа.
         const own = m.incidentId ? await this.firstMessage(m.incidentId, d.id) : null;
+        // В один чат тревога могла дойти, а в другой — нет. Закрытие получает только тот адресат,
+        // у которого есть исходное сообщение. Короткий сбой (`replaces`) сам и есть первая весть.
+        if (m.event === 'resolved' && m.incidentId && !m.replaces && own === null) continue;
         const replyTo = own ?? (head ? await this.firstMessage(head.incidentId, d.id) : null);
         const sent = await this.sendPaced(d, {
           text,
