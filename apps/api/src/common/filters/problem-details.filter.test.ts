@@ -76,6 +76,18 @@ describe('ProblemDetailsFilter', () => {
     expect(r.body.type).toContain('step-up');
     expect(r.body.detail).toBe('Нужен повторный ввод пароля');
   });
+
+  it('слишком большое тело → понятная 413, а не общая 500', () => {
+    const r = run(
+      Object.assign(new Error('request entity too large'), { type: 'entity.too.large', status: 413 }),
+    );
+    expect(r.status).toBe(413);
+    expect(r.body).toMatchObject({
+      title: 'Текст слишком большой',
+      detail: 'Текст слишком большой. Сократите его и попробуйте ещё раз.',
+      type: 'https://nodeservice.dev/problems/payload-too-large',
+    });
+  });
 });
 
 describe('ProblemDetailsFilter: расширения', () => {

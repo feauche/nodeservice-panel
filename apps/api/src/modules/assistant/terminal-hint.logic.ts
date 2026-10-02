@@ -24,6 +24,11 @@ export function maskSecrets(input: string): { text: string; count: number } {
     /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
     hit('[приватный ключ скрыт]'),
   );
+  // Пароль иногда по ошибке вводят как команду; это правило должно идти до общего «ключ: значение».
+  t = t.replace(/^(\s*)[^:\s]{6,}(: command not found\s*)$/gim, (_m, indent: string, tail: string) => {
+    count += 1;
+    return `${indent}[скрыто]${tail}`;
+  });
   // «password=…», «"token": "…"», «api_key: …»: имя поля с секретным словом и любое значение.
   t = t.replace(
     /([A-Za-z0-9_.-]*(?:pass(?:word|wd|phrase)?|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|psk)s?)(["']?\s*[=:]\s*)("[^"\n]*"|'[^'\n]*'|\S+)/gi,
@@ -41,6 +46,34 @@ export function maskSecrets(input: string): { text: string; count: number } {
     count += 1;
     return `${flag}[скрыто]`;
   });
+  // DATABASE_URL и похожие URI: скрываем только пароль, оставляя протокол, пользователя и адрес полезными.
+  t = t.replace(/([a-z][a-z0-9+.-]*:\/\/[^\s:/@]*:)[^\s@/]+@/gi, (_m, prefix: string) => {
+    count += 1;
+    return `${prefix}[скрыто]@`;
+  });
+  // Распространённые формы пароля в командах, которые не выглядят как --password.
+  t = t.replace(
+    /(\bcurl\b[^\n]*?(?:\s-u|\s--user)\s+)([^:\s]+):\S+/gi,
+    (_m, prefix: string, user: string) => {
+      count += 1;
+      return `${prefix}${user}:[скрыто]`;
+    },
+  );
+  t = t.replace(/(\bmysql\b[^\n]*?\s-p)(\s*)(?!-)(\S+)/gi, (_m, prefix: string, gap: string) => {
+    count += 1;
+    return `${prefix}${gap}[скрыто]`;
+  });
+  t = t.replace(/(\bsshpass\b[^\n]*?\s-p\s+)\S+/gi, (_m, prefix: string) => {
+    count += 1;
+    return `${prefix}[скрыто]`;
+  });
+  t = t.replace(
+    /(\becho\s+(?:-n\s+)?)(\S+)(\s*\|\s*sudo\s+-S\b)/gi,
+    (_m, prefix: string, _secret: string, tail: string) => {
+      count += 1;
+      return `${prefix}[скрыто]${tail}`;
+    },
+  );
   // Идентификаторы пользователей VLESS и подобное.
   t = t.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, hit('[uuid]'));
   // Длинные строки из base64/hex: ключи Reality, хэши, токены.

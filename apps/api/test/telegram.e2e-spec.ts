@@ -928,7 +928,9 @@ describe('telegram e2e', () => {
     expect(await outboxCount()).toBe(1);
 
     tg.networkDown = false;
-    await app.get<Db>(DB).execute(sql`update telegram_outbox set next_attempt_at = now()`);
+    await app
+      .get<Db>(DB)
+      .execute(sql`update telegram_outbox set next_attempt_at = now() - interval '1 second'`);
     expect(await tgs.retryOutbox()).toBe(1);
     expect(tg.ids).toHaveLength(deliveredBefore + 1);
     expect(await outboxCount()).toBe(0);
@@ -965,7 +967,9 @@ describe('telegram e2e', () => {
     expect(await outboxCount()).toBe(1);
 
     tg.networkDown = false;
-    await app.get<Db>(DB).execute(sql`update telegram_outbox set next_attempt_at = now()`);
+    await app
+      .get<Db>(DB)
+      .execute(sql`update telegram_outbox set next_attempt_at = now() - interval '1 second'`);
     expect(await tgs.retryOutbox()).toBe(1);
     expect(tg.ids).toHaveLength(deliveredBefore + 1);
     expect(textOf(tg.sent().at(-1))).toContain('Ночная проверка');
@@ -983,13 +987,17 @@ describe('telegram e2e', () => {
     tg.networkDown = false;
     tg.sendFailuresRemaining = 1;
     const attemptsBefore = tg.calls.length;
-    await app.get<Db>(DB).execute(sql`update telegram_outbox set next_attempt_at = now()`);
+    await app
+      .get<Db>(DB)
+      .execute(sql`update telegram_outbox set next_attempt_at = now() - interval '1 second'`);
     expect(await tgs.retryOutbox()).toBe(0);
     // После повторной неудачи первой записи вторая даже не отправляется.
     expect(tg.calls).toHaveLength(attemptsBefore + 1);
     expect(await outboxCount()).toBe(2);
 
-    await app.get<Db>(DB).execute(sql`update telegram_outbox set next_attempt_at = now()`);
+    await app
+      .get<Db>(DB)
+      .execute(sql`update telegram_outbox set next_attempt_at = now() - interval '1 second'`);
     expect(await tgs.retryOutbox()).toBe(2);
     const delivered = tg
       .sent()

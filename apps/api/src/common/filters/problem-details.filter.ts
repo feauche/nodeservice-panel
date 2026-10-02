@@ -60,6 +60,7 @@ const TITLES: Record<number, string> = {
   403: 'Доступ запрещён',
   404: 'Не найдено',
   409: 'Конфликт',
+  413: 'Текст слишком большой',
   422: 'Данные не прошли проверку',
   429: 'Слишком много запросов',
   500: 'Внутренняя ошибка',
@@ -115,6 +116,10 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       if (status === HttpStatus.NOT_FOUND && detail?.startsWith('Cannot '))
         detail =
           'Такого адреса в API нет. Если панель только что обновлялась — перезагрузи страницу: интерфейс и сервер могли разойтись версиями.';
+    } else if (isPayloadTooLarge(exception)) {
+      status = HttpStatus.PAYLOAD_TOO_LARGE;
+      detail = 'Текст слишком большой. Сократите его и попробуйте ещё раз.';
+      type = 'https://nodeservice.dev/problems/payload-too-large';
     } else {
       stack = exception instanceof Error ? exception.stack : String(exception);
     }
@@ -152,4 +157,10 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     };
     res.status(status).type('application/problem+json').json(problem);
   }
+}
+
+function isPayloadTooLarge(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const err = value as { status?: unknown; statusCode?: unknown; type?: unknown };
+  return err.status === 413 || err.statusCode === 413 || err.type === 'entity.too.large';
 }

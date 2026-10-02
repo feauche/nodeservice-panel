@@ -32,11 +32,13 @@ export function setupHttp(app: NestExpressApplication): void {
   // и подписью ed25519, CSRF неприменим. /api/internal/* — служебные запросы изнутри контейнера api
   // (nodeservice update): только с 127.0.0.1 и с подписью из APP_SECRET, браузер их не делает.
   app.use((req: Request, res: Response, next: NextFunction) =>
-    req.path.startsWith('/api/') &&
-    !req.path.startsWith('/api/agent/') &&
-    !req.path.startsWith('/api/internal/')
-      ? csrf(req, res, next)
-      : next(),
+    shouldApplyCsrf(req.path) ? csrf(req, res, next) : next(),
   );
   app.setGlobalPrefix('api');
+}
+
+/** Express сопоставляет маршруты без учёта регистра; защита обязана делать так же. */
+export function shouldApplyCsrf(path: string): boolean {
+  const p = path.toLowerCase();
+  return p.startsWith('/api/') && !p.startsWith('/api/agent/') && !p.startsWith('/api/internal/');
 }

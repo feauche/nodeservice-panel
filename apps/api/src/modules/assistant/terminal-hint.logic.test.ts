@@ -12,6 +12,22 @@ describe('maskSecrets', () => {
     expect(cut.text).toBe('x\n[приватный ключ скрыт]');
     expect(full.count).toBe(1);
   });
+  it('пароли в URI и типовых командах не уходят модели', () => {
+    const cases: Array<[string, string]> = [
+      [
+        'DATABASE_URL=postgresql://postgres:S3cretPass@db:5432/app',
+        'DATABASE_URL=postgresql://postgres:[скрыто]@db:5432/app',
+      ],
+      ['REDIS_URL=redis://:redisPass@cache:6379', 'REDIS_URL=redis://:[скрыто]@cache:6379'],
+      ['curl -u admin:curlPass https://example.com', 'curl -u admin:[скрыто] https://example.com'],
+      ['mysql -uroot -pMysqlPass db', 'mysql -uroot -p[скрыто] db'],
+      ['mysql -u root -p MysqlPass db', 'mysql -u root -p [скрыто] db'],
+      ['sshpass -p SshPass ssh root@host', 'sshpass -p [скрыто] ssh root@host'],
+      ['echo SudoPass | sudo -S id', 'echo [скрыто] | sudo -S id'],
+      ['Sup3rSecret: command not found', '[скрыто]: command not found'],
+    ];
+    for (const [input, expected] of cases) expect(maskSecrets(input).text, input).toBe(expected);
+  });
   it('пароли, токены и ключи в разных записях', () => {
     const cases: Array<[string, string]> = [
       ['DB_PASSWORD=hunter2', 'DB_PASSWORD=[скрыто]'],

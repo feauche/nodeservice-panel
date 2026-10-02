@@ -200,9 +200,14 @@ export function buildBlockCheckCommand(address: string, port: number, sni: strin
       '  echo \'{"stage":"port","ok":true,"stalledAtKb":null,"missing":"openssl"}\'',
       '  exit 0',
       'fi',
+      // OpenSSL и curl требуют квадратные скобки вокруг литерала IPv6 в составном host:port.
+      'case "$addr" in',
+      '  *:*) tls_endpoint="[$addr]:$port"; resolve_addr="[$addr]" ;;',
+      '  *) tls_endpoint="$addr:$port"; resolve_addr="$addr" ;;',
+      'esac',
       // Шаг 2: настоящее TLS-рукопожатие с именем маскировки ноды. Тихий обрыв без сертификата в
       // ответе (не отказ, а именно тишина) — признак блокировки по протоколу/имени, не сбоя сети.
-      `tls_out=$(timeout ${BLOCK_CHECK_READ_TIMEOUT_SEC} openssl s_client -connect "$addr:$port" -servername "$sni" </dev/null 2>&1)`,
+      `tls_out=$(timeout ${BLOCK_CHECK_READ_TIMEOUT_SEC} openssl s_client -connect "$tls_endpoint" -servername "$sni" </dev/null 2>&1)`,
       'if ! printf \'%s\' "$tls_out" | grep -q "BEGIN CERTIFICATE"; then',
       '  echo \'{"stage":"tls","ok":false,"stalledAtKb":null}\'',
       '  exit 0',
@@ -218,7 +223,7 @@ export function buildBlockCheckCommand(address: string, port: number, sni: strin
       'stalled=""',
       `for kb in ${sizes.join(' ')}; do`,
       "  pad=$(head -c $((kb*1000)) /dev/zero | tr '\\0' 'A')",
-      `  curl -s -o /dev/null --max-time ${BLOCK_CHECK_READ_TIMEOUT_SEC} --connect-timeout ${BLOCK_CHECK_CONNECT_TIMEOUT_SEC} -H "X-Pad: $pad" "https://$sni:$port/" --resolve "$sni:$port:$addr" 2>/dev/null`,
+      `  curl -s -o /dev/null --max-time ${BLOCK_CHECK_READ_TIMEOUT_SEC} --connect-timeout ${BLOCK_CHECK_CONNECT_TIMEOUT_SEC} -H "X-Pad: $pad" "https://$sni:$port/" --resolve "$sni:$port:$resolve_addr" 2>/dev/null`,
       '  rc=$?',
       '  if [ "$rc" = "28" ]; then stalled=$kb; break; fi',
       '  if [ "$rc" != "0" ] && [ "$rc" != "22" ]; then stalled="err"; break; fi',

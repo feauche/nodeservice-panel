@@ -43,7 +43,14 @@ import { PanelLifecycleService } from './modules/health/panel-lifecycle.service.
 import { TerminalGateway } from './modules/terminal/terminal.gateway.js';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+    bodyParser: false,
+  });
+  // Контракты разрешают до 100 000 знаков. Кириллица занимает несколько байт, поэтому стандартных
+  // 100 КБ Express недостаточно даже для текста, который проходит проверку DTO.
+  app.useBodyParser('json', { limit: '1mb' });
+  app.useBodyParser('urlencoded', { limit: '1mb', extended: true });
   app.useLogger(app.get(Logger));
   const config = app.get<ConfigService<Env, true>>(ConfigService);
   const isProd = config.get('NODE_ENV') === 'production';

@@ -64,6 +64,13 @@ describe('pickRuProbes', () => {
 });
 
 describe('buildBlockCheckCommand', () => {
+  it('оборачивает IPv6 для OpenSSL и curl --resolve', () => {
+    const cmd = unescapeSh(buildBlockCheckCommand('2a01:4f8:c0c:1::1', 8443, 'mask.example.com'));
+    expect(cmd).toContain('tls_endpoint="[$addr]:$port"');
+    expect(cmd).toContain('resolve_addr="[$addr]"');
+    expect(cmd).toContain('openssl s_client -connect "$tls_endpoint"');
+    expect(cmd).toContain('--resolve "$sni:$port:$resolve_addr"');
+  });
   it('подставляет адрес, порт и SNI (в кавычках для оболочки); печатает один JSON на этапах tcp/tls/data', () => {
     const cmd = unescapeSh(buildBlockCheckCommand('203.0.113.7', 8443, 'www.example.com'));
     expect(cmd).toContain("addr='203.0.113.7'");

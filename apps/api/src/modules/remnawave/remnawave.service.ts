@@ -7,7 +7,7 @@ import {
   type RemnawaveStatus,
 } from '@nodeservice/shared';
 
-import { problem } from '../../common/filters/problem-details.filter.js';
+import { errorText, problem } from '../../common/filters/problem-details.filter.js';
 import type { Env } from '../../config/env.schema.js';
 import { AuditService } from '../audit/audit.service.js';
 import {
@@ -146,7 +146,7 @@ export class RemnawaveService {
           target: { type: 'settings', id: 'remnawave', display: creds.domain },
         });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorText(err);
       await this.store.updateSnapshot({
         checkedAt: new Date().toISOString(),
         error: message,

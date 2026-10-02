@@ -32,16 +32,19 @@ describe('расширенное оформление Telegram', () => {
     expect(blocks.map((b) => b.type)).toEqual([
       'paragraph',
       'paragraph',
+      'paragraph',
       'table',
       'paragraph',
       'table',
+      'paragraph',
       'paragraph',
     ]);
     expect(blocks[0]).toEqual({
       type: 'paragraph',
       text: [{ type: 'bold', text: 'Онлайн:' }, ' 605 → 0 (−100 %) за 5 минут'],
     });
-    expect(blocks[1]).toEqual({ type: 'paragraph', text: { type: 'bold', text: 'Из России:' } });
+    expect(blocks[1]).toEqual({ type: 'paragraph', text: '\u00a0' });
+    expect(blocks[2]).toEqual({ type: 'paragraph', text: { type: 'bold', text: 'Из России:' } });
     // Подпись целиком с двоеточиями внутри — тоже жирная.
     expect(bodyBlocks('Вход арендодателя (amwey.guardora.pro:1819), из России:')).toEqual([
       {
@@ -49,12 +52,12 @@ describe('расширенное оформление Telegram', () => {
         text: { type: 'bold', text: 'Вход арендодателя (amwey.guardora.pro:1819), из России:' },
       },
     ]);
-    expect(table(blocks[2])).toEqual([
+    expect(table(blocks[3])).toEqual([
       ['Откуда', 'Результат'],
       ['Мост', 'порт не отвечает совсем'],
       ['Россия - 1', 'порт не отвечает совсем'],
     ]);
-    expect(table(blocks[4])).toEqual([
+    expect(table(blocks[5])).toEqual([
       ['Откуда', 'Результат'],
       ['Нидерланды - 2', 'порт отвечает'],
     ]);
@@ -80,10 +83,11 @@ describe('расширенное оформление Telegram', () => {
     });
   });
 
-  it('пустых блоков не бывает: Telegram их отвергает', () => {
+  it('пустых блоков не бывает, а внутренний разрыв сохраняется безопасным пробелом', () => {
     const blocks = bodyBlocks('\n\n  \nСтрока\n\n\n•  \n');
     expect(blocks).toEqual([
       { type: 'paragraph', text: 'Строка' },
+      { type: 'paragraph', text: '\u00a0' },
       { type: 'list', items: [{ blocks: [{ type: 'paragraph', text: '—' }] }] },
     ]);
   });
@@ -108,10 +112,33 @@ describe('расширенное оформление Telegram', () => {
       type: 'paragraph',
       text: [{ type: 'bold', text: 'Финляндия #01' }, ' · ', { type: 'code', text: '95.216.10.4' }],
     });
+    expect(blocks[2]).toEqual({ type: 'paragraph', text: '\u00a0' });
+    expect(blocks.at(-2)).toEqual({ type: 'paragraph', text: '\u00a0' });
     expect(blocks.at(-1)).toEqual({ type: 'footer', text: 'Критичный инцидент · 23:11' });
     // Разметку экранировать не нужно: текст идёт как есть.
     const raw = richMessageBlocks({ event: 'resolved', title: 'a <b> & c', body: null, server: null });
     expect(raw).toEqual([{ type: 'heading', size: 3, text: '✅ a <b> & c' }]);
+  });
+
+  it('разбор Джарвиса, уточнение и таблица не слипаются', () => {
+    const blocks = bodyBlocks(
+      [
+        '🤖 Разбор Джарвиса (уверенность средняя): причина.',
+        '',
+        'Уточнено: свежая проверка.',
+        '',
+        'Порт SSH 5492 — ни из одной страны:',
+        '• Мост — порт не отвечает',
+      ].join('\n'),
+    );
+    expect(blocks.map((b) => (b.type === 'paragraph' ? b.text : b.type))).toEqual([
+      [{ type: 'bold', text: '🤖 Разбор Джарвиса (уверенность средняя):' }, ' причина.'],
+      '\u00a0',
+      [{ type: 'bold', text: 'Уточнено:' }, ' свежая проверка.'],
+      '\u00a0',
+      { type: 'bold', text: 'Порт SSH 5492 — ни из одной страны:' },
+      'table',
+    ]);
   });
 
   it('очень длинный текст обрезается, а не упирается в предел Telegram', () => {

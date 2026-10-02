@@ -85,7 +85,18 @@ export function onlineText(nodeName: string, s: OnlineSummary): string {
 
 /** Агент и SSH по данным панели: когда последний раз отвечали. */
 export function connectionText(
-  s: Pick<Server, 'agentStatus' | 'agentLastSeenAt' | 'sshOk' | 'lastSshOkAt' | 'lastSshCheckAt'>,
+  s: Pick<
+    Server,
+    | 'agentStatus'
+    | 'agentVersion'
+    | 'agentLastSeenAt'
+    | 'agentTransport'
+    | 'agentRoute'
+    | 'agentRouteFallback'
+    | 'sshOk'
+    | 'lastSshOkAt'
+    | 'lastSshCheckAt'
+  >,
   nowMs = Date.now(),
 ): string {
   const agent =
@@ -100,7 +111,15 @@ export function connectionText(
       : s.sshOk === false
         ? `SSH с панели не работает, последний успешный вход ${ago(s.lastSshOkAt, nowMs)}`
         : 'SSH ещё не проверяли';
-  return `Связь с панелью: ${agent}; ${ssh}.`;
+  const version = s.agentVersion ? `, версия ${s.agentVersion}` : '';
+  const route = s.agentRoute ? ` (${s.agentRoute})` : '';
+  const channel =
+    s.agentTransport === 'https' && s.agentRouteFallback === false
+      ? ` Канал агента: основной входящий HTTPS${route}; панель подключается к агенту, поэтому исходящий доступ сервера к домену панели для этой связи не нужен.`
+      : s.agentTransport
+        ? ` Канал агента: запасной исходящий ${s.agentTransport === 'websocket' ? 'WebSocket' : 'HTTPS'}${route}; сервер сам подключается к панели, поэтому его исходящий доступ к этому адресу важен.`
+        : '';
+  return `Связь с панелью: ${agent}${version}; ${ssh}.${channel}`;
 }
 
 /** Порт SSH из каждой страны и что это значит. */

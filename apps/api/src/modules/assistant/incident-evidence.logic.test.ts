@@ -187,7 +187,11 @@ describe('агент, парк, прошлые дела, покрытие', () =
     const t = connectionText(
       {
         agentStatus: 'offline',
+        agentVersion: 'v0.7.0',
         agentLastSeenAt: '2026-09-29T11:48:00Z',
+        agentTransport: null,
+        agentRoute: null,
+        agentRouteFallback: null,
         sshOk: false,
         lastSshOkAt: '2026-09-29T09:00:00Z',
         lastSshCheckAt: null,
@@ -195,9 +199,28 @@ describe('агент, парк, прошлые дела, покрытие', () =
       NOW,
     );
     expect(t).toBe(
-      'Связь с панелью: агент молчит, последний раз был 12 мин назад; SSH с панели не работает, последний успешный вход 3 ч назад.',
+      'Связь с панелью: агент молчит, последний раз был 12 мин назад, версия v0.7.0; SSH с панели не работает, последний успешный вход 3 ч назад.',
     );
     expect(ago(null)).toBe('ни разу');
+  });
+  it('для v0.8 объясняет направление основного входящего канала', () => {
+    const t = connectionText(
+      {
+        agentStatus: 'offline',
+        agentVersion: 'v0.8.0',
+        agentLastSeenAt: null,
+        agentTransport: 'https',
+        agentRoute: 'https://199.189.253.180:25607',
+        agentRouteFallback: false,
+        sshOk: true,
+        lastSshOkAt: null,
+        lastSshCheckAt: null,
+      },
+      NOW,
+    );
+    expect(t).toContain('основной входящий HTTPS');
+    expect(t).toContain('панель подключается к агенту');
+    expect(t).toContain('исходящий доступ сервера к домену панели для этой связи не нужен');
   });
   it('одновременные сбои у других серверов — общая причина', () => {
     const me = inc({});

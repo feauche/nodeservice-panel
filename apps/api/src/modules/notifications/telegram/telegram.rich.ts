@@ -27,6 +27,11 @@ export type RichBlock =
 /** Пределы Telegram: 500 блоков и 32 768 знаков; держимся с запасом, остаток честно помечаем. */
 const BLOCKS_MAX = 120;
 const TEXT_MAX = 12_000;
+/** Telegram отвергает пустой paragraph, поэтому визуальный разрыв — неразрывный пробел. */
+const SPACER_TEXT = '\u00a0';
+
+const spacer = (): RichBlock => ({ type: 'paragraph', text: SPACER_TEXT });
+const isSpacer = (b: RichBlock | undefined): boolean => b?.type === 'paragraph' && b.text === SPACER_TEXT;
 
 const bold = (text: string): RichText => ({ type: 'bold', text });
 const cell = (text: RichText, header = false): RichCell => ({
@@ -80,18 +85,29 @@ function bulletsBlock(lines: string[]): RichBlock {
 export function bodyBlocks(body: string): RichBlock[] {
   const out: RichBlock[] = [];
   let bullets: string[] = [];
+  let separated = false;
+  const push = (block: RichBlock) => {
+    if (separated && out.length > 0 && !isSpacer(out.at(-1))) out.push(spacer());
+    separated = false;
+    out.push(block);
+  };
   const flush = () => {
-    if (bullets.length > 0) out.push(bulletsBlock(bullets));
+    if (bullets.length > 0) push(bulletsBlock(bullets));
     bullets = [];
   };
   for (const raw of body.split('\n')) {
     const line = raw.trim();
+    if (!line) {
+      flush();
+      if (out.length > 0) separated = true;
+      continue;
+    }
     if (BULLET.test(line)) {
       bullets.push(line);
       continue;
     }
     flush();
-    if (line) out.push({ type: 'paragraph', text: lineText(line) });
+    push({ type: 'paragraph', text: lineText(line) });
   }
   flush();
   return out;
@@ -116,12 +132,16 @@ export function richMessageBlocks(m: TelegramMessageInput): RichBlock[] {
     });
   const body = m.body?.trim();
   if (body) {
+    if (m.server) blocks.push(spacer());
     const clipped = body.length > TEXT_MAX ? `${body.slice(0, TEXT_MAX)}…` : body;
     const parsed = bodyBlocks(clipped);
     blocks.push(...parsed.slice(0, BLOCKS_MAX));
     if (parsed.length > BLOCKS_MAX) blocks.push({ type: 'paragraph', text: '…остальное — в панели.' });
   }
-  if (m.footer) blocks.push({ type: 'footer', text: m.footer });
+  if (m.footer) {
+    if (body && !isSpacer(blocks.at(-1))) blocks.push(spacer());
+    blocks.push({ type: 'footer', text: m.footer });
+  }
   return blocks;
 }
 

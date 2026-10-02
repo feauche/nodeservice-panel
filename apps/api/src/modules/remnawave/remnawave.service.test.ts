@@ -181,7 +181,8 @@ describe('RemnawaveService: тихая перепроверка (джоба)', (
     ctx.world.fetchError = new HttpException({ detail: 'таймаут' }, 502) as unknown as Error;
     await ctx.svc.syncQuiet();
     let s = await ctx.svc.status();
-    expect(s.error).toBeTruthy();
+    expect(s.error).toBe('таймаут');
+    expect(s.error).not.toBe('Http Exception');
     expect(s.stats).toEqual(STATS); // прежние данные остались
     expect(ctx.audit.filter((a) => a.action === 'remnawave.unreachable')).toHaveLength(1);
     // повторная неудача не пишет второй раз
