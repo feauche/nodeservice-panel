@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  collapseBaseline,
   minutesText,
   ONLINE_GAP_MAX_MS,
   onlineBaseline,
@@ -50,10 +51,32 @@ describe('onlineBaseline: с чем сравнивать свежий онлай
   });
 });
 
+describe('collapseBaseline: длительный обвал онлайна', () => {
+  it('высокий уровень подтверждают три снимка, а не один пик', () => {
+    const prior = every([600, 610, 590, 300, 120, 30]);
+    expect(collapseBaseline(prior, T0 + 6 * MIN)).toMatchObject({ online: 590, at: T0 + 2 * MIN });
+
+    const oneSpike = every([30, 30, 600, 30, 30, 30]);
+    expect(collapseBaseline(oneSpike, T0 + 6 * MIN)?.online).toBe(30);
+  });
+
+  it('перерыв больше получаса не сравнивает свежий онлайн со старым', () => {
+    const prior = every([600, 600, 600]);
+    expect(collapseBaseline(prior, T0 + 2 * MIN + ONLINE_GAP_MAX_MS + 1)).toBeNull();
+  });
+});
+
 describe('withSample', () => {
-  it('новый снимок в конец, всё старше окна — долой', () => {
+  it('новый снимок в конец, история за шесть часов сохраняется', () => {
     const next = withSample(every([1, 2, 3, 4, 5, 6, 7]), { at: T0 + 7 * MIN, online: 8 });
-    expect(next.map((s) => s.online)).toEqual([4, 5, 6, 7, 8]);
+    expect(next.map((s) => s.online)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it('снимки старше шести часов удаляются', () => {
+    const old = { at: T0, online: 600 };
+    const recent = { at: T0 + 359 * MIN, online: 30 };
+    const fresh = { at: T0 + 361 * MIN, online: 29 };
+    expect(withSample([old, recent], fresh)).toEqual([recent, fresh]);
   });
 });
 

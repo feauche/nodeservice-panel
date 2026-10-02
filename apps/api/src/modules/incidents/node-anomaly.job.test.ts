@@ -232,6 +232,28 @@ describe('падение онлайна ноды', () => {
     expect(opened).toEqual([]);
   });
 
+  it('постепенный обвал более 90 % не исчезает за пятиминутным окном', async () => {
+    const { snap, opened } = setup();
+    // Ни один отрезок в пять минут не падает на 80 %, но нода в итоге теряет 95 % онлайна.
+    for (const online of [600, 600, 600, 500, 400, 320, 250, 200, 160, 125, 100, 80, 64])
+      await snap(node({ usersOnline: online }));
+    for (const online of [51, 47, 40, 35]) await snap(node({ usersOnline: online }));
+    expect(opened).toEqual([]);
+    await snap(node({ usersOnline: 29 }));
+    expect(opened).toHaveLength(1);
+    expect(opened[0]?.detail).toContain('Онлайн: 600 → 29 (−95 %)');
+  });
+
+  it('после перезапуска длительный обвал виден в сохранённых измерениях', async () => {
+    const saved = savedOnline([600, 610, 590, 400, 300, 200, 140, 100, 70, 45, 30], 1);
+    const { snap, opened } = setup(result(), SOON, saved);
+    for (let i = 0; i < 4; i += 1) await snap(node({ usersOnline: 29 }));
+    expect(opened).toEqual([]);
+    await snap(node({ usersOnline: 29 }));
+    expect(opened).toHaveLength(1);
+    expect(opened[0]?.detail).toContain('Онлайн: 590 → 29 (−95 %)');
+  });
+
   it('тот же снимок дважды — одна проверка: «три подряд» на нём не набираются', async () => {
     const { snap, opened, rerun } = setup();
     await snap(node());

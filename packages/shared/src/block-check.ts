@@ -18,6 +18,17 @@ export const NODE_ONLINE_DROP_MIN_BASELINE = 10;
  * 29.09.2026: на третью проверку, не на вторую — перезагрузки и короткие сбои не должны шуметь).
  */
 export const NODE_ONLINE_DROP_CONFIRM_CHECKS = 3;
+/**
+ * Медленный, но критичный обвал: короткое окно выше его не видит, если онлайн падал
+ * ступенями. База считается по нескольким высоким снимкам, поэтому один случайный пик
+ * не поднимает тревогу.
+ */
+export const NODE_ONLINE_COLLAPSE_PCT = 90;
+export const NODE_ONLINE_COLLAPSE_WINDOW_MIN = 6 * 60;
+export const NODE_ONLINE_COLLAPSE_MIN_BASELINE = 50;
+export const NODE_ONLINE_COLLAPSE_BASELINE_SAMPLES = 3;
+/** Медленную просадку подтверждаем дольше, чем резкую: пятью свежими снимками. */
+export const NODE_ONLINE_COLLAPSE_CONFIRM_CHECKS = 5;
 /** Сколько снимков подряд онлайн должен быть в норме, чтобы открытый инцидент закрылся сам. */
 export const NODE_ONLINE_RECOVER_CHECKS = 3;
 /** «В норме» — не меньше такой доли онлайна до падения, %. */

@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import {
+  NODE_ONLINE_COLLAPSE_CONFIRM_CHECKS,
+  NODE_ONLINE_COLLAPSE_MIN_BASELINE,
+  NODE_ONLINE_COLLAPSE_PCT,
   NODE_ONLINE_DROP_CONFIRM_CHECKS,
   NODE_ONLINE_DROP_MIN_BASELINE,
   NODE_ONLINE_DROP_PCT,
@@ -18,6 +21,7 @@ import { IncidentsRepository } from './incidents.repository.js';
 import { IncidentsService } from './incidents.service.js';
 import {
   baselineFromDetail,
+  collapseBaseline,
   ONLINE_RESTORE_MIN,
   type OnlineSample,
   onlineBaseline,
@@ -45,6 +49,9 @@ interface Candidate {
   baselineAt: number;
   /** Сколько снимков подряд уже показали просадку (первый — сама находка). */
   seen: number;
+  /** Порог и число подтверждений разные для быстрого и длительного падения. */
+  dropPct: number;
+  confirmChecks: number;
 }
 
 /** Подтверждённое падение онлайна, которое пора разбирать. */
@@ -55,6 +62,8 @@ interface Drop {
   baselineAt: number;
   /** За сколько минут упал: от последнего снимка с прежним онлайном до подтверждения. */
   minutes: number;
+  dropPct: number;
+  confirmChecks: number;
 }
 
 /**
@@ -63,7 +72,8 @@ interface Drop {
  * ноды с наибольшим за последние пять минут (решение владельца 30.09.2026: сравнение только с предыдущей
  * минутой пропускало падение ступеньками — 300 → 200 → 110 → 30). История снимков лежит в памяти; после
  * запуска панели она восстанавливается из сохранённых измерений онлайна, иначе падение, начавшееся перед
- * перезапуском, оставалось незамеченным: базой становился уже упавший онлайн.
+ * перезапуском, оставалось незамеченным: базой становился уже упавший онлайн. Второй контур
+ * ловит падение более чем на 90 %, даже если оно растянулось на несколько часов; его база тоже переживает перезапуск.
  * Резкое падение онлайна не открывает инцидент сразу: обычная перезагрузка сервера тоже на секунды
  * роняет онлайн до нуля и сама поднимается. Первое обнаружение — только кандидат; открываем инцидент,
  * лишь если просадку показали три снимка подряд (NODE_ONLINE_DROP_CONFIRM_CHECKS, решение владельца
@@ -143,7 +153,9 @@ export class NodeAnomalyJob {
             this.pending.set(drop.node.uuid, {
               baselineOnline: drop.before,
               baselineAt: drop.baselineAt,
-              seen: NODE_ONLINE_DROP_CONFIRM_CHECKS - 1,
+              seen: drop.confirmChecks - 1,
+              dropPct: drop.dropPct,
+              confirmChecks: drop.confirmChecks,
             });
         }
       }
@@ -190,12 +202,13 @@ export class NodeAnomalyJob {
     const last = prior.at(-1);
     if (last && at <= last.at) return null;
     const baseline = onlineBaseline(prior, at);
+    const sustainedBaseline = collapseBaseline(prior, at);
     this.history.set(node.uuid, withSample(prior, { at, online }));
 
     const candidate = this.pending.get(node.uuid);
     if (candidate) {
-      const stillDown = online < candidate.baselineOnline * (1 - NODE_ONLINE_DROP_PCT / 100);
-      if (stillDown && candidate.seen + 1 < NODE_ONLINE_DROP_CONFIRM_CHECKS) {
+      const stillDown = online <= candidate.baselineOnline * (1 - candidate.dropPct / 100);
+      if (stillDown && candidate.seen + 1 < candidate.confirmChecks) {
         // Просадка держится, но проверок подряд ещё мало — ждём следующий снимок.
         candidate.seen += 1;
         return null;
@@ -210,16 +223,42 @@ export class NodeAnomalyJob {
           after: online,
           baselineAt: candidate.baselineAt,
           minutes: Math.max(1, Math.round((at - candidate.baselineAt) / 60_000)),
+          dropPct: candidate.dropPct,
+          confirmChecks: candidate.confirmChecks,
         };
       }
       // Поднялось само на следующей же проверке — инцидент не заводим, идём дальше как обычно.
     }
 
-    if (!baseline || baseline.online < NODE_ONLINE_DROP_MIN_BASELINE) return null;
-    const dropPct = ((baseline.online - online) / baseline.online) * 100;
-    if (dropPct < NODE_ONLINE_DROP_PCT) return null;
-    // Не открываем сразу — ждём подтверждения следующим снимком (см. коммент к классу).
-    this.pending.set(node.uuid, { baselineOnline: baseline.online, baselineAt: baseline.at, seen: 1 });
+    const fastDrop = baseline
+      ? ((baseline.online - online) / Math.max(1, baseline.online)) * 100
+      : Number.NEGATIVE_INFINITY;
+    if (baseline && baseline.online >= NODE_ONLINE_DROP_MIN_BASELINE && fastDrop >= NODE_ONLINE_DROP_PCT) {
+      this.pending.set(node.uuid, {
+        baselineOnline: baseline.online,
+        baselineAt: baseline.at,
+        seen: 1,
+        dropPct: NODE_ONLINE_DROP_PCT,
+        confirmChecks: NODE_ONLINE_DROP_CONFIRM_CHECKS,
+      });
+      return null;
+    }
+    const sustainedDrop = sustainedBaseline
+      ? ((sustainedBaseline.online - online) / Math.max(1, sustainedBaseline.online)) * 100
+      : Number.NEGATIVE_INFINITY;
+    if (
+      sustainedBaseline &&
+      sustainedBaseline.online >= NODE_ONLINE_COLLAPSE_MIN_BASELINE &&
+      sustainedDrop >= NODE_ONLINE_COLLAPSE_PCT
+    ) {
+      this.pending.set(node.uuid, {
+        baselineOnline: sustainedBaseline.online,
+        baselineAt: sustainedBaseline.at,
+        seen: 1,
+        dropPct: NODE_ONLINE_COLLAPSE_PCT,
+        confirmChecks: NODE_ONLINE_COLLAPSE_CONFIRM_CHECKS,
+      });
+    }
     return null;
   }
 
@@ -227,11 +266,13 @@ export class NodeAnomalyJob {
   private async recordUnexplained(drop: Drop, error: unknown): Promise<boolean> {
     const pct = Math.max(0, Math.round(((drop.before - drop.after) / Math.max(1, drop.before)) * 100));
     const reason = error instanceof Error ? error.message : String(error);
+    const confirmations =
+      drop.confirmChecks === 3 ? 'тремя' : drop.confirmChecks === 5 ? 'пятью' : String(drop.confirmChecks);
     const title = `Резко упал онлайн, причину проверить не удалось · ${drop.node.name}`;
     const detail = [
       `Онлайн: ${drop.before} → ${drop.after} (−${pct} %) за ${drop.minutes} мин.`,
       '',
-      'Падение подтверждено тремя свежими снимками Remnawave. Проверка причины завершилась ошибкой, поэтому панель не утверждает, что это блокировка или неисправность сервера.',
+      `Падение подтверждено ${confirmations} свежими снимками Remnawave. Проверка причины завершилась ошибкой, поэтому панель не утверждает, что это блокировка или неисправность сервера.`,
       `Ошибка диагностики: ${reason.slice(0, 300)}`,
       'Проверьте ноду и сервер вручную; Джарвис разберёт доступные данные этого дела.',
     ].join('\n');

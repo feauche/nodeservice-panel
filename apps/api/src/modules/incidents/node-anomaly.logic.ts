@@ -1,4 +1,8 @@
-import { NODE_ONLINE_DROP_WINDOW_MIN } from '@nodeservice/shared';
+import {
+  NODE_ONLINE_COLLAPSE_BASELINE_SAMPLES,
+  NODE_ONLINE_COLLAPSE_WINDOW_MIN,
+  NODE_ONLINE_DROP_WINDOW_MIN,
+} from '@nodeservice/shared';
 
 import type { VmMatrixSeries } from '../metrics/vm-reader.service.js';
 
@@ -9,13 +13,14 @@ export interface OnlineSample {
 }
 
 const WINDOW_MS = NODE_ONLINE_DROP_WINDOW_MIN * 60_000;
+const COLLAPSE_WINDOW_MS = NODE_ONLINE_COLLAPSE_WINDOW_MIN * 60_000;
 /**
  * Перерыв в снимках (панель не работала, Remnawave не отвечала) дольше этого — прежний онлайн уже не база:
  * за большее время онлайн заметно меняется и сам, без всякого сбоя.
  */
 export const ONLINE_GAP_MAX_MS = 30 * 60_000;
 /** За сколько минут читать сохранённые измерения после запуска: окно плюс допустимый перерыв. */
-export const ONLINE_RESTORE_MIN = NODE_ONLINE_DROP_WINDOW_MIN + ONLINE_GAP_MAX_MS / 60_000;
+export const ONLINE_RESTORE_MIN = NODE_ONLINE_COLLAPSE_WINDOW_MIN + ONLINE_GAP_MAX_MS / 60_000;
 
 /**
  * С чем сравнивать свежий онлайн: наибольший онлайн за окно (NODE_ONLINE_DROP_WINDOW_MIN) перед последним
@@ -33,9 +38,27 @@ export function onlineBaseline(prior: OnlineSample[], nowMs: number): OnlineSamp
   return best;
 }
 
-/** История с новым снимком: всё, что старше окна, базой уже не станет. */
+/**
+ * Подтверждённый высокий онлайн за длинное окно. Берём третий по высоте снимок: так один-два
+ * случайных пика не станут базой, а реальный рабочий уровень не исчезнет после пяти минут низкого
+ * онлайна. Перерыв дольше ONLINE_GAP_MAX_MS отменяет сравнение: за это время картина могла смениться.
+ */
+export function collapseBaseline(prior: OnlineSample[], nowMs: number): OnlineSample | null {
+  const last = prior.at(-1);
+  if (!last || nowMs - last.at > ONLINE_GAP_MAX_MS) return null;
+  const eligible = prior.filter((s) => s.at > last.at - COLLAPSE_WINDOW_MS);
+  if (eligible.length < NODE_ONLINE_COLLAPSE_BASELINE_SAMPLES) return null;
+  const high = [...eligible]
+    .sort((a, b) => b.online - a.online)
+    .at(NODE_ONLINE_COLLAPSE_BASELINE_SAMPLES - 1);
+  if (!high) return null;
+  // Время — последний снимок не ниже устойчивого уровня, чтобы длительность не завышать.
+  return eligible.findLast((s) => s.online >= high.online) ?? high;
+}
+
+/** История с новым снимком: всё, что старше длинного окна, базой уже не станет. */
 export function withSample(prior: OnlineSample[], sample: OnlineSample): OnlineSample[] {
-  return [...prior.filter((s) => s.at > sample.at - WINDOW_MS), sample];
+  return [...prior.filter((s) => s.at > sample.at - COLLAPSE_WINDOW_MS), sample];
 }
 
 /**
