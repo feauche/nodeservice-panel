@@ -49,4 +49,31 @@ describe('настройки копий: свой чат', () => {
     expect(await screen.findByText(/Свой чат — строкой вида/)).toBeInTheDocument();
     expect(mockBackups.settings.telegram.ownUrl).toBe('tgram://***/-1009876543210');
   });
+
+  it('сохраняет вторую копию в S3, но не возвращает ключи в форму', async () => {
+    renderPage(BackupsPage, '/settings/backups');
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByLabelText('Хранить вторую копию'));
+    await user.type(screen.getByLabelText('Endpoint'), 'https://s3.example.com');
+    await user.type(screen.getByLabelText('Bucket'), 'nodeservice-safe');
+    await user.type(screen.getByLabelText('Access key'), 'AKIA_TEST');
+    await user.type(screen.getByLabelText('Secret key'), 'secret-test');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+
+    await waitFor(() => expect(mockBackups.settings.offsite.enabled).toBe(true));
+    expect(mockBackups.lastUpdate?.offsite).toMatchObject({
+      endpoint: 'https://s3.example.com',
+      region: 'auto',
+      bucket: 'nodeservice-safe',
+      prefix: 'nodeservice',
+      accessKeyId: 'AKIA_TEST',
+      secretAccessKey: 'secret-test',
+    });
+    await waitFor(() => expect(screen.getByLabelText('Access key')).toHaveValue(''));
+    expect(screen.getByLabelText('Access key')).toHaveAttribute(
+      'placeholder',
+      expect.stringContaining('сохранён'),
+    );
+  });
 });

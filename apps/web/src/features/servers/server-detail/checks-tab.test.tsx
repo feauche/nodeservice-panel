@@ -46,7 +46,7 @@ describe('ChecksTab', () => {
 
   it('доступность из России — отдельный ручной пункт с таблицей российских и зарубежных точек', async () => {
     renderPage(() => <ChecksTab server={server()} />, '/');
-    const list = await screen.findByRole('list', { name: 'Проверки связи — по кнопке' });
+    const list = await screen.findByRole('list', { name: 'Каждый день, автоматически' });
     const access = within(list).getByTestId('check-russia_access');
     expect(within(access).getByText('Доступность из России')).toBeInTheDocument();
 
@@ -66,19 +66,19 @@ describe('ChecksTab', () => {
     expect(within(access).getByText('Германия - 1')).toBeInTheDocument();
   });
 
-  it('само раз в сутки — только процессор; сторонние скрипты отдельно и только по кнопке', async () => {
+  it('свои проверки раз в сутки; сторонние скрипты отдельно и только по кнопке', async () => {
     seedServerChecks(server().id);
     renderPage(() => <ChecksTab server={server()} />, '/');
     await screen.findByTestId('check-cpu');
-    expect(screen.getByText(/Процессор панель замеряет сама/)).toHaveTextContent(
-      /раз в сутки, следующий замер — через .*Проверка доступности и сторонние скрипты запускаются только по кнопке\./,
+    expect(screen.getByText(/Доступность из России и процессор/)).toHaveTextContent(
+      /раз в сутки, следующий замер — через .*Сторонние скрипты запускаются только по кнопке\./,
     );
     const auto = screen.getByRole('list', { name: 'Каждый день, автоматически' });
     expect(
       within(auto)
         .getAllByRole('listitem')
         .map((li) => li.dataset.testid),
-    ).toEqual(['check-cpu']);
+    ).toEqual(['check-russia_access', 'check-cpu']);
     const scripts = screen.getByRole('list', { name: 'Сторонние скрипты — по кнопке' });
     expect(
       within(scripts)
@@ -93,9 +93,9 @@ describe('ChecksTab', () => {
     seedServerChecks(server().id);
     renderPage(() => <ChecksTab server={server()} />, '/');
     await screen.findByTestId('check-cpu');
-    expect(
-      screen.getByText(/Суточный замер процессора выключен в «Настройки → Автопроверки»/),
-    ).toHaveTextContent('все проверки запускаются по кнопке');
+    expect(screen.getByText(/Суточные проверки доступности и процессора выключены/)).toHaveTextContent(
+      'все проверки запускаются по кнопке',
+    );
     expect(screen.queryByText('Каждый день, автоматически')).not.toBeInTheDocument();
     expect(screen.getByRole('list', { name: 'Своя проверка — по кнопке' })).toBeInTheDocument();
   });

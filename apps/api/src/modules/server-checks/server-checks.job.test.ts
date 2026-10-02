@@ -34,8 +34,44 @@ describe('ServerChecksJob', () => {
       }),
     );
     const report = notifications.push.mock.calls[0]?.[0]?.body as string;
-    expect(report).toContain('• A: успешно · исправилось');
+    expect(report).toContain('• A · процессор: успешно · исправилось');
     expect(report).toContain('• B: пропущено — SSH недоступен');
+  });
+
+  it('выделяет точную точку, где доступность из России ухудшилась', async () => {
+    const block = (verdict: 'ok' | 'unreachable') => ({
+      nodeName: 'A',
+      address: '1.2.3.4',
+      sniUsed: null,
+      probes: [{ from: 'Россия - 1', verdict, detail: '', stalledAtKb: null, error: null }],
+      foreign: [],
+      verdict,
+      unchecked: null,
+      foreignUnchecked: null,
+      entry: null,
+    });
+    const notifications = { push: vi.fn().mockResolvedValue(undefined) };
+    const job = new ServerChecksJob(
+      { list: vi.fn().mockResolvedValue([{ id: 's1', name: 'A', sshOk: true }]) } as never,
+      {
+        dueLightChecks: vi.fn().mockResolvedValue([{ serverId: 's1', check: 'russia_access' }]),
+        history: vi.fn().mockResolvedValue([{ status: 'ok', blockResult: block('ok') }]),
+        scheduled: vi.fn().mockResolvedValue({
+          status: 'ok',
+          check: 'russia_access',
+          blockResult: block('unreachable'),
+        }),
+      } as never,
+      { get: vi.fn().mockResolvedValue({ serverChecksEnabled: true }) } as never,
+      notifications as never,
+    );
+
+    await job.run();
+
+    expect(notifications.push).toHaveBeenCalledWith(expect.objectContaining({ severity: 'warn' }));
+    const report = notifications.push.mock.calls[0]?.[0]?.body as string;
+    expect(report).toContain('лучше — 0, хуже — 1');
+    expect(report).toContain('Россия - 1: доступна → не отвечает');
   });
 
   it('marks a failed check as attention required', async () => {

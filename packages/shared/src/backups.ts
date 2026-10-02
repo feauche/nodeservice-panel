@@ -196,6 +196,8 @@ export type BackupRun = z.infer<typeof backupRunSchema>;
 
 export const backupsResponseSchema = z.object({
   items: z.array(backupItemSchema),
+  /** Абсолютная папка на сервере панели, где лежат локальные архивы. */
+  localLocation: z.string(),
   run: backupRunSchema,
   /** Следующая копия по расписанию; null — расписание выключено. */
   nextAt: z.string().nullable(),

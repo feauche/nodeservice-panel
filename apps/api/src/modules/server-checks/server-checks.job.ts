@@ -1,9 +1,71 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
+import type { BlockCheckResult, ServerCheckRun } from '@nodeservice/shared';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ServersRepository } from '../servers/servers.repository.js';
 import { AutochecksStore } from '../settings/autochecks.store.js';
 import { ServerChecksService } from './server-checks.service.js';
+
+const VERDICT_WEIGHT: Record<string, number> = {
+  ok: 0,
+  partial: 1,
+  tspu: 2,
+  block_16_20: 2,
+  ip_block: 2,
+  unreachable: 3,
+};
+const VERDICT_WORD: Record<string, string> = {
+  ok: 'доступна',
+  partial: 'с перебоями',
+  tspu: 'признаки ТСПУ',
+  block_16_20: 'обрыв данных',
+  ip_block: 'блокировка IP',
+  unreachable: 'не отвечает',
+};
+
+function blockChanges(
+  previous: BlockCheckResult | null | undefined,
+  current: BlockCheckResult | null | undefined,
+) {
+  if (!previous || !current) return { direction: 0, lines: [] as string[] };
+  const before = new Map([...previous.probes, ...previous.foreign].map((p) => [p.from, p.verdict]));
+  let direction = 0;
+  const lines: string[] = [];
+  for (const probe of [...current.probes, ...current.foreign]) {
+    const old = before.get(probe.from);
+    if (!old || old === probe.verdict) continue;
+    const delta = (VERDICT_WEIGHT[probe.verdict] ?? 2) - (VERDICT_WEIGHT[old] ?? 2);
+    direction += Math.sign(delta);
+    lines.push(
+      `${probe.from}: ${VERDICT_WORD[old] ?? old} → ${VERDICT_WORD[probe.verdict] ?? probe.verdict}`,
+    );
+  }
+  return { direction, lines };
+}
+
+function compare(previous: ServerCheckRun | undefined, current: ServerCheckRun) {
+  if (!previous) return { change: 'первая проверка', direction: 0, lines: [] as string[] };
+  if (previous.status !== current.status)
+    return {
+      change:
+        previous.status === 'ok' ? 'стало хуже' : current.status === 'ok' ? 'исправилось' : 'изменилось',
+      direction: previous.status === 'ok' ? 1 : current.status === 'ok' ? -1 : 0,
+      lines: [] as string[],
+    };
+  const blocks = blockChanges(previous.blockResult, current.blockResult);
+  return {
+    change:
+      blocks.lines.length === 0
+        ? 'без изменений'
+        : blocks.direction > 0
+          ? 'стало хуже'
+          : blocks.direction < 0
+            ? 'исправилось'
+            : 'изменилось',
+    direction: blocks.direction,
+    lines: blocks.lines,
+  };
+}
 
 /**
  * Свои проверки реестра раз в сутки (Настройки → Автопроверки, «Проверки серверов раз в сутки»): раз в
@@ -66,18 +128,13 @@ export class ServerChecksJob {
         }
         if (current.status === 'ok') ok += 1;
         else failed += 1;
-        if (previous && previous.status !== 'ok' && current.status === 'ok') improved += 1;
-        if (previous?.status === 'ok' && current.status !== 'ok') worse += 1;
-        const change = !previous
-          ? 'первая проверка'
-          : previous.status === current.status
-            ? 'без изменений'
-            : previous.status === 'ok'
-              ? 'стало хуже'
-              : 'исправилось';
+        const compared = compare(previous, current);
+        if (compared.direction < 0) improved += 1;
+        if (compared.direction > 0) worse += 1;
         details.push(
-          `• ${names.get(due.serverId) ?? due.serverId}: ${current.status === 'ok' ? 'успешно' : 'ошибка'} · ${change}`,
+          `• ${names.get(due.serverId) ?? due.serverId} · ${current.check === 'russia_access' ? 'доступность' : 'процессор'}: ${current.status === 'ok' ? 'успешно' : 'ошибка'} · ${compared.change}`,
         );
+        for (const line of compared.lines) details.push(`  ↳ ${line}`);
       }
       if (dueChecks.length > 0)
         for (const server of allServers.filter((s) => s.sshOk === false))

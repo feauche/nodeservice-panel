@@ -255,7 +255,11 @@ function ReportCard({ notification: n }: { notification: Notification }) {
                 'max-h-24 overflow-hidden [mask-image:linear-gradient(#000_65%,transparent)]',
             )}
           >
-            {n.body}
+            {categoryOf(n) === 'checks' && n.body.includes('\nПо серверам:\n') ? (
+              <CheckReportBody body={n.body} />
+            ) : (
+              n.body
+            )}
           </div>
           {hasDetails && (
             <button
@@ -295,6 +299,64 @@ function ReportCard({ notification: n }: { notification: Notification }) {
         </div>
       )}
     </article>
+  );
+}
+
+function CheckReportBody({ body }: { body: string }) {
+  const [summary = '', rows = ''] = body.split('\nПо серверам:\n', 2);
+  const groups: Array<{ title: string; detail: string[] }> = [];
+  for (const line of rows.split('\n')) {
+    if (line.startsWith('• ')) groups.push({ title: line.slice(2), detail: [] });
+    else if (line.trim().startsWith('↳')) groups.at(-1)?.detail.push(line.trim().slice(1).trim());
+  }
+  return (
+    <div className="flex flex-col gap-2.5 whitespace-normal">
+      <p className="m-0 whitespace-pre-line">{summary}</p>
+      <div className="overflow-hidden rounded-[10px] border border-border bg-surface">
+        {groups.map((group) => {
+          const state =
+            group.title.includes('стало хуже') || group.title.includes('ошибка')
+              ? 'worse'
+              : group.title.includes('исправилось')
+                ? 'better'
+                : 'same';
+          return (
+            <div
+              key={`${group.title}-${group.detail.join()}`}
+              className="flex flex-wrap items-start gap-2 border-t border-border px-3 py-2.5 first:border-t-0"
+            >
+              <div className="min-w-0 flex-1">
+                <b className="block text-[12.5px] font-semibold text-foreground">
+                  {group.title.split(' · ')[0]}
+                </b>
+                {group.title.includes(' · ') && (
+                  <span className="text-[11.5px] text-text-3">
+                    {group.title.slice(group.title.indexOf(' · ') + 3)}
+                  </span>
+                )}
+                {group.detail.map((line) => (
+                  <span key={line} className="mt-1 block text-[11.5px] text-text-2">
+                    {line}
+                  </span>
+                ))}
+              </div>
+              <span
+                className={cn(
+                  'rounded-full px-2 py-0.5 text-[10.5px] font-semibold',
+                  state === 'worse'
+                    ? 'bg-crit-soft text-crit'
+                    : state === 'better'
+                      ? 'bg-ok-soft text-ok'
+                      : 'bg-surface-3 text-text-3',
+                )}
+              >
+                {state === 'worse' ? 'хуже' : state === 'better' ? 'исправилось' : 'без изменений'}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

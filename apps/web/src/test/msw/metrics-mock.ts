@@ -108,6 +108,16 @@ export const metricsHandlers = [
       stepSeconds: METRIC_RANGES[range].stepSeconds,
       vmOk: mockMetrics.vmOk,
       series,
+      online: online
+        ? {
+            nodeUuid: `node-${String(params.id)}`,
+            name: mockServers.items.find((sv) => sv.id === params.id)?.name ?? 'Нода',
+            points: genSeries(String(params.id), 'conntrackCount', range).map((point) => ({
+              ...point,
+              v: point.v === null ? null : Math.max(0, Math.round(point.v / 10)),
+            })),
+          }
+        : null,
     });
   }),
 ];

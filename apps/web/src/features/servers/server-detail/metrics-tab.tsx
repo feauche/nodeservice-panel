@@ -15,6 +15,7 @@ import {
 
 import { cn } from '@/lib/utils';
 import { useServerMetrics } from './metrics-api';
+import { NodeOnlineChart } from './online-chart';
 
 const RANGES: Array<{ key: MetricRange; label: string }> = [
   { key: '1h', label: '1 час' },
@@ -49,10 +50,12 @@ export function MetricsTab({
   serverId,
   range,
   onRange,
+  agentOnline,
 }: {
   serverId: string;
   range: MetricRange;
   onRange: (r: MetricRange) => void;
+  agentOnline: boolean;
 }) {
   const metrics = useServerMetrics(serverId, range);
   const d = metrics.data;
@@ -103,108 +106,147 @@ export function MetricsTab({
           Хранилище метрик (VictoriaMetrics) сейчас недоступно — графики могут быть неполными.
         </p>
       )}
-      <div className="grid gap-3 lg:grid-cols-2">
-        <MetricPanel
-          title="Процессор"
-          current={fmtOrDash(lastValue(series?.cpuPct ?? []), fmtPct)}
-          pct={lastValue(series?.cpuPct ?? [])}
-          empty={!series || series.cpuPct.length === 0}
-        >
-          <AreaMetric
-            points={series?.cpuPct ?? []}
-            color="var(--ns-accent)"
-            range={range}
-            unit="%"
-            max={100}
-          />
-        </MetricPanel>
-        <MetricPanel
-          title="Память"
-          current={fmtOrDash(lastValue(memPct), fmtPct)}
-          pct={lastValue(memPct)}
-          empty={memPct.length === 0}
-        >
-          <AreaMetric points={memPct} color="var(--ns-teal)" range={range} unit="%" max={100} />
-        </MetricPanel>
-        <MetricPanel
-          title="Диск"
-          current={fmtOrDash(lastValue(diskPct), fmtPct)}
-          pct={lastValue(diskPct)}
-          empty={diskPct.length === 0}
-        >
-          <AreaMetric points={diskPct} color="var(--ns-warn)" range={range} unit="%" max={100} />
-        </MetricPanel>
-        <MetricPanel
-          title="Сеть"
-          current={
-            series && (lastValue(series.netRxBps) !== null || lastValue(series.netTxBps) !== null)
-              ? `↓ ${fmtOrDash(lastValue(series.netRxBps), fmtMbitShort)} · ↑ ${fmtOrDash(lastValue(series.netTxBps), fmtMbitShort)} Мбит/с`
-              : '—'
-          }
-          empty={!net || net.length === 0}
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={net ?? []} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
-              <CartesianGrid stroke="var(--ns-hairline)" vertical={false} />
-              <XAxis
-                dataKey="t"
-                type="number"
-                domain={['dataMin', 'dataMax']}
-                tickFormatter={fmtAxisTime(range)}
-                minTickGap={48}
-                tickLine={false}
-                axisLine={false}
-                tick={{ fill: 'var(--ns-text-3)', fontSize: 10.5 }}
-              />
-              <YAxis
-                width={44}
-                tickFormatter={(v: number) => `${((v * 8) / 1_000_000).toFixed(0)}М`}
-                tickLine={false}
-                axisLine={false}
-                tick={{ fill: 'var(--ns-text-3)', fontSize: 10.5 }}
-              />
-              <ChartTooltip content={<NetTip range={range} />} />
-              <Line
-                dataKey="rx"
-                name="входящий"
-                stroke="var(--ns-accent)"
-                strokeWidth={1.6}
-                dot={false}
-                isAnimationActive={false}
-                connectNulls
-              />
-              <Line
-                dataKey="tx"
-                name="исходящий"
-                stroke="var(--ns-teal)"
-                strokeWidth={1.6}
-                dot={false}
-                isAnimationActive={false}
-                connectNulls
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </MetricPanel>
-        <MetricPanel
-          title="Load average"
-          current={fmtOrDash(lastValue(series?.load1 ?? []), (v) => v.toFixed(2))}
-          empty={!series || series.load1.length === 0}
-        >
-          <AreaMetric points={series?.load1 ?? []} color="var(--ns-accent)" range={range} unit="" />
-        </MetricPanel>
-        <MetricPanel
-          title="Conntrack"
-          current={fmtOrDash(lastValue(series?.conntrackCount ?? []), fmtInt)}
-          empty={!series || series.conntrackCount.length === 0}
-        >
-          <AreaMetric
-            points={series?.conntrackCount ?? []}
-            color="var(--ns-chart-base, #7d8797)"
-            range={range}
-            unit=""
-          />
-        </MetricPanel>
-      </div>
+      {!agentOnline && !metrics.isError && (
+        <p className="m-0 rounded-[12px] border border-border bg-surface px-4 py-2.5 text-[12.5px] text-text-2">
+          Агент не на связи: его прошлые метрики скрыты. Онлайн ниже приходит из Remnawave и остаётся
+          актуальным.
+        </p>
+      )}
+      {metrics.isError && (
+        <div className="flex min-h-32 flex-col items-center justify-center gap-3 rounded-2xl border border-crit/30 bg-crit-soft px-4 text-center text-[13px]">
+          <span>Не удалось загрузить метрики и онлайн ноды.</span>
+          <button
+            type="button"
+            className="h-8 rounded-[8px] border border-border bg-surface px-3 text-[12px] font-medium"
+            onClick={() => void metrics.refetch()}
+          >
+            Повторить
+          </button>
+        </div>
+      )}
+      {!metrics.isError && (
+        <div className="grid gap-3 lg:grid-cols-2">
+          {d?.online && (
+            <div className="lg:col-span-2">
+              <NodeOnlineChart name={d.online.name} points={d.online.points} range={range} />
+            </div>
+          )}
+          {!agentOnline && metrics.isPending && (
+            <div className="grid h-40 place-items-center rounded-2xl border border-dashed border-border text-center text-[13px] text-text-3 lg:col-span-2">
+              Загружаю онлайн ноды…
+            </div>
+          )}
+          {!agentOnline && d && !d.online && (
+            <div className="grid h-40 place-items-center rounded-2xl border border-dashed border-border text-center text-[13px] text-text-3 lg:col-span-2">
+              Нода Remnawave не связана с этим сервером.
+            </div>
+          )}
+          {agentOnline && (
+            <>
+              <MetricPanel
+                title="Процессор"
+                current={fmtOrDash(lastValue(series?.cpuPct ?? []), fmtPct)}
+                pct={lastValue(series?.cpuPct ?? [])}
+                empty={!series || series.cpuPct.length === 0}
+              >
+                <AreaMetric
+                  points={series?.cpuPct ?? []}
+                  color="var(--ns-accent)"
+                  range={range}
+                  unit="%"
+                  max={100}
+                />
+              </MetricPanel>
+              <MetricPanel
+                title="Память"
+                current={fmtOrDash(lastValue(memPct), fmtPct)}
+                pct={lastValue(memPct)}
+                empty={memPct.length === 0}
+              >
+                <AreaMetric points={memPct} color="var(--ns-teal)" range={range} unit="%" max={100} />
+              </MetricPanel>
+              <MetricPanel
+                title="Диск"
+                current={fmtOrDash(lastValue(diskPct), fmtPct)}
+                pct={lastValue(diskPct)}
+                empty={diskPct.length === 0}
+              >
+                <AreaMetric points={diskPct} color="var(--ns-warn)" range={range} unit="%" max={100} />
+              </MetricPanel>
+              <MetricPanel
+                title="Сеть"
+                current={
+                  series && (lastValue(series.netRxBps) !== null || lastValue(series.netTxBps) !== null)
+                    ? `↓ ${fmtOrDash(lastValue(series.netRxBps), fmtMbitShort)} · ↑ ${fmtOrDash(lastValue(series.netTxBps), fmtMbitShort)} Мбит/с`
+                    : '—'
+                }
+                empty={!net || net.length === 0}
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={net ?? []} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
+                    <CartesianGrid stroke="var(--ns-hairline)" vertical={false} />
+                    <XAxis
+                      dataKey="t"
+                      type="number"
+                      domain={['dataMin', 'dataMax']}
+                      tickFormatter={fmtAxisTime(range)}
+                      minTickGap={48}
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fill: 'var(--ns-text-3)', fontSize: 10.5 }}
+                    />
+                    <YAxis
+                      width={44}
+                      tickFormatter={(v: number) => `${((v * 8) / 1_000_000).toFixed(0)}М`}
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fill: 'var(--ns-text-3)', fontSize: 10.5 }}
+                    />
+                    <ChartTooltip content={<NetTip range={range} />} />
+                    <Line
+                      dataKey="rx"
+                      name="входящий"
+                      stroke="var(--ns-accent)"
+                      strokeWidth={1.6}
+                      dot={false}
+                      isAnimationActive={false}
+                      connectNulls
+                    />
+                    <Line
+                      dataKey="tx"
+                      name="исходящий"
+                      stroke="var(--ns-teal)"
+                      strokeWidth={1.6}
+                      dot={false}
+                      isAnimationActive={false}
+                      connectNulls
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </MetricPanel>
+              <MetricPanel
+                title="Load average"
+                current={fmtOrDash(lastValue(series?.load1 ?? []), (v) => v.toFixed(2))}
+                empty={!series || series.load1.length === 0}
+              >
+                <AreaMetric points={series?.load1 ?? []} color="var(--ns-accent)" range={range} unit="" />
+              </MetricPanel>
+              <MetricPanel
+                title="Conntrack"
+                current={fmtOrDash(lastValue(series?.conntrackCount ?? []), fmtInt)}
+                empty={!series || series.conntrackCount.length === 0}
+              >
+                <AreaMetric
+                  points={series?.conntrackCount ?? []}
+                  color="var(--ns-chart-base, #7d8797)"
+                  range={range}
+                  unit=""
+                />
+              </MetricPanel>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

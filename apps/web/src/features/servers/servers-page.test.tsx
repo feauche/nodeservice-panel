@@ -165,7 +165,8 @@ describe('ServersPage', () => {
     await user.click(screen.getByRole('button', { name: 'Список' }));
     await user.click(screen.getAllByTestId('server-row')[1] as HTMLElement);
     const dialog = await screen.findByRole('dialog', { name: second.name });
-    expect(within(dialog).getByText('Метрик нет — агент не на связи')).toBeInTheDocument();
+    expect(within(dialog).getByText(/Агент не на связи/i)).toBeInTheDocument();
+    expect(await within(dialog).findByText('Нода Remnawave не связана с этим сервером.')).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: 'Выяснить почему' }));
     expect(await within(dialog).findByText('Нет связи с панелью')).toBeInTheDocument();
     expect(
@@ -545,14 +546,21 @@ describe('ServersPage', () => {
     await screen.findByText('de-fra-01');
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Действия с de-fra-01' }));
-    // у ноды с агентом в сети пункт называется «Переустановить агента»
-    await user.click(await screen.findByRole('menuitem', { name: /становить агента/ }));
-    const dialog = await screen.findByRole('dialog', { name: 'Установка агента' });
+    // Установленный агент сначала открывает безопасное управление, а не сразу выпускает новый токен.
+    await user.click(await screen.findByRole('menuitem', { name: 'Управление агентом' }));
+    let dialog = await screen.findByRole('dialog', { name: 'Управление агентом' });
+    await user.click(within(dialog).getByRole('button', { name: /Переустановить/ }));
+    dialog = await screen.findByRole('dialog', { name: 'Переустановка агента' });
     expect(within(dialog).getByText(/github\.com\/feauche\/nodeservice-agent/)).toBeInTheDocument();
-    await user.click(within(dialog).getByRole('button', { name: 'Установить по SSH' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Переустановить по SSH' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(mockServers.items[0]?.agentStatus).toBe('pending');
     expect(await screen.findByText('Ожидает агента')).toBeInTheDocument();
+    // Пока агент ожидается, он всё ещё установлен: доступны обновление, удаление и отвязка.
+    await user.click(screen.getByRole('button', { name: 'Действия с de-fra-01' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Управление агентом' }));
+    dialog = await screen.findByRole('dialog', { name: 'Управление агентом' });
+    expect(within(dialog).getByRole('button', { name: 'Удалить агент' })).toBeInTheDocument();
   });
 
   it('добавление без проверки (ключ панели): мгновенно, статус «SSH не проверен»', async () => {

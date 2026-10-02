@@ -1138,7 +1138,7 @@ export class IncidentsService {
     const label = cut > 0 ? row.title.slice(0, cut) : INCIDENT_KIND_META[row.kind as IncidentKind].label;
     await this.notifications.push({
       severity: 'ok',
-      title: `${incidentTitleToken(label)} — ${reason ? 'закрыт' : 'проблема исчезла'}`,
+      title: `${row.serverId ? incidentTitleToken(label) : label} — ${reason ? 'закрыт' : 'проблема исчезла'}`,
       ...(row.serverId ? { server: { id: row.serverId, name: row.serverName } } : {}),
       body: reason ?? 'Инцидент закрыт автоматически.',
       link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },

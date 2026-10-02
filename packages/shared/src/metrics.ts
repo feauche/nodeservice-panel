@@ -35,6 +35,8 @@ export const serverMetricsResponseSchema = z.object({
   /** false — VictoriaMetrics недоступна: серии пустые, и это не ошибка панели. */
   vmOk: z.boolean(),
   series: z.record(z.enum(SERVER_METRIC_KEYS), z.array(metricPointSchema)),
+  /** Онлайн связанной ноды Remnawave; null — сервер не связан с нодой. */
+  online: z.object({ nodeUuid: z.string(), name: z.string(), points: z.array(metricPointSchema) }).nullable(),
 });
 export type ServerMetricsResponse = z.infer<typeof serverMetricsResponseSchema>;
 

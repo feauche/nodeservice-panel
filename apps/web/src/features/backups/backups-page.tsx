@@ -105,9 +105,14 @@ export function BackupsPage() {
                   sub: `${scheduleWords(s)}${s.auto ? ` · ${timeZoneLabel(tz).split(' · ')[1] ?? ''}` : ''}`,
                 },
                 {
-                  label: 'На сервере',
-                  value: `${regular.length} из ${s.keep}`,
-                  sub: `${formatSize(data.totalSize)}${data.freeBytes != null ? ` · свободно ${formatSize(data.freeBytes)}` : ''}`,
+                  label: 'Хранение',
+                  value: s.offsite.enabled ? (items[0]?.offsite?.ok ? '2 места' : '1 из 2') : '1 место',
+                  sub: s.offsite.enabled
+                    ? items[0]?.offsite?.ok
+                      ? 'сервер панели · внешнее S3'
+                      : 'внешняя копия ещё не подтверждена'
+                    : `${regular.length} из ${s.keep} · ${formatSize(data.totalSize)}`,
+                  tone: s.offsite.enabled && items.length > 0 && !items[0]?.offsite?.ok ? 'crit' : undefined,
                 },
                 {
                   label: 'Защита',
@@ -149,6 +154,7 @@ export function BackupsPage() {
 
       <BackupsList
         items={items}
+        localLocation={data?.localLocation ?? null}
         keep={s?.keep ?? null}
         timeZone={tz}
         loading={list.isPending}

@@ -51,6 +51,8 @@ interface Draft {
   pw: string;
   pw2: string;
   ownUrl: string;
+  offsiteAccessKey: string;
+  offsiteSecretKey: string;
   paths: string[];
 }
 
@@ -62,6 +64,8 @@ const fromSaved = (s: BackupSettings): Draft => ({
   pw: '',
   pw2: '',
   ownUrl: s.telegram.ownUrl ?? '',
+  offsiteAccessKey: '',
+  offsiteSecretKey: '',
   paths: s.extra.paths.length ? s.extra.paths : [],
 });
 
@@ -112,6 +116,8 @@ export function BackupSettingsForm({
   const set = (patch: Partial<BackupSettings>) => setD((p) => ({ ...p, s: { ...p.s, ...patch } }));
   const setTg = (patch: Partial<BackupSettings['telegram']>) =>
     setD((p) => ({ ...p, s: { ...p.s, telegram: { ...p.s.telegram, ...patch } } }));
+  const setOffsite = (patch: Partial<BackupSettings['offsite']>) =>
+    setD((p) => ({ ...p, s: { ...p.s, offsite: { ...p.s.offsite, ...patch } } }));
 
   const destinations = telegram.data?.destinations ?? [];
   const destOptions = destinations.map((x) => ({
@@ -141,6 +147,20 @@ export function BackupSettingsForm({
     d.s.extra.enabled && cleanPaths.some((p) => !p.startsWith('/'))
       ? 'Пути — полные, от корня: /etc/nginx.'
       : null;
+  const offsiteCredentialsChanged = Boolean(d.offsiteAccessKey.trim() || d.offsiteSecretKey);
+  const offsiteProblem = !d.s.offsite.enabled
+    ? null
+    : !d.pwOn
+      ? 'Для внешнего хранилища сначала включите пароль на архив.'
+      : !d.s.offsite.bucket.trim()
+        ? 'Укажите bucket внешнего хранилища.'
+        : !d.s.offsite.region.trim()
+          ? 'Укажите регион внешнего хранилища.'
+          : !saved.offsite.credentialsSet && (!d.offsiteAccessKey.trim() || !d.offsiteSecretKey)
+            ? 'Укажите Access key и Secret key.'
+            : offsiteCredentialsChanged && (!d.offsiteAccessKey.trim() || !d.offsiteSecretKey)
+              ? 'Для смены доступа заполните оба ключа.'
+              : null;
 
   const draftComparable = useMemo(
     () =>
@@ -154,12 +174,16 @@ export function BackupSettingsForm({
     [d, keepNum, cleanPaths],
   );
   const dirty =
-    draftComparable !== JSON.stringify(saved) || (needNewPw && (d.pw !== '' || d.pw2 !== '')) || d.pwChange;
+    draftComparable !== JSON.stringify(saved) ||
+    (needNewPw && (d.pw !== '' || d.pw2 !== '')) ||
+    d.pwChange ||
+    offsiteCredentialsChanged;
   const problem =
     (keepBad ? `Хранить — от ${BACKUP_KEEP_MIN} до ${BACKUP_KEEP_MAX}.` : null) ??
     pwProblem ??
     tgProblem ??
-    pathProblem;
+    pathProblem ??
+    offsiteProblem;
 
   const save = async () => {
     setError(null);
@@ -177,6 +201,19 @@ export function BackupSettingsForm({
         ...chat,
         // Поле не трогали — не передаём («не менять»); новая строка — заменить; пусто — убрать.
         ...(ownChanged ? { ownUrl: d.ownUrl.trim() || null } : {}),
+      },
+      offsite: {
+        enabled: d.s.offsite.enabled,
+        endpoint: d.s.offsite.endpoint.trim(),
+        region: d.s.offsite.region.trim(),
+        bucket: d.s.offsite.bucket.trim(),
+        prefix: d.s.offsite.prefix.trim(),
+        ...(offsiteCredentialsChanged
+          ? {
+              accessKeyId: d.offsiteAccessKey.trim(),
+              secretAccessKey: d.offsiteSecretKey,
+            }
+          : {}),
       },
       extra: { enabled: d.s.extra.enabled, paths: cleanPaths },
       ...(needNewPw ? { password: d.pw } : !d.pwOn && saved.passwordSet ? { password: null } : {}),
@@ -271,6 +308,88 @@ export function BackupSettingsForm({
             onChange={(v) => set({ beforeUpdate: v })}
           />
         </SettingsRow>
+      </SettingsCard>
+
+      <SettingsCard
+        title="Внешнее хранилище"
+        hint="Вторая зашифрованная копия вне сервера панели — S3, MinIO, Backblaze или совместимое хранилище."
+      >
+        <SettingsRow
+          label="Хранить вторую копию"
+          htmlFor="bk-offsite"
+          hint="После загрузки панель проверяет объект в хранилище и показывает оба физических места у каждой копии."
+        >
+          <Toggle
+            id="bk-offsite"
+            checked={d.s.offsite.enabled}
+            onChange={(v) => setOffsite({ enabled: v })}
+          />
+        </SettingsRow>
+        {d.s.offsite.enabled && (
+          <SettingsRow stack>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <TextField
+                id="bk-s3-endpoint"
+                label="Endpoint"
+                value={d.s.offsite.endpoint}
+                placeholder="https://s3.example.com"
+                hint="Оставьте пустым для AWS S3."
+                onChange={(v) => setOffsite({ endpoint: v })}
+              />
+              <TextField
+                id="bk-s3-region"
+                label="Регион"
+                value={d.s.offsite.region}
+                placeholder="auto"
+                onChange={(v) => setOffsite({ region: v })}
+              />
+              <TextField
+                id="bk-s3-bucket"
+                label="Bucket"
+                value={d.s.offsite.bucket}
+                placeholder="nodeservice-backups"
+                onChange={(v) => setOffsite({ bucket: v })}
+              />
+              <TextField
+                id="bk-s3-prefix"
+                label="Папка внутри bucket"
+                value={d.s.offsite.prefix}
+                placeholder="nodeservice"
+                onChange={(v) => setOffsite({ prefix: v })}
+              />
+              <TextField
+                id="bk-s3-access"
+                label="Access key"
+                value={d.offsiteAccessKey}
+                placeholder={
+                  saved.offsite.credentialsSet ? 'Ключ сохранён · оставить прежним' : 'Access key ID'
+                }
+                autoComplete="off"
+                onChange={(v) => setD((p) => ({ ...p, offsiteAccessKey: v }))}
+              />
+              <TextField
+                id="bk-s3-secret"
+                label="Secret key"
+                value={d.offsiteSecretKey}
+                placeholder={
+                  saved.offsite.credentialsSet ? 'Ключ сохранён · оставить прежним' : 'Secret access key'
+                }
+                type="password"
+                autoComplete="new-password"
+                onChange={(v) => setD((p) => ({ ...p, offsiteSecretKey: v }))}
+              />
+            </div>
+            <div className="mt-3">
+              {!d.pwOn ? (
+                <Warn crit>Внешняя копия включится только вместе с паролем на архив.</Warn>
+              ) : (
+                <p className="m-0 text-[11.5px] text-text-3">
+                  Ключи доступа шифруются в базе панели и никогда не возвращаются в браузер.
+                </p>
+              )}
+            </div>
+          </SettingsRow>
+        )}
       </SettingsCard>
 
       <SettingsCard title="Отправка в Telegram" hint="Архив приходит файлом сразу после копии.">
@@ -622,6 +741,45 @@ function PwField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="h-[34px] rounded-[9px] bg-surface-2 text-[13px]"
+      />
+      {hint && <span className="text-[11.5px] text-text-3">{hint}</span>}
+    </div>
+  );
+}
+
+function TextField({
+  id,
+  label,
+  value,
+  onChange,
+  placeholder,
+  hint,
+  type = 'text',
+  autoComplete,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  hint?: string;
+  type?: 'text' | 'password';
+  autoComplete?: string;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <label htmlFor={id} className="text-[12.5px] font-semibold">
+        {label}
+      </label>
+      <Input
+        id={id}
+        type={type}
+        autoComplete={autoComplete}
+        spellCheck={false}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-[34px] rounded-[9px] bg-surface-2 font-mono text-[12.5px]"
       />
       {hint && <span className="text-[11.5px] text-text-3">{hint}</span>}
     </div>

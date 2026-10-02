@@ -9,7 +9,9 @@ import {
   type ServerMetricsResponse,
   VM_METRIC_NAMES,
 } from '@nodeservice/shared';
-
+import { NODE_ONLINE_METRIC } from '../fleet-stats/fleet-stats.service.js';
+import { NodeLinkService } from '../remnawave/node-link.service.js';
+import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersRepository } from '../servers/servers.repository.js';
 import { type VmMatrixSeries, VmReaderService } from './vm-reader.service.js';
 
@@ -22,6 +24,8 @@ export class MetricsService {
   constructor(
     private readonly vm: VmReaderService,
     private readonly servers: ServersRepository,
+    private readonly remnawave: RemnawaveService,
+    private readonly links: NodeLinkService,
   ) {}
 
   async serverSeries(serverId: string, range: MetricRange): Promise<ServerMetricsResponse> {
@@ -44,7 +48,47 @@ export class MetricsService {
       }
       series[key] = toPoints(res[0]);
     }
-    return { range, stepSeconds, vmOk, series };
+    const [server, remna] = await Promise.all([
+      this.servers.findById(serverId).catch(() => null),
+      this.remnawave.status().catch(() => null),
+    ]);
+    let online: ServerMetricsResponse['online'] = null;
+    if (server && remna?.nodes.length) {
+      const node = (
+        await this.links.resolve(
+          [
+            {
+              id: server.id,
+              name: server.name,
+              host: server.host,
+              nodeLink: server.nodeLink,
+              facts: {
+                hostname: server.hostname,
+                os: server.os,
+                osVersion: server.osVersion,
+                arch: server.arch,
+                kernel: server.kernel,
+                cpuCores: server.cpuCores,
+                memoryMb: server.memoryMb,
+                addresses: server.addresses,
+              },
+            },
+          ],
+          remna.nodes,
+        )
+      ).nodeOf(serverId);
+      if (node) {
+        const result = await this.vm.queryRange(
+          `max(${NODE_ONLINE_METRIC}{node_uuid="${node.uuid}"})`,
+          start,
+          end,
+          stepSeconds,
+        );
+        if (result === null) vmOk = false;
+        online = { nodeUuid: node.uuid, name: node.name, points: toPoints(result?.[0]) };
+      }
+    }
+    return { range, stepSeconds, vmOk, series, online };
   }
 
   async overview(): Promise<OverviewMetricsResponse> {

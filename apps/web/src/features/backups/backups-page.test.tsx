@@ -59,7 +59,7 @@ describe('BackupsPage', () => {
     const list = await screen.findByRole('list', { name: 'Резервные копии' });
     expect(within(list).getAllByRole('listitem')).toHaveLength(7);
     // Копия «перед восстановлением» в счёт хранения не входит.
-    expect(screen.getByText('6 из 7')).toBeInTheDocument();
+    expect(screen.getByText(/6 из 7/)).toBeInTheDocument();
     expect(screen.getByText('С паролем')).toBeInTheDocument();
     expect(within(list).getByText('перед обновлением 0.35.0')).toBeInTheDocument();
     expect(within(list).getAllByText('✓ проверена').length).toBeGreaterThan(0);
@@ -189,7 +189,7 @@ describe('BackupsPage', () => {
       down = false;
       await user.click(screen.getByRole('button', { name: 'Повторить' }));
       expect(await screen.findByRole('radio', { name: 'Раз в неделю' })).toBeInTheDocument();
-      expect(screen.getByText('6 из 7')).toBeInTheDocument();
+      expect(screen.getByText(/6 из 7/)).toBeInTheDocument();
       expect(screen.queryByText(/Не удалось загрузить настройки копий/)).not.toBeInTheDocument();
     });
 
@@ -226,7 +226,7 @@ describe('BackupsPage', () => {
         within(screen.getByRole('list', { name: 'Резервные копии' })).getAllByRole('listitem'),
       ).toHaveLength(7);
       expect(screen.queryByText(/Не удалось загрузить список копий/)).not.toBeInTheDocument();
-      expect(screen.getByText('6 из 7')).toBeInTheDocument();
+      expect(screen.getByText(/6 из 7/)).toBeInTheDocument();
     });
 
     it('копий действительно нет — «Копий пока нет» только после успешной загрузки', async () => {

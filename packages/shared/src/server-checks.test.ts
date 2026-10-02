@@ -9,7 +9,7 @@ import {
 
 describe('реестр проверок: что панель запускает сама', () => {
   it('по расписанию — только свои команды: сторонние скрипты и тяжёлые в суточный прогон не входят', () => {
-    expect(SERVER_CHECK_AUTO_KEYS).toEqual(['cpu']);
+    expect(SERVER_CHECK_AUTO_KEYS).toEqual(['russia_access', 'cpu']);
     for (const key of SERVER_CHECK_AUTO_KEYS) {
       expect(SERVER_CHECK_META[key].thirdParty, key).toBe(false);
       expect(SERVER_CHECK_META[key].heavy, key).toBe(false);

@@ -1,4 +1,4 @@
-import type { BlockCheckResult, RemnawaveNode } from '@nodeservice/shared';
+import type { BlockCheckResult, IncidentSnapshot, RemnawaveNode } from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
 
 import { NodeLinkService } from '../remnawave/node-link.service.js';
@@ -82,6 +82,7 @@ function setup(
     severity: string;
     serverId: string | null;
     serverName: string;
+    snapshot?: IncidentSnapshot;
   }> = [];
   /** С какими исключёнными серверами запускалась проверка порта ноды и входа. */
   const checks: Array<{ excluded: string[] }> = [];
@@ -166,13 +167,13 @@ function setup(
     new NodeLinkService({ resolve: async (host) => fleet.dns?.[host] ?? [] }),
   );
   /** Очередной снимок: через минуту после прошлого или через `skipMin` минут (перерыв в снимках). */
-  const snap = async (n: RemnawaveNode, error: string | null = null, skipMin = 1) => {
+  const snap = async (n: RemnawaveNode | RemnawaveNode[], error: string | null = null, skipMin = 1) => {
     seq += skipMin;
     status = {
       connected: true,
       checkedAt: new Date(T0 + seq * 60_000).toISOString(),
       error,
-      nodes: [n],
+      nodes: Array.isArray(n) ? n : [n],
     };
     await job.run();
   };
@@ -195,6 +196,25 @@ function setup(
 }
 
 describe('падение онлайна ноды', () => {
+  it('одновременная просадка двух нод создаёт одно массовое дело', async () => {
+    const second = node({ uuid: 'u-2', name: 'нидерланды - 2', address: '5.6.7.8' });
+    const { snap, opened } = setup(result(), SOON, [], {
+      servers: [
+        { id: '00000000-0000-4000-8000-000000000001', name: 'guardora (Аренда)', host: '1.2.3.4' },
+        { id: '00000000-0000-4000-8000-000000000002', name: 'нидерланды - 2', host: '5.6.7.8' },
+      ],
+    });
+    await snap([node(), second]);
+    for (let i = 0; i < 3; i += 1) {
+      await snap([node({ usersOnline: 0 }), { ...second, usersOnline: 0 }]);
+    }
+
+    expect(opened).toHaveLength(1);
+    expect(opened[0]?.title).toBe('Массовое падение онлайна · 2 ноды');
+    expect(opened[0]?.serverId).toBeNull();
+    expect(opened[0]?.snapshot?.fleet?.members.map((member) => member.nodeUuid)).toEqual(['u-1', 'u-2']);
+  });
+
   it('три снимка подряд с просадкой — дело; при оплате в окне и недоступном сервере — «проверьте оплату»', async () => {
     const { snap, opened } = setup();
     await snap(node());

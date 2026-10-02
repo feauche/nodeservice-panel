@@ -278,17 +278,14 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
   const content = (
     <>
       {whyOpen && agentSilent(s) && <EgressDetails server={s} />}
-      {tab === 'metrics' &&
-        (s.agentStatus === 'online' ? (
-          <MetricsTab serverId={s.id} range={range} onRange={setRange} />
-        ) : (
-          // Агент молчит — прошлые метрики устарели, не показываем их (решение владельца 29.09.2026).
-          <div className="grid h-40 place-items-center rounded-2xl border border-dashed border-border text-center text-[13px] text-text-3">
-            {s.agentStatus === 'not_installed' || s.agentStatus === 'installing'
-              ? 'Метрик нет — агент ещё не установлен'
-              : 'Метрик нет — агент не на связи'}
-          </div>
-        ))}
+      {tab === 'metrics' && (
+        <MetricsTab
+          serverId={s.id}
+          range={range}
+          onRange={setRange}
+          agentOnline={s.agentStatus === 'online'}
+        />
+      )}
       {tab === 'journal' && <JournalTab serverId={s.id} />}
       {tab === 'terminal' && <TerminalHistoryTab serverId={s.id} />}
       {tab === 'maintenance' && <MaintenanceTab server={s} />}
@@ -535,7 +532,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
                 <DropdownMenuContent align="end" side="top" className="z-[60] min-w-[220px]">
                   <DropdownMenuItem onSelect={() => setInstallOpen(true)}>
                     <KeyRoundIcon className="size-4" aria-hidden="true" />
-                    {s.agentStatus === 'online' ? 'Переустановить агента' : 'Установить агента'}
+                    {s.agentStatus === 'not_installed' ? 'Установить агента' : 'Управление агентом'}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
@@ -591,17 +588,15 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
                   />
                   Проверить связь
                 </Button>
-                {s.agentStatus !== 'online' && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setInstallOpen(true)}
-                    className={SIDE_BTN}
-                  >
-                    <KeyRoundIcon className="size-4" aria-hidden="true" />
-                    Установить агента
-                  </Button>
-                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setInstallOpen(true)}
+                  className={SIDE_BTN}
+                >
+                  <KeyRoundIcon className="size-4" aria-hidden="true" />
+                  {s.agentStatus === 'not_installed' ? 'Установить агента' : 'Управление агентом'}
+                </Button>
                 <Button
                   type="button"
                   variant="outline"

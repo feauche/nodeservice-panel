@@ -326,6 +326,20 @@ export const incidentSnapshotSchema = z.object({
   node: nodeStateSchema.nullable(),
   agentStatus: z.string().nullable(),
   agentVersion: z.string().nullable(),
+  /** Одно общее дело для одновременно затронутых нод или серверов. */
+  fleet: z
+    .object({
+      cause: z.enum(['online', 'connectivity']),
+      members: z.array(
+        z.object({
+          serverId: z.uuid().nullable(),
+          nodeUuid: z.string().nullable(),
+          name: z.string(),
+          baseline: z.number().nullable(),
+        }),
+      ),
+    })
+    .optional(),
 });
 export type IncidentSnapshot = z.infer<typeof incidentSnapshotSchema>;
 

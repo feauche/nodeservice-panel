@@ -255,6 +255,7 @@ export class BackupsService implements OnModuleInit {
     const fs = await statfs(this.dir).catch(() => null);
     return {
       items,
+      localLocation: this.dir,
       run: this.runState,
       nextAt: s.auto ? (nextBackupAt(new Date(), s, tz)?.toISOString() ?? null) : null,
       timeZone: tz,

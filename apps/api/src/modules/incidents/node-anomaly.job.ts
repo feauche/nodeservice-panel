@@ -42,6 +42,14 @@ const COOLDOWN_MIN = 30;
 /** Сколько раз после запуска пробовать прочитать сохранённые измерения, если хранилище не отвечает. */
 const RESTORE_TRIES = 3;
 
+const nodeCount = (count: number): string => {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  const word =
+    mod100 >= 11 && mod100 <= 14 ? 'нод' : mod10 === 1 ? 'нода' : mod10 >= 2 && mod10 <= 4 ? 'ноды' : 'нод';
+  return `${count} ${word}`;
+};
+
 /** Просадка увидена, но ещё не открыта — ждёт подтверждения следующим снимком (см. коммент к checkNode). */
 interface Candidate {
   baselineOnline: number;
@@ -130,6 +138,13 @@ export class NodeAnomalyJob {
         if (drop) due.push(drop);
       }
       if (due.length === 0) return;
+      // Одновременная просадка нескольких нод — одно общее событие. Иначе один сбой площадки или
+      // маршрута создавал несколько дел, несколько разборов и столько же сообщений в Telegram.
+      if (due.length >= 2) {
+        await this.recordFleetDrop(due, status.nodes);
+        for (const drop of due) this.cooldownUntil.set(drop.node.uuid, Date.now() + COOLDOWN_MIN * 60_000);
+        return;
+      }
       for (const drop of due) {
         try {
           await this.investigate(drop, status.nodes, due.length - 1);
@@ -164,6 +179,97 @@ export class NodeAnomalyJob {
     } finally {
       this.busy = false;
     }
+  }
+
+  private async recordFleetDrop(drops: Drop[], nodes: RemnawaveNode[]): Promise<void> {
+    const allServers = await this.servers.list();
+    const links = await this.links.resolve(allServers, nodes);
+    const members = drops.map((drop) => ({
+      serverId: links.serverIdsOf(drop.node.uuid)[0] ?? null,
+      nodeUuid: drop.node.uuid,
+      name: drop.node.name,
+      baseline: drop.before,
+    }));
+    const existing = (await this.incidents.list('open')).find(
+      (row) =>
+        row.snapshot?.fleet?.cause === 'online' &&
+        row.snapshot.fleet.members.some((member) =>
+          members.some((current) => current.nodeUuid === member.nodeUuid),
+        ),
+    );
+    const lines = drops.map((drop) => {
+      const pct = Math.max(0, Math.round(((drop.before - drop.after) / Math.max(1, drop.before)) * 100));
+      return `• ${drop.node.name}: ${drop.before} → ${drop.after} (−${pct} %) за ${drop.minutes} мин`;
+    });
+    const detail = [
+      `Одновременно резко упал онлайн у ${drops.length} нод. Панель ведёт одно общее дело: это похоже на общую площадку, маршрут или изменение в Remnawave.`,
+      '',
+      ...lines,
+      '',
+      'Причина пока не установлена. Состояние каждого участника проверяется отдельно, а дело закроется после восстановления всех нод.',
+    ].join('\n');
+    if (existing) {
+      await this.incidents.update(existing.id, {
+        detail,
+        snapshot: {
+          cpu: existing.snapshot?.cpu ?? null,
+          mem: existing.snapshot?.mem ?? null,
+          disk: existing.snapshot?.disk ?? null,
+          node: existing.snapshot?.node ?? null,
+          agentStatus: existing.snapshot?.agentStatus ?? null,
+          agentVersion: existing.snapshot?.agentVersion ?? null,
+          fleet: { cause: 'online', members },
+        },
+      });
+      await this.incidents.appendEvent(existing.id, {
+        at: new Date().toISOString(),
+        by: 'auto',
+        action: `Состав массовой аварии обновлён: ${members.map((m) => m.name).join(', ')}`,
+        result: 'detect',
+      });
+      return;
+    }
+    const affected = nodeCount(drops.length);
+    const title = `Массовое падение онлайна · ${affected}`;
+    const row = await this.incidents.open({
+      serverId: null,
+      serverName: affected,
+      kind: 'node_blocked',
+      severity: 'crit',
+      title,
+      detail,
+      timeline: [
+        {
+          at: new Date().toISOString(),
+          by: 'auto',
+          action: 'Обнаружено одновременно на нескольких нодах',
+          result: 'detect',
+        },
+      ],
+      snapshot: {
+        cpu: null,
+        mem: null,
+        disk: null,
+        node: null,
+        agentStatus: null,
+        agentVersion: null,
+        fleet: { cause: 'online', members },
+      },
+    });
+    if (!row) return;
+    await this.notifications.push({
+      severity: 'crit',
+      title,
+      body: detail,
+      link: { to: `/incidents/${row.id}`, label: 'Открыть общее дело' },
+      telegram: {
+        event: 'incident_crit',
+        incidentId: row.id,
+        kind: 'node_blocked',
+        awaitAnalysis: await this.incidentsService.analysisWillFollow(),
+        serverKey: 'fleet:online',
+      },
+    });
   }
 
   /**

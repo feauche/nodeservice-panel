@@ -21,9 +21,8 @@ import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useExplainServerCheck, useRunServerCheck, useServerChecks } from '../server-checks-api';
 
-/** Своя проверка связи и сторонние скрипты запускаются вручную; процессор — ещё и раз в сутки. */
+/** Свои проверки связи и процессора повторяются раз в сутки; сторонние скрипты запускаются вручную. */
 const AUTO = SERVER_CHECK_AUTO_KEYS;
-const CONNECTION = ['russia_access'] as const satisfies readonly ServerCheckKey[];
 const SCRIPTS = SERVER_CHECK_KEYS.filter(
   (k) => SERVER_CHECK_META[k].thirdParty && !SERVER_CHECK_META[k].heavy,
 );
@@ -301,7 +300,7 @@ function CheckRow({
 
 /**
  * Вкладка «Проверки» (R5/J9): своя проверка доступности из России — отдельной строкой по варианту C;
- * процессор панель повторяет раз в сутки, сторонние скрипты запускаются по кнопке, тяжёлые — с подтверждением.
+ * доступность и процессор панель повторяет раз в сутки, сторонние скрипты — по кнопке, тяжёлые — с подтверждением.
  */
 export function ChecksTab({ server }: { server: Server }) {
   const checks = useServerChecks(server.id);
@@ -366,28 +365,19 @@ export function ChecksTab({ server }: { server: Server }) {
     <div className="flex flex-col gap-2">
       {autoOn ? (
         <p className="m-0 mb-2 text-[12.5px] text-text-2">
-          Процессор панель замеряет сама <b className="text-foreground">раз в сутки</b>
+          Доступность из России и процессор панель проверяет сама{' '}
+          <b className="text-foreground">раз в сутки</b>
           {next
             ? `, следующий замер — ${formatIn(next) === 'уже истекла' ? 'в ближайшие минуты' : formatIn(next)}`
             : ', первый — в ближайшее время'}
-          . Проверка доступности и сторонние скрипты запускаются только по кнопке. На одном сервере
-          одновременно идёт одна проверка.
+          . Сторонние скрипты запускаются только по кнопке. На одном сервере одновременно идёт одна проверка.
         </p>
       ) : (
         <p className="m-0 mb-2 text-[12.5px] text-text-2">
-          Суточный замер процессора выключен в «Настройки → Автопроверки» — все проверки запускаются по
-          кнопке. На одном сервере одновременно идёт одна проверка.
+          Суточные проверки доступности и процессора выключены в «Настройки → Автопроверки» — все проверки
+          запускаются по кнопке. На одном сервере одновременно идёт одна проверка.
         </p>
       )}
-      <h3 className="m-0 px-0.5 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
-        Проверки связи — по кнопке
-      </h3>
-      <ul
-        aria-label="Проверки связи — по кнопке"
-        className="m-0 list-none overflow-hidden rounded-2xl border border-border bg-surface p-0"
-      >
-        {CONNECTION.map(row)}
-      </ul>
       <h3 className="m-0 px-0.5 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
         {autoTitle}
       </h3>

@@ -88,7 +88,8 @@ export class NodeBlockRecheckJob {
       const open = (await this.incidentsRepo.list('open')).filter(
         (i) =>
           // Только дела падения онлайна («Онлайн: X →»): «Недоступен из части сетей» закрывает детекция связи.
-          (i.kind === 'node_blocked' || i.kind === 'server_down') && baselineFromDetail(i.detail) !== null,
+          (i.kind === 'node_blocked' || i.kind === 'server_down') &&
+          (baselineFromDetail(i.detail) !== null || i.snapshot?.fleet?.cause === 'online'),
       );
       for (const id of this.watch.keys()) if (!open.some((r) => r.id === id)) this.watch.delete(id);
       if (open.length === 0) return;
@@ -104,6 +105,34 @@ export class NodeBlockRecheckJob {
         // Тот же снимок, что в прошлый раз, — новой проверки ещё не было.
         if (w.checkedAt === status.checkedAt) continue;
         w.checkedAt = status.checkedAt;
+        const fleet = row.snapshot?.fleet?.cause === 'online' ? row.snapshot.fleet : null;
+        if (fleet) {
+          const states = fleet.members.map((member) => {
+            const node = status.nodes.find((candidate) => candidate.uuid === member.nodeUuid);
+            const online = node?.usersOnline ?? 0;
+            return { member, online, recovered: online >= recoverThreshold(member.baseline) };
+          });
+          const recovered = states.filter((state) => state.recovered).length;
+          if (recovered !== states.length) {
+            w.up = 0;
+            if (w.said !== 'watching') {
+              w.said = 'watching';
+              await this.note(
+                row.id,
+                `Восстановились ${recovered} из ${states.length}: ${states.map((state) => `${state.member.name} — ${state.online}`).join('; ')}.`,
+              );
+            }
+            continue;
+          }
+          w.up += 1;
+          if (w.up < NODE_ONLINE_RECOVER_CHECKS) continue;
+          await this.incidents.autoResolveById(
+            row.id,
+            `Онлайн восстановился у всех ${states.length} нод и держится ${NODE_ONLINE_RECOVER_CHECKS} проверки подряд.`,
+          );
+          this.watch.delete(row.id);
+          continue;
+        }
         // Нода дела с сервером — по общей связи «сервер ↔ нода», у дела без сервера — по имени ноды.
         const server = row.serverId ? (allServers.find((s) => s.id === row.serverId) ?? null) : null;
         const node =

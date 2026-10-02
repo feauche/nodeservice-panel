@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { useServerMetrics } from '@/features/servers/server-detail/metrics-api';
+import { NodeOnlineChart } from '@/features/servers/server-detail/online-chart';
 import { cn } from '@/lib/utils';
 import { buildGeometry, CHART_H, CHART_W, chartMarkers, chartRange, pctSeries } from './analysis-chart-data';
 import { useIncidentsSettings } from './incidents-settings-api';
@@ -11,8 +12,9 @@ const THRESHOLD_KEY = { cpuPct: 'cpuPct', memPct: 'memPct', diskPct: 'diskPct' }
 const RANGE_LABEL = { '1h': 'последний час', '24h': 'последние сутки', '7d': 'последние 7 дней' } as const;
 
 /** Не у каждого инцидента есть что нарисовать: только нагрузка и место. */
-export const hasAnalysisChart = (inc: Pick<Incident, 'kind' | 'serverId'>): boolean =>
-  INCIDENT_CHART_METRIC[inc.kind] !== undefined && inc.serverId !== null;
+export const hasAnalysisChart = (inc: Pick<Incident, 'kind' | 'serverId' | 'detail'>): boolean =>
+  inc.serverId !== null &&
+  (INCIDENT_CHART_METRIC[inc.kind] !== undefined || /Онлайн:\s*\d+\s*→\s*\d+/.test(inc.detail));
 
 /**
  * График-доказательство: метрика за окно вокруг инцидента, порог, момент открытия и попытки починки.
@@ -20,13 +22,35 @@ export const hasAnalysisChart = (inc: Pick<Incident, 'kind' | 'serverId'>): bool
  */
 export function AnalysisChart({ incident }: { incident: Incident }) {
   const metric = INCIDENT_CHART_METRIC[incident.kind];
+  const onlineDrop = /Онлайн:\s*\d+\s*→\s*\d+/.test(incident.detail);
   const range = useMemo(() => chartRange(incident.openedAt, Date.now()), [incident.openedAt]);
   const q = useServerMetrics(
     incident.serverId ?? '',
     range,
-    metric !== undefined && incident.serverId !== null,
+    (metric !== undefined || onlineDrop) && incident.serverId !== null,
   );
   const settings = useIncidentsSettings();
+  if (!metric && !onlineDrop) return null;
+
+  if (!metric && onlineDrop) {
+    if (q.isPending)
+      return <Skeleton data-testid="analysis-chart-skeleton" className="h-[176px] rounded-[12px]" />;
+    if (q.isError || !q.data?.online)
+      return (
+        <p className="rounded-[12px] border border-border bg-surface-2 px-3.5 py-3 text-[12.5px] text-text-3">
+          История онлайна недоступна: сервер не связан с нодой Remnawave или данные ещё не накопились.
+        </p>
+      );
+    return (
+      <NodeOnlineChart
+        name={q.data.online.name}
+        points={q.data.online.points}
+        range={range}
+        incidentAt={incident.openedAt}
+        compact
+      />
+    );
+  }
   if (!metric) return null;
 
   const points = q.data ? pctSeries(metric, q.data.series) : [];

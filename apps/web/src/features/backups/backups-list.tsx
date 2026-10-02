@@ -29,6 +29,7 @@ import { formatSize, formatWhen } from './backups-format';
  */
 export function BackupsList({
   items,
+  localLocation,
   keep,
   timeZone,
   loading,
@@ -39,6 +40,7 @@ export function BackupsList({
   onDelete,
 }: {
   items: BackupItem[];
+  localLocation: string | null;
   keep: number | null;
   timeZone: string;
   loading: boolean;
@@ -94,6 +96,7 @@ export function BackupsList({
             <Row
               key={it.name}
               item={it}
+              localLocation={localLocation}
               timeZone={timeZone}
               busy={busy}
               onRestore={() => onRestore(it)}
@@ -108,12 +111,14 @@ export function BackupsList({
 
 function Row({
   item,
+  localLocation,
   timeZone,
   busy,
   onRestore,
   onDelete,
 }: {
   item: BackupItem;
+  localLocation: string | null;
   timeZone: string;
   busy: boolean;
   onRestore: () => void;
@@ -133,6 +138,20 @@ function Row({
         </div>
         <div className="truncate font-mono text-[11px] text-text-3" title={item.name}>
           {item.name}
+        </div>
+        <div className="mt-1 flex min-w-0 flex-col gap-0.5 text-[11px] text-text-3">
+          <span className="truncate" title={localLocation ? `${localLocation}/${item.name}` : undefined}>
+            <b className="font-medium text-text-2">Сервер панели:</b>{' '}
+            <span className="font-mono">{localLocation ?? 'локальное хранилище'}</span>
+          </span>
+          {item.offsite && (
+            <span className={item.offsite.ok ? 'truncate' : 'text-warn'} title={item.offsite.location}>
+              <b className="font-medium text-text-2">Внешняя копия:</b>{' '}
+              <span className="font-mono">
+                {item.offsite.ok ? item.offsite.location : (item.offsite.note ?? 'ошибка')}
+              </span>
+            </span>
+          )}
         </div>
       </div>
       {/* Узко: размер и состояние — второй строкой под именем. */}
@@ -192,6 +211,18 @@ function States({ item }: { item: BackupItem }) {
       ) : (
         <Pill key="t" tone="warn" title={item.telegram.note ?? 'Отправить в Telegram не удалось'}>
           не отправилась
+        </Pill>
+      ),
+    );
+  if (item.offsite)
+    pills.push(
+      item.offsite.ok ? (
+        <Pill key="o" tone="ok" title={`Вторая копия хранится в ${item.offsite.location}`}>
+          2 места
+        </Pill>
+      ) : (
+        <Pill key="o" tone="crit" title={item.offsite.note ?? 'Внешнюю копию сохранить не удалось'}>
+          только локально
         </Pill>
       ),
     );

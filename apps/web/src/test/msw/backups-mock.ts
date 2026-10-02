@@ -218,6 +218,7 @@ export const backupsHandlers = [
   http.get('/api/backups', () =>
     HttpResponse.json({
       items: mockBackups.items,
+      localLocation: '/var/lib/nodeservice/backups',
       run: mockBackups.run,
       nextAt: nextAt(),
       timeZone: 'Asia/Omsk',
@@ -231,7 +232,7 @@ export const backupsHandlers = [
   http.put('/api/backups/settings', async ({ request }) => {
     const b = (await request.json()) as BackupSettingsUpdate;
     mockBackups.lastUpdate = b;
-    const { password, telegram, ...rest } = b;
+    const { password, telegram, offsite, ...rest } = b;
     const s = {
       ...mockBackups.settings,
       ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)),
@@ -253,6 +254,17 @@ export const backupsHandlers = [
         own = maskTelegramUrl(t.chatId, t.topic);
       }
       s.telegram = { ...tg, ownUrl: own };
+    }
+    if (offsite) {
+      const changed = Boolean(offsite.accessKeyId && offsite.secretAccessKey);
+      s.offsite = {
+        enabled: offsite.enabled,
+        endpoint: offsite.endpoint,
+        region: offsite.region,
+        bucket: offsite.bucket,
+        prefix: offsite.prefix,
+        credentialsSet: changed || mockBackups.settings.offsite.credentialsSet,
+      };
     }
     if (password !== undefined) s.passwordSet = Boolean(password);
     mockBackups.settings = s as BackupSettings;

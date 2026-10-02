@@ -1,13 +1,15 @@
 import type { Server } from '@nodeservice/shared';
-import { CopyIcon, Loader2Icon } from 'lucide-react';
+import { CopyIcon, Loader2Icon, RefreshCwIcon, Trash2Icon } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { DialogActions, DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { StepUpCancelledError } from '@/features/security/step-up';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
-import { useEnrollmentToken, useInstallAgent } from './servers-api';
+import { useStartMaintenance } from './maintenance-api';
+import { useEnrollmentToken, useInstallAgent, useUninstallAgent, useUnlinkAgent } from './servers-api';
 
 interface Props {
   server: Server;
@@ -22,8 +24,14 @@ interface Props {
 export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
   const enrollment = useEnrollmentToken();
   const install = useInstallAgent();
+  const maintenance = useStartMaintenance(server.id);
+  const uninstall = useUninstallAgent();
+  const unlink = useUnlinkAgent();
   const [command, setCommand] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [installMode, setInstallMode] = useState(server.agentStatus === 'not_installed');
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [unlinkOpen, setUnlinkOpen] = useState(false);
 
   const issue = async () => {
     setError(null);
@@ -39,14 +47,19 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
     }
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: токен выпускается один раз на открытие
+  // Команда нужна только при установке или переустановке: просмотр состояния не отзывает действующий токен.
   useEffect(() => {
-    if (open) void issue();
+    if (open) setInstallMode(server.agentStatus === 'not_installed');
     else {
       setCommand(null);
       setError(null);
     }
-  }, [open]);
+  }, [open, server.agentStatus]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: новый одноразовый токен на вход в режим установки
+  useEffect(() => {
+    if (open && installMode && !command && !enrollment.isPending && !error) void issue();
+  }, [open, installMode]);
 
   const doInstall = async () => {
     try {
@@ -58,59 +71,191 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
     }
   };
 
+  const doUpdate = async () => {
+    try {
+      await maintenance.mutateAsync('agent_update');
+      onOpenChange(false);
+      toast.success(`Обновление агента на «${server.name}» запущено.`);
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    }
+  };
+
+  const doUninstall = async () => {
+    try {
+      await uninstall.mutateAsync(server.id);
+      setRemoveOpen(false);
+      onOpenChange(false);
+      toast.success(`Агент удалён с «${server.name}» и отвязан.`);
+    } catch (err) {
+      if (err instanceof StepUpCancelledError) return;
+      setRemoveOpen(false);
+      setError(`Удалить агент по SSH не удалось: ${apiErrorMessage(err)}`);
+      setUnlinkOpen(true);
+    }
+  };
+
+  const doUnlink = async () => {
+    try {
+      await unlink.mutateAsync(server.id);
+      setUnlinkOpen(false);
+      onOpenChange(false);
+      toast.success(`Агент отвязан от «${server.name}».`);
+    } catch (err) {
+      if (!(err instanceof StepUpCancelledError)) toast.error(apiErrorMessage(err));
+    }
+  };
+
+  const installed = server.agentStatus !== 'not_installed';
+  const pending = install.isPending || maintenance.isPending || uninstall.isPending || unlink.isPending;
+
   return (
-    <Dialog open={open} onOpenChange={(o) => !install.isPending && onOpenChange(o)}>
-      <DialogContent className="sm:max-w-[560px] rounded-2xl border-border bg-surface p-6">
-        <DialogHeader>
-          <DialogTitle className="font-heading text-[17px]">Установка агента</DialogTitle>
-          <DialogDescription className="text-[12.5px] text-text-2">
-            Проще всего — «Установить по SSH»: панель сама зайдёт на сервер и выполнит установку из релизов
-            GitHub. Или выполни команду ниже вручную от root. Токен одноразовый, живёт 24 часа; новый отзывает
-            старый.
-          </DialogDescription>
-        </DialogHeader>
-        {error ? (
-          <div className="mt-1 flex items-center justify-between gap-3 rounded-[10px] border border-crit/30 bg-crit-soft px-3 py-2 text-[12.5px]">
-            <span role="alert">{error}</span>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-7 flex-none rounded-[8px] border-border bg-surface-2 px-2.5 text-[12px]"
-              onClick={() => void issue()}
-            >
-              Повторить
-            </Button>
-          </div>
-        ) : (
-          <code className="mt-1 block min-h-[52px] break-all rounded-[10px] border border-border bg-surface-2 px-3 py-2 font-mono text-[12px]">
-            {command ?? 'Готовлю команду…'}
-          </code>
-        )}
-        <div className="mt-2 flex justify-center">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!command}
-            className="h-8 rounded-[8px] border-border bg-surface-2 px-2.5 text-[12px] text-text-2 hover:bg-surface-3 hover:text-foreground"
-            onClick={() => {
-              void navigator.clipboard?.writeText(command ?? '');
-              toast.success('Команда скопирована.');
-            }}
-          >
-            <CopyIcon className="size-3.5" aria-hidden="true" />
-            Скопировать команду
-          </Button>
-        </div>
-        <DialogActions>
-          <DialogSecondaryButton disabled={install.isPending} onClick={() => onOpenChange(false)}>
-            Закрыть
-          </DialogSecondaryButton>
-          <DialogPrimaryButton disabled={install.isPending || !command} onClick={() => void doInstall()}>
-            {install.isPending && <Loader2Icon className="animate-spin" aria-hidden="true" />}
-            Установить по SSH
-          </DialogPrimaryButton>
-        </DialogActions>
-      </DialogContent>
-    </Dialog>
+    <>
+      <Dialog open={open} onOpenChange={(o) => !pending && onOpenChange(o)}>
+        <DialogContent className="sm:max-w-[600px] rounded-2xl border-border bg-surface p-6">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-[17px]">
+              {installed && !installMode
+                ? 'Управление агентом'
+                : installed
+                  ? 'Переустановка агента'
+                  : 'Установка агента'}
+            </DialogTitle>
+            <DialogDescription className="text-[12.5px] text-text-2">
+              {installed && !installMode
+                ? `Агент ${server.agentVersion ? `v${server.agentVersion}` : 'установлен'} · ${server.agentStatus === 'online' ? 'сейчас на связи' : 'сейчас не отвечает'}.`
+                : 'Панель может установить агент по SSH. Ручная команда остаётся запасным путём; её токен одноразовый и живёт 24 часа.'}
+            </DialogDescription>
+          </DialogHeader>
+          {installed && !installMode ? (
+            <div className="mt-1 grid gap-2 sm:grid-cols-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending}
+                className="h-auto justify-start rounded-[11px] border-border bg-surface-2 px-3.5 py-3 text-left"
+                onClick={() => void doUpdate()}
+              >
+                <RefreshCwIcon className="size-4" aria-hidden="true" />
+                <span>
+                  <b className="block text-[13px]">Обновить агент</b>
+                  <span className="block text-[11.5px] font-normal text-text-3">
+                    Последний релиз, настройки и ключ сохранятся
+                  </span>
+                </span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending}
+                className="h-auto justify-start rounded-[11px] border-border bg-surface-2 px-3.5 py-3 text-left"
+                onClick={() => {
+                  setCommand(null);
+                  setError(null);
+                  setInstallMode(true);
+                }}
+              >
+                <CopyIcon className="size-4" aria-hidden="true" />
+                <span>
+                  <b className="block text-[13px]">Переустановить</b>
+                  <span className="block text-[11.5px] font-normal text-text-3">
+                    Полная установка поверх текущей
+                  </span>
+                </span>
+              </Button>
+            </div>
+          ) : (
+            <>
+              {error ? (
+                <div className="mt-1 flex items-center justify-between gap-3 rounded-[10px] border border-crit/30 bg-crit-soft px-3 py-2 text-[12.5px]">
+                  <span role="alert">{error}</span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-7 flex-none rounded-[8px] border-border bg-surface-2 px-2.5 text-[12px]"
+                    onClick={() => void issue()}
+                  >
+                    Повторить
+                  </Button>
+                </div>
+              ) : (
+                <code className="mt-1 block min-h-[52px] break-all rounded-[10px] border border-border bg-surface-2 px-3 py-2 font-mono text-[12px]">
+                  {command ?? 'Готовлю команду…'}
+                </code>
+              )}
+              <div className="mt-2 flex justify-center">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!command}
+                  className="h-8 rounded-[8px] border-border bg-surface-2 px-2.5 text-[12px] text-text-2 hover:bg-surface-3 hover:text-foreground"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(command ?? '');
+                    toast.success('Команда скопирована.');
+                  }}
+                >
+                  <CopyIcon className="size-3.5" aria-hidden="true" />
+                  Скопировать команду
+                </Button>
+              </div>
+            </>
+          )}
+          <DialogActions>
+            {installed && !installMode ? (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={pending}
+                  className="mr-auto text-crit hover:bg-crit-soft hover:text-crit"
+                  onClick={() => setRemoveOpen(true)}
+                >
+                  <Trash2Icon className="size-4" aria-hidden="true" /> Удалить агент
+                </Button>
+                <DialogSecondaryButton disabled={pending} onClick={() => onOpenChange(false)}>
+                  Закрыть
+                </DialogSecondaryButton>
+              </>
+            ) : (
+              <>
+                <DialogSecondaryButton
+                  disabled={install.isPending}
+                  onClick={() => (installed ? setInstallMode(false) : onOpenChange(false))}
+                >
+                  {installed ? 'Назад' : 'Закрыть'}
+                </DialogSecondaryButton>
+                <DialogPrimaryButton
+                  disabled={install.isPending || !command}
+                  onClick={() => void doInstall()}
+                >
+                  {install.isPending && <Loader2Icon className="animate-spin" aria-hidden="true" />}
+                  {installed ? 'Переустановить по SSH' : 'Установить по SSH'}
+                </DialogPrimaryButton>
+              </>
+            )}
+          </DialogActions>
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog
+        open={removeOpen}
+        onOpenChange={setRemoveOpen}
+        kind="crit"
+        title={`Удалить агент с «${server.name}»?`}
+        description="Панель подключится по SSH, остановит и удалит службу агента, его настройки и ключ, затем отвяжет сервер. Остальные программы на сервере не затрагиваются."
+        yesLabel="Удалить агент"
+        loading={uninstall.isPending}
+        onConfirm={() => void doUninstall()}
+      />
+      <ConfirmDialog
+        open={unlinkOpen}
+        onOpenChange={setUnlinkOpen}
+        kind="warn"
+        title="Отвязать агент только в панели?"
+        description="SSH недоступен, поэтому служба может остаться на сервере. Её ключ будет отозван: подключиться к панели она больше не сможет. Когда SSH появится, удалите службу вручную или переустановите агент."
+        yesLabel="Только отвязать"
+        loading={unlink.isPending}
+        onConfirm={() => void doUnlink()}
+      />
+    </>
   );
 }

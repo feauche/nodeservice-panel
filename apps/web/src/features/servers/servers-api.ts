@@ -42,6 +42,10 @@ export const serversApi = {
     api.post(`/servers/${id}/trust-host-key`, { fingerprint }, serverSchema),
   refreshInventory: (id: string): Promise<Server> => api.post(`/servers/${id}/inventory`, {}, serverSchema),
   installAgent: (id: string): Promise<Server> => api.post(`/servers/${id}/agent/install`, {}, serverSchema),
+  uninstallAgent: (id: string): Promise<Server> =>
+    withStepUp(() => api.post(`/servers/${id}/agent/uninstall`, {}, serverSchema)),
+  unlinkAgent: (id: string): Promise<Server> =>
+    withStepUp(() => api.post(`/servers/${id}/agent/unlink`, {}, serverSchema)),
   enrollmentToken: (id: string): Promise<EnrollmentTokenResponse> =>
     api.post(`/servers/${id}/enrollment-token`, {}, enrollmentTokenResponseSchema),
 };
@@ -119,6 +123,16 @@ export function useRefreshInventory() {
     mutationFn: (id: string) => serversApi.refreshInventory(id),
     onSuccess: apply,
   });
+}
+
+export function useUninstallAgent() {
+  const apply = useApplyServer();
+  return useMutation({ mutationFn: serversApi.uninstallAgent, onSuccess: apply });
+}
+
+export function useUnlinkAgent() {
+  const apply = useApplyServer();
+  return useMutation({ mutationFn: serversApi.unlinkAgent, onSuccess: apply });
 }
 
 export function useDeleteServer() {

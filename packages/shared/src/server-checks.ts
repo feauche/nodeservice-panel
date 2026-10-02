@@ -113,7 +113,7 @@ export const SERVER_CHECK_META: Record<ServerCheckKey, ServerCheckMeta> = {
 };
 
 /** Что панель запускает сама по расписанию: лёгкие проверки своими командами, без сторонних скриптов. */
-export const SERVER_CHECK_AUTO_KEYS: readonly ServerCheckKey[] = ['cpu'];
+export const SERVER_CHECK_AUTO_KEYS: readonly ServerCheckKey[] = ['russia_access', 'cpu'];
 
 /** Проверки по расписанию повторяются не чаще раза в столько часов. */
 export const SERVER_CHECK_INTERVAL_HOURS = 24;
