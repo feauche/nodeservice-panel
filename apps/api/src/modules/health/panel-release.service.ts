@@ -5,8 +5,8 @@ import { type PanelRelease, SHARED_VERSION } from '@nodeservice/shared';
 import type { Env } from '../../config/env.schema.js';
 import { newerVersion, plainVersion } from './panel-release.logic.js';
 
-const SUCCESS_CACHE_MS = 6 * 60 * 60_000;
-const FAILURE_CACHE_MS = 15 * 60_000;
+const SUCCESS_CACHE_MS = 15 * 60_000;
+const FAILURE_CACHE_MS = 5 * 60_000;
 const FETCH_TIMEOUT_MS = 6_000;
 
 type GitHubRelease = {

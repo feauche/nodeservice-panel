@@ -173,7 +173,7 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
   {
     name: 'get_server_checks',
     description:
-      'Реестр проверок сервера: последний результат каждой проверки — процессор (sysbench), регион IP в базах и сервисах, геоблок зарубежных сервисов, DPI до российских сайтов, качество и репутация IP, а если запускались вручную — скорость до России (iPerf3) и полный замер (YABS). Вывод — сырой текст скриптов: прочитайте его и перескажите владельцу выводы простыми словами, а не таблицами. Сама раз в сутки панель повторяет только замер процессора, и то если он включён (autoEnabled; nextAutoAt — когда следующий); остальные — сторонние скрипты, они идут только по кнопке во вкладке «Проверки» или через run_server_check. Итог cancelled — панель отменила запуск: скачанный скрипт не совпал с проверенной версией, на сервере он не запускался. serverId — id или имя; check — ключ одной проверки, если нужна только она (cpu | ip_region | geoblock | dpi | ip_quality | iperf3_ru | yabs).',
+      'Реестр проверок сервера: доступность связанной ноды из России (russia_access: российские TCP/TLS/данные и зарубежное сравнение в blockResult), процессор (sysbench), регион IP в базах и сервисах, геоблок зарубежных сервисов, DPI до российских сайтов, качество и репутация IP, скорость до России (iPerf3) и полный замер (YABS). У сторонних проверок output — сырой текст скрипта; прочитайте его и перескажите владельцу выводы простыми словами. Сама раз в сутки панель повторяет только процессор; доступность и сторонние скрипты запускаются по кнопке или через run_server_check. Итог cancelled — закреплённый скрипт не прошёл проверку. serverId — id или имя; check — ключ одной проверки (russia_access | cpu | ip_region | geoblock | dpi | ip_quality | iperf3_ru | yabs).',
     input_schema: {
       type: 'object',
       properties: {
@@ -218,12 +218,15 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
   {
     name: 'run_server_check',
     description:
-      'Запустить ЛЁГКУЮ проверку сервера сейчас и дождаться итога (до 4 минут): cpu | ip_region | geoblock | dpi | ip_quality. Зови, когда свежий результат действительно нужен для ответа (жалоба «сервис не открывается» — geoblock; «не та страна» — ip_region; «медленно» — cpu), а прошлый результат старше суток или его нет; сначала посмотри get_server_checks. Тяжёлые (iperf3_ru, yabs) так не запускаются — предлагай их через propose_change server.check. В автоматическом разборе (администратора рядом нет) — только cpu: остальные лёгкие — сторонние скрипты, их запускают по кнопке или просьбе администратора. На сервере одновременно идёт одна проверка. serverId — id или имя.',
+      'Запустить лёгкую проверку сервера сейчас и дождаться итога (до 4 минут): russia_access | cpu | ip_region | geoblock | dpi | ip_quality. russia_access проверяет пользовательский порт связанной ноды с российских и зарубежных серверов парка; запускайте её при жалобе на доступ из России. Сначала посмотрите get_server_checks. Тяжёлые (iperf3_ru, yabs) так не запускаются. В автоматическом разборе сторонние проверки не запускаются; russia_access и cpu — собственные проверки панели. На сервере одновременно идёт одна проверка.',
     input_schema: {
       type: 'object',
       properties: {
         serverId: { type: 'string', description: 'id или имя сервера' },
-        check: { type: 'string', enum: ['cpu', 'ip_region', 'geoblock', 'dpi', 'ip_quality'] },
+        check: {
+          type: 'string',
+          enum: ['russia_access', 'cpu', 'ip_region', 'geoblock', 'dpi', 'ip_quality'],
+        },
       },
       required: ['serverId', 'check'],
     },
@@ -932,7 +935,7 @@ export async function runReadTool(
       return none(
         `«${SERVER_CHECK_META[key].label}» — сторонний скрипт: в автоматическом разборе он не запускается, только по кнопке или просьбе администратора. Опирайся на прошлый результат (get_server_checks); если нужен свежий — напиши в unknown, что его стоит запустить во вкладке «Проверки» сервера.`,
       );
-    if (s.sshOk === false)
+    if (key !== 'russia_access' && s.sshOk === false)
       return none(`К серверу «${s.name}» сейчас нет доступа по SSH — проверку запустить нельзя.`);
     let started: Awaited<ReturnType<typeof deps.checks.startForJarvis>>;
     try {
@@ -991,6 +994,7 @@ export async function runReadTool(
         status: done.status,
         error: done.error,
         output: out,
+        blockResult: done.blockResult ?? null,
       }),
       citations: cite,
       proposals: [],
@@ -1106,6 +1110,7 @@ export async function runReadTool(
           finishedAt: r.finishedAt,
           error: r.error,
           output: cut(r.output),
+          blockResult: r.blockResult ?? null,
         })),
       }),
       citations: [{ type: 'server', id: s.id, label: s.name }],

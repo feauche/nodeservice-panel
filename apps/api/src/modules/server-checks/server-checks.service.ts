@@ -20,6 +20,7 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 import { ServersService } from '../servers/servers.service.js';
 import { SshService, type SshSession } from '../servers/ssh.service.js';
 import { AutochecksStore } from '../settings/autochecks.store.js';
+import { RussiaAccessCheckService } from './russia-access-check.service.js';
 import { ServerChecksRepository, toCheckRun } from './server-checks.repository.js';
 import {
   capOutput,
@@ -63,6 +64,7 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
     private readonly cls: ClsService,
     private readonly notifications: NotificationsService,
     private readonly autochecks: AutochecksStore,
+    private readonly russiaAccess: RussiaAccessCheckService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -198,20 +200,25 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
       chain = chain.then(() => this.repo.setOutput(row.id, snapshot)).catch(() => undefined);
     };
     try {
-      const { target } = await this.servers.sshTargetFor(row.serverId);
-      session = await this.ssh.connect(target);
-      const res = await session.execStream(checkCommand(row.check), {
-        timeoutMs: SERVER_CHECK_TIMEOUT_MS[row.check],
-        signal,
-        onData: (chunk) => {
-          raw += chunk;
-          if (raw.length > RAW_MAX) raw = raw.slice(0, RAW_MAX / 4) + raw.slice(-(RAW_MAX * 3) / 4);
-          timer ??= setTimeout(flush, OUTPUT_FLUSH_MS);
-        },
-      });
-      if (res.code !== 0 && !reportComplete(row.check, cleanOutput(raw))) {
-        error = exitReason(res.code);
-        status = runStatus(res.code);
+      if (row.check === 'russia_access') {
+        const result = await this.russiaAccess.run(row.serverId);
+        raw = JSON.stringify(result);
+      } else {
+        const { target } = await this.servers.sshTargetFor(row.serverId);
+        session = await this.ssh.connect(target);
+        const res = await session.execStream(checkCommand(row.check), {
+          timeoutMs: SERVER_CHECK_TIMEOUT_MS[row.check],
+          signal,
+          onData: (chunk) => {
+            raw += chunk;
+            if (raw.length > RAW_MAX) raw = raw.slice(0, RAW_MAX / 4) + raw.slice(-(RAW_MAX * 3) / 4);
+            timer ??= setTimeout(flush, OUTPUT_FLUSH_MS);
+          },
+        });
+        if (res.code !== 0 && !reportComplete(row.check, cleanOutput(raw))) {
+          error = exitReason(res.code);
+          status = runStatus(res.code);
+        }
       }
     } catch (err) {
       error = errorText(err).slice(0, 500);

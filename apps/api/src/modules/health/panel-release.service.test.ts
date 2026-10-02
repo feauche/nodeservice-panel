@@ -44,6 +44,22 @@ describe('PanelReleaseService', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('успешный ответ перечитывает через 15 минут', async () => {
+    let now = Date.parse('2026-10-02T10:00:00.000Z');
+    service.now = () => now;
+    const fetcher = vi.fn(async () => Response.json({ tag_name: 'v0.56.0' }));
+    service.fetchImpl = fetcher as typeof fetch;
+
+    await service.latest();
+    now += 15 * 60_000 - 1;
+    await service.latest();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    now += 1;
+    await service.latest();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('ошибка GitHub не выдаёт выдуманную версию', async () => {
     service.fetchImpl = vi.fn(async () => new Response('{}', { status: 403 })) as typeof fetch;
     await expect(service.latest()).resolves.toMatchObject({
@@ -51,6 +67,22 @@ describe('PanelReleaseService', () => {
       status: 'unavailable',
       release: null,
     });
+  });
+
+  it('после ошибки повторяет запрос через 5 минут', async () => {
+    let now = Date.parse('2026-10-02T10:00:00.000Z');
+    service.now = () => now;
+    const fetcher = vi.fn(async () => new Response('{}', { status: 503 }));
+    service.fetchImpl = fetcher as typeof fetch;
+
+    await service.latest();
+    now += 5 * 60_000 - 1;
+    await service.latest();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    now += 1;
+    await service.latest();
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it('не отдаёт ссылку на чужой сайт из ответа GitHub', async () => {

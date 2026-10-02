@@ -1,4 +1,5 @@
 import {
+  type BlockCheckResult,
   SERVER_CHECK_AUTO_KEYS,
   SERVER_CHECK_INTERVAL_HOURS,
   SERVER_CHECK_META,
@@ -24,7 +25,36 @@ export const mockServerChecks = {
 let seq = 0;
 const uuid = () => `0192c000-cccc-7000-8000-${String(++seq).padStart(12, '0')}`;
 
+const RUSSIA_RESULT: BlockCheckResult = {
+  nodeName: 'Нидерланды - 1',
+  address: '1.2.3.4',
+  sniUsed: 'mask.example',
+  probes: [
+    {
+      from: 'Россия - 1',
+      verdict: 'ok',
+      detail: 'TLS-подключение и передача данных прошли без обрывов.',
+      stalledAtKb: null,
+      error: null,
+    },
+  ],
+  foreign: [
+    {
+      from: 'Германия - 1',
+      verdict: 'ok',
+      detail: 'TCP-порт отвечает.',
+      stalledAtKb: null,
+      error: null,
+    },
+  ],
+  verdict: 'ok',
+  unchecked: null,
+  foreignUnchecked: null,
+  entry: null,
+};
+
 const SAMPLE: Record<ServerCheckKey, string> = {
+  russia_access: JSON.stringify(RUSSIA_RESULT),
   cpu: 'Устанавливаю недостающий пакет: sysbench\n== Одно ядро\nCPU speed:\n    events per second:  1180.42\n== Все ядра: 2\nCPU speed:\n    events per second:  2310.77\n',
   ip_region:
     'Service        Country\nMaxMind        NL\nIPinfo         NL\nCloudflare     NL\nYouTube        NL\nChatGPT        DE\n',
@@ -127,6 +157,7 @@ export const serverChecksHandlers = [
       startedAt: new Date().toISOString(),
       finishedAt: null,
       output: '',
+      blockResult: null,
       error: null,
       explanation: null,
     };
@@ -140,6 +171,7 @@ export const serverChecksHandlers = [
             if (i === lines.length - 1) {
               run.status = 'ok';
               run.finishedAt = new Date().toISOString();
+              if (check === 'russia_access') run.blockResult = RUSSIA_RESULT;
             }
           },
           mockServerChecks.speedMs * (i + 1),

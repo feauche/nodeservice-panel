@@ -44,12 +44,34 @@ describe('ChecksTab', () => {
     });
   });
 
+  it('доступность из России — отдельный ручной пункт с таблицей российских и зарубежных точек', async () => {
+    renderPage(() => <ChecksTab server={server()} />, '/');
+    const list = await screen.findByRole('list', { name: 'Проверки связи — по кнопке' });
+    const access = within(list).getByTestId('check-russia_access');
+    expect(within(access).getByText('Доступность из России')).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(within(access).getByRole('button', { name: /Запустить/ }));
+    await waitFor(
+      () => expect(mockServerChecks.runs.find((r) => r.check === 'russia_access')?.status).toBe('ok'),
+      { timeout: 4000 },
+    );
+    await waitFor(() => expect(within(access).getAllByText('Доступна').length).toBeGreaterThan(0), {
+      timeout: 4000,
+    });
+    await user.click(within(access).getByRole('button', { name: /Подробнее/ }));
+    expect(within(access).getByText('Из России')).toBeInTheDocument();
+    expect(within(access).getByText('Контроль из других стран')).toBeInTheDocument();
+    expect(within(access).getByText('Россия - 1')).toBeInTheDocument();
+    expect(within(access).getByText('Германия - 1')).toBeInTheDocument();
+  });
+
   it('само раз в сутки — только процессор; сторонние скрипты отдельно и только по кнопке', async () => {
     seedServerChecks(server().id);
     renderPage(() => <ChecksTab server={server()} />, '/');
     await screen.findByTestId('check-cpu');
     expect(screen.getByText(/Процессор панель замеряет сама/)).toHaveTextContent(
-      /раз в сутки, следующий замер — через .*Остальные проверки — сторонние скрипты: по расписанию панель их не запускает\./,
+      /раз в сутки, следующий замер — через .*Проверка доступности и сторонние скрипты запускаются только по кнопке\./,
     );
     const auto = screen.getByRole('list', { name: 'Каждый день, автоматически' });
     expect(

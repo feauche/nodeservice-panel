@@ -16,7 +16,8 @@ describe('реестр проверок: что панель запускает 
     }
   });
 
-  it('каждая проверка, кроме процессора, — сторонний скрипт', () => {
+  it('ручная проверка из России — своя, остальные ручные проверки сервера используют сторонние скрипты', () => {
+    expect(SERVER_CHECK_META.russia_access).toMatchObject({ thirdParty: false, heavy: false });
     const thirdParty = SERVER_CHECK_KEYS.filter((k) => SERVER_CHECK_META[k].thirdParty);
     expect(thirdParty).toEqual(['ip_region', 'geoblock', 'dpi', 'ip_quality', 'iperf3_ru', 'yabs']);
   });

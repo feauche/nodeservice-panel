@@ -126,7 +126,7 @@ describe('сторонние скрипты закреплены на верси
   });
 
   it('команды качают только закреплённые адреса и сверяют сумму; своя команда ничего не качает', () => {
-    for (const key of SERVER_CHECK_KEYS) {
+    for (const key of SERVER_CHECK_KEYS.filter((item) => item !== 'russia_access')) {
       const cmd = checkCommand(key);
       const commits = [...cmd.matchAll(RAW)].map((m) => m[1]);
       if (!SERVER_CHECK_META[key].thirdParty) {

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { blockCheckResultSchema } from './block-check.js';
+
 /**
  * Реестр проверок сервера (R5/J9). Набор взят из multitest (github.com/saveksme/multitest), но сам multitest
  * панель не качает: он лишь тонкая обёртка, которая скачивает и запускает чужие скрипты. Панель вызывает те же
@@ -13,6 +15,7 @@ import { z } from 'zod';
  * Вывод хранится сырым текстом: его читает и объясняет Джарвис, отдельных разборщиков под каждый скрипт нет.
  */
 export const SERVER_CHECK_KEYS = [
+  'russia_access',
   'cpu',
   'ip_region',
   'geoblock',
@@ -42,6 +45,14 @@ export interface ServerCheckMeta {
 }
 
 export const SERVER_CHECK_META: Record<ServerCheckKey, ServerCheckMeta> = {
+  russia_access: {
+    label: 'Доступность из России',
+    what: 'Проверяет порт ноды с российских серверов парка: TCP, TLS с именем маскировки и передачу данных; сравнивает с зарубежными точками.',
+    heavy: false,
+    duration: 'обычно 1–3 минуты',
+    source: 'NodeService · серверы вашего парка',
+    thirdParty: false,
+  },
   cpu: {
     label: 'Процессор',
     what: 'Скорость процессора (sysbench): одно ядро и все ядра. Сравнивать серверы между собой и замечать «урезанные» тарифы.',
@@ -102,9 +113,7 @@ export const SERVER_CHECK_META: Record<ServerCheckKey, ServerCheckMeta> = {
 };
 
 /** Что панель запускает сама по расписанию: лёгкие проверки своими командами, без сторонних скриптов. */
-export const SERVER_CHECK_AUTO_KEYS: readonly ServerCheckKey[] = SERVER_CHECK_KEYS.filter(
-  (k) => !SERVER_CHECK_META[k].heavy && !SERVER_CHECK_META[k].thirdParty,
-);
+export const SERVER_CHECK_AUTO_KEYS: readonly ServerCheckKey[] = ['cpu'];
 
 /** Проверки по расписанию повторяются не чаще раза в столько часов. */
 export const SERVER_CHECK_INTERVAL_HOURS = 24;
@@ -134,6 +143,8 @@ export const serverCheckRunSchema = z.object({
   finishedAt: z.string().nullable(),
   /** Вывод скрипта без цветовых кодов. */
   output: z.string(),
+  /** Структурированный итог собственной проверки доступности; у остальных проверок null. */
+  blockResult: blockCheckResultSchema.nullable().optional(),
   error: z.string().nullable(),
   /** Пересказ Джарвиса по кнопке «Объяснить»; null — ещё не просили. Привязан к этому запуску. */
   explanation: z.string().nullable(),

@@ -12,7 +12,7 @@ export function usePanelRelease() {
   return useQuery({
     queryKey: ['system', 'release'],
     queryFn: ({ signal }) => panelReleaseApi.latest(signal),
-    staleTime: 60 * 60_000,
-    refetchInterval: 6 * 60 * 60_000,
+    staleTime: 15 * 60_000,
+    refetchInterval: 15 * 60_000,
   });
 }

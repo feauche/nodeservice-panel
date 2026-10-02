@@ -1,4 +1,8 @@
 import {
+  BLOCK_VERDICT_LABELS,
+  type BlockCheckResult,
+  type BlockProbeResult,
+  type BlockUncheckedReason,
   SERVER_CHECK_AUTO_KEYS,
   SERVER_CHECK_KEYS,
   SERVER_CHECK_META,
@@ -17,20 +21,28 @@ import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useExplainServerCheck, useRunServerCheck, useServerChecks } from '../server-checks-api';
 
-/** Сама раз в сутки — только своя команда; сторонние лёгкие и тяжёлые — по кнопке. */
+/** Своя проверка связи и сторонние скрипты запускаются вручную; процессор — ещё и раз в сутки. */
 const AUTO = SERVER_CHECK_AUTO_KEYS;
+const CONNECTION = ['russia_access'] as const satisfies readonly ServerCheckKey[];
 const SCRIPTS = SERVER_CHECK_KEYS.filter(
-  (k) => !SERVER_CHECK_META[k].heavy && SERVER_CHECK_META[k].thirdParty,
+  (k) => SERVER_CHECK_META[k].thirdParty && !SERVER_CHECK_META[k].heavy,
 );
 const HEAVY = SERVER_CHECK_KEYS.filter((k) => SERVER_CHECK_META[k].heavy);
 
-function StatusBadge({ run }: { run: ServerCheckRun | undefined }) {
+function StatusBadge({ check, run }: { check: ServerCheckKey; run: ServerCheckRun | undefined }) {
+  const result = check === 'russia_access' ? run?.blockResult : null;
   const [cls, label] = !run
     ? ['bg-surface-3 text-text-3', 'Не запускалась']
     : run.status === 'running'
       ? ['bg-brand-soft text-brand', 'Идёт']
       : run.status === 'ok'
-        ? ['bg-ok-soft text-ok', 'Готово']
+        ? result?.unchecked
+          ? ['bg-warn-soft text-warn', 'Не проверено']
+          : result?.verdict === 'ok'
+            ? ['bg-ok-soft text-ok', 'Доступна']
+            : result
+              ? ['bg-warn-soft text-warn', 'Есть проблема']
+              : ['bg-ok-soft text-ok', 'Готово']
         : // Скрипт не совпал с проверенной версией: панель его не запускала — это не ошибка проверки.
           run.status === 'cancelled'
           ? ['bg-warn-soft text-warn', 'Отменена']
@@ -49,6 +61,108 @@ function StatusBadge({ run }: { run: ServerCheckRun | undefined }) {
       )}
       {label}
     </span>
+  );
+}
+
+const UNCHECKED: Record<BlockUncheckedReason, string> = {
+  no_port: 'В Remnawave не найден пользовательский порт этой ноды.',
+  bad_address: 'Адрес, порт или имя маскировки ноды имеют недопустимый формат.',
+  no_probers: 'В парке нет подходящих российских серверов, с которых можно выполнить проверку.',
+  ssh: 'Панель не смогла войти ни на один российский проверяющий сервер.',
+  no_answer: 'Проверяющие серверы не завершили команду проверки.',
+  remnawave: 'Remnawave не ответила, поэтому порт ноды узнать не удалось.',
+  gone: 'Проверяемый сервер или вход больше не найден.',
+};
+
+function ProbeTable({
+  title,
+  probes,
+  empty,
+}: {
+  title: string;
+  probes: BlockProbeResult[];
+  empty: string | null;
+}) {
+  const probeLabel = (probe: BlockProbeResult): string => {
+    if (probe.verdict === 'ok') return 'Доступна';
+    if (probe.verdict === 'partial') return 'С перебоями';
+    if (probe.verdict === 'tspu') return 'Признаки ТСПУ';
+    if (probe.verdict === 'block_16_20') return 'Обрыв данных';
+    return 'Не отвечает';
+  };
+  return (
+    <div>
+      <h4 className="m-0 mb-1.5 text-[11px] font-semibold tracking-[0.06em] text-text-3 uppercase">
+        {title}
+      </h4>
+      {probes.length > 0 ? (
+        <div className="overflow-hidden rounded-[10px] border border-border">
+          <div className="grid grid-cols-[minmax(110px,0.7fr)_minmax(110px,0.55fr)_minmax(180px,1.5fr)] bg-surface-2 px-3 py-2 text-[10.5px] font-semibold tracking-[0.05em] text-text-3 uppercase max-sm:grid-cols-[1fr_auto]">
+            <span>Откуда</span>
+            <span>Результат</span>
+            <span className="max-sm:hidden">Что увидел сервер</span>
+          </div>
+          {probes.map((probe) => (
+            <div
+              key={probe.from}
+              className="grid grid-cols-[minmax(110px,0.7fr)_minmax(110px,0.55fr)_minmax(180px,1.5fr)] border-t border-border px-3 py-2.5 text-[12px] max-sm:grid-cols-[1fr_auto]"
+            >
+              <span className="font-medium">{probe.from}</span>
+              <span
+                className={cn(
+                  'font-medium',
+                  probe.verdict === 'ok'
+                    ? 'text-ok'
+                    : probe.verdict === 'partial'
+                      ? 'text-warn'
+                      : 'text-crit',
+                )}
+              >
+                {probeLabel(probe)}
+              </span>
+              <span className="text-text-2 max-sm:col-span-2 max-sm:mt-1">{probe.detail}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="m-0 rounded-[10px] border border-warn/30 bg-warn-soft px-3 py-2.5 text-[12px] text-warn">
+          {empty ?? 'Подходящих проверяющих серверов нет.'}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function RussiaAccessResult({ result }: { result: BlockCheckResult }) {
+  const mainReason = result.unchecked ? UNCHECKED[result.unchecked] : null;
+  const foreignReason = result.foreignUnchecked ? UNCHECKED[result.foreignUnchecked] : null;
+  return (
+    <div className="flex flex-col gap-3 rounded-[12px] border border-border bg-bg-2 p-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span
+          className={cn(
+            'text-[13.5px] font-semibold',
+            result.unchecked ? 'text-warn' : result.verdict === 'ok' ? 'text-ok' : 'text-crit',
+          )}
+        >
+          {result.unchecked
+            ? 'Проверить не удалось'
+            : result.verdict === 'unreachable'
+              ? 'Порт ноды не отвечает'
+              : BLOCK_VERDICT_LABELS[result.verdict]}
+        </span>
+        <span className="text-[12px] text-text-3">
+          {result.nodeName} · {result.address}
+        </span>
+      </div>
+      <ProbeTable title="Из России" probes={result.probes} empty={mainReason} />
+      <ProbeTable title="Контроль из других стран" probes={result.foreign} empty={foreignReason} />
+      <p className="m-0 text-[11.5px] text-text-3">
+        {result.sniUsed
+          ? `Глубокая проверка выполнена с именем маскировки ${result.sniUsed}.`
+          : 'Имя маскировки не найдено: проверена доступность TCP-порта, глубокая TLS/DPI-проверка недоступна.'}
+      </p>
+    </div>
   );
 }
 
@@ -79,7 +193,7 @@ function CheckRow({
           <div className="text-[12px] text-text-3">{meta.what}</div>
         </div>
         <div className="max-md:hidden">
-          <StatusBadge run={run} />
+          <StatusBadge check={check} run={run} />
         </div>
         <div className="text-[12px] text-text-3 max-md:hidden">{run ? formatAgo(run.startedAt) : '—'}</div>
         <div className="flex items-center justify-end gap-1.5">
@@ -118,7 +232,7 @@ function CheckRow({
       </div>
       {/* На телефоне статус и время — под названием. */}
       <div className="mt-1.5 flex items-center gap-2 md:hidden">
-        <StatusBadge run={run} />
+        <StatusBadge check={check} run={run} />
         {run && <span className="text-[12px] text-text-3">{formatAgo(run.startedAt)}</span>}
       </div>
       {open && run && (
@@ -128,7 +242,7 @@ function CheckRow({
               {run.error}
             </p>
           )}
-          {!running && (
+          {!running && check !== 'russia_access' && (
             <div className="rounded-[10px] border border-ai/30 bg-ai-soft px-3 py-2.5 text-[12.5px]">
               <div className="mb-1 flex items-center gap-1.5 text-[11.5px] font-semibold text-ai">
                 <JarvisIcon className="size-3.5" aria-hidden="true" />
@@ -158,13 +272,27 @@ function CheckRow({
               )}
             </div>
           )}
-          <pre
-            data-testid="check-output"
-            className="m-0 max-h-[260px] overflow-auto rounded-[10px] border border-border bg-bg-2 px-3 py-2.5 font-mono text-[11.5px] leading-[1.55] text-text-2"
-          >
-            {run.output || (running ? 'Ждём первые строки вывода…' : 'Вывода нет.')}
-          </pre>
-          <p className="m-0 text-[11.5px] text-text-3">Скрипт: {meta.source}.</p>
+          {check === 'russia_access' ? (
+            run.blockResult ? (
+              <RussiaAccessResult result={run.blockResult} />
+            ) : (
+              <p className="m-0 rounded-[10px] border border-border bg-bg-2 px-3 py-2.5 text-[12.5px] text-text-3">
+                {running
+                  ? 'Проверяю с серверов парка…'
+                  : run.error
+                    ? 'Результата нет.'
+                    : 'Результат не удалось прочитать.'}
+              </p>
+            )
+          ) : (
+            <pre
+              data-testid="check-output"
+              className="m-0 max-h-[260px] overflow-auto rounded-[10px] border border-border bg-bg-2 px-3 py-2.5 font-mono text-[11.5px] leading-[1.55] text-text-2"
+            >
+              {run.output || (running ? 'Ждём первые строки вывода…' : 'Вывода нет.')}
+            </pre>
+          )}
+          <p className="m-0 text-[11.5px] text-text-3">Источник: {meta.source}.</p>
         </div>
       )}
     </li>
@@ -172,10 +300,8 @@ function CheckRow({
 }
 
 /**
- * Вкладка «Проверки» (R5/J9, витрина `server-checks-variants.html`, вариант A): свою команду (процессор)
- * панель повторяет сама раз в сутки, если это не выключено в «Автопроверках»; сторонние скрипты — только по
- * кнопке, тяжёлые — ещё и с подтверждением. Вывод сырой; пересказ простыми словами — по кнопке «Объяснить»
- * у Джарвиса, сохраняется у запуска.
+ * Вкладка «Проверки» (R5/J9): своя проверка доступности из России — отдельной строкой по варианту C;
+ * процессор панель повторяет раз в сутки, сторонние скрипты запускаются по кнопке, тяжёлые — с подтверждением.
  */
 export function ChecksTab({ server }: { server: Server }) {
   const checks = useServerChecks(server.id);
@@ -244,7 +370,7 @@ export function ChecksTab({ server }: { server: Server }) {
           {next
             ? `, следующий замер — ${formatIn(next) === 'уже истекла' ? 'в ближайшие минуты' : formatIn(next)}`
             : ', первый — в ближайшее время'}
-          . Остальные проверки — сторонние скрипты: по расписанию панель их не запускает. На одном сервере
+          . Проверка доступности и сторонние скрипты запускаются только по кнопке. На одном сервере
           одновременно идёт одна проверка.
         </p>
       ) : (
@@ -253,6 +379,15 @@ export function ChecksTab({ server }: { server: Server }) {
           кнопке. На одном сервере одновременно идёт одна проверка.
         </p>
       )}
+      <h3 className="m-0 px-0.5 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
+        Проверки связи — по кнопке
+      </h3>
+      <ul
+        aria-label="Проверки связи — по кнопке"
+        className="m-0 list-none overflow-hidden rounded-2xl border border-border bg-surface p-0"
+      >
+        {CONNECTION.map(row)}
+      </ul>
       <h3 className="m-0 px-0.5 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
         {autoTitle}
       </h3>

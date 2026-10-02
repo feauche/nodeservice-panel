@@ -1,11 +1,20 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { ServerCheckKey, ServerCheckRun } from '@nodeservice/shared';
+import { blockCheckResultSchema, type ServerCheckKey, type ServerCheckRun } from '@nodeservice/shared';
 import { and, desc, eq, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { type ServerCheckRow, serverChecks } from '../../infra/db/schema/index.js';
 
 export function toCheckRun(r: ServerCheckRow): ServerCheckRun {
+  let blockResult: ServerCheckRun['blockResult'] = null;
+  if (r.check === 'russia_access' && r.output) {
+    try {
+      const parsed = blockCheckResultSchema.safeParse(JSON.parse(r.output));
+      blockResult = parsed.success ? parsed.data : null;
+    } catch {
+      // Старый или оборванный результат остаётся обычным текстовым выводом.
+    }
+  }
   return {
     id: r.id,
     serverId: r.serverId,
@@ -16,6 +25,7 @@ export function toCheckRun(r: ServerCheckRow): ServerCheckRun {
     startedAt: r.startedAt.toISOString(),
     finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
     output: r.output,
+    blockResult,
     error: r.error,
     explanation: r.explanation,
   };

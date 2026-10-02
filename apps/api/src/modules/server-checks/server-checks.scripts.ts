@@ -1,5 +1,7 @@
 import { SERVER_CHECK_OUTPUT_MAX, type ServerCheckKey } from '@nodeservice/shared';
 
+type ScriptCheckKey = Exclude<ServerCheckKey, 'russia_access'>;
+
 /**
  * Команды реестра проверок (R5/J9). Выполняются по SSH от root через bash.
  * Чужие скрипты берутся только по https — те же, что вызывает multitest, но без него самого: сам multitest
@@ -9,7 +11,7 @@ import { SERVER_CHECK_OUTPUT_MAX, type ServerCheckKey } from '@nodeservice/share
  */
 
 /** Серверные таймауты (секунды). */
-const SERVER_TIMEOUT_SEC: Record<ServerCheckKey, number> = {
+const SERVER_TIMEOUT_SEC: Record<ScriptCheckKey, number> = {
   cpu: 120,
   ip_region: 240,
   geoblock: 300,
@@ -20,9 +22,9 @@ const SERVER_TIMEOUT_SEC: Record<ServerCheckKey, number> = {
 };
 
 /** Панельные таймауты (мс): на минуту больше серверных — плюс установка недостающих пакетов. */
-export const SERVER_CHECK_TIMEOUT_MS: Record<ServerCheckKey, number> = Object.fromEntries(
+export const SERVER_CHECK_TIMEOUT_MS: Record<ScriptCheckKey, number> = Object.fromEntries(
   Object.entries(SERVER_TIMEOUT_SEC).map(([k, sec]) => [k, (sec + 5 * 60) * 1000]),
-) as Record<ServerCheckKey, number>;
+) as Record<ScriptCheckKey, number>;
 
 const ENV = 'export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8 LANG=C.UTF-8 TERM=dumb NO_COLOR=1';
 
@@ -118,7 +120,7 @@ export const SCRIPT_PREPARE_FAILED_EXIT = 113;
  * автора — сначала переписать эти адреса на закреплённый коммит и сверить уже переписанный файл. Файлы
  * удаляются при выходе.
  */
-const remote = (key: ServerCheckKey, pin: ScriptPin, args = '') =>
+const remote = (key: ScriptCheckKey, pin: ScriptPin, args = '') =>
   [
     'f=$(mktemp) || exit 1',
     `trap 'rm -f "$f" "$f.pin"' EXIT`,
@@ -138,7 +140,7 @@ const remote = (key: ServerCheckKey, pin: ScriptPin, args = '') =>
 /** Сумму считает sha256sum (coreutils): без него сверить нельзя — честный отказ need, а не «не совпал». */
 const NEED_SUM = 'need sha256sum coreutils';
 
-const body = (pins: ScriptPins): Record<ServerCheckKey, string[]> => ({
+const body = (pins: ScriptPins): Record<ScriptCheckKey, string[]> => ({
   cpu: [
     'need sysbench sysbench',
     'echo "== Одно ядро"',
@@ -188,7 +190,7 @@ const body = (pins: ScriptPins): Record<ServerCheckKey, string[]> => ({
 const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
 /** pins — только для тестов (свой «скрипт» с известной суммой); на серверы идут SCRIPT_PINS. */
-export function checkCommand(key: ServerCheckKey, pins: ScriptPins = SCRIPT_PINS): string {
+export function checkCommand(key: ScriptCheckKey, pins: ScriptPins = SCRIPT_PINS): string {
   const script = [`# ns-check:${key}`, ENV, 'need curl curl', ...body(pins)[key]].join('\n');
   // NEED объявляется раньше первого вызова; маркер остаётся первой строкой самой команды.
   return `# ns-check:${key}\nbash -c ${q([NEED, script].join('\n'))}`;
