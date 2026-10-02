@@ -28,7 +28,13 @@ import { ServersService } from '../servers/servers.service.js';
 import { SshService, type SshSession } from '../servers/ssh.service.js';
 import { AgentReleasesService } from './agent-releases.service.js';
 import { MaintenanceRepository, toRun } from './maintenance.repository.js';
-import { actionSteps, checkScript, MAINTENANCE_TIMEOUT_MS, parseCheckOutput } from './maintenance.scripts.js';
+import {
+  actionSteps,
+  checkScript,
+  MAINTENANCE_TIMEOUT_MS,
+  parseCheckOutput,
+  resumeDetachedAptUpgradeScript,
+} from './maintenance.scripts.js';
 
 /** Лог пишем в БД пачками: клиент опрашивает раз в полторы секунды, чаще не нужно. */
 const LOG_FLUSH_MS = 800;
@@ -70,12 +76,126 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    const n = await this.repo.failOrphans('Прервано перезапуском панели').catch(() => 0);
-    if (n > 0) this.log.warn(`Закрыто незавершённых запусков обслуживания: ${n}`);
+    const running = await this.repo.listRunning().catch(() => [] as MaintenanceRunRow[]);
+    let failed = 0;
+    for (const row of running) {
+      const detached =
+        row.kind === 'apt_upgrade' &&
+        row.steps.some((step) => step.key === 'upgrade' && step.status === 'running');
+      if (!detached) {
+        await this.repo.failRun(row.id, 'Прервано перезапуском панели').catch(() => undefined);
+        failed += 1;
+        continue;
+      }
+      const ctl = new AbortController();
+      this.active.set(row.serverId, ctl);
+      void this.resumeDetachedUpgrade(row, ctl.signal)
+        .catch((err) => this.log.warn(`Обновление ${row.id} не подхвачено: ${errorText(err)}`))
+        .finally(() => this.active.delete(row.serverId));
+    }
+    if (failed > 0) this.log.warn(`Закрыто незавершённых запусков обслуживания: ${failed}`);
   }
 
   onModuleDestroy(): void {
     for (const ctl of this.active.values()) ctl.abort();
+  }
+
+  /**
+   * apt/dpkg продолжает работу в systemd на самом сервере. После рестарта API снова читаем тот же лог,
+   * ждём exit-код и выполняем проверку после, вместо ложного «прервано» и потерянного результата.
+   */
+  private async resumeDetachedUpgrade(row: MaintenanceRunRow, signal: AbortSignal): Promise<void> {
+    const steps = row.steps.map((step) => ({ ...step }));
+    const upgrade = steps.find((step) => step.key === 'upgrade');
+    const after = steps.find((step) => step.key === 'after');
+    let session: SshSession | null = null;
+    let error: string | null = null;
+    let interruptedByShutdown = false;
+    // execStream вызывает onData синхронно, а запись в PostgreSQL асинхронна. Цепочка сохраняет
+    // исходный порядок строк и гарантирует, что перед итоговым статусом весь журнал уже записан.
+    let logWrites = Promise.resolve();
+    const write = (chunk: string) => {
+      logWrites = logWrites.then(() => this.repo.appendLog(row.id, chunk)).catch(() => undefined);
+      return logWrites;
+    };
+    try {
+      const { target } = await this.servers.sshTargetFor(row.serverId);
+      session = await this.ssh.connect(target);
+      await write('\n▶ Панель снова подключилась к обновлению после перезапуска\n');
+      const resumed = await session.execStream(resumeDetachedAptUpgradeScript(), {
+        timeoutMs: MAINTENANCE_TIMEOUT_MS.apt_upgrade,
+        onData: (chunk) => void write(chunk),
+        signal,
+      });
+      if (resumed.code !== 0) throw new StepFailed(`системная задача завершилась с кодом ${resumed.code}`);
+      if (upgrade) {
+        upgrade.status = 'ok';
+        upgrade.finishedAt = new Date().toISOString();
+        upgrade.detail = 'завершено после повторного подключения панели';
+      }
+      if (after) {
+        after.status = 'running';
+        after.startedAt = new Date().toISOString();
+      }
+      await this.repo.setSteps(row.id, steps);
+      let output = '';
+      const checked = await session.execStream(checkScript(), {
+        timeoutMs: MAINTENANCE_TIMEOUT_MS.check,
+        onData: (chunk) => {
+          output = (output + chunk).slice(-64 * 1024);
+        },
+        signal,
+      });
+      if (checked.code !== 0 || !output.includes('@@done=1'))
+        throw new StepFailed('проверка после не завершилась');
+      const check = parseCheckOutput(output, await this.releases.latest());
+      await this.repo.saveCheck(row.serverId, check);
+      if (after) {
+        after.status = 'ok';
+        after.finishedAt = new Date().toISOString();
+        after.detail = check.updates ? `обновлений: ${check.updates.total}` : 'готово';
+      }
+      await write('\n✓ Обновление завершено; итог и проверка после сохранены.\n');
+    } catch (err) {
+      // Штатная остановка API (в том числе nodeservice update) не означает, что apt на сервере упал.
+      // Строку оставляем running: новый процесс снова найдёт её и подключится к той же systemd-задаче.
+      if (signal.aborted) {
+        interruptedByShutdown = true;
+        await write('\n▶ Панель снова перезапускается; системная задача продолжает работу на сервере.\n');
+      } else {
+        error = errorText(err);
+        if (upgrade?.status === 'running') {
+          upgrade.status = 'failed';
+          upgrade.finishedAt = new Date().toISOString();
+          upgrade.detail = error.slice(0, 300);
+        }
+        for (const step of steps)
+          if (step.status === 'pending' || step.status === 'running') step.status = 'skipped';
+        await write(`\n✗ ${error}\n`);
+      }
+    } finally {
+      session?.end();
+    }
+    await logWrites;
+    if (interruptedByShutdown) return;
+    await this.repo.finishRun(row.id, error ? 'failed' : 'ok', steps, error);
+    const server = await this.serversRepo.findById(row.serverId);
+    await this.audit.record({
+      action: 'server.maintenance.apt_upgrade',
+      actor: row.actorId
+        ? { type: 'admin', id: row.actorId, display: row.actorDisplay ?? 'администратор' }
+        : SYSTEM_ACTOR,
+      source: row.actorId ? 'manual' : 'auto',
+      result: error ? 'failed' : 'ok',
+      severity: error ? 'warn' : 'info',
+      target: { type: 'server', id: row.serverId, display: server?.name ?? row.serverId },
+      durationMs: Date.now() - row.startedAt.getTime(),
+      metadata: {
+        runId: row.id,
+        resumedAfterRestart: true,
+        ...(error ? { error: error.slice(0, 300) } : {}),
+      },
+    });
   }
 
   async state(serverId: string): Promise<MaintenanceState> {

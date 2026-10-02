@@ -73,6 +73,9 @@ const HOST_PROBE_TTL_MS = 60_000;
 const REACH_TTL_MS = process.env.NODE_ENV === 'test' ? 0 : 3 * 60_000;
 /** Сетевые перепроверки разных серверов: быстрее последовательного обхода, без SSH-шторма по всему парку. */
 const CONNECTIVITY_CONCURRENCY = 4;
+/** Массовая потеря хотя бы половины наблюдаемого парка — сначала один системный сбой, не десятки дел. */
+const FLEET_BLIND_MIN_SERVERS = 3;
+const FLEET_BLIND_RATIO = 0.5;
 /** Связь пропала с другими серверами за это время — сбой считается одновременным: общая причина. */
 const FLEET_WINDOW_MS = 30 * 60_000;
 /** Дело о падении онлайна узнаётся по первой строке текста: «Онлайн: 396 → 0 …». */
@@ -288,7 +291,7 @@ export class IncidentsService {
 
   /** После перезапуска панели разбор «идёт» вечно: помечаем такие оборванными. */
   async failRunningAnalyses(reason: string): Promise<number> {
-    const rows = (await this.repo.list('all')).filter((r) => r.analysis?.status === 'running');
+    const rows = await this.repo.withRunningAnalysis();
     for (const r of rows)
       await this.repo.update(r.id, {
         analysis: { ...(r.analysis as IncidentAnalysis), status: 'failed', finishedAt: now(), error: reason },
@@ -388,17 +391,9 @@ export class IncidentsService {
   /** «Автопочинка»: политика по сигналам, цепочка шагов и статистика за STATS_DAYS дней. */
   async policy(): Promise<IncidentPolicyResponse> {
     const cfg = await this.settings.get();
-    const since = Date.now() - STATS_DAYS * 86_400_000;
     const stats = new Map<string, { runs: number; helped: number; lastAt: string | null }>();
-    for (const row of await this.repo.list('all'))
-      for (const a of row.attempts) {
-        if (new Date(a.startedAt).getTime() < since) continue;
-        const st = stats.get(row.kind) ?? { runs: 0, helped: 0, lastAt: null };
-        st.runs += 1;
-        if (a.status === 'helped') st.helped += 1;
-        if (!st.lastAt || a.startedAt > st.lastAt) st.lastAt = a.startedAt;
-        stats.set(row.kind, st);
-      }
+    for (const row of await this.repo.actionStatsSince(new Date(Date.now() - STATS_DAYS * 86_400_000)))
+      stats.set(row.kind, { runs: row.runs, helped: row.helped, lastAt: row.lastAt });
     const paused =
       cfg.pausedUntil && new Date(cfg.pausedUntil).getTime() > Date.now() ? cfg.pausedUntil : null;
     return {
@@ -482,6 +477,24 @@ export class IncidentsService {
     await this.runner.autoTick();
 
     if (connectivityReady) {
+      const offline = rows.filter(
+        (server) =>
+          server.agentStatus === 'offline' &&
+          (!server.agentLastSeenAt || Date.now() - server.agentLastSeenAt.getTime() >= AGENT_OFFLINE_FOR_MS),
+      );
+      const observed = rows.filter((server) => server.agentStatus !== 'not_installed').length;
+      // При одновременной потере большей части агентов сначала проверяем сам обзор панели. Раньше каждый
+      // сервер успевал открыть своё дело, а после восстановления 10–20 накопленных тревог уходили в Telegram.
+      if (
+        offline.length >= FLEET_BLIND_MIN_SERVERS &&
+        observed > 0 &&
+        offline.length / observed >= FLEET_BLIND_RATIO &&
+        (await this.massConnectivityBlind(offline))
+      ) {
+        await this.cancelFreshConnectivityIncidents(offline);
+        await this.panelAlerts.connectivityDown(offline.length).catch(() => undefined);
+        return;
+      }
       let cursor = 0;
       let panelBlind = 0;
       const worker = async () => {
@@ -499,6 +512,50 @@ export class IncidentsService {
       const report =
         panelBlind > 0 ? this.panelAlerts.connectivityDown(panelBlind) : this.panelAlerts.connectivityUp();
       await report.catch(() => undefined);
+    }
+  }
+
+  /**
+   * Массовый предохранитель: панель не видит напрямую ни один из одновременно пропавших серверов, а
+   * перекрёстная проверка тоже не нашла ни одного открытого порта. Это один сбой наблюдения/площадки;
+   * объявлять каждый сервер выключенным до следующего независимого снимка нельзя.
+   */
+  private async massConnectivityBlind(offline: ServerRow[]): Promise<boolean> {
+    const direct = await Promise.all(offline.map((server) => this.hostAnswers(server)));
+    if (direct.some(Boolean)) return false;
+    const samples = offline.slice(0, Math.min(3, offline.length));
+    const remote = await Promise.all(samples.map((server) => this.countryReachCached(server)));
+    return remote.every((reach) => !reach.results.some((result) => result.open));
+  }
+
+  /**
+   * Если массовая картина сложилась не в один тик, ранние серверы могли уже успеть открыть отдельные дела.
+   * Закрываем только дела этой же свежей волны, без ложного «Починилось», и чистим их очередь Telegram.
+   */
+  private async cancelFreshConnectivityIncidents(offline: ServerRow[]): Promise<void> {
+    const ids = new Set(offline.map((server) => server.id));
+    const starts = offline
+      .map((server) => server.agentLastSeenAt?.getTime() ?? Date.now())
+      .filter(Number.isFinite);
+    const waveStartedAt = Math.min(...starts) - AGENT_OFFLINE_FOR_MS;
+    for (const row of await this.repo.list('open')) {
+      if (!row.serverId || !ids.has(row.serverId) || row.openedAt.getTime() < waveStartedAt) continue;
+      if (!['server_down', 'agent_offline', 'ssh_down', 'node_blocked'].includes(row.kind)) continue;
+      await this.notifications.cancelIncidentDeliveries(row.id);
+      await this.repo.update(row.id, {
+        status: 'resolved',
+        resolvedAt: new Date(),
+        resolvedBy: 'auto',
+        proposal: null,
+        timeline: [
+          ...row.timeline,
+          ev(
+            'auto',
+            'Отменено: одновременно пропало наблюдение за большей частью парка; отдельный сбой сервера не подтверждён',
+            'resolved',
+          ),
+        ],
+      });
     }
   }
 

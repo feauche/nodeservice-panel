@@ -138,4 +138,45 @@ describe('достоверность диагноза связи сервера'
     release();
     await run;
   });
+
+  it('массовую потерю агентов считает одним сбоем наблюдения и не открывает дела по серверам', async () => {
+    const rows = Array.from({ length: 6 }, (_, n) => ({
+      id: `s${n}`,
+      agentStatus: 'offline',
+      agentLastSeenAt: null,
+    }));
+    const connectivityDown = vi.fn(async () => undefined);
+    const stub = {} as never;
+    const service = new IncidentsService(
+      { list: async () => [] } as never,
+      { list: async () => rows } as never,
+      { get: async () => ({ cpuPct: 90, memPct: 90, diskPct: 90, forDurationMinutes: 5 }) } as never,
+      stub,
+      stub,
+      { autoTick: async () => undefined } as never,
+      { remember: () => undefined } as never,
+      stub,
+      stub,
+      stub,
+      stub,
+      stub,
+      stub,
+      { connectivityDown, connectivityUp: async () => undefined } as never,
+    );
+    const evalConnectivity = vi.fn(async () => 'checked' as const);
+    const cancelFreshConnectivityIncidents = vi.fn(async () => undefined);
+    Object.assign(service as unknown as Record<string, unknown>, {
+      evalNode: async () => undefined,
+      evalThreshold: async () => undefined,
+      massConnectivityBlind: async () => true,
+      cancelFreshConnectivityIncidents,
+      evalConnectivity,
+    });
+
+    await service.evaluate({ cpu: new Map(), mem: new Map(), disk: new Map() });
+
+    expect(cancelFreshConnectivityIncidents).toHaveBeenCalledTimes(1);
+    expect(connectivityDown).toHaveBeenCalledWith(6);
+    expect(evalConnectivity).not.toHaveBeenCalled();
+  });
 });

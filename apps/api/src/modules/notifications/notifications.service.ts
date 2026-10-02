@@ -298,6 +298,15 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
   }
 
   /**
+   * Дело оказалось следствием потери наблюдения самой панели: снять ожидание разбора и все ещё не
+   * доставленные Telegram-сообщения. Это отличается от обычного закрытия — «Починилось» тут ложно.
+   */
+  async cancelIncidentDeliveries(incidentId: string): Promise<void> {
+    await this.dropDeferred(incidentId);
+    await this.telegram.cancelIncident(incidentId);
+  }
+
+  /**
    * Минутная задача и старт панели: отправить всё отложенное, чему пора. После перезапуска будильников в
    * памяти нет — сообщение уходит отсюда, когда разбор закончился, прерван или время ожидания истекло.
    */

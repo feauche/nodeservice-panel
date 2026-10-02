@@ -156,6 +156,21 @@ export class MaintenanceRepository {
     });
   }
 
+  async listRunning(): Promise<MaintenanceRunRow[]> {
+    return this.db
+      .select()
+      .from(maintenanceRuns)
+      .where(eq(maintenanceRuns.status, 'running'))
+      .orderBy(desc(maintenanceRuns.startedAt));
+  }
+
+  async failRun(id: string, reason: string): Promise<void> {
+    await this.db
+      .update(maintenanceRuns)
+      .set({ status: 'failed', error: reason, finishedAt: new Date() })
+      .where(and(eq(maintenanceRuns.id, id), eq(maintenanceRuns.status, 'running')));
+  }
+
   async lastFinished(serverId: string): Promise<MaintenanceRunRow | undefined> {
     return this.db.query.maintenanceRuns.findFirst({
       where: and(eq(maintenanceRuns.serverId, serverId), sql`${maintenanceRuns.status} <> 'running'`),

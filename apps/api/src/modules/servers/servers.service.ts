@@ -35,6 +35,8 @@ import { AuditService } from '../audit/audit.service.js';
 import {
   AGENT_INSTALL_LABEL,
   AGENT_INSTALL_TIMEOUT_MS,
+  AGENT_UNINSTALL_LABEL,
+  AGENT_UNINSTALL_SCRIPT,
   agentInstallCommand,
   agentPullInstallScript,
   installFailure,
@@ -845,6 +847,77 @@ export class ServersService {
     });
     if (!updated) throw serverProblems.notFound();
     return this.toDto(updated);
+  }
+
+  private async clearAgentBinding(row: ServerRow): Promise<Server> {
+    const updated = await this.repo.update(row.id, {
+      agentStatus: 'not_installed',
+      agentPubkey: null,
+      agentVersion: null,
+      agentEnrolledAt: null,
+      agentLastSeenAt: null,
+      agentTransport: null,
+      agentRoute: null,
+      agentRouteFallback: null,
+      agentListenPort: null,
+      agentAccessKeyEnc: null,
+      agentTlsCert: null,
+    });
+    if (!updated) throw serverProblems.notFound();
+    this.installedAt.delete(row.id);
+    // Отвязка должна немедленно отозвать и уже открытый канал. Иначе старый процесс продолжит слать
+    // heartbeat до следующего обрыва, хотя его ключ и порт в панели уже освобождены.
+    for (const listener of this.deleteListeners) {
+      try {
+        listener(row.id);
+      } catch {
+        // Привязка уже снята; сбой закрытия канала не должен возвращать её обратно.
+      }
+    }
+    return this.toDto(updated);
+  }
+
+  /** Остановить и удалить агент на сервере, затем освободить его ключ и уникальный порт в панели. */
+  async uninstallAgent(id: string): Promise<Server> {
+    const row = await this.repo.findById(id);
+    if (!row) throw serverProblems.notFound();
+    let session: SshSession | null = null;
+    try {
+      session = await this.ssh.connect(await this.storedTarget(row));
+      const result = await session.exec(AGENT_UNINSTALL_SCRIPT, {
+        timeoutMs: 60_000,
+        label: AGENT_UNINSTALL_LABEL,
+      });
+      if (result.code !== 0)
+        throw serverProblems.sshCommand(
+          AGENT_UNINSTALL_LABEL,
+          installFailure(result.stdout + result.stderr, result.code),
+        );
+    } finally {
+      session?.end();
+    }
+    const updated = await this.clearAgentBinding(row);
+    await this.audit.record({
+      action: 'server.agent.uninstall',
+      severity: 'warn',
+      target: { type: 'server', id, display: row.name },
+      metadata: { host: `${row.host}:${row.port}` },
+    });
+    return updated;
+  }
+
+  /** Забыть привязку, когда сервер уже недоступен; старый процесс больше не пройдёт проверку ключа. */
+  async unlinkAgent(id: string): Promise<Server> {
+    const row = await this.repo.findById(id);
+    if (!row) throw serverProblems.notFound();
+    const updated = await this.clearAgentBinding(row);
+    await this.audit.record({
+      action: 'server.agent.unlinked',
+      severity: 'warn',
+      target: { type: 'server', id, display: row.name },
+      metadata: { note: 'Привязка удалена без подключения к серверу' },
+    });
+    return updated;
   }
 
   /** Выдаёт серверу постоянные уникальные реквизиты входящего агента. Уникальность порта держит БД. */

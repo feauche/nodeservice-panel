@@ -22,6 +22,13 @@ export interface IncidentsPage {
   totalPages: number;
 }
 
+export interface IncidentActionStat {
+  kind: string;
+  runs: number;
+  helped: number;
+  lastAt: string | null;
+}
+
 /** Хранилище инцидентов. Один открытый инцидент на (server_id, kind) держит частичный уникальный индекс. */
 @Injectable()
 export class IncidentsRepository {
@@ -45,6 +52,49 @@ export class IncidentsRepository {
       .from(incidents)
       .where(this.where(status))
       .orderBy(desc(incidents.openedAt), desc(incidents.id));
+  }
+
+  /** Только строки с реально идущей попыткой; сторожу не нужно читать всю годовую историю каждые 30 с. */
+  async withRunningAttempts(): Promise<IncidentRow[]> {
+    return this.db
+      .select()
+      .from(incidents)
+      .where(sql`exists (
+        select 1 from jsonb_array_elements(${incidents.attempts}) as attempt
+        where attempt->>'status' = 'running'
+      )`);
+  }
+
+  /** Только оборванные разборы при старте API, без загрузки обычных инцидентов. */
+  async withRunningAnalysis(): Promise<IncidentRow[]> {
+    return this.db.select().from(incidents).where(sql`${incidents.analysis}->>'status' = 'running'`);
+  }
+
+  /** Статистика автопочинки считается PostgreSQL по элементам JSON, а не полными строками в Node.js. */
+  async actionStatsSince(since: Date): Promise<IncidentActionStat[]> {
+    const result = await this.db.execute<{
+      kind: string;
+      runs: number;
+      helped: number;
+      last_at: Date | string | null;
+    }>(sql`
+      select i.kind,
+             count(*)::int as runs,
+             count(*) filter (where attempt->>'status' = 'helped')::int as helped,
+             max((attempt->>'startedAt')::timestamptz) as last_at
+      from incidents as i
+      cross join lateral jsonb_array_elements(i.attempts) as attempt
+      where (attempt->>'startedAt')::timestamptz >= ${since}
+      group by i.kind
+    `);
+    return result.rows.map((row) => ({
+      kind: row.kind,
+      runs: Number(row.runs),
+      helped: Number(row.helped),
+      // pg может вернуть timestamptz как Date или строку `2026-10-02 15:15:46+00`. Контракт API
+      // требует ISO с T и Z независимо от настройки парсера драйвера.
+      lastAt: row.last_at === null ? null : new Date(row.last_at).toISOString(),
+    }));
   }
 
   /**

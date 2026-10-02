@@ -593,7 +593,10 @@ describe('agent e2e', () => {
     await agent.delete(`/api/servers/${goneId}`).set(CSRF_HEADER, csrf).expect(204);
     const bye = await ws.next();
     expect(bye.type).toBe(AGENT_MSG.error);
-    expect(bye.payload).toMatchObject({ code: 'unknown-server', message: 'Сервер удалён из панели' });
+    expect(bye.payload).toMatchObject({
+      code: 'unknown-server',
+      message: 'Агент удалён или отвязан в панели',
+    });
     expect(await closed).toBe(CLOSE_SERVER_DELETED);
     await new Promise((r) => setTimeout(r, 200));
     const after = await db.execute<{ action: string }>(
@@ -610,7 +613,10 @@ describe('agent e2e', () => {
     await app.get<Db>(DB).execute(sql`delete from servers where id = ${serverId}`);
     ws.send(AGENT_MSG.heartbeat, {});
     const bye = await ws.next();
-    expect(bye.payload).toMatchObject({ code: 'unknown-server', message: 'Сервер удалён из панели' });
+    expect(bye.payload).toMatchObject({
+      code: 'unknown-server',
+      message: 'Агент удалён или отвязан в панели',
+    });
     expect(await closed).toBe(CLOSE_SERVER_DELETED);
   });
 });

@@ -246,6 +246,20 @@ export class FakeSsh {
                 stream.write(`Временных файлов старше часа: ${this.inspectTmpGb.toFixed(1)} ГБ\n`);
                 stream.exit(0);
               } else if (
+                info.command.includes("docker inspect -f '{{.State.Status}}'") &&
+                info.command.includes('docker ps -a --format')
+              ) {
+                // Пред-проверка restart_node: точный контейнер ноды найден и работает.
+                stream.write('running\n');
+                stream.exit(0);
+              } else if (
+                (info.command.includes('docker restart "$N"') ||
+                  info.command.includes('docker start "$N"')) &&
+                info.command.includes('docker ps -a --format')
+              ) {
+                stream.write('remnanode\n');
+                stream.exit(0);
+              } else if (
                 this.holdAptClean &&
                 info.command.includes('apt-get') &&
                 info.command.includes('clean')

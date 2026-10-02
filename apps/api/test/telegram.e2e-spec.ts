@@ -957,6 +957,36 @@ describe('telegram e2e', () => {
     expect(tg.ids).toHaveLength(deliveredBefore + 1);
   });
 
+  it('после восстановления Telegram не присылает запоздалую тревогу уже закрытого инцидента', async () => {
+    await fresh();
+    const tgs = app.get(TelegramService);
+    const incident = await openIncident('server_down', 'crit');
+    const deliveredBefore = tg.ids.length;
+    tg.networkDown = true;
+    await tgs.dispatch({
+      event: 'incident_crit',
+      kind: 'server_down',
+      incidentId: incident.id,
+      serverKey: serverId,
+      title: 'Сервер недоступен',
+    });
+    expect(await outboxCount()).toBe(1);
+
+    await app.get(IncidentsRepository).update(incident.id, {
+      status: 'resolved',
+      resolvedAt: new Date(),
+      resolvedBy: 'auto',
+    });
+    tg.networkDown = false;
+    await app
+      .get<Db>(DB)
+      .execute(sql`update telegram_outbox set next_attempt_at = now() - interval '1 second'`);
+
+    expect(await tgs.retryOutbox()).toBe(0);
+    expect(await outboxCount()).toBe(0);
+    expect(tg.ids).toHaveLength(deliveredBefore);
+  });
+
   it('ответ 429 откладывает адресную очередь ровно на retry_after Telegram', async () => {
     await fresh();
     const tgs = app.get(TelegramService);

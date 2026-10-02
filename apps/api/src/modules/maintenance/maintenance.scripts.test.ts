@@ -14,7 +14,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { actionSteps, checkScript, parseCheckOutput } from './maintenance.scripts.js';
+import {
+  actionSteps,
+  checkScript,
+  parseCheckOutput,
+  resumeDetachedAptUpgradeScript,
+} from './maintenance.scripts.js';
 
 /**
  * Скрипты обслуживания прогоняются через настоящий sh: синтаксис, кавычки, `set -e`, разбор
@@ -56,6 +61,7 @@ describe('maintenance scripts', () => {
   it('все скрипты проходят проверку синтаксиса sh -n', () => {
     const scripts = [
       checkScript(),
+      resumeDetachedAptUpgradeScript(),
       ...(['apt_upgrade', 'agent_update', 'cleanup', 'unattended_enable'] as const).flatMap((k) =>
         actionSteps(k, 'feauche/nodeservice-agent').map((s) => s.command),
       ),
@@ -203,5 +209,15 @@ describe('maintenance scripts', () => {
     expect(upgrade).toContain('systemd-run --unit=nodeservice-upgrade');
     expect(upgrade).toContain('/run/nodeservice-upgrade.exit');
     expect(upgrade).not.toMatch(/timeout -k 30 \d+ apt-get.*upgrade/);
+  });
+
+  it('после перезапуска панель подхватывает журнал и настоящий код уже запущенного apt upgrade', () => {
+    const resume = resumeDetachedAptUpgradeScript();
+    expect(resume).toContain('nodeservice-upgrade.service');
+    expect(resume).toContain('/var/log/nodeservice-upgrade.log');
+    expect(resume).toContain('/run/nodeservice-upgrade.exit');
+    expect(resume).toContain('while systemctl is-active');
+    expect(resume).toContain('exit "$(cat "$RESULT")"');
+    expect(resume).not.toContain('systemd-run');
   });
 });

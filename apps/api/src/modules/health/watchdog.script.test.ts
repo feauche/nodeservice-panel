@@ -47,6 +47,12 @@ const THREE_CHATS: WatchdogParams['chats'] = [
 /** 1 октября 2026, 01:12 по Омску. */
 const T0 = Date.UTC(2026, 8, 30, 19, 12) / 1000;
 const min = (m: number) => String(T0 + m * 60);
+const alert = (reason: string, at = '01:12') =>
+  `🔴 <b>Панель NodeService не отвечает</b>\n\nС <b>${at}</b>: ${reason}.\n\n<i>Независимый сторож: Германия-1 (Hetzner's)</i>`;
+const recovered = (duration = '8 мин') =>
+  `✅ <b>Панель снова отвечает</b>\n\nНе отвечала: <b>${duration}</b>.`;
+const testMessage =
+  "✅ <b>Сторож панели NodeService работает</b>\n\nСервер: <b>Германия-1 (Hetzner's)</b>\n\n<i>Если панель перестанет отвечать, сторож напишет сюда независимо от неё.</i>";
 
 /**
  * Подменённый curl: адрес панели отвечает тем, что лежит в $STUB_DIR (код выхода, код ответа, тело);
@@ -60,7 +66,7 @@ const min = (m: number) => String(T0 + m * 60);
 const FAKE_CURL = [
   '#!/bin/sh',
   'printf "%s\\n" "$*" >> "$STUB_DIR/argv.log"',
-  'out=""; url=""; text=""; chat=""; topic=""; proxy=""; m=15; ct=""; cfg=""',
+  'out=""; url=""; text=""; rich=""; chat=""; topic=""; proxy=""; m=15; ct=""; cfg=""',
   'while [ $# -gt 0 ]; do',
   '  case "$1" in',
   '    -o) out="$2"; shift 2 ;;',
@@ -70,7 +76,7 @@ const FAKE_CURL = [
   '    -K) cfg="$2"; shift 2 ;;',
   '    --proxy) proxy="$2"; shift 2 ;;',
   '    --data-urlencode)',
-  `      case "$2" in text=*) text="\${2#text=}" ;; chat_id=*) chat="\${2#chat_id=}" ;; message_thread_id=*) topic="\${2#message_thread_id=}" ;; esac`,
+  `      case "$2" in text=*) text="\${2#text=}" ;; rich_message=*) rich="\${2#rich_message=}" ;; chat_id=*) chat="\${2#chat_id=}" ;; message_thread_id=*) topic="\${2#message_thread_id=}" ;; esac`,
   '      shift 2 ;;',
   '    -*) shift ;;',
   '    *) url="$1"; shift ;;',
@@ -87,6 +93,10 @@ const FAKE_CURL = [
   'hang() { s=$m; [ -n "$ct" ] && [ "$ct" -lt "$s" ] && s=$ct; sleep "$s"; printf 000; exit 28; }',
   'case "$url" in',
   '  https://api.telegram.org/*)',
+  '    case "$url" in */sendRichMessage)',
+  '      if [ -z "$STUB_RICH_OK" ]; then printf "%s" \'{"ok":false,"description":"method not found"}\' > "$out"; printf 404; exit 0; fi',
+  '      text="$rich" ;;',
+  '    esac',
   '    echo "proxy=$proxy" >> "$STUB_DIR/tg.log"',
   '    [ -n "$STUB_TG_DOWN" ] && { printf 000; exit 7; }',
   '    [ -n "$proxy" ] && [ "$proxy" = "$STUB_PROXY_DOWN" ] && { printf 000; exit 7; }',
@@ -214,9 +224,7 @@ describe('сторож панели: скрипт на сервере парка
     run(min(1));
     expect(sent()).toEqual([]);
     run(min(2));
-    expect(sent()).toEqual([
-      "🔴 Панель не отвечает с 01:12: нет ответа за 10 с.\nСообщает сторож с сервера «Германия-1 (Hetzner's)».",
-    ]);
+    expect(sent()).toEqual([alert('нет ответа за 10 с')]);
     // Токен, чат и тема — из файла настроек.
     expect(meta(0)).toBe(
       `chat=-1002946167407 topic=8 proxy= url=https://api.telegram.org/bot${TOKEN}/sendMessage`,
@@ -225,21 +233,35 @@ describe('сторож панели: скрипт на сервере парка
     expect(sent()).toHaveLength(1);
   });
 
+  it('сторож сначала шлёт Rich Message с заголовком; обычный HTML остаётся запасным', () => {
+    panel('timeout');
+    twoFails();
+    run(min(2), [], { STUB_RICH_OK: '1' });
+    const payload = JSON.parse(sent()[0] ?? '{}') as {
+      blocks?: Array<{ type?: string; text?: string }>;
+      skip_entity_detection?: boolean;
+    };
+    expect(payload.skip_entity_detection).toBe(true);
+    expect(payload.blocks?.[0]).toMatchObject({
+      type: 'heading',
+      text: '🔴 Панель NodeService не отвечает',
+    });
+    expect(payload.blocks?.[1]?.text).toContain('Независимый сторож');
+    expect(meta(0)).toContain('/sendRichMessage');
+  });
+
   it('восстановление — одно сообщение, сколько не отвечала; дальше тихо', () => {
     panel('refused');
     for (let m = 0; m < 3; m += 1) run(min(m));
     panel('ok');
     run(min(8));
     run(min(9));
-    expect(sent()).toEqual([
-      "🔴 Панель не отвечает с 01:12: нет ответа: не удаётся подключиться.\nСообщает сторож с сервера «Германия-1 (Hetzner's)».",
-      '✅ Панель снова отвечает, не отвечала 8 мин.',
-    ]);
+    expect(sent()).toEqual([alert('нет ответа: не удаётся подключиться'), recovered()]);
     // Новый сбой — снова с чистого листа.
     panel('timeout');
     for (let m = 60; m < 63; m += 1) run(min(m));
     expect(sent()).toHaveLength(3);
-    expect(sent()[2]).toMatch(/^🔴 Панель не отвечает с 02:12: /);
+    expect(sent()[2]).toContain('С <b>02:12</b>');
   });
 
   it('неудачи вперемешку с ответами — не «подряд»: сообщения нет', () => {
@@ -262,15 +284,13 @@ describe('сторож панели: скрипт на сервере парка
     panel('502');
     for (let m = 3; m < 6; m += 1) run(min(m));
     expect(sent()).toEqual([
-      "🔴 Панель не отвечает с 01:12: ошибка 503: база данных не отвечает; поиск инцидентов не отрабатывал 5 мин.\nСообщает сторож с сервера «Германия-1 (Hetzner's)».",
+      alert('ошибка 503: база данных не отвечает; поиск инцидентов не отрабатывал 5 мин'),
     ]);
     panel('ok');
     run(min(10));
     panel('502');
     for (let m = 20; m < 23; m += 1) run(min(m));
-    expect(sent()[2]).toMatch(
-      /^🔴 Панель не отвечает с 01:32: ошибка 502: сервер панели отвечает, а сама панель — нет\./,
-    );
+    expect(sent()[2]).toMatch(/С <b>01:32<\/b>: ошибка 502: сервер панели отвечает, а сама панель — нет\./);
   });
 
   it('Telegram недоступен — сообщение не потеряно: сторож пробует каждую минуту, пока не дойдёт, и только одно', () => {
@@ -280,7 +300,7 @@ describe('сторож панели: скрипт на сервере парка
     run(min(5));
     run(min(6));
     expect(sent()).toHaveLength(1);
-    expect(sent()[0]).toMatch(/^🔴 Панель не отвечает с 01:12: /);
+    expect(sent()[0]).toContain('С <b>01:12</b>');
   });
 
   it('Telegram недоступен, когда панель поднялась, — «снова отвечает» не теряется: уходит, когда дойдёт, и одно', () => {
@@ -294,7 +314,7 @@ describe('сторож панели: скрипт на сервере парка
     run(min(15));
     run(min(16));
     // Сколько не отвечала — до минуты, когда панель снова ответила, а не до доставки.
-    expect(sent()).toEqual([expect.stringMatching(/^🔴 /), '✅ Панель снова отвечает, не отвечала 8 мин.']);
+    expect(sent()).toEqual([expect.stringMatching(/^🔴 /), recovered()]);
   });
 
   it('прокси из «Уведомлений»: через него; не соединяется — напрямую, и сообщение одно', () => {
@@ -401,14 +421,14 @@ describe('сторож панели: скрипт на сервере парка
       panel('ok');
       await runKilled(min(8), 1_500, { STUB_HANG_CHAT: '412345678' });
       expect(sent()).toHaveLength(4);
-      expect(sent()[3]).toBe('✅ Панель снова отвечает, не отвечала 8 мин.');
+      expect(sent()[3]).toBe(recovered());
       run(min(9));
       run(min(10));
       expect(sent()).toHaveLength(6);
       expect(sent().filter((message) => message.startsWith('✅'))).toEqual([
-        '✅ Панель снова отвечает, не отвечала 8 мин.',
-        '✅ Панель снова отвечает, не отвечала 8 мин.',
-        '✅ Панель снова отвечает, не отвечала 8 мин.',
+        recovered(),
+        recovered(),
+        recovered(),
       ]);
     });
   });
@@ -417,9 +437,7 @@ describe('сторож панели: скрипт на сервере парка
     const ok = run(min(0), ['test']);
     expect(ok.status).toBe(0);
     expect(parseWatchdogOutput(ok.stdout)).toEqual({ panel: 'ok', sent: '1' });
-    expect(sent()).toEqual([
-      "Сторож панели на сервере «Германия-1 (Hetzner's)» на месте. Если панель перестанет отвечать, он напишет сюда.",
-    ]);
+    expect(sent()).toEqual([testMessage]);
     panel('timeout');
     const bad = run(min(1), ['test'], { STUB_TG_DOWN: '1' });
     expect(parseWatchdogOutput(bad.stdout)).toEqual({ panel: 'нет ответа за 10 с', sent: '0' });
@@ -496,7 +514,7 @@ describe('сторож панели: скрипт на сервере парка
       // Поставленный скрипт читает поставленный файл настроек: имя сервера с кавычкой не ломает его.
       panel('timeout');
       for (let m = 0; m < 3; m += 1) run(min(m), [], { NS_WATCHDOG_ENV: env }, installed('script'));
-      expect(sent()[0]).toContain("«Германия-1 (Hetzner's)»");
+      expect(sent()[0]).toContain("Германия-1 (Hetzner's)");
 
       const off = sh(WATCHDOG_REMOVE_COMMAND);
       expect(parseWatchdogOutput(off.stdout)).toEqual({ removed: '1' });

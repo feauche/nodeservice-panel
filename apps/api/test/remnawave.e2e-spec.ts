@@ -147,6 +147,7 @@ describe('Remnawave e2e (J4)', () => {
       connected: false,
       domain: null,
       checkedAt: null,
+      lastAttemptAt: null,
       error: null,
       stats: null,
       nodes: [],

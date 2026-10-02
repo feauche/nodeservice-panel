@@ -310,12 +310,12 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
     if (ws) this.closeDeleted(ws, serverId);
   }
 
-  /** Агенту говорим причину (её видно в его журнале на сервере) и закрываем соединение особым кодом. */
+  /** Агенту говорим причину (её видно в его журнале) и закрываем соединение особым кодом. */
   private closeDeleted(ws: WebSocket, serverId: string): void {
     // Из списка убираем заранее: обработчик закрытия не должен писать «пропал со связи» про удалённый сервер.
     if (this.active.get(serverId) === ws) this.active.delete(serverId);
-    this.sendError(ws, 'unknown-server', 'Сервер удалён из панели');
-    ws.close(CLOSE_SERVER_DELETED, 'server deleted');
+    this.sendError(ws, 'unknown-server', 'Агент удалён или отвязан в панели');
+    ws.close(CLOSE_SERVER_DELETED, 'agent revoked');
   }
 
   /**

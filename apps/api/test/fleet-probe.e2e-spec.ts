@@ -437,7 +437,8 @@ describe('проверка доступности, процессы и пред�
       if (inc.analysis && inc.analysis.status !== 'running') {
         expect(inc.analysis.status).toBe('done');
         expect(inc.analysis.reachability?.ports[0]?.verdict).toBe('reachable');
-        expect(inc.analysis.reachability?.probes).toHaveLength(3);
+        expect(inc.analysis.reachability?.probes).toHaveLength(4);
+        expect(inc.analysis.reachability?.probes.at(-1)?.from).toBe('Сервер панели');
         return;
       }
       await new Promise((r) => setTimeout(r, 50));

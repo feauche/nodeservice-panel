@@ -46,6 +46,14 @@ export const backupSettingsSchema = z.object({
     ownUrl: z.string().nullable(),
     notifyFailure: z.boolean(),
   }),
+  offsite: z.object({
+    enabled: z.boolean(),
+    endpoint: z.string(),
+    region: z.string(),
+    bucket: z.string(),
+    prefix: z.string(),
+    credentialsSet: z.boolean(),
+  }),
   /** Пароль задан (сам пароль наружу не отдаётся никогда). */
   passwordSet: z.boolean(),
   includeMetrics: z.boolean(),
@@ -66,6 +74,14 @@ export const BACKUP_SETTINGS_DEFAULT: BackupSettings = {
     destinationId: null,
     ownUrl: null,
     notifyFailure: true,
+  },
+  offsite: {
+    enabled: false,
+    endpoint: '',
+    region: 'auto',
+    bucket: '',
+    prefix: 'nodeservice',
+    credentialsSet: false,
   },
   passwordSet: false,
   includeMetrics: false,
@@ -102,6 +118,17 @@ export const backupSettingsUpdateSchema = z.object({
       notifyFailure: z.boolean(),
     })
     .optional(),
+  offsite: z
+    .object({
+      enabled: z.boolean(),
+      endpoint: z.string().trim().max(500),
+      region: z.string().trim().min(1).max(100),
+      bucket: z.string().trim().max(255),
+      prefix: z.string().trim().max(300),
+      accessKeyId: z.string().trim().max(300).nullable().optional(),
+      secretAccessKey: z.string().max(500).nullable().optional(),
+    })
+    .optional(),
   /** Новый пароль; '' или null — снять пароль; не передан — не менять. */
   password: z.string().max(200).nullable().optional(),
   includeMetrics: z.boolean().optional(),
@@ -121,6 +148,8 @@ export const backupItemSchema = z.object({
   verified: z.boolean().nullable(),
   /** Отправка в Telegram: sent / failed (с причиной) / null — не отправлялась. */
   telegram: z.object({ ok: z.boolean(), note: z.string().nullable() }).nullable(),
+  /** Вторая физическая копия в S3-совместимом хранилище. */
+  offsite: z.object({ ok: z.boolean(), location: z.string(), note: z.string().nullable() }).nullable(),
   /** Что внутри (если известно): база, ключи, метрики, число путей. */
   contents: z
     .object({ db: z.boolean(), env: z.boolean(), metrics: z.boolean(), paths: z.number().int() })
@@ -137,6 +166,7 @@ export const BACKUP_STAGES = [
   'pack',
   'encrypt',
   'verify',
+  'offsite',
   'telegram',
   'cleanup',
 ] as const;
@@ -149,6 +179,7 @@ export const BACKUP_STAGE_LABELS: Record<BackupStage, string> = {
   pack: 'Упаковываю архив',
   encrypt: 'Шифрую паролем',
   verify: 'Проверяю копию',
+  offsite: 'Отправляю во внешнее хранилище',
   telegram: 'Отправляю в Telegram',
   cleanup: 'Удаляю старые копии',
 };

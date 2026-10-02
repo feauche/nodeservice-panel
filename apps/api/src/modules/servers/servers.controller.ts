@@ -150,6 +150,24 @@ export class ServersController {
     return this.servers.installAgent(id);
   }
 
+  @Post(':id/agent/uninstall')
+  @HttpCode(200)
+  @UseGuards(StepUpGuard)
+  @ApiOperation({ summary: 'Удалить агент с сервера по SSH и отвязать его (step-up)' })
+  @ApiOkResponse({ type: ServerDto })
+  uninstallAgent(@Param('id', ParseUUIDPipe) id: string): Promise<ServerDto> {
+    return this.servers.uninstallAgent(id);
+  }
+
+  @Post(':id/agent/unlink')
+  @HttpCode(200)
+  @UseGuards(StepUpGuard)
+  @ApiOperation({ summary: 'Отвязать недоступный агент без подключения к серверу (step-up)' })
+  @ApiOkResponse({ type: ServerDto })
+  unlinkAgent(@Param('id', ParseUUIDPipe) id: string): Promise<ServerDto> {
+    return this.servers.unlinkAgent(id);
+  }
+
   @Post(':id/enrollment-token')
   @HttpCode(200)
   @UseGuards(StepUpGuard)

@@ -15,7 +15,7 @@ import { and, asc, desc, eq, lte, sql } from 'drizzle-orm';
 import { panelTimeZone } from '../../../common/panel-time-zone.js';
 import type { Env } from '../../../config/env.schema.js';
 import { DB, type Db } from '../../../infra/db/db.module.js';
-import { telegramMessages, telegramOutbox } from '../../../infra/db/schema/index.js';
+import { incidents, telegramMessages, telegramOutbox } from '../../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../../audit/audit.context.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { describeTelegramError, TELEGRAM_CLIENT, type TelegramClient } from './telegram.client.js';
@@ -152,6 +152,11 @@ export class TelegramService {
   private readonly richRejectedAt = new Map<string, number>();
   /** Минутная задача и ручной вызов не должны одновременно отправить одну запись outbox. */
   private outboxBusy = false;
+  /**
+   * Дела, отменённые до доставки (например, ложная массовая тревога при потере сети самой панели).
+   * Метка закрывает гонку с уже начатой отправкой; постоянная очередь дополнительно очищается в БД.
+   */
+  private readonly cancelledIncidents = new Set<string>();
   /** Отправки в один чат идут строго по порядку, события разных серверов друг друга не обгоняют. */
   private readonly chatTurns = new Map<string, Promise<PacedSend>>();
   /** Запросы одного бота не стартуют одновременно даже для разных чатов. */
@@ -395,6 +400,8 @@ export class TelegramService {
     const next = previous
       .catch(() => ({ result: null, queued: false }))
       .then(async () => {
+        if (payload.incidentId && this.cancelledIncidents.has(payload.incidentId))
+          return { result: null, queued: false };
         const waitMs = Math.max(0, (this.chatNextAt.get(d.id) ?? 0) - Date.now());
         if (waitMs > Math.max(5_000, this.deliveryPaceMs + 1_000))
           return durable &&
@@ -409,6 +416,10 @@ export class TelegramService {
                 queued: false,
               };
         if (waitMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+        // Пока сообщение ждало своего места в темпе чата, массовый предохранитель мог отменить ложное
+        // дело. Не выпускаем уже подготовленную тревогу после восстановления обзора панели.
+        if (payload.incidentId && this.cancelledIncidents.has(payload.incidentId))
+          return { result: null, queued: false };
         // Более старая весть этого чата ждёт повтора: новая сразу встаёт следом и не обгоняет её.
         if (durable && (await this.hasPendingDelivery(d.id))) {
           const queued = await this.enqueueDelivery(d.id, payload);
@@ -579,6 +590,7 @@ export class TelegramService {
    */
   dispatch(m: TelegramDispatch): Promise<void> {
     const run = async () => {
+      if (m.incidentId && this.cancelledIncidents.has(m.incidentId)) return;
       const key = m.incidentId && m.serverKey && OPENING.has(m.event) ? m.serverKey : null;
       if (!key) return this.deliver(m);
       const next = (this.serverTurns.get(key) ?? Promise.resolve()).then(() => this.deliver(m));
@@ -595,6 +607,7 @@ export class TelegramService {
 
   private async deliver(m: TelegramDispatch): Promise<void> {
     try {
+      if (m.incidentId && this.cancelledIncidents.has(m.incidentId)) return;
       const s = await this.store.load();
       if (s.destinations.length === 0) return;
       if (m.kind && !s.kinds[m.kind]) return;
@@ -726,6 +739,7 @@ export class TelegramService {
     payload: TelegramOutboxPayload,
     retryAfterSeconds?: number,
   ): Promise<boolean> {
+    if (payload.incidentId && this.cancelledIncidents.has(payload.incidentId)) return false;
     return this.db
       .insert(telegramOutbox)
       .values({
@@ -799,10 +813,35 @@ export class TelegramService {
           await this.db.delete(telegramOutbox).where(eq(telegramOutbox.id, row.id));
           continue;
         }
+        if (payload.incidentId && this.cancelledIncidents.has(payload.incidentId)) {
+          await this.db.delete(telegramOutbox).where(eq(telegramOutbox.id, row.id));
+          continue;
+        }
         // Если исходная тревога тем временем дошла другим повтором, последующие события отвечают уже на неё.
         const own = payload.incidentId
           ? await this.firstMessage(payload.incidentId, destination.id).catch(() => null)
           : null;
+        // Telegram мог быть недоступен дольше самого сбоя. Если дело уже закрыто, а его первая тревога
+        // в этот чат так и не дошла, не воспроизводим после восстановления старую пару
+        // «всё упало» → «починилось». Для продолжающегося дела очередь по-прежнему хранится без срока.
+        if (payload.incidentId && own === null && OPENING.has(payload.event)) {
+          const [incident] = await this.db
+            .select({ status: incidents.status })
+            .from(incidents)
+            .where(eq(incidents.id, payload.incidentId))
+            .limit(1);
+          if (!incident || incident.status === 'resolved') {
+            await this.db
+              .delete(telegramOutbox)
+              .where(
+                and(
+                  eq(telegramOutbox.destinationId, destination.id),
+                  sql`${telegramOutbox.payload}->>'incidentId' = ${payload.incidentId}`,
+                ),
+              );
+            continue;
+          }
+        }
         const replyTo = own ?? payload.replyTo;
         const sent = await this.sendPaced(destination, { ...payload, replyTo }, false);
         const result = sent.result;
@@ -838,6 +877,22 @@ export class TelegramService {
     } finally {
       this.outboxBusy = false;
     }
+  }
+
+  /**
+   * Удалить ещё не доставленные сообщения ложного/отменённого дела. Уже доставленное сообщение в Telegram
+   * удалить нельзя, но его запоздавшие тревоги и отдельные «Починилось» больше не выйдут из outbox.
+   */
+  async cancelIncident(incidentId: string): Promise<void> {
+    this.cancelledIncidents.add(incidentId);
+    await this.db
+      .delete(telegramOutbox)
+      .where(sql`${telegramOutbox.payload}->>'incidentId' = ${incidentId}`)
+      .catch((err: unknown) =>
+        this.log.warn(
+          `Telegram: очередь отменённого дела ${incidentId} не очищена: ${err instanceof Error ? err.message : err}`,
+        ),
+      );
   }
 
   /** Когда по инциденту в последний раз писали в Telegram (отсчёт для напоминаний); null — не писали. */

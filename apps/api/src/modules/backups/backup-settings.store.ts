@@ -28,8 +28,12 @@ export interface BackupScheduleState {
 }
 
 /** Как настройки лежат в app_meta: пароль и свой чат (с токеном бота) — зашифрованы. */
-export interface StoredBackupSettings extends Omit<BackupSettings, 'passwordSet' | 'telegram'> {
+export interface StoredBackupSettings extends Omit<BackupSettings, 'passwordSet' | 'telegram' | 'offsite'> {
   telegram: Omit<BackupSettings['telegram'], 'ownUrl'> & { ownUrlEnc: string | null };
+  offsite: Omit<BackupSettings['offsite'], 'credentialsSet'> & {
+    accessKeyIdEnc: string | null;
+    secretAccessKeyEnc: string | null;
+  };
   passwordEnc: string | null;
 }
 
@@ -46,6 +50,7 @@ export class BackupSettingsStore {
     const fallback: StoredBackupSettings = {
       ...d,
       telegram: { ...d.telegram, ownUrlEnc: null },
+      offsite: { ...d.offsite, accessKeyIdEnc: null, secretAccessKeyEnc: null },
       passwordEnc: null,
     };
     if (!row) return fallback;
@@ -55,6 +60,7 @@ export class BackupSettingsStore {
         ...d,
         ...raw,
         telegram: { ...d.telegram, ...(raw.telegram ?? {}), ownUrl: null },
+        offsite: { ...d.offsite, ...(raw.offsite ?? {}), credentialsSet: false },
         extra: { ...d.extra, ...(raw.extra ?? {}) },
         passwordSet: false,
       });
@@ -63,6 +69,11 @@ export class BackupSettingsStore {
       return {
         ...rest,
         telegram: { ...rest.telegram, ownUrlEnc: raw.telegram?.ownUrlEnc ?? null },
+        offsite: {
+          ...rest.offsite,
+          accessKeyIdEnc: raw.offsite?.accessKeyIdEnc ?? null,
+          secretAccessKeyEnc: raw.offsite?.secretAccessKeyEnc ?? null,
+        },
         passwordEnc: raw.passwordEnc ?? null,
       };
     } catch {
@@ -119,11 +130,23 @@ export class BackupSettingsStore {
     return this.crypto.encrypt(v);
   }
 
+  offsiteCredentials(s: StoredBackupSettings): { accessKeyId: string; secretAccessKey: string } | null {
+    if (!s.offsite.accessKeyIdEnc || !s.offsite.secretAccessKeyEnc) return null;
+    try {
+      return {
+        accessKeyId: this.crypto.decrypt(s.offsite.accessKeyIdEnc),
+        secretAccessKey: this.crypto.decrypt(s.offsite.secretAccessKeyEnc),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   /** Наружу: без пароля, свой чат — маской. */
   toPublic(s: StoredBackupSettings): BackupSettings {
     const url = this.ownUrl(s);
     const t = url ? parseTelegramUrl(url) : null;
-    const { passwordEnc, telegram, ...rest } = s;
+    const { passwordEnc, telegram, offsite, ...rest } = s;
     return {
       ...rest,
       telegram: {
@@ -132,6 +155,14 @@ export class BackupSettingsStore {
         destinationId: telegram.destinationId,
         notifyFailure: telegram.notifyFailure,
         ownUrl: t ? maskTelegramUrl(t.chatId, t.topic) : null,
+      },
+      offsite: {
+        enabled: offsite.enabled,
+        endpoint: offsite.endpoint,
+        region: offsite.region,
+        bucket: offsite.bucket,
+        prefix: offsite.prefix,
+        credentialsSet: Boolean(offsite.accessKeyIdEnc && offsite.secretAccessKeyEnc),
       },
       passwordSet: passwordEnc !== null,
     };

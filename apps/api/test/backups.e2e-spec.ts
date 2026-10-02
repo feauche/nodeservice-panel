@@ -9,6 +9,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -247,6 +248,32 @@ describe('резервные копии e2e', () => {
     );
     expect(s1.passwordSet).toBe(true);
     expect(JSON.stringify(s1)).not.toContain('секрет');
+    const external = backupSettingsSchema.parse(
+      (
+        await putSettings({
+          offsite: {
+            enabled: true,
+            endpoint: 'https://s3.example.test/',
+            region: 'eu-central-1',
+            bucket: 'nodeservice-backups',
+            prefix: '/production/',
+            accessKeyId: 'ACCESS-ID',
+            secretAccessKey: 'SECRET-KEY',
+          },
+        }).expect(200)
+      ).body,
+    );
+    expect(external.offsite).toEqual({
+      enabled: true,
+      endpoint: 'https://s3.example.test',
+      region: 'eu-central-1',
+      bucket: 'nodeservice-backups',
+      prefix: 'production',
+      credentialsSet: true,
+    });
+    expect(JSON.stringify(external)).not.toContain('ACCESS-ID');
+    expect(JSON.stringify(external)).not.toContain('SECRET-KEY');
+    await putSettings({ offsite: { ...external.offsite, enabled: false } }).expect(200);
     await putSettings({ extra: { enabled: true, paths: ['etc'] } }).expect(400);
     const chk = (
       await agent
@@ -323,6 +350,78 @@ describe('резервные копии e2e', () => {
     expect(tg.files[0]?.caption).toContain('Архив резервной копии');
     expect(tg.files[0]?.reply_parameters).toContain('message_id');
     expect(readdirSync(store).filter((f) => f.endsWith('.enc'))).toHaveLength(2);
+  });
+
+  it('внешняя копия: S3 получает зашифрованный файл, а удаление из панели удаляет и объект', async () => {
+    const objects = new Map<string, Buffer>();
+    const objectSizes = new Map<string, number>();
+    const s3 = createServer((req, res) => {
+      const key = new URL(req.url ?? '/', 'http://s3.test').pathname;
+      if (req.method === 'PUT') {
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+        req.on('end', () => {
+          objects.set(key, Buffer.concat(chunks));
+          objectSizes.set(
+            key,
+            Number(req.headers['x-amz-decoded-content-length'] ?? req.headers['content-length'] ?? 0),
+          );
+          res.statusCode = 200;
+          res.setHeader('etag', '"test-etag"');
+          res.end();
+        });
+        return;
+      }
+      if (req.method === 'HEAD') {
+        const body = objects.get(key);
+        if (!body) res.statusCode = 404;
+        else {
+          res.setHeader('content-length', String(objectSizes.get(key) ?? body.length));
+          res.setHeader('etag', '"test-etag"');
+        }
+        res.end();
+        return;
+      }
+      if (req.method === 'DELETE') {
+        objects.delete(key);
+        objectSizes.delete(key);
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
+      res.statusCode = 405;
+      res.end();
+    });
+    await new Promise<void>((resolve) => s3.listen(0, '127.0.0.1', resolve));
+    const address = s3.address();
+    if (!address || typeof address === 'string') throw new Error('S3 не запустился');
+    const offsite = {
+      enabled: true,
+      endpoint: `http://127.0.0.1:${address.port}`,
+      region: 'eu-test-1',
+      bucket: 'nodeservice-backups',
+      prefix: 'production',
+      accessKeyId: 'ACCESS-ID',
+      secretAccessKey: 'SECRET-KEY',
+    };
+    try {
+      await putSettings({ keep: 3, password: 'секрет', offsite }).expect(200);
+      await sleep(1100);
+      await agent.post('/api/backups/run').set(CSRF_HEADER, csrf).send({ sendTelegram: false }).expect(202);
+      const item = (await waitIdle()).items[0];
+      expect(item?.offsite).toEqual({
+        ok: true,
+        location: expect.stringMatching(/^s3:\/\/nodeservice-backups\/production\//),
+        note: null,
+      });
+      expect(objects.size).toBe(1);
+      expect([...objects.values()][0]?.length).toBeGreaterThan(0);
+      await agent.delete(`/api/backups/${item?.name}`).set(CSRF_HEADER, csrf).expect(204);
+      expect(objects.size).toBe(0);
+    } finally {
+      await putSettings({ offsite: { ...offsite, enabled: false } }).expect(200);
+      await new Promise<void>((resolve, reject) => s3.close((err) => (err ? reject(err) : resolve())));
+    }
   });
 
   it('в архиве — ключи установки в том виде, как их читает консольное восстановление, и отпечаток ключа', async () => {

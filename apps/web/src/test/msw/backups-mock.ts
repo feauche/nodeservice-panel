@@ -62,6 +62,7 @@ function item(at: Date, kind: BackupItem['kind'], size: number, extra: Partial<B
     contents: { db: true, env: true, metrics: false, paths: 2 },
     version: '0.38.1',
     ...extra,
+    offsite: extra.offsite ?? null,
   };
 }
 

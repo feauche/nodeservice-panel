@@ -58,6 +58,21 @@ function detachedAptUpgrade(command: string): string {
   ].join('\n');
 }
 
+/** Подключиться к уже запущенной systemd-задаче после рестарта панели и дождаться её настоящего итога. */
+export function resumeDetachedAptUpgradeScript(): string {
+  return [
+    '# ns-maint:apt_upgrade:resume',
+    'UNIT=nodeservice-upgrade.service',
+    'LOG=/var/log/nodeservice-upgrade.log',
+    'RESULT=/run/nodeservice-upgrade.exit',
+    'echo "Панель перезапустилась — снова подключаю журнал системной задачи."',
+    'while systemctl is-active --quiet "$UNIT"; do sleep 10; done',
+    'cat "$LOG" 2>/dev/null || true',
+    '[ -s "$RESULT" ] || { echo "Не найден итог системной задачи; смотрите journalctl -u nodeservice-upgrade"; exit 1; }',
+    'exit "$(cat "$RESULT")"',
+  ].join('\n');
+}
+
 /**
  * Проверка (T0): ничего не меняет, кроме `apt-get update` (обновляет только индекс пакетов).
  * Печатает строки `@@ключ=значение`, разбирает parseCheckOutput().

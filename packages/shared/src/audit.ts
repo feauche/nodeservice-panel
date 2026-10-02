@@ -143,6 +143,8 @@ export const AUDIT_ACTIONS = {
   'server.host_key.trusted': { category: 'server', label: 'Доверен новый отпечаток сервера' },
   'server.enrollment.issued': { category: 'server', label: 'Выпущен токен подключения агента' },
   'server.agent.install': { category: 'server', label: 'Установка агента по SSH' },
+  'server.agent.uninstall': { category: 'server', label: 'Удаление агента по SSH' },
+  'server.agent.unlinked': { category: 'server', label: 'Отвязка агента' },
   'server.agent.pending_explained': {
     category: 'server',
     label: 'Выяснено, почему агент не выходит на связь',

@@ -11,6 +11,20 @@ export const AGENT_INSTALL_LABEL = 'установка агента';
  * скачивание отведено три минуты; здесь шагов больше).
  */
 export const AGENT_INSTALL_TIMEOUT_MS = 5 * 60_000;
+export const AGENT_UNINSTALL_LABEL = 'удаление агента';
+
+/** Полностью убрать агент и только его правила UFW. Команда повторяемая: отсутствие файлов — успех. */
+export const AGENT_UNINSTALL_SCRIPT = [
+  '# ns-agent:uninstall',
+  'systemctl disable --now nodeservice-agent >/dev/null 2>&1 || true',
+  'rm -f /etc/systemd/system/nodeservice-agent.service /etc/nodeservice-agent.env /usr/local/bin/nodeservice-agent',
+  'rm -rf /var/lib/nodeservice-agent',
+  'systemctl daemon-reload >/dev/null 2>&1 || true',
+  'if command -v ufw >/dev/null 2>&1; then',
+  '  ufw status numbered 2>/dev/null | sed -n \'/NodeService agent/s/^\\[ *\\([0-9][0-9]*\\)\\].*/\\1/p\' | sort -rn | while read -r n; do yes | ufw delete "$n" >/dev/null 2>&1 || true; done',
+  'fi',
+  'echo "Агент NodeService удалён."',
+].join('\n');
 
 export interface AgentInstallParams {
   /** GitHub-репозиторий агента: «владелец/имя». */

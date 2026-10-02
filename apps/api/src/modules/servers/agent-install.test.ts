@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   AGENT_STATE_PATH,
+  AGENT_UNINSTALL_SCRIPT,
   agentInstallCommand,
   agentInstallScript,
   agentPullInstallScript,
@@ -52,6 +53,14 @@ describe('входящий агент', () => {
     expect(pullCertificateFromOutput(`шаг\nNODESERVICE_PULL_CERT=${cert}\nготово\n`)).toBe(cert);
     expect(pullCertificateFromOutput('NODESERVICE_PULL_CERT=eA==\n')).toBeNull();
     expect(pullCertificateFromOutput('без сертификата')).toBeNull();
+  });
+
+  it('удаление агента повторяемо и убирает только его правила UFW', () => {
+    expect(spawnSync('/bin/sh', ['-n'], { input: AGENT_UNINSTALL_SCRIPT }).status).toBe(0);
+    expect(AGENT_UNINSTALL_SCRIPT).toContain('disable --now nodeservice-agent');
+    expect(AGENT_UNINSTALL_SCRIPT).toContain('/var/lib/nodeservice-agent');
+    expect(AGENT_UNINSTALL_SCRIPT).toContain('/NodeService agent/');
+    expect(AGENT_UNINSTALL_SCRIPT).not.toContain('ufw reset');
   });
 });
 

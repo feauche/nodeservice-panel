@@ -324,7 +324,15 @@ export class BillingService {
       const [item] = await tx
         .update(billingItems)
         .set({ paidUntil: to, notifiedState: null, notifiedAt: null, updatedAt: new Date() })
-        .where(and(eq(billingItems.id, row.id), eq(billingItems.paidUntil, row.paidUntil)))
+        // PostgreSQL хранит микросекунды, а JS Date — только миллисекунды. Прямое равенство иногда не
+        // находило только что прочитанную строку и автоплатёж падал ложным «срок уже изменился».
+        // Блокировка UPDATE всё равно защищает от двух продлений: после первого новый срок уже не совпадёт.
+        .where(
+          and(
+            eq(billingItems.id, row.id),
+            sql`date_trunc('milliseconds', ${billingItems.paidUntil}) = ${row.paidUntil}`,
+          ),
+        )
         .returning();
       if (!item)
         throw problem(HttpStatus.CONFLICT, {

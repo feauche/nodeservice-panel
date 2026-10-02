@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import pg from 'pg';
 
+import { CryptoService } from '../../common/crypto/crypto.service.js';
 import { BackupToolError } from './backup-errors.js';
 
 /**
@@ -16,7 +17,7 @@ export interface BackupTools {
   /** Можно ли делать копии: в образе есть pg_dump нужной версии. */
   check(): Promise<{ ok: boolean; reason: string | null }>;
   dump(out: string): Promise<void>;
-  /** Дамп читается (pg_restore --list). */
+  /** Дамп полностью разворачивается во временную БД; обязательные данные и шифротексты читаются. */
   verify(dump: string): Promise<boolean>;
   /**
    * Развернуть дамп вместо текущей базы: во временную базу, потом подмена имён; прежняя база остаётся
@@ -223,6 +224,7 @@ export class PgBackupTools implements BackupTools {
   constructor(
     private readonly databaseUrl: string,
     private readonly du: DiskUsage = readerDu,
+    private readonly crypto?: CryptoService,
   ) {}
 
   async check(): Promise<{ ok: boolean; reason: string | null }> {
@@ -249,8 +251,75 @@ export class PgBackupTools implements BackupTools {
   }
 
   async verify(dump: string): Promise<boolean> {
-    const r = await run('pg_restore', ['--list', dump], { timeoutMs: 5 * 60_000 });
-    return r.code === 0 && r.stdout.includes('TABLE');
+    const url = new URL(this.databaseUrl);
+    const dbName = decodeURIComponent(url.pathname.slice(1)) || 'nodeservice';
+    const suffix = `${Date.now()}_${process.pid}`;
+    // PostgreSQL принимает имя до 63 байт; конец уникален и должен сохраниться.
+    const temp = `${dbName.slice(0, Math.max(1, 62 - suffix.length - 8))}_verify_${suffix}`;
+    const admin = new URL(url.toString());
+    admin.pathname = '/postgres';
+    const adminUrl = admin.toString();
+    const target = new URL(url.toString());
+    target.pathname = `/${temp}`;
+    const drop = () =>
+      withAdmin(adminUrl, (client) => client.query(`DROP DATABASE IF EXISTS ${ident(temp)} WITH (FORCE)`));
+    try {
+      await drop().catch(() => undefined);
+      await withAdmin(adminUrl, (client) => client.query(`CREATE DATABASE ${ident(temp)}`));
+      const restored = await run(
+        'pg_restore',
+        ['--no-owner', '--no-privileges', '--exit-on-error', '-d', target.toString(), dump],
+        { timeoutMs: 30 * 60_000 },
+      );
+      if (restored.code !== 0) {
+        this.log.warn(`Пробное восстановление копии не удалось: ${failureText(restored)}`);
+        return false;
+      }
+      const valid = await withAdmin(target.toString(), async (client) => {
+        const required = await client.query<{
+          users: string | null;
+          servers: string | null;
+          meta: string | null;
+        }>(
+          `select to_regclass('public.users')::text as users,
+                  to_regclass('public.servers')::text as servers,
+                  to_regclass('public.app_meta')::text as meta`,
+        );
+        const tables = required.rows[0];
+        if (!tables?.users || !tables.servers || !tables.meta) return false;
+        // Запись администратора должна быть пригодна для входа: логин есть, хеш имеет формат argon2.
+        const users = await client.query<{ login: string; password_hash: string }>(
+          'select login, password_hash from users order by created_at limit 2',
+        );
+        if (users.rows.length === 0) return false;
+        if (users.rows.some((user) => !user.login || !user.password_hash.startsWith('$argon2'))) return false;
+        // Копия без подходящего ENCRYPTION_KEY бесполезна: SSH-ключи и ключи агентов не прочитаются.
+        if (this.crypto) {
+          const secrets = await client.query<{ ssh: string | null; agent: string | null }>(
+            `select ssh_private_key_enc as ssh, agent_access_key_enc as agent
+             from servers
+             where ssh_private_key_enc is not null or agent_access_key_enc is not null`,
+          );
+          for (const secret of secrets.rows) {
+            if (secret.ssh) this.crypto.decrypt(secret.ssh);
+            if (secret.agent) this.crypto.decrypt(secret.agent);
+          }
+        }
+        return true;
+      });
+      return valid;
+    } catch (err) {
+      this.log.warn(
+        `Пробная проверка восстановления не завершилась: ${err instanceof Error ? err.message : err}`,
+      );
+      return false;
+    } finally {
+      await drop().catch((err: unknown) =>
+        this.log.warn(
+          `Временная база проверки ${temp} не удалилась: ${err instanceof Error ? err.message : err}`,
+        ),
+      );
+    }
   }
 
   async restore(dump: string): Promise<void> {

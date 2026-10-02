@@ -1,4 +1,4 @@
-import { constants, createWriteStream, openAsBlob } from 'node:fs';
+import { constants, createReadStream, createWriteStream, openAsBlob } from 'node:fs';
 import {
   access,
   chmod,
@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-
+import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { HttpStatus, Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -82,6 +82,7 @@ interface Sidecar {
   kind: BackupKind;
   verified: boolean | null;
   telegram: { ok: boolean; note: string | null } | null;
+  offsite: { ok: boolean; location: string; note: string | null } | null;
   contents: BackupItem['contents'];
   version: string | null;
 }
@@ -237,6 +238,7 @@ export class BackupsService implements OnModuleInit {
         encrypted: name.endsWith('.enc'),
         verified: sc?.verified ?? null,
         telegram: sc?.telegram ?? null,
+        offsite: sc?.offsite ?? null,
         contents: sc?.contents ?? null,
         version: sc?.version ?? null,
       });
@@ -303,8 +305,38 @@ export class BackupsService implements OnModuleInit {
         ownUrlEnc,
       };
     }
+    if (patch.offsite) {
+      const o = patch.offsite;
+      let accessKeyIdEnc = cur.offsite.accessKeyIdEnc;
+      let secretAccessKeyEnc = cur.offsite.secretAccessKeyEnc;
+      if (o.accessKeyId === null || o.accessKeyId === '') accessKeyIdEnc = null;
+      else if (o.accessKeyId !== undefined) accessKeyIdEnc = this.store.encrypt(o.accessKeyId);
+      if (o.secretAccessKey === null || o.secretAccessKey === '') secretAccessKeyEnc = null;
+      else if (o.secretAccessKey !== undefined) secretAccessKeyEnc = this.store.encrypt(o.secretAccessKey);
+      next.offsite = {
+        enabled: o.enabled,
+        endpoint: o.endpoint.replace(/\/+$/, ''),
+        region: o.region,
+        bucket: o.bucket,
+        prefix: o.prefix.replace(/^\/+|\/+$/g, ''),
+        accessKeyIdEnc,
+        secretAccessKeyEnc,
+      };
+    }
     if (patch.password !== undefined)
       next.passwordEnc = patch.password ? this.store.encrypt(patch.password) : null;
+    if (next.offsite.enabled) {
+      if (!next.offsite.bucket || !next.offsite.region)
+        throw problem(HttpStatus.BAD_REQUEST, { detail: 'Для внешнего хранилища укажите регион и bucket.' });
+      if (!next.offsite.accessKeyIdEnc || !next.offsite.secretAccessKeyEnc)
+        throw problem(HttpStatus.BAD_REQUEST, {
+          detail: 'Для внешнего хранилища укажите оба ключа доступа.',
+        });
+      if (!next.passwordEnc)
+        throw problem(HttpStatus.BAD_REQUEST, {
+          detail: 'Внешняя копия должна быть зашифрована: сначала задайте пароль резервных копий.',
+        });
+    }
     await this.store.save(next);
     await this.syncBeforeUpdateMarker(next.beforeUpdate);
     const before = this.store.toPublic(cur);
@@ -325,6 +357,8 @@ export class BackupsService implements OnModuleInit {
       changes.telegram = { before: before.telegram.enabled, after: after.telegram.enabled };
     if (JSON.stringify(before.extra) !== JSON.stringify(after.extra))
       changes.extra = { before: extraText(before.extra), after: extraText(after.extra) };
+    if (JSON.stringify(before.offsite) !== JSON.stringify(after.offsite))
+      changes.offsite = { before: before.offsite.enabled, after: after.offsite.enabled };
     this.audit.extend({ ...(Object.keys(changes).length ? { changes } : {}) });
     return after;
   }
@@ -394,6 +428,8 @@ export class BackupsService implements OnModuleInit {
   ): Promise<BackupItem> {
     const s = await this.store.load();
     const password = this.store.password(s);
+    if (s.offsite.enabled && !password)
+      throw new BackupError('Внешнее хранилище включено, но пароль шифрования копий недоступен.');
     const now = new Date();
     // Без ключей копия бесполезна на новом сервере: консольное восстановление её не примет, а из панели
     // после неё не войти. Такая копия — не удача: честная ошибка вместо тихого успеха. Ключи известны
@@ -460,17 +496,23 @@ export class BackupsService implements OnModuleInit {
       // панели, как и консольную копию. Диск, где права не меняются, — не повод остаться без копии.
       await chmod(`${target}.part`, 0o600).catch(() => undefined);
       await rename(`${target}.part`, target);
+      const size = (await stat(target)).size;
       const contents = { db: true, env: true, metrics: hasMetrics, paths: pathsCount };
+      let offsite: Sidecar['offsite'] = null;
+      if (s.offsite.enabled) {
+        this.stage('offsite');
+        offsite = await this.uploadOffsite(s, target, name, size);
+      }
       const side: Sidecar = {
         createdAt: now.toISOString(),
         kind,
         verified,
         telegram: null,
+        offsite,
         contents,
         version: SHARED_VERSION,
       };
       await writeFile(`${target}.json`, JSON.stringify(side), { mode: 0o600 });
-      const size = (await stat(target)).size;
       if (kind !== 'pre_restore' && (opts.sendTelegram ?? s.telegram.enabled)) {
         this.stage('telegram');
         side.telegram = await this.sendToTelegram(s, target, name, size, now, contents, Boolean(password));
@@ -488,6 +530,7 @@ export class BackupsService implements OnModuleInit {
           encrypted: Boolean(password),
           metrics: hasMetrics,
           paths: pathsCount,
+          offsite: offsite?.ok ? offsite.location : (offsite?.note ?? 'выключено'),
         },
       });
       this.log.log(`Копия ${name} (${mb(size)}) готова`);
@@ -499,12 +542,59 @@ export class BackupsService implements OnModuleInit {
         encrypted: Boolean(password),
         verified,
         telegram: side.telegram,
+        offsite: side.offsite,
         contents,
         version: SHARED_VERSION,
       };
     } finally {
       await rm(work, { recursive: true, force: true }).catch(() => undefined);
       await rm(`${target}.part`, { force: true }).catch(() => undefined);
+    }
+  }
+
+  /** Зашифрованная вторая копия: загружаем и сразу подтверждаем размер отдельным запросом. */
+  private async uploadOffsite(
+    s: StoredBackupSettings,
+    path: string,
+    name: string,
+    size: number,
+  ): Promise<NonNullable<Sidecar['offsite']>> {
+    const key = [s.offsite.prefix, name].filter(Boolean).join('/');
+    const location = `s3://${s.offsite.bucket}/${key}`;
+    const credentials = this.store.offsiteCredentials(s);
+    if (!credentials) return { ok: false, location, note: 'ключи доступа не читаются' };
+    const client = new S3Client({
+      region: s.offsite.region,
+      credentials,
+      ...(s.offsite.endpoint ? { endpoint: s.offsite.endpoint, forcePathStyle: true } : {}),
+    });
+    try {
+      await client.send(
+        new PutObjectCommand({
+          Bucket: s.offsite.bucket,
+          Key: key,
+          Body: createReadStream(path),
+          ContentLength: size,
+          ContentType: 'application/octet-stream',
+          Metadata: { nodeservice: SHARED_VERSION, encrypted: 'true' },
+        }),
+      );
+      const head = await client.send(new HeadObjectCommand({ Bucket: s.offsite.bucket, Key: key }));
+      if (head.ContentLength !== size)
+        throw new Error(`после загрузки размер ${head.ContentLength ?? '?'} вместо ${size}`);
+      return { ok: true, location, note: null };
+    } catch (err) {
+      const note = err instanceof Error ? err.message.slice(0, 300) : 'хранилище не ответило';
+      await this.notifications.push({
+        severity: 'crit',
+        title: 'Копия не сохранена во внешнем хранилище',
+        body: `Локальная зашифрованная копия готова, но ${location} не подтверждена. Причина: ${note}`,
+        link: { to: '/settings/backups', label: 'Открыть копии' },
+        telegram: { event: 'panel_health' },
+      });
+      return { ok: false, location, note };
+    } finally {
+      client.destroy();
     }
   }
 
@@ -654,12 +744,16 @@ export class BackupsService implements OnModuleInit {
    */
   private async retain(keep: number, protect: string | null = null): Promise<void> {
     const items = await this.items();
+    const settings = await this.store.load();
     const regular = items.filter((i) => i.kind !== 'pre_restore' && i.kind !== 'uploaded');
     const preRestore = items.filter((i) => i.kind === 'pre_restore');
     for (const it of [...regular.slice(keep), ...preRestore.slice(2)]) {
       // Копию, из которой сейчас восстанавливают, не удаляем ни при каких условиях: иначе её стёрла бы
       // копия «перед восстановлением», сделанная за секунду до распаковки.
       if (it.name === protect) continue;
+      // Не забываем внешнюю копию. Если S3 временно не ответил, оставляем локальную запись:
+      // следующий проход срока хранения повторит удаление, а объект не останется сиротой.
+      if (it.offsite?.ok && !(await this.deleteOffsite(settings, it.offsite))) continue;
       await rm(join(this.dir, it.name), { force: true }).catch(() => undefined);
       await rm(join(this.dir, `${it.name}.json`), { force: true }).catch(() => undefined);
     }
@@ -670,9 +764,45 @@ export class BackupsService implements OnModuleInit {
     await stat(path).catch(() => {
       throw problem(HttpStatus.NOT_FOUND, { type: BACKUP_PROBLEM.notFound, detail: 'Такой копии нет.' });
     });
+    const item = (await this.items()).find((candidate) => candidate.name === name);
+    if (item?.offsite?.ok && !(await this.deleteOffsite(await this.store.load(), item.offsite)))
+      throw problem(HttpStatus.BAD_GATEWAY, {
+        detail: 'Внешнее хранилище не подтвердило удаление. Копия оставлена в панели — повторите позже.',
+      });
     await rm(path, { force: true });
     await rm(`${path}.json`, { force: true });
     this.audit.extend({ target: { type: 'backup', id: name, display: name } });
+  }
+
+  /** Удалить тот же S3-объект при ручном удалении и по сроку хранения. */
+  private async deleteOffsite(
+    s: StoredBackupSettings,
+    offsite: NonNullable<BackupItem['offsite']>,
+  ): Promise<boolean> {
+    if (!offsite.location.startsWith('s3://')) return true;
+    const rest = offsite.location.slice('s3://'.length);
+    const slash = rest.indexOf('/');
+    if (slash <= 0 || slash === rest.length - 1) return false;
+    const bucket = rest.slice(0, slash);
+    const key = rest.slice(slash + 1);
+    const credentials = this.store.offsiteCredentials(s);
+    if (!credentials) return false;
+    const client = new S3Client({
+      region: s.offsite.region,
+      credentials,
+      ...(s.offsite.endpoint ? { endpoint: s.offsite.endpoint, forcePathStyle: true } : {}),
+    });
+    try {
+      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+      return true;
+    } catch (err) {
+      this.log.warn(
+        `Внешняя копия ${offsite.location} не удалена: ${err instanceof Error ? err.message : err}`,
+      );
+      return false;
+    } finally {
+      client.destroy();
+    }
   }
 
   /**
@@ -740,6 +870,7 @@ export class BackupsService implements OnModuleInit {
         kind: 'uploaded',
         verified: null,
         telegram: null,
+        offsite: null,
         contents: null,
         version: null,
       };
@@ -757,6 +888,7 @@ export class BackupsService implements OnModuleInit {
         encrypted,
         verified: null,
         telegram: null,
+        offsite: null,
         contents: null,
         version: null,
       };

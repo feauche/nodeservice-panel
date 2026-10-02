@@ -83,10 +83,10 @@ describe('AgentGateway: удаление сервера', () => {
     expect(closed).toEqual([]);
 
     for (const l of ctx.deleteListeners) l('srv-1');
-    expect(closed).toEqual([[CLOSE_SERVER_DELETED, 'server deleted']]);
+    expect(closed).toEqual([[CLOSE_SERVER_DELETED, 'agent revoked']]);
     expect(JSON.parse(sent[0] ?? '{}')).toMatchObject({
       type: 'error',
-      payload: { code: 'unknown-server', message: 'Сервер удалён из панели' },
+      payload: { code: 'unknown-server', message: 'Агент удалён или отвязан в панели' },
     });
     expect(ctx.inner.active.has('srv-1')).toBe(false);
     expect(ctx.offline).toEqual([]);

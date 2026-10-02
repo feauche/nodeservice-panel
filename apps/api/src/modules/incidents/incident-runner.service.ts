@@ -201,7 +201,7 @@ export class IncidentRunnerService implements OnModuleInit {
    */
   async failOrphans(note: string, pick: (a: IncidentAttempt) => boolean): Promise<number> {
     let n = 0;
-    for (const row of await this.repo.list('all')) {
+    for (const row of await this.repo.withRunningAttempts()) {
       const stale = row.attempts.filter((a) => a.status === 'running' && !this.active.has(a.id) && pick(a));
       if (stale.length === 0) continue;
       const ids = new Set(stale.map((a) => a.id));

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-
+import { CryptoService } from '../../common/crypto/crypto.service.js';
 import type { Env } from '../../config/env.schema.js';
 import { StepUpGuard } from '../security/step-up.guard.js';
 import { BackupSettingsStore } from './backup-settings.store.js';
@@ -20,8 +20,9 @@ import { BackupsInternalController } from './backups-internal.controller.js';
     StepUpGuard,
     {
       provide: BACKUP_TOOLS,
-      inject: [ConfigService],
-      useFactory: (config: ConfigService<Env, true>) => new PgBackupTools(config.get('DATABASE_URL')),
+      inject: [ConfigService, CryptoService],
+      useFactory: (config: ConfigService<Env, true>, crypto: CryptoService) =>
+        new PgBackupTools(config.get('DATABASE_URL'), undefined, crypto),
     },
   ],
   exports: [BackupsService],

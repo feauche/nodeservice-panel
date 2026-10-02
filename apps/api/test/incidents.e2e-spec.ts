@@ -149,7 +149,18 @@ describe('incidents e2e', () => {
   it('агент офлайн и SSH тоже недоступен → одно дело «Сервер недоступен», переустановку агента не предлагаем', async () => {
     const db = app.get<Db>(DB);
     const svc = app.get(IncidentsService);
+    const bc = app.get(NodeBlockCheckService);
+    const probe = svc.probeHost;
+    const reach = bc.countryReach;
+    svc.probeHost = async () => false;
+    bc.countryReach = async () => ({
+      results: [{ from: 'Германия-1', country: 'DE', open: false }],
+      blind: null,
+    });
+    (svc as unknown as { hostCache: Map<string, unknown> }).hostCache.clear();
+    (svc as unknown as { reachCache: Map<string, unknown> }).reachCache.clear();
     await db.execute(sql`update servers set agent_status = 'offline', ssh_ok = false where id = ${serverId}`);
+    await svc.evaluate(noMetrics);
     await svc.evaluate(noMetrics);
 
     const list = incidentsListResponseSchema.parse(
@@ -161,6 +172,10 @@ describe('incidents e2e', () => {
     expect(mine[0]?.detail).toMatch(/переустанавливать агента бессмысленно/);
 
     // SSH снова работает, агент молчит — сервер отвечает: дело закрыто, открыто «Агент не в сети» с шагом
+    svc.probeHost = probe;
+    bc.countryReach = reach;
+    (svc as unknown as { hostCache: Map<string, unknown> }).hostCache.clear();
+    (svc as unknown as { reachCache: Map<string, unknown> }).reachCache.clear();
     await db.execute(sql`update servers set ssh_ok = true where id = ${serverId}`);
     await svc.evaluate(noMetrics);
     const after = incidentsListResponseSchema.parse(
@@ -178,7 +193,9 @@ describe('incidents e2e', () => {
     const db = app.get<Db>(DB);
     const svc = app.get(IncidentsService);
     const repo = app.get(IncidentsRepository);
+    const bc = app.get(NodeBlockCheckService);
     const probe = svc.probeHost;
+    const reach = bc.countryReach;
     try {
       // Агент замолчал, сервер отвечает — «Агент не в сети» с предложением переустановить.
       await db.execute(
@@ -199,10 +216,16 @@ describe('incidents e2e', () => {
 
       // Через минуту порт SSH перестал открываться: то же дело становится «Сервер недоступен».
       svc.probeHost = async () => false;
+      bc.countryReach = async () => ({
+        results: [{ from: 'Германия-1', country: 'DE', open: false }],
+        blind: null,
+      });
       (svc as unknown as { hostCache: Map<string, unknown> }).hostCache.clear();
+      (svc as unknown as { reachCache: Map<string, unknown> }).reachCache.clear();
       const pushed = vi.spyOn(app.get(NotificationsService), 'push');
       const closings = () =>
         pushed.mock.calls.map(([n]) => n).filter((n) => n.telegram?.event === 'resolved');
+      await svc.evaluate(noMetrics);
       await svc.evaluate(noMetrics);
       const open = incidentsListResponseSchema
         .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
@@ -236,7 +259,9 @@ describe('incidents e2e', () => {
       pushed.mockRestore();
     } finally {
       svc.probeHost = probe;
+      bc.countryReach = reach;
       (svc as unknown as { hostCache: Map<string, unknown> }).hostCache.clear();
+      (svc as unknown as { reachCache: Map<string, unknown> }).reachCache.clear();
     }
   });
 
@@ -244,7 +269,9 @@ describe('incidents e2e', () => {
     const db = app.get<Db>(DB);
     const svc = app.get(IncidentsService);
     const repo = app.get(IncidentsRepository);
+    const bc = app.get(NodeBlockCheckService);
     const probe = svc.probeHost;
+    const reach = bc.countryReach;
     const open = async () =>
       incidentsListResponseSchema
         .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
@@ -266,20 +293,24 @@ describe('incidents e2e', () => {
         sql`update servers set agent_status = 'offline', ssh_ok = false where id = ${serverId}`,
       );
       await svc.evaluate(noMetrics);
+      await svc.evaluate(noMetrics);
     };
     try {
       // Агент молчит и SSH не пускает, но порт SSH с панели открывается: сервер включён — хостер его не
       // отключал, и оплата тут ни при чём.
       await lose();
-      const [alive] = await open();
-      expect(alive?.kind).toBe('server_down');
-      expect(alive?.title).toBe('Сервер недоступен · inc-host');
-      expect(alive?.detail).toMatch(/хотя порт SSH 127\.0\.0\.1:\d+ с панели открывается\. Сервер включён/);
-      for (const s of ['💳', 'оплат', 'выключен']) expect(alive?.detail, s).not.toContain(s);
+      const alive = await open();
+      expect(alive.map((item) => item.kind).sort()).toEqual(['agent_offline', 'ssh_down']);
+      for (const item of alive)
+        for (const s of ['💳', 'оплат', 'выключен']) expect(item.detail, s).not.toContain(s);
       await back();
 
       // Порт SSH не открывается — сервер не отвечает совсем.
       svc.probeHost = async () => false;
+      bc.countryReach = async () => ({
+        results: [{ from: 'Германия-1', country: 'DE', open: false }],
+        blind: null,
+      });
       await lose();
       const [down] = await open();
       expect(down?.kind).toBe('server_down');
@@ -288,15 +319,11 @@ describe('incidents e2e', () => {
       expect(down?.detail).toMatch(
         /\n\n💳 Срок оплаты близко: Сервер «inc-host VPS»: 451 ₽, оплачено до \d{1,2} [а-я]+( \d{4})?, \d{2}:\d{2} \((МСК|UTC[+-]\d+)\)\.\n/,
       );
-      // Других серверов парка нет — из других стран проверить не с чего: панель просит проверить оплату,
-      // но причиной её не называет.
-      expect(down?.detail).toContain(
-        'Проверить из других стран не с чего: нет серверов парка с известной страной и рабочим SSH.',
-      );
-      expect(down?.detail).toContain(
-        'Проверьте оплату: из других стран порт не проверен, а срок оплаты близко — возможно, сервер отключили чуть раньше срока.',
-      );
-      expect(down?.detail).not.toContain('Вероятнее всего');
+      // Независимая зарубежная точка тоже не видит порт, поэтому отключение подтверждено не только сетью
+      // панели; близкая оплата может быть причиной, но вывод остаётся вероятностным.
+      expect(down?.detail).toContain('Порт SSH');
+      expect(down?.detail).toContain('Германия-1 — порт не отвечает');
+      expect(down?.detail).toContain('Вероятнее всего: оплата закончилась чуть раньше срока');
       // Просроченный сертификат сервер не выключает — в дело не попал и заголовок не стал «просрочена оплата».
       expect(down?.detail).not.toContain('certwarden');
       // В колокольчике заголовок тот же, что у дела, а не просто «Сервер недоступен».
@@ -396,6 +423,8 @@ describe('incidents e2e', () => {
       expect(first).toBeTruthy();
       svc.probeHost = async () => false;
       hostCache.clear();
+      (svc as unknown as { reachCache: Map<string, unknown> }).reachCache.clear();
+      await svc.evaluate(noMetrics);
       await svc.evaluate(noMetrics);
       const [refined] = await open();
       expect(refined?.id).toBe(first?.id);
@@ -403,7 +432,9 @@ describe('incidents e2e', () => {
       expect(refined?.detail).toContain('💳 Срок оплаты близко: Сервер «inc-host VPS»');
     } finally {
       svc.probeHost = probe;
+      bc.countryReach = reach;
       hostCache.clear();
+      (svc as unknown as { reachCache: Map<string, unknown> }).reachCache.clear();
       await db.execute(sql`delete from billing_items where title in ('inc-host VPS', 'certwarden')`);
       await db.execute(sql`delete from incidents where server_name in ('inc-neighbour', 'Нидерланды - 1')`);
       await db.execute(sql`delete from servers where name = 'inc-neighbour'`);
@@ -673,12 +704,14 @@ describe('incidents e2e', () => {
       });
       clear();
       await svc.evaluate(noMetrics);
+      await svc.evaluate(noMetrics);
       const everywhere = incidentsListResponseSchema
         .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
         .items.filter((i) => i.serverName === 'inc-host');
       expect(everywhere.map((i) => i.kind).sort()).toEqual(['agent_offline', 'ssh_down']);
       await db.execute(sql`update servers set ssh_ok = true where id = ${serverId}`);
       clear();
+      await svc.evaluate(noMetrics);
       await svc.evaluate(noMetrics);
 
       svc.probeHost = async () => false;
@@ -691,6 +724,7 @@ describe('incidents e2e', () => {
         blind: null,
       });
       clear();
+      await svc.evaluate(noMetrics);
       await svc.evaluate(noMetrics);
       const open = incidentsListResponseSchema
         .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
@@ -726,6 +760,7 @@ describe('incidents e2e', () => {
       });
       clear();
       await svc.evaluate(noMetrics);
+      await svc.evaluate(noMetrics);
       const down = incidentsListResponseSchema
         .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
         .items.filter((i) => i.serverName === 'inc-host');
@@ -752,6 +787,7 @@ describe('incidents e2e', () => {
       });
       clear();
       await svc.evaluate(noMetrics);
+      await svc.evaluate(noMetrics);
       const ruOnly = await repo.findOpen(serverId, 'server_down');
       expect(ruOnly?.detail).toContain(
         'не отвечает ни с одного проверяющего сервера, но все они в России; из-за рубежа порт не проверен:',
@@ -774,6 +810,7 @@ describe('incidents e2e', () => {
       });
       clear();
       await svc.evaluate(noMetrics);
+      await svc.evaluate(noMetrics);
       const panelCut = await repo.findOpen(serverId, 'node_blocked');
       expect(panelCut?.detail).toContain(
         'Похоже: закрыт путь между сервером и панелью — со всех проверяющих серверов (Мост, Германия-1) порт открыт, а с сервера панели не отвечает',
@@ -784,6 +821,7 @@ describe('incidents e2e', () => {
       svc.probeHost = probe;
       await db.execute(sql`update servers set ssh_ok = false where id = ${serverId}`);
       clear();
+      await svc.evaluate(noMetrics);
       await svc.evaluate(noMetrics);
       const reopened = incidentSchema.parse(
         (await agent.get(`/api/incidents/${panelCut?.id}`).expect(200)).body,
@@ -797,8 +835,8 @@ describe('incidents e2e', () => {
       await db.execute(sql`update servers set ssh_ok = true where id = ${serverId}`);
       svc.probeHost = async () => false;
 
-      // Серверы парка есть, но панель не зашла ни на один: это не «проверить не с чего» — возможно, связь
-      // пропала у самой панели. Текст уже открытого дела не переписывается — смотрим на новом.
+      // Серверы парка есть, но панель не зашла ни на один: это сбой обзора самой панели. Пустая
+      // перепроверка не доказывает падение сервера и не должна создавать ложное критичное дело.
       await db.execute(sql`delete from incidents where server_id = ${serverId}`);
       bc.countryReach = async () => ({ results: [], blind: 'ssh' });
       clear();
@@ -806,11 +844,7 @@ describe('incidents e2e', () => {
       const blind = incidentsListResponseSchema
         .parse((await agent.get('/api/incidents?status=open').expect(200)).body)
         .items.filter((i) => i.serverName === 'inc-host');
-      expect(blind.map((i) => i.kind)).toEqual(['server_down']);
-      expect(blind[0]?.detail).toContain(
-        'Проверить из других стран не удалось: панель не зашла ни на один сервер парка — возможно, связь пропала у самой панели.',
-      );
-      expect(blind[0]?.detail).not.toContain('не с чего');
+      expect(blind).toEqual([]);
 
       // Агент вернулся — всё закрыто.
       svc.probeHost = probe;
@@ -1481,7 +1515,7 @@ describe('incidents e2e', () => {
     await p.expect(202);
     const done = await settled(inc?.id ?? '');
     expect(done.attempts[0]?.status).toBe('helped');
-    expect(done.attempts[0]?.steps[2]?.note).toContain('контейнер ноды запущен');
+    expect(done.attempts[0]?.steps[2]?.note).toContain('контейнер ноды стабильно работает');
     expect(done.status).toBe('resolved');
     expect(ssh.execLog.some((c) => c.includes('docker start'))).toBe(true);
   });
