@@ -216,6 +216,29 @@ describe('ServersService: установка агента', () => {
   });
 });
 
+describe('ServersService: смена IP', () => {
+  it('сохраняет привязку и состояние агента — новый IP не требует переустановки', async () => {
+    const ctx = make('online', async () => ({ code: 0 }));
+    const lastSeen = new Date('2026-10-02T01:00:00Z');
+    Object.assign(ctx.row, {
+      agentPubkey: 'pinned-agent-key',
+      agentVersion: 'v0.6.1',
+      agentLastSeenAt: lastSeen,
+      countrySource: 'manual',
+    });
+
+    await ctx.svc.update('s1', { host: '198.51.100.27' });
+
+    expect(ctx.row).toMatchObject({
+      host: '198.51.100.27',
+      agentStatus: 'online',
+      agentPubkey: 'pinned-agent-key',
+      agentVersion: 'v0.6.1',
+      agentLastSeenAt: lastSeen,
+    });
+  });
+});
+
 describe('ServersService: удаление сервера', () => {
   it('слушатели узнают об удалении (шлюз закрывает соединение агента); их сбой удалению не мешает', async () => {
     const ctx = make('online', async () => ({ code: 0 }));
