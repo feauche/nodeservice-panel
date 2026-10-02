@@ -77,6 +77,22 @@ describe('ServersPage', () => {
     expect(screen.getAllByTestId('server-row')).toHaveLength(2);
   });
 
+  it('входящий HTTPS агента показывается как основной канал', async () => {
+    const first = mockServers.items[0] as Server;
+    mockServers.items[0] = {
+      ...first,
+      agentTransport: 'https',
+      agentRoute: 'https://203.0.113.7:43127/v1/snapshot',
+      agentRouteFallback: false,
+    };
+    renderPage(Harness, '/servers');
+    const user = userEvent.setup();
+    await user.click((await screen.findByText('de-fra-01')).closest('article') as HTMLElement);
+    const dialog = await screen.findByRole('dialog', { name: 'de-fra-01' });
+    expect(within(dialog).getByText('HTTPS · основной вход')).toBeInTheDocument();
+    expect(within(dialog).getByText('203.0.113.7:43127')).toBeInTheDocument();
+  });
+
   it('SSH не пустил, а агент на связи: сервер не «Офлайн» — «Внимание» с причиной, метрики на месте', async () => {
     const first = mockServers.items[0] as Server;
     mockServers.items[0] = { ...first, sshOk: false };

@@ -17,7 +17,9 @@ import {
   AGENT_STATE_PATH,
   agentInstallCommand,
   agentInstallScript,
+  agentPullInstallScript,
   installFailure,
+  pullCertificateFromOutput,
 } from './agent-install.js';
 import { shellQuote } from './ssh.service.js';
 
@@ -25,8 +27,33 @@ const PARAMS = {
   repo: 'feauche/nodeservice-agent',
   token: 'nse_test-TOKEN_123',
   panel: 'https://panel.test',
+  fallbackPanels: ['https://backup.test', 'https://second.test'],
 };
 const OLD_STATE = '{"serverId":"old","privKey":"old-key"}';
+
+describe('входящий агент', () => {
+  it('ключ отсутствует в команде и передаётся установщику только через stdin', () => {
+    const script = agentPullInstallScript({
+      repo: 'feauche/nodeservice-agent',
+      serverId: '0192c000-0000-7000-8000-000000000001',
+      serverName: "Казахстан ' 1",
+      port: 23456,
+      panelIp: '192.0.2.10',
+    });
+    expect(script).toContain('--listen-port 23456');
+    expect(script).toContain("--panel-ip '192.0.2.10'");
+    expect(script).toContain('--access-key-stdin');
+    expect(script).toContain("'Казахстан '\\'' 1'");
+    expect(script).not.toMatch(/nsa_|access-key\s+['"]/);
+  });
+
+  it('принимает только сертификат разумного размера', () => {
+    const cert = Buffer.alloc(300, 7).toString('base64');
+    expect(pullCertificateFromOutput(`шаг\nNODESERVICE_PULL_CERT=${cert}\nготово\n`)).toBe(cert);
+    expect(pullCertificateFromOutput('NODESERVICE_PULL_CERT=eA==\n')).toBeNull();
+    expect(pullCertificateFromOutput('без сертификата')).toBeNull();
+  });
+});
 
 /** На серверах sh — это dash, на машине разработчика — bash: проверяем обоими, когда оба есть. */
 const SHELLS = ['/bin/sh', ...(existsSync('/bin/dash') ? ['/bin/dash'] : [])];
@@ -147,6 +174,8 @@ describe.each(SHELLS)('установка агента: команды для с
       PARAMS.token,
       '--panel',
       PARAMS.panel,
+      '--fallback-panels',
+      PARAMS.fallbackPanels.join(','),
     ]);
     expect(existsSync(state)).toBe(false);
     expect(existsSync(`${state}.prev`)).toBe(false);
@@ -185,6 +214,8 @@ describe.each(SHELLS)('установка агента: команды для с
       PARAMS.token,
       '--panel',
       PARAMS.panel,
+      '--fallback-panels',
+      PARAMS.fallbackPanels.join(','),
     ]);
     expect(readFileSync(state, 'utf8')).toBe(OLD_STATE);
   });
@@ -201,7 +232,9 @@ describe.each(SHELLS)('установка агента: команды для с
     // Команда владельца работает с настоящим путём привязки — для проверки подставляем временный.
     const manual = agentInstallCommand(PARAMS);
     expect(manual).toContain(AGENT_STATE_PATH);
-    expect(manual).toContain(`--token ${PARAMS.token} --panel ${PARAMS.panel}`);
+    expect(manual).toContain('--token');
+    expect(manual).toContain('--panel');
+    expect(manual).toContain('--fallback-panels');
     expect(manual).toContain('github.com/feauche/nodeservice-agent/releases/latest/download/install.sh');
     // Скрипт больше не идёт по конвейеру в sh: у конвейера код выхода — от sh с пустым вводом, то есть 0.
     expect(manual).not.toMatch(/\|\s*sh/);
@@ -219,7 +252,14 @@ describe.each(SHELLS)('установка агента: команды для с
     expect(ok.status).toBe(0);
     expect(existsSync(state)).toBe(false);
     expect(existsSync(`${state}.prev`)).toBe(false);
-    expect(readFileSync(join(dir, 'args'), 'utf8')).toContain(PARAMS.token);
+    expect(readFileSync(join(dir, 'args'), 'utf8').trim().split('\n')).toEqual([
+      '--token',
+      PARAMS.token,
+      '--panel',
+      PARAMS.panel,
+      '--fallback-panels',
+      PARAMS.fallbackPanels.join(','),
+    ]);
   });
 
   it('ручная команда: скрипт скачался, но упал на своём шаге (не скачался бинарь) — привязка возвращена', () => {

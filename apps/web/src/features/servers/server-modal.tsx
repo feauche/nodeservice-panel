@@ -111,7 +111,7 @@ function AgentFact({ server, noPanel }: { server: Server; noPanel: boolean }) {
       ? `${AGENT_STATUS_LABELS[server.agentStatus]} · ${server.agentVersion.startsWith('v') ? server.agentVersion : `v${server.agentVersion}`}`
       : AGENT_STATUS_LABELS[server.agentStatus];
   const showRoute = server.agentStatus === 'online' && server.agentTransport;
-  const fallback = server.agentTransport === 'https' || server.agentRouteFallback === true;
+  const fallback = server.agentRouteFallback === true;
   const host = routeHost(server.agentRoute);
   return (
     <span className="block min-w-0">

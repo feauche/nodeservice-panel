@@ -224,7 +224,7 @@ describe('agent e2e', () => {
     expect((err.payload as { code: string }).code).toBe('auth-failed');
   });
 
-  it('полный цикл: hello → challenge → auth → welcome, heartbeat и метрики, offline при разрыве', async () => {
+  it('полный цикл: hello → challenge → auth → welcome, heartbeat и метрики', async () => {
     const ws = new WsAgent();
     await ws.connect(wsBase);
     ws.send(AGENT_MSG.hello, { serverId, pubkey: pubkeyB64, version: '0.5.0-test' });
@@ -253,18 +253,14 @@ describe('agent e2e', () => {
     expect(online.agentLastSeenAt).not.toBeNull();
 
     ws.ws.close();
-    await expect
-      .poll(
-        async () =>
-          serverSchema.parse((await agent.get(`/api/servers/${serverId}`).expect(200)).body).agentStatus,
-        { timeout: 5_000 },
-      )
-      .toBe('offline');
+    // Короткий разрыв не красит весь парк: offline ставит джоба по таймауту сигналов.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await statusOf(serverId)).toBe('online');
 
     const audit = auditListResponseSchema.parse(
       (await agent.get('/api/audit?category=server').expect(200)).body,
     );
-    for (const action of ['server.agent.enrolled', 'server.agent.online', 'server.agent.offline'])
+    for (const action of ['server.agent.enrolled', 'server.agent.online'])
       expect(audit.items.some((e) => e.action === action)).toBe(true);
   });
 
@@ -308,7 +304,8 @@ describe('agent e2e', () => {
     expect(String(online[0]?.metadata.reason)).toMatch(/возобновились/);
 
     ws.ws.close();
-    await expect.poll(() => statusOf(serverId), { timeout: 5_000 }).toBe('offline');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await statusOf(serverId)).toBe('online');
   });
 
   it('отвергнутый агент стучится снова и снова — в Журнале одна запись в час, с числом попыток', async () => {
@@ -445,21 +442,20 @@ describe('agent e2e', () => {
   });
 
   it('установка по SSH: панель выполняет скрипт из релизов, статус — «Ожидает агента»', async () => {
-    // Предыдущий ws-тест закрыл соединение — дождёмся, пока агент честно станет «не в сети».
-    const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline) {
-      const cur = serverSchema.parse((await agent.get(`/api/servers/${serverId}`).expect(200)).body);
-      if (cur.agentStatus !== 'online') break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    // Установка сама снимает старую зелёную отметку и ждёт сигнала от нового агента.
     const res = await agent.post(`/api/servers/${serverId}/agent/install`).set(CSRF_HEADER, csrf).expect(200);
     const updated = serverSchema.parse(res.body);
     expect(updated.agentStatus).toBe('pending');
-    expect(ssh.execLog.some((c) => c.includes('install.sh') && c.includes('--token'))).toBe(true);
+    expect(
+      ssh.execLog.some(
+        (c) => c.includes('install.sh') && c.includes('--listen-port') && c.includes('--access-key-stdin'),
+      ),
+    ).toBe(true);
+    expect(ssh.execLog.some((c) => /nsa_[A-Za-z0-9_-]+/.test(c))).toBe(false);
     expect(ssh.execLog.some((c) => c.includes('github.com/feauche/nodeservice-agent'))).toBe(true);
   });
 
-  it('установка не удалась: причина словами, ни команды, ни токена в ответе и в Журнале; токен отозван', async () => {
+  it('установка не удалась: причина словами, ни команды, ни ключа в ответе и в Журнале', async () => {
     const before = await statusOf(serverId);
     const reason =
       'Установочный скрипт агента не скачался: скачивание с GitHub не уложилось в минуту. На сервере ничего не изменено.';
@@ -470,23 +466,18 @@ describe('agent e2e', () => {
         .set(CSRF_HEADER, csrf)
         .expect(502);
       expect(res.body.detail).toBe(`Команда на сервере не выполнилась (установка агента): ${reason}`);
-      // Токен этой установки — из команды, которую получил сервер.
       const command = [...ssh.execLog].reverse().find((c) => c.includes('# ns-agent:install')) ?? '';
-      const token = /--token '(nse_[^']+)'/.exec(command)?.[1] ?? '';
-      expect(token).toMatch(/^nse_/);
+      expect(command).toContain('--access-key-stdin');
+      expect(command).not.toMatch(/nsa_[A-Za-z0-9_-]+/);
       const log = await journal(serverId);
       expect(log.find((e) => e.action === 'server.agent.install')).toMatchObject({
         result: 'failed',
         metadata: { reason: res.body.detail },
       });
-      for (const secret of [token, 'curl', 'mktemp'])
+      for (const secret of ['nsa_', 'curl', 'mktemp'])
         expect(JSON.stringify([res.body, log]), secret).not.toContain(secret);
-      // Статус — прежний, а не «Ожидает агента»; токен неудавшейся установки больше не действует.
+      // Статус — прежний, а не «Ожидает агента».
       expect(await statusOf(serverId)).toBe(before);
-      await request(app.getHttpServer())
-        .post('/api/agent/v1/enroll')
-        .send({ token, pubkey: pubkeyB64, version: '0.5.0-test' })
-        .expect(400);
     } finally {
       ssh.agentInstall = { code: 0, output: '' };
     }

@@ -351,6 +351,20 @@
       "when": 1790900000000,
       "tag": "0052_telegram_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1790905000000,
+      "tag": "0053_agent_connection",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1790910000000,
+      "tag": "0054_agent_pull",
+      "breakpoints": true
     }
   ]
 }

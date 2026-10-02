@@ -111,6 +111,20 @@ describe('AgentService: сигнал по открытому соединени�
     expect(ctx.written).toEqual(['s1']);
   });
 
+  it('входящий HTTPS-агент становится основным каналом, а не запасным', async () => {
+    const row = server({ agentStatus: 'offline' });
+    const ctx = make(row);
+    await ctx.agents.acceptPull(row as never, 'v0.8.0', {} as never, 'https://203.0.113.5:23456');
+    expect(row).toMatchObject({
+      agentStatus: 'online',
+      agentVersion: 'v0.8.0',
+      agentTransport: 'https',
+      agentRoute: 'https://203.0.113.5:23456',
+      agentRouteFallback: false,
+    });
+    expect(ctx.written).toEqual(['s1']);
+  });
+
   it('сигнал и метрика пришли разом — запись «вышел на связь» одна', async () => {
     const row = server({ agentStatus: 'offline' });
     const ctx = make(row);

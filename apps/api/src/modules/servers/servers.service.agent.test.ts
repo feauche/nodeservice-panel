@@ -7,6 +7,8 @@ import { ServersService } from './servers.service.js';
 import type { SshExecStreamOptions } from './ssh.service.js';
 
 const TOKEN = 'nse_SECRET-token';
+const ACCESS_KEY = `nsa_${TOKEN.slice(4)}`;
+const CERT = Buffer.alloc(300, 7).toString('base64');
 
 type Exec = (command: string, opts: SshExecStreamOptions) => Promise<{ code: number }>;
 
@@ -40,6 +42,9 @@ function make(agentStatus: string, exec: Exec, connect?: () => Promise<never>, a
     agentStatus,
     agentVersion: null,
     agentLastSeenAt: null,
+    agentListenPort: null,
+    agentAccessKeyEnc: null,
+    agentTlsCert: null,
     sshOk: true,
     lastSshCheckAt: now,
     lastSshOkAt: now,
@@ -63,9 +68,13 @@ function make(agentStatus: string, exec: Exec, connect?: () => Promise<never>, a
   };
   const session = {
     hostKeyFp: 'SHA256:x',
-    execStream: (command: string, opts: SshExecStreamOptions = {}) => {
+    exec: async () => ({ code: 1, stdout: '', stderr: '' }),
+    execAsUser: async () => ({ code: 0, stdout: '192.0.2.10', stderr: '' }),
+    execStream: async (command: string, opts: SshExecStreamOptions = {}) => {
       calls.push({ command, opts });
-      return exec(command, opts);
+      const result = await exec(command, opts);
+      if (result.code === 0) opts.onData?.(`NODESERVICE_PULL_CERT=${CERT}\n`);
+      return result;
     },
     end: () => {},
   };
@@ -74,7 +83,12 @@ function make(agentStatus: string, exec: Exec, connect?: () => Promise<never>, a
     repo as never,
     ssh as never,
     { get: async () => ({ privateKeyOpenSsh: 'KEY' }) } as never,
-    { randomToken: () => TOKEN.slice(4), sha256Hex: (v: string) => `hash:${v}` } as never,
+    {
+      randomToken: () => TOKEN.slice(4),
+      sha256Hex: (v: string) => `hash:${v}`,
+      encrypt: (v: string) => `enc:${v}`,
+      decrypt: (v: string) => v.replace(/^enc:/, ''),
+    } as never,
     { record: async (e: never) => void journal.push(e) } as never,
     {
       get: (k: string) =>
@@ -95,7 +109,7 @@ const outward = (err: unknown, ctx: ReturnType<typeof make>) =>
   `${errorText(err)}\n${JSON.stringify(ctx.installs())}`;
 
 describe('ServersService: установка агента', () => {
-  it('скрипт завершился с ошибкой: установка не засчитана, причина названа, токен отозван', async () => {
+  it('скрипт завершился с ошибкой: установка не засчитана, причина названа, секрет не раскрыт', async () => {
     const ctx = make('offline', async (_c, o) => {
       o.onData?.('→ скачиваю nodeservice-agent_linux_amd64 (latest)\n✗ не скачался бинарь\n');
       return { code: 1 };
@@ -110,10 +124,10 @@ describe('ServersService: установка агента', () => {
     expect(ctx.installs()[0]).toMatchObject({ result: 'failed' });
     expect(String(ctx.installs()[0]?.metadata?.reason)).toContain('не скачался бинарь');
     expect(outward(err, ctx)).not.toContain(TOKEN);
-    expect(ctx.revoked).toEqual(['tok-1']);
+    expect(ctx.revoked).toEqual([]);
   });
 
-  it('на установку даётся несколько минут; таймаут не раскрывает команду и токен, токен отзывается', async () => {
+  it('на установку даётся несколько минут; ключ идёт через stdin и не попадает в команду', async () => {
     const ctx = make('not_installed', async (command, o) => {
       // Как SshService: в ошибке — имя команды, если его дали, иначе её начало.
       throw serverProblems.sshCommand(o.label ?? command.slice(0, 60), 'таймаут 300 с');
@@ -121,15 +135,17 @@ describe('ServersService: установка агента', () => {
     const err = await ctx.svc.installAgent('s1').catch((e: unknown) => e);
     expect(ctx.calls).toHaveLength(1);
     expect(ctx.calls[0]?.opts.timeoutMs).toBeGreaterThanOrEqual(3 * 60_000);
-    expect(ctx.calls[0]?.command).toContain(`--token '${TOKEN}'`);
+    expect(ctx.calls[0]?.command).toContain('--access-key-stdin');
+    expect(ctx.calls[0]?.command).not.toContain(ACCESS_KEY);
+    expect(ctx.calls[0]?.opts.input).toBe(`${ACCESS_KEY}\n`);
     expect(errorText(err)).toBe('Команда на сервере не выполнилась (установка агента): таймаут 300 с');
     for (const secret of [TOKEN, 'curl', 'install.sh', 'github'])
       expect(outward(err, ctx)).not.toContain(secret);
     expect(ctx.row.agentStatus).toBe('not_installed');
-    expect(ctx.revoked).toEqual(['tok-1']);
+    expect(ctx.revoked).toEqual([]);
   });
 
-  it('панель не зашла на сервер: токен этой установки тоже отозван', async () => {
+  it('панель не зашла на сервер: статус возвращается без выпуска одноразового токена', async () => {
     const ctx = make(
       'offline',
       async () => ({ code: 0 }),
@@ -139,7 +155,7 @@ describe('ServersService: установка агента', () => {
     );
     await expect(ctx.svc.installAgent('s1')).rejects.toMatchObject({ status: 502 });
     expect(ctx.row.agentStatus).toBe('offline');
-    expect(ctx.revoked).toEqual(['tok-1']);
+    expect(ctx.revoked).toEqual([]);
     expect(ctx.installs()).toHaveLength(1);
   });
 
@@ -172,7 +188,8 @@ describe('ServersService: установка агента', () => {
   it('неудача поверх оборванной установки: «Агент устанавливается…» не остаётся висеть', async () => {
     const never = make('installing', async () => ({ code: 1 }));
     await expect(never.svc.installAgent('s1')).rejects.toBeDefined();
-    expect(never.row.agentStatus).toBe('not_installed');
+    // Реквизиты уже выпущены, поэтому это настроенный, но недоступный агент.
+    expect(never.row.agentStatus).toBe('offline');
     // Агент когда-то был привязан — честнее «не в сети», чем «не установлен».
     const bound = make('installing', async () => ({ code: 1 }));
     bound.row.agentPubkey = 'pubkey';
@@ -211,6 +228,7 @@ describe('ServersService: установка агента', () => {
         repo: 'feauche/nodeservice-agent',
         token: TOKEN,
         panel: 'https://agents.example.net',
+        fallbackPanels: ['https://panel.test'],
       }),
     );
   });

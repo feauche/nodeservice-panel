@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import type { Server } from '@nodeservice/shared';
 
+import { AgentPullClient } from '../agent/agent-pull.client.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
 import { NotificationsService, SERVER_TOKEN } from '../notifications/notifications.service.js';
@@ -17,8 +18,8 @@ const PENDING_GRACE_MS = process.env.NODE_ENV === 'test' ? 0 : 3 * 60_000;
 /**
  * «Ожидает агента» не должно висеть молча (случай «Казахстан-1»: агент стоял и работал, но сеть сервера
  * не пропускала трафик к панели — владелец трижды переустанавливал агента). Через 3 минуты после установки
- * панель один раз заходит на сервер (напрямую или через сервер парка, откуда он доступен) и проверяет,
- * куда он может выйти, — и пишет причину словами в колокольчик. После этого ждать нечего: статус сменяется
+ * панель проверяет назначенный входящий HTTPS-порт; для старого агента — прежний исходящий маршрут. Причина
+ * приходит словами в колокольчик. После этого ждать нечего: статус сменяется
  * на «Агент не в сети», и за сервером снова следит детекция инцидентов (дело «Агент не в сети» остаётся
  * открытым или заводится) — иначе «Ожидает агента» висело бы вечно, без дела и без напоминаний.
  * Заодно джоба снимает «Агент устанавливается…», оставшееся от установки, которую оборвал перезапуск панели.
@@ -33,6 +34,7 @@ export class AgentPendingJob {
   constructor(
     private readonly servers: ServersService,
     private readonly serversRepo: ServersRepository,
+    private readonly pull: AgentPullClient,
     private readonly egress: EgressCheckService,
     private readonly blockCheck: NodeBlockCheckService,
     private readonly notifications: NotificationsService,
@@ -110,7 +112,9 @@ export class AgentPendingJob {
   private async dropStaleInstall(s: Server): Promise<void> {
     const fresh = await this.serversRepo.findById(s.id);
     if (fresh?.agentStatus !== 'installing' || this.servers.agentInstallRunning(s.id)) return;
-    await this.serversRepo.update(s.id, { agentStatus: fresh.agentPubkey ? 'offline' : 'not_installed' });
+    await this.serversRepo.update(s.id, {
+      agentStatus: fresh.agentPubkey || fresh.agentAccessKeyEnc ? 'offline' : 'not_installed',
+    });
     await this.audit.record({
       action: 'server.agent.install',
       result: 'failed',
@@ -123,6 +127,30 @@ export class AgentPendingJob {
   }
 
   private async explain(s: Server, all: Server[]): Promise<void> {
+    const row = await this.serversRepo.findById(s.id);
+    if (row?.agentListenPort && row.agentAccessKeyEnc && row.agentTlsCert) {
+      let detail: string;
+      try {
+        await this.pull.snapshot(row, false);
+        detail =
+          'Агент уже отвечает на защищённый запрос. Панель повторит опрос автоматически; переустанавливать его не нужно.';
+      } catch (err) {
+        detail = `Панель не может подключиться к HTTPS-порту ${row.agentListenPort}: ${err instanceof Error ? err.message : String(err)}. Проверьте внешний firewall провайдера и правило «ufw status numbered»: порт должен быть разрешён только с IP панели. Исходящий доступ сервера к домену панели для этого режима не нужен.`;
+      }
+      await this.notifications.push({
+        severity: 'warn',
+        title: `Панель не получает ответ агента на ${SERVER_TOKEN}`,
+        server: { id: s.id, name: s.name, host: s.host },
+        body: detail,
+      });
+      await this.audit.record({
+        action: 'server.agent.pending_explained',
+        source: 'auto',
+        target: { type: 'server', id: s.id, display: s.name },
+        metadata: { verdict: 'pull-unreachable', port: row.agentListenPort },
+      });
+      return;
+    }
     const report = await this.egress.checkWithFallback(s, all, async () =>
       (await this.blockCheck.countryReach(s.host, s.port, s.id, all)).results
         .filter((r) => r.open)

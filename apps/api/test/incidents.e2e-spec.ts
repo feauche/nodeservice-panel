@@ -453,7 +453,9 @@ describe('incidents e2e', () => {
           .items.filter((n) => n.title.includes('не выходит на связь'));
       const was = (await mine()).length;
       await db.execute(
-        sql`update servers set agent_status = 'pending', ssh_ok = true where id = ${serverId}`,
+        sql`update servers set agent_status = 'pending', ssh_ok = true,
+          agent_listen_port = null, agent_access_key_enc = null, agent_tls_cert = null
+          where id = ${serverId}`,
       );
       await app.get(AgentPendingJob).run();
       const notes = await mine();

@@ -37,6 +37,8 @@ export interface SshExecStreamOptions {
   signal?: AbortSignal;
   /** Как назвать команду в тексте ошибки («установка агента») вместо её начала: в команде бывает токен. */
   label?: string;
+  /** Данные для stdin; секрет не попадает в команду, process list и текст ошибки. */
+  input?: string;
 }
 
 export interface SshExecOptions {
@@ -284,6 +286,7 @@ export class SshService {
             const errDec = new StringDecoder('utf8');
             stream.on('data', (d: Buffer) => opts.onData?.(out.write(d)));
             stream.stderr.on('data', (d: Buffer) => opts.onData?.(errDec.write(d)));
+            if (opts.input !== undefined) stream.end(opts.input);
             stream.on('close', (code: number | null) => finish(() => resolve({ code: code ?? -1 })));
           });
         }),

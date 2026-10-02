@@ -7,6 +7,9 @@ interface Row {
   port: number;
   agentStatus: string;
   agentPubkey: string | null;
+  agentListenPort?: number | null;
+  agentAccessKeyEnc?: string | null;
+  agentTlsCert?: string | null;
   sshOk: boolean | null;
 }
 
@@ -56,6 +59,7 @@ async function make(env: 'test' | 'production', opts: { explainFails?: boolean }
   const job = new AgentPendingJob(
     servers as never,
     serversRepo as never,
+    { snapshot: async () => Promise.reject(new Error('таймаут подключения к агенту')) } as never,
     egress as never,
     {
       countryReach: async () => {
@@ -96,6 +100,19 @@ describe('AgentPendingJob: «Ожидает агента» не висит ве�
     await ctx.job.run(t0 + 400_000);
     expect(ctx.pushed).toHaveLength(1);
     expect(ctx.offline()).toHaveLength(1);
+  });
+
+  it('для нового агента проверяет входящий порт и не ставит ошибочный диагноз про исходящий маршрут', async () => {
+    const ctx = await make('test');
+    ctx.row.agentListenPort = 23456;
+    ctx.row.agentAccessKeyEnc = 'enc:key';
+    ctx.row.agentTlsCert = 'cert';
+    await ctx.job.run();
+    expect(ctx.pushed).toHaveLength(1);
+    expect(ctx.pushed[0]?.title).toContain('Панель не получает ответ');
+    expect(ctx.pushed[0]?.body).toContain('HTTPS-порту 23456');
+    expect(ctx.pushed[0]?.body).toContain('Исходящий доступ сервера');
+    expect(ctx.hooks.countryChecks).toBeUndefined();
   });
 
   it('агент вышел на связь, пока панель выясняла причину, — статус не трогаем', async () => {

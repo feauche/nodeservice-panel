@@ -91,6 +91,12 @@ export const servers = pgTable('servers', {
   agentRoute: text('agent_route'),
   /** Маршрут не первый в актуальном списке панели. */
   agentRouteFallback: boolean('agent_route_fallback'),
+  /** Уникальный в пределах парка пятизначный HTTPS-порт входящего агента (миграция 0054). */
+  agentListenPort: integer('agent_listen_port'),
+  /** Уникальный Bearer-ключ панели, зашифрованный AES-256-GCM. */
+  agentAccessKeyEnc: text('agent_access_key_enc'),
+  /** Самоподписанный сертификат агента (DER в base64); панель использует его как pinned CA. */
+  agentTlsCert: text('agent_tls_cert'),
   sshOk: boolean('ssh_ok'),
   lastSshCheckAt: timestamp('last_ssh_check_at', { withTimezone: true }),
   lastSshOkAt: timestamp('last_ssh_ok_at', { withTimezone: true }),

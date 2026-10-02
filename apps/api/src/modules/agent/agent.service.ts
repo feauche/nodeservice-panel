@@ -31,6 +31,7 @@ const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 export interface AgentConnection {
   transport: 'websocket' | 'https';
   route?: string;
+  fallback?: boolean;
 }
 
 /** Актор записей Журнала от имени агента: системный, но с понятной подписью. */
@@ -253,6 +254,22 @@ export class AgentService {
     return true;
   }
 
+  /** Снимок, который панель забрала у входящего агента. */
+  async acceptPull(
+    server: ServerRow,
+    version: string,
+    metrics: AgentMetrics | undefined,
+    route: string,
+  ): Promise<void> {
+    const current = await this.syncConnection(server, {
+      transport: 'https',
+      route,
+      fallback: false,
+    });
+    if (metrics) await this.handleMetrics(current, version, metrics);
+    else await this.touch(current.id, version);
+  }
+
   /** Записываем смену канала один раз; обычные сигналы не создают событий обновления сервера каждые 10 с. */
   private async syncConnection(server: ServerRow, connection: AgentConnection): Promise<ServerRow> {
     const patch = this.connectionPatch(connection);
@@ -270,7 +287,7 @@ export class AgentService {
     return {
       agentTransport: connection.transport,
       agentRoute: route,
-      agentRouteFallback: route ? route !== this.wsUrls()[0] : null,
+      agentRouteFallback: route ? (connection.fallback ?? route !== this.wsUrls()[0]) : null,
     } as const;
   }
 }

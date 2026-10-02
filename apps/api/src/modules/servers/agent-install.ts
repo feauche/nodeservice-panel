@@ -18,9 +18,29 @@ export interface AgentInstallParams {
   token: string;
   /** Публичный адрес панели. */
   panel: string;
+  /** Независимые входы, которые первичная регистрация пробует после основного. */
+  fallbackPanels?: string[];
+}
+
+export interface AgentPullInstallParams {
+  repo: string;
+  serverId: string;
+  serverName: string;
+  port: number;
+  /** Адрес, с которого сервер увидел SSH-сеанс панели: точечное правило UFW. */
+  panelIp: string;
 }
 
 const scriptUrl = (repo: string) => `https://github.com/${repo}/releases/latest/download/install.sh`;
+
+const installerArgs = ({ token, panel, fallbackPanels = [] }: AgentInstallParams): string =>
+  [
+    '--token',
+    shellQuote(token),
+    '--panel',
+    shellQuote(panel),
+    ...(fallbackPanels.length > 0 ? ['--fallback-panels', shellQuote(fallbackPanels.join(','))] : []),
+  ].join(' ');
 
 /**
  * Команда для ручной установки — её видит и копирует владелец (запасной путь, когда панель не заходит по
@@ -30,10 +50,11 @@ const scriptUrl = (repo: string) => `https://github.com/${repo}/releases/latest/
  * новый агент не успел привязаться сам); любой сбой даёт ненулевой код. Обёртка `sh -c` — чтобы команда
  * одинаково работала в любой оболочке, куда её вставят.
  */
-export function agentInstallCommand({ repo, token, panel }: AgentInstallParams): string {
+export function agentInstallCommand(params: AgentInstallParams): string {
+  const { repo } = params;
   const inner = [
     `S=${AGENT_STATE_PATH}`,
-    `f=$(mktemp) && curl -fsSL -o "$f" ${scriptUrl(repo)} && { mv -f "$S" "$S.prev" 2>/dev/null; sh "$f" --token ${token} --panel ${panel}; }`,
+    `f=$(mktemp) && curl -fsSL -o "$f" ${scriptUrl(repo)} && { mv -f "$S" "$S.prev" 2>/dev/null; sh "$f" ${installerArgs(params)}; }`,
     'c=$?',
     '[ $c = 0 ] || [ -e "$S" ] || mv -f "$S.prev" "$S" 2>/dev/null',
     'rm -f "$f" "$S.prev"',
@@ -49,7 +70,8 @@ export function agentInstallCommand({ repo, token, panel }: AgentInstallParams):
  * владелец у терминала видит вывод сам. Маркер в первой строке — для логов и тестового sshd; NS_AGENT_STATE
  * переопределяется только в тестах (настоящий шелл, временная папка).
  */
-export function agentInstallScript({ repo, token, panel }: AgentInstallParams): string {
+export function agentInstallScript(params: AgentInstallParams): string {
+  const { repo } = params;
   return [
     '# ns-agent:install',
     `S="\${NS_AGENT_STATE:-${AGENT_STATE_PATH}}"`,
@@ -76,7 +98,7 @@ export function agentInstallScript({ repo, token, panel }: AgentInstallParams): 
     // Старая привязка иначе переживает установку: агент пишет «токен игнорирую», и новый токен пропадает
     // зря — повторная установка ничего не меняла (случай «Казахстан-1»). Поэтому на время установки убираем.
     '[ -e "$S" ] && mv -f "$S" "$S.prev"',
-    `if sh "$F" --token ${shellQuote(token)} --panel ${shellQuote(panel)}; then`,
+    `if sh "$F" ${installerArgs(params)}; then`,
     '  rm -f "$S.prev"',
     'else',
     '  rc=$?',
@@ -87,6 +109,57 @@ export function agentInstallScript({ repo, token, panel }: AgentInstallParams): 
     '  exit "$rc"',
     'fi',
   ].join('\n');
+}
+
+/**
+ * Новая установка «как у Remnawave»: агент слушает свой HTTPS-порт, а панель опрашивает его сама.
+ * Секрет намеренно отсутствует в тексте: SshService передаёт его только через stdin.
+ */
+export function agentPullInstallScript(params: AgentPullInstallParams): string {
+  const args = [
+    '--listen-port',
+    String(params.port),
+    '--server-id',
+    shellQuote(params.serverId),
+    '--server-name',
+    shellQuote(params.serverName),
+    '--panel-ip',
+    shellQuote(params.panelIp),
+    '--access-key-stdin',
+  ].join(' ');
+  return [
+    '# ns-agent:install-pull',
+    'command -v curl >/dev/null 2>&1 || { echo "На сервере нет curl — без него установочный скрипт не скачать. Установите curl и повторите."; exit 1; }',
+    'F="$(mktemp)" || { echo "Не удалось создать временный файл на сервере."; exit 1; }',
+    `trap 'rm -f "$F"' EXIT`,
+    `code="$(curl -sSL --max-time 60 -o "$F" -w '%{http_code}' ${shellQuote(scriptUrl(params.repo))} 2>/dev/null)"`,
+    'rc=$?',
+    'if [ "$rc" -ne 0 ] || [ "$code" != 200 ] || [ ! -s "$F" ]; then',
+    '  case "$rc" in',
+    '    0) if [ "$code" = 200 ]; then why="GitHub отдал пустой файл"; else why="GitHub ответил ошибкой $code"; fi ;;',
+    '    6) why="сервер не находит адрес GitHub" ;;',
+    '    7) why="сервер не может соединиться с GitHub" ;;',
+    '    28) why="скачивание с GitHub не уложилось в минуту" ;;',
+    '    35|60) why="защищённое соединение с GitHub не устанавливается" ;;',
+    '    *) why="скачивание завершилось с ошибкой $rc" ;;',
+    '  esac',
+    '  echo "Установочный скрипт агента не скачался: $why. На сервере ничего не изменено."',
+    '  exit 1',
+    'fi',
+    `sh "$F" ${args}`,
+  ].join('\n');
+}
+
+/** Сертификат печатает сам агент после настройки; это открытые данные, которыми панель пиннит TLS. */
+export function pullCertificateFromOutput(output: string): string | null {
+  const value = output.match(/(?:^|\n)NODESERVICE_PULL_CERT=([A-Za-z0-9+/=]+)(?:\n|$)/)?.[1];
+  if (!value) return null;
+  try {
+    const der = Buffer.from(value, 'base64');
+    return der.length >= 200 && der.length <= 4_096 ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-
+import { AgentModule } from '../agent/agent.module.js';
 import { BillingModule } from '../billing/billing.module.js';
 
 import { MaintenanceModule } from '../maintenance/maintenance.module.js';
@@ -27,6 +27,7 @@ import { NodeProbeJob } from './node-probe.job.js';
 /** R3: инциденты, детекция с гистерезисом, реестр действий T0–T3 с пред-/пост-проверкой и откатом. */
 @Module({
   imports: [
+    AgentModule,
     ServersModule,
     SettingsModule,
     MetricsModule,

@@ -184,9 +184,12 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
     const connect = mk('connect', 'Подключение по SSH');
     if (kind === 'check')
       return [connect, mk('collect', 'Сбор данных о системе'), mk('release', 'Версия агента на GitHub')];
-    const action = actionSteps(kind, this.config.get('AGENT_REPO'), configuredAgentWsUrls(this.config)).map(
-      (s) => mk(s.key, s.label),
-    );
+    const action =
+      kind === 'agent_update'
+        ? [mk('install', 'Установка защищённого канала агента')]
+        : actionSteps(kind, this.config.get('AGENT_REPO'), configuredAgentWsUrls(this.config)).map((s) =>
+            mk(s.key, s.label),
+          );
     const tail = kind === 'agent_update' ? [mk('verify', 'Агент вышел на связь')] : [];
     return [connect, ...action, ...tail, mk('after', 'Проверка после')];
   }
@@ -308,17 +311,14 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
           };
         }
       } else {
-        for (const spec of actionSteps(
-          row.kind,
-          this.config.get('AGENT_REPO'),
-          configuredAgentWsUrls(this.config),
-        )) {
-          await runStep(spec.key, async () => {
-            await exec(spec.command, row.kind);
-            return null;
-          });
-        }
         if (row.kind === 'agent_update') {
+          // Полная установка переводит и старый исходящий агент на новый входящий HTTPS-канал.
+          // Короткое «заменить бинарь» сохранило бы старый state.json и оставило прежнюю схему связи.
+          await runStep('install', async () => {
+            const updated = await this.servers.installAgent(row.serverId);
+            write(`агент установлен, ожидаю первый запрос панели · порт назначен автоматически\n`);
+            return updated.agentVersion ? `установлен · ${updated.agentVersion}` : 'установлен';
+          });
           // Считаем только heartbeat после перезапуска: старый агент мог отметиться во время скачивания.
           const installedAt = Date.now();
           await runStep('verify', async () => {
@@ -340,6 +340,17 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
               'агент не вышел на связь за 45 с — проверьте journalctl -u nodeservice-agent',
             );
           });
+        } else {
+          for (const spec of actionSteps(
+            row.kind,
+            this.config.get('AGENT_REPO'),
+            configuredAgentWsUrls(this.config),
+          )) {
+            await runStep(spec.key, async () => {
+              await exec(spec.command, row.kind);
+              return null;
+            });
+          }
         }
         await runStep('after', async () => {
           const check = await collect();

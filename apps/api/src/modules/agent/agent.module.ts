@@ -6,6 +6,8 @@ import { AgentController } from './agent.controller.js';
 import { AgentGateway } from './agent.gateway.js';
 import { AgentService } from './agent.service.js';
 import { AgentOfflineJob } from './agent-offline.job.js';
+import { AgentPullClient } from './agent-pull.client.js';
+import { AgentPullJob } from './agent-pull.job.js';
 import { AgentPulseLimiter } from './agent-pulse.limiter.js';
 import { VmWriterService } from './vm.service.js';
 
@@ -13,7 +15,15 @@ import { VmWriterService } from './vm.service.js';
 @Module({
   imports: [ServersModule, SettingsModule],
   controllers: [AgentController],
-  providers: [AgentService, AgentGateway, AgentPulseLimiter, VmWriterService, AgentOfflineJob],
-  exports: [AgentGateway],
+  providers: [
+    AgentService,
+    AgentGateway,
+    AgentPulseLimiter,
+    VmWriterService,
+    AgentOfflineJob,
+    AgentPullClient,
+    AgentPullJob,
+  ],
+  exports: [AgentGateway, AgentPullClient],
 })
 export class AgentModule {}

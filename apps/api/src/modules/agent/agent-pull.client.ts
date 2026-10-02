@@ -1,0 +1,78 @@
+import { request } from 'node:https';
+import { Injectable } from '@nestjs/common';
+import { type AgentMetrics, agentMetricsSchema } from '@nodeservice/shared';
+import { z } from 'zod';
+
+import { CryptoService } from '../../common/crypto/crypto.service.js';
+import type { ServerRow } from '../../infra/db/schema/index.js';
+
+const responseSchema = z.object({
+  serverId: z.string().min(1).max(100),
+  version: z.string().min(1).max(50),
+  metrics: agentMetricsSchema.optional(),
+});
+
+export interface AgentPullSnapshot {
+  serverId: string;
+  version: string;
+  metrics?: AgentMetrics | undefined;
+}
+
+export function certificatePem(derBase64: string): string {
+  const body = derBase64.match(/.{1,64}/g)?.join('\n') ?? derBase64;
+  return `-----BEGIN CERTIFICATE-----\n${body}\n-----END CERTIFICATE-----\n`;
+}
+
+/** Один короткий HTTPS-запрос к агенту. Сертификат и Bearer-ключ уникальны для сервера. */
+@Injectable()
+export class AgentPullClient {
+  constructor(private readonly crypto: CryptoService) {}
+
+  async snapshot(server: ServerRow, metrics: boolean): Promise<AgentPullSnapshot> {
+    if (!server.agentListenPort || !server.agentAccessKeyEnc || !server.agentTlsCert)
+      throw new Error('входящий канал агента настроен не полностью');
+    const accessKey = this.crypto.decrypt(server.agentAccessKeyEnc);
+    const tlsCert = server.agentTlsCert;
+    return new Promise((resolve, reject) => {
+      const req = request(
+        {
+          hostname: server.host,
+          port: server.agentListenPort,
+          path: `/v1/snapshot?metrics=${metrics ? '1' : '0'}`,
+          method: 'GET',
+          ca: certificatePem(tlsCert),
+          servername: 'nodeservice-agent',
+          minVersion: 'TLSv1.3',
+          timeout: 5_000,
+          headers: { Authorization: `Bearer ${accessKey}`, Accept: 'application/json' },
+        },
+        (res) => {
+          let body = '';
+          res.setEncoding('utf8');
+          res.on('data', (chunk: string) => {
+            if (body.length < 64 * 1024) body += chunk;
+            else req.destroy(new Error('ответ агента слишком большой'));
+          });
+          res.on('end', () => {
+            if (res.statusCode !== 200) {
+              reject(new Error(`агент ответил ${res.statusCode ?? 'без статуса'}`));
+              return;
+            }
+            try {
+              const parsed = responseSchema.parse(JSON.parse(body));
+              if (parsed.serverId !== server.id) throw new Error('агент ответил с другим serverId');
+              resolve(parsed);
+            } catch (err) {
+              reject(
+                new Error(`ответ агента повреждён: ${err instanceof Error ? err.message : String(err)}`),
+              );
+            }
+          });
+        },
+      );
+      req.once('timeout', () => req.destroy(new Error('таймаут подключения к агенту')));
+      req.once('error', reject);
+      req.end();
+    });
+  }
+}

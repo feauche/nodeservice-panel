@@ -203,8 +203,16 @@ export class FakeSsh {
                   this.checks.output[key] ?? `\u001b[32mпроверка ${key}\u001b[0m\n10%\r100%\nготово\n`,
                 );
                 stream.exit(this.checks.code[key] ?? 0);
+              } else if (info.command.includes('SSH_CONNECTION%%')) {
+                stream.write('192.0.2.10');
+                stream.exit(0);
+              } else if (info.command.includes('/proc/net/tcp /proc/net/tcp6')) {
+                // Новый агент подбирает порт до установки: 1 означает, что слушателя на нём нет.
+                stream.exit(1);
               } else if (info.command.includes('# ns-agent:install')) {
                 if (this.agentInstall.output) stream.write(this.agentInstall.output);
+                else if (this.agentInstall.code === 0)
+                  stream.write(`NODESERVICE_PULL_CERT=${Buffer.alloc(300, 7).toString('base64')}\n`);
                 stream.exit(this.agentInstall.code);
               } else if (info.command.includes('# ns-blockcheck')) {
                 const portOnly = info.command.replaceAll("'\\''", "'").includes("sni=''\n");

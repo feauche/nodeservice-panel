@@ -1,3 +1,5 @@
+import { randomInt } from 'node:crypto';
+import { isIP } from 'node:net';
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -26,6 +28,7 @@ import { CryptoService } from '../../common/crypto/crypto.service.js';
 import { errorText, problem } from '../../common/filters/problem-details.filter.js';
 import type { Env } from '../../config/env.schema.js';
 import type { ServerRow, servers } from '../../infra/db/schema/index.js';
+import { configuredAgentBaseUrls } from '../agent/agent-urls.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { diffChanges } from '../audit/audit.diff.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -33,8 +36,9 @@ import {
   AGENT_INSTALL_LABEL,
   AGENT_INSTALL_TIMEOUT_MS,
   agentInstallCommand,
-  agentInstallScript,
+  agentPullInstallScript,
   installFailure,
+  pullCertificateFromOutput,
 } from './agent-install.js';
 import { PanelKeyService } from './panel-key.service.js';
 import { ServerCountryService } from './server-country.service.js';
@@ -751,32 +755,70 @@ export class ServersService {
   private async runAgentInstall(id: string): Promise<Server> {
     const row = await this.repo.findById(id);
     if (!row) throw serverProblems.notFound();
-    const issued = await this.issueToken(row);
-    // Пока идёт установка — карточка показывает «Агент устанавливается…» (по живому потоку).
-    if (row.agentStatus !== 'online') await this.repo.update(id, { agentStatus: 'installing' });
+    // Пока идёт установка — карточка показывает «Агент устанавливается…». Старая
+    // зелёная отметка не доказывает, что уже вышел на связь именно вновь установленный агент.
+    await this.repo.update(id, { agentStatus: 'installing' });
     let session: Awaited<ReturnType<SshService['connect']>> | undefined;
     try {
       session = await this.ssh.connect(await this.storedTarget(row));
+      const peer = await session.execAsUser(`printf '%s' "\${SSH_CONNECTION%% *}"`);
+      const panelIp = peer.stdout.trim();
+      if (peer.code !== 0 || isIP(panelIp) === 0)
+        throw new Error('не удалось определить IP панели для правила UFW');
+      const hadPullPort = row.agentListenPort !== null;
+      const pull = await this.ensureAgentPullConfig(row);
+      // При первой настройке проверяем ещё и сам сервер: уникальность в БД защищает парк, а здесь
+      // исключаем столкновение с любой другой службой на выбранной машине.
+      if (!hadPullPort) {
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          const check = await session.exec(
+            `P=$(printf '%04X' ${pull.port}); awk -v p="$P" '$2 ~ (":" p "$") && $4 == "0A" { f=1 } END { exit !f }' /proc/net/tcp /proc/net/tcp6 2>/dev/null`,
+            { label: 'проверка порта агента' },
+          );
+          if (check.code !== 0) break;
+          if (attempt === 99) throw new Error('Не удалось подобрать свободный порт агента на сервере');
+          Object.assign(pull, await this.ensureAgentPullConfig(row, true));
+        }
+      }
       let output = '';
-      const res = await session.execStream(agentInstallScript(this.agentInstallParams(issued.token)), {
-        label: AGENT_INSTALL_LABEL,
-        timeoutMs: AGENT_INSTALL_TIMEOUT_MS,
-        // Нужен только хвост вывода — причина неудачи.
-        onData: (chunk) => {
-          output = (output + chunk).slice(-2_000);
+      const res = await session.execStream(
+        agentPullInstallScript({
+          repo: this.config.get('AGENT_REPO'),
+          serverId: row.id,
+          serverName: row.name,
+          port: pull.port,
+          panelIp,
+        }),
+        {
+          label: AGENT_INSTALL_LABEL,
+          timeoutMs: AGENT_INSTALL_TIMEOUT_MS,
+          input: `${pull.accessKey}\n`,
+          // Нужен только хвост вывода — причина неудачи.
+          onData: (chunk) => {
+            output = (output + chunk).slice(-2_000);
+          },
         },
-      });
+      );
       if (res.code !== 0)
         throw serverProblems.sshCommand(AGENT_INSTALL_LABEL, installFailure(output, res.code));
+      const cert = pullCertificateFromOutput(output);
+      if (!cert)
+        throw serverProblems.sshCommand(
+          AGENT_INSTALL_LABEL,
+          'агент запустился, но не вернул TLS-сертификат — установка не подтверждена',
+        );
+      await this.repo.update(id, { agentTlsCert: cert });
     } catch (err) {
-      // Установка не состоялась — её токен больше не нужен (после таймаута скрипт мог остаться на сервере).
-      await this.repo.revokeToken(issued.tokenId).catch(() => undefined);
       // Прежний статус возвращаем, только если его не сменил сам агент (успел выйти на связь). Прежнее
       // «устанавливается» (осталось от оборванной установки) не возвращаем — оно висело бы вечно.
       const current = await this.repo.findById(id);
       if (current?.agentStatus === 'installing') {
         const before =
-          row.agentStatus !== 'installing' ? row.agentStatus : row.agentPubkey ? 'offline' : 'not_installed';
+          row.agentStatus !== 'installing'
+            ? row.agentStatus
+            : row.agentPubkey || row.agentAccessKeyEnc
+              ? 'offline'
+              : 'not_installed';
         await this.repo.update(id, { agentStatus: before });
       }
       await this.audit.record({
@@ -805,6 +847,35 @@ export class ServersService {
     return this.toDto(updated);
   }
 
+  /** Выдаёт серверу постоянные уникальные реквизиты входящего агента. Уникальность порта держит БД. */
+  private async ensureAgentPullConfig(
+    row: ServerRow,
+    replacePort = false,
+  ): Promise<{ port: number; accessKey: string }> {
+    const accessKey = row.agentAccessKeyEnc
+      ? this.crypto.decrypt(row.agentAccessKeyEnc)
+      : `nsa_${this.crypto.randomToken(32)}`;
+    if (row.agentListenPort && !replacePort) return { port: row.agentListenPort, accessKey };
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const port = randomInt(10_000, 65_536);
+      try {
+        const updated = await this.repo.update(row.id, {
+          agentListenPort: port,
+          agentAccessKeyEnc: row.agentAccessKeyEnc ?? this.crypto.encrypt(accessKey),
+          ...(replacePort ? { agentTlsCert: null } : {}),
+        });
+        if (!updated) throw serverProblems.notFound();
+        row.agentListenPort = port;
+        row.agentAccessKeyEnc = updated.agentAccessKeyEnc;
+        row.agentTlsCert = updated.agentTlsCert;
+        return { port, accessKey };
+      } catch (err) {
+        if ((err as { code?: string }).code !== '23505') throw err;
+      }
+    }
+    throw new Error('Не удалось подобрать свободный уникальный порт агента');
+  }
+
   /** С этого момента «Ожидает агента» отсчитывает свои три минуты (AgentPendingJob); нет — установки не было. */
   agentInstalledAt(id: string): number | undefined {
     return this.installedAt.get(id);
@@ -828,10 +899,12 @@ export class ServersService {
   }
 
   private agentInstallParams(token: string) {
+    const [panel, ...fallbackPanels] = configuredAgentBaseUrls(this.config);
     return {
       repo: this.config.get('AGENT_REPO'),
       token,
-      panel: this.config.get('AGENT_PUBLIC_URL') ?? this.config.get('PUBLIC_URL'),
+      panel: panel ?? this.config.getOrThrow('PUBLIC_URL'),
+      fallbackPanels,
     };
   }
 
