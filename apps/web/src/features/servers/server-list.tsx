@@ -36,7 +36,7 @@ export function useServersView(): [ServersView, (v: ServersView) => void] {
 }
 
 const COLS =
-  'grid grid-cols-[10px_minmax(0,1fr)_20px] items-center gap-x-3 md:grid-cols-[10px_minmax(0,1.4fr)_minmax(0,1fr)_56px_56px_56px_minmax(0,140px)_20px]';
+  'grid grid-cols-[10px_minmax(0,1fr)_20px] items-center gap-x-3 md:grid-cols-[10px_minmax(0,1.4fr)_minmax(0,1fr)_56px_56px_56px_minmax(0,140px)_20px] xl:grid-cols-[10px_minmax(0,1.4fr)_minmax(0,1fr)_76px_56px_56px_56px_minmax(0,140px)_20px]';
 
 const TONE: Record<ServerHealth, string> = { ok: 'text-text-3', warn: 'text-warn', crit: 'text-crit' };
 
@@ -84,6 +84,7 @@ export function ServerList({
         <span />
         <span>Сервер</span>
         <span>Состояние</span>
+        <span className="max-xl:hidden">Агент</span>
         <span className="text-right">CPU</span>
         <span className="text-right">RAM</span>
         <span className="text-right">Диск</span>
@@ -98,6 +99,11 @@ export function ServerList({
           const { health, reason: problem } = serverState(s, m);
           // Метрики шлёт агент: нет его на связи — цифр нет. SSH и нода их не гасят.
           const offline = s.agentStatus !== 'online';
+          const agentVersion = s.agentVersion
+            ? s.agentVersion.startsWith('v')
+              ? s.agentVersion
+              : `v${s.agentVersion}`
+            : '—';
           const provider = providerOf(s);
           return (
             <li key={s.id} className="border-t border-border first:border-t-0">
@@ -125,6 +131,9 @@ export function ServerList({
                     <CountryMark server={s} />
                   </span>
                   <span className="block truncate font-mono text-[11px] text-text-3">{s.host}</span>
+                  <span className="block truncate font-mono text-[10.5px] text-text-3 xl:hidden">
+                    Агент {agentVersion}
+                  </span>
                   {problem && (
                     <span className={cn('block truncate text-[11.5px] md:hidden', TONE[health])}>
                       {problem}
@@ -133,6 +142,15 @@ export function ServerList({
                 </span>
                 <span className={cn('truncate max-md:hidden', TONE[health])} title={problem ?? undefined}>
                   {problem ?? '—'}
+                </span>
+                <span
+                  data-testid="server-agent-version"
+                  className={cn(
+                    'truncate font-mono text-[11.5px] max-xl:hidden',
+                    s.agentVersion ? (offline ? 'text-text-3' : 'text-text-2') : 'text-text-3',
+                  )}
+                >
+                  {agentVersion}
                 </span>
                 <Pct value={m?.cpuPct} warn={CPU_WARN_PCT} offline={offline} />
                 <Pct value={m?.memPct} warn={MEM_WARN_PCT} offline={offline} />

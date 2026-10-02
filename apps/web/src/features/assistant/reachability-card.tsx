@@ -7,7 +7,10 @@ const VERDICT: Record<
   { tone: string; label: (p: number, o: number, t: number) => string }
 > = {
   reachable: { tone: 'bg-ok-soft text-ok', label: (p) => `${p}: открыт со всех` },
-  closed_everywhere: { tone: 'bg-crit-soft text-crit', label: (p) => `${p}: закрыт со всех` },
+  closed_everywhere: {
+    tone: 'bg-crit-soft text-crit',
+    label: (p, _open, total) => `${p}: нет ответа с ${total} проверенных точек`,
+  },
   partial: { tone: 'bg-warn-soft text-warn', label: (p, o, t) => `${p}: открыт с ${o} из ${t}` },
   unknown: { tone: 'bg-surface-3 text-text-3', label: (p) => `${p}: не проверен` },
 };
@@ -37,7 +40,7 @@ export function ReachabilityCard({ result }: { result: ReachabilityResult }) {
       <figcaption className="flex flex-wrap items-baseline gap-x-2 border-b border-border px-3 py-2 text-[13px] font-semibold">
         Доступность {result.target.name} снаружи
         <span className="text-[12px] font-normal text-text-3">
-          с {answered} {answered === 1 ? 'независимого сервера' : 'независимых серверов'} парка
+          с {answered} {answered === 1 ? 'проверенной точки' : 'проверенных точек'}
         </span>
       </figcaption>
       {/* Узкий экран: матрица не помещается, поэтому по строке на проверяющего */}

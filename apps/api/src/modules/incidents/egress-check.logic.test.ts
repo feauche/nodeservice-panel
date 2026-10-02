@@ -93,6 +93,18 @@ describe('ступенька', () => {
 });
 
 describe('команда на самом деле подключается', () => {
+  it('цели запускаются параллельно и укладываются в один общий предел', () => {
+    const cmd = buildEgressCommand(
+      [
+        { label: 'a', host: 'a.example.com', port: 443, group: 'panel' },
+        { label: 'b', host: 'b.example.com', port: 443, group: 'foreign' },
+      ],
+      'a.example.com',
+    );
+    expect(cmd.match(/\) &/g)).toHaveLength(3);
+    expect(cmd).toContain('wait');
+  });
+
   it('открытый порт — open с временем, закрытый — closed; разбор по номерам', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ns-eg-'));
     for (const [name, body] of [

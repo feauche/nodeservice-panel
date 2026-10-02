@@ -18,6 +18,7 @@ import {
   REACH_NOTES,
   sameReachTarget,
   summarizeReach,
+  withPanelProbe,
 } from './fleet-probe.logic.js';
 
 const srv = (over: Partial<Server> & { name: string }): Server =>
@@ -192,6 +193,36 @@ describe('parseReach и summarizeReach', () => {
       closed: 0,
       verdict: 'reachable',
     });
+  });
+  it('карточка разбора включает сервер панели и пересчитывает итог', () => {
+    const base: ReachabilityResult = {
+      target: { name: 'Сервер', address: '1.2.3.4' },
+      probes: [
+        {
+          from: 'Мост',
+          ok: true,
+          error: null,
+          ports: [{ port: 22, open: false, ms: null }],
+          dns: null,
+          ping: null,
+        },
+      ],
+      ports: [
+        {
+          port: 22,
+          open: 0,
+          closed: 1,
+          verdict: 'closed_everywhere',
+          text: 'Порт 22: закрыт со всех.',
+        },
+      ],
+      dns: { answers: [], consistent: true },
+      notes: [],
+    };
+    const result = withPanelProbe(base, 22, true);
+    expect(result.probes.at(-1)).toMatchObject({ from: 'Сервер панели', ports: [{ port: 22, open: true }] });
+    expect(result.ports[0]).toMatchObject({ open: 1, closed: 1, verdict: 'partial' });
+    expect(withPanelProbe(base, 22, null)).toBe(base);
   });
   it('расхождение DNS видно', () => {
     expect(dnsSummary([probe('a', [true], '1.1.1.1'), probe('b', [true], '2.2.2.2')])).toEqual({

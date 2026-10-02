@@ -186,6 +186,35 @@ export function summarizeReach(probes: ReachProbe[], ports: number[]): ReachSumm
   });
 }
 
+/**
+ * Добавляет в карточку разбора независимую проверку с самого сервера панели. Без неё текст разбора мог
+ * говорить «с панели открыт», а таблица ниже одновременно показывала «закрыт со всех».
+ */
+export function withPanelProbe(
+  result: ReachabilityResult,
+  port: number,
+  panelOpen: boolean | null,
+): ReachabilityResult {
+  if (panelOpen === null) return result;
+  const panel: ReachProbe = {
+    from: 'Сервер панели',
+    ok: true,
+    error: null,
+    ports: [{ port, open: panelOpen, ms: null }],
+    dns: null,
+    ping: null,
+  };
+  const probes = [...result.probes.filter((probe) => probe.from !== panel.from), panel];
+  return {
+    ...result,
+    probes,
+    ports: summarizeReach(
+      probes,
+      result.ports.map((item) => item.port),
+    ),
+  };
+}
+
 /** Что отвечает DNS у разных проверяющих: расхождение — признак подмены или сбоя резолвера. */
 export function dnsSummary(probes: ReachProbe[]): { answers: string[]; consistent: boolean } {
   const answers = [...new Set(probes.filter((p) => p.ok && p.dns).map((p) => p.dns as string))];

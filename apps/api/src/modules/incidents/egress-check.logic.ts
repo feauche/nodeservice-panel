@@ -74,12 +74,17 @@ export function buildEgressCommand(targets: EgressTarget[], panelHost: string): 
   const lines = ['# ns-egress'];
   targets.forEach((t, i) => {
     lines.push(
-      `s=$(date +%s%N); if timeout 5 bash -c "exec 3<>/dev/tcp/${t.host}/${t.port}" 2>/dev/null; then e=$(date +%s%N); echo "${i} open $(( (e-s)/1000000 ))"; else echo "${i} closed"; fi`,
+      `(s=$(date +%s%N); if timeout 5 bash -c "exec 3<>/dev/tcp/${t.host}/${t.port}" 2>/dev/null; then e=$(date +%s%N); echo "${i} open $(( (e-s)/1000000 ))"; else echo "${i} closed"; fi) &`,
     );
   });
   const ping = isSafeBlockCheckTarget(panelHost, 443, null) ? panelHost : '';
   if (ping)
-    lines.push(`if ping -c 2 -W 2 ${ping} >/dev/null 2>&1; then echo "ping ok"; else echo "ping fail"; fi`);
+    lines.push(
+      `(if ping -c 2 -W 2 ${ping} >/dev/null 2>&1; then echo "ping ok"; else echo "ping fail"; fi) &`,
+    );
+  // В недоступной сети каждая цель ждёт свои 5 секунд. Последовательно двенадцать целей занимали минуту
+  // и попадали под общий SSH-таймаут; параллельно весь снимок ограничен одной самой медленной целью.
+  lines.push('wait');
   return SH(lines.join('\n'));
 }
 
@@ -87,16 +92,20 @@ export function parseEgress(
   stdout: string,
   targets: EgressTarget[],
 ): { results: EgressResult[]; panelPing: boolean | null } {
-  const results: EgressResult[] = [];
+  // Параллельные проверки заканчиваются в произвольном порядке; итог возвращаем в порядке целей, чтобы
+  // таблица не прыгала от запуска к запуску.
+  const seen = new Map<number, EgressResult>();
   let panelPing: boolean | null = null;
   for (const raw of stdout.split('\n')) {
     const line = raw.trim();
     if (line === 'ping ok') panelPing = true;
     else if (line === 'ping fail') panelPing = false;
     const m = line.match(/^(\d+) (open|closed)(?: (\d+))?$/);
-    const target = m ? targets[Number(m[1])] : undefined;
-    if (m && target) results.push({ target, open: m[2] === 'open', ms: m[3] ? Number(m[3]) : null });
+    const index = m ? Number(m[1]) : -1;
+    const target = targets[index];
+    if (m && target) seen.set(index, { target, open: m[2] === 'open', ms: m[3] ? Number(m[3]) : null });
   }
+  const results = targets.flatMap((_, index) => (seen.has(index) ? [seen.get(index) as EgressResult] : []));
   return { results, panelPing };
 }
 

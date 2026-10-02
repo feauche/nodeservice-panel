@@ -302,6 +302,21 @@ describe('события того же дела не обгоняют отлож
     await svc.settle();
     expect(sent.map((m) => m.event)).toEqual(['needs_confirm']);
   });
+
+  it('первое «ждёт подтверждения» ждёт автоматического разбора и получает его вывод', async () => {
+    const { svc, sent, db } = make();
+    db.incidents.set('i10', openedAgo(30_000));
+    const message = followUp('i10', 'needs_confirm', 'Ждёт подтверждения');
+    if (message.telegram) message.telegram.awaitAnalysis = true;
+    await svc.push(message);
+    await svc.settle();
+    expect(sent).toHaveLength(0);
+    await svc.releaseAfterAnalysis('i10', 'Контейнер остановлен после обновления.', 'high');
+    await svc.settle();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.event).toBe('needs_confirm');
+    expect(sent[0]?.body).toMatch(/^🤖 Разбор Джарвиса \(уверенность высокая\): Контейнер остановлен/);
+  });
 });
 
 describe('отложенное сообщение переживает перезапуск панели', () => {

@@ -779,7 +779,7 @@ export class IncidentsService {
       closed.length === 0
         ? // Все проверяющие видят порт, не видит только панель: «закрыт из части стран» было бы неправдой.
           `Похоже: закрыт путь между сервером и панелью — со всех проверяющих серверов (${opened.join(', ')}) порт открыт, а с сервера панели не отвечает (поэтому молчат агент и SSH). Обычно это фильтрация у хостера одной из сторон или сбой маршрута между ними. Сервер выключать и переустанавливать ничего не нужно.`
-        : `Похоже: путь до сервера закрыт из части сетей — не отвечает с ${closed.join(', ')}${panelOpen ? '' : ' и с сервера панели (поэтому молчат агент и SSH)'}, а с ${opened.join(', ')} открыт. Чаще всего это блокировка в этих странах (ТСПУ в России) или сбой маршрута у хостера. Сервер выключать и переустанавливать ничего не нужно: помогает смена IP или ожидание, пока починят сеть.`,
+        : `Путь до сервера недоступен из части проверенных сетей: не отвечает с ${closed.join(', ')}${panelOpen ? '' : ' и с сервера панели (поэтому молчат агент и SSH)'}, а с ${opened.join(', ')} открыт. Сервер работает, но одна TCP-проверка не определяет причину: это могут быть правила доступа, фильтрация маршрута или сетевой сбой. Не меняйте IP только по этому результату — сначала сравните страны и проверку выхода самого сервера.`,
       ...(out && out.results.length > 0 ? ['', egressText(out)] : []),
     ].join('\n');
     if (!existing) {
@@ -963,7 +963,8 @@ export class IncidentsService {
     this.recheckMaintenance(server.id, kind);
     // Решаем сразу: предложение шага уходит своим уведомлением, автопочинка выжидает паузу —
     // тогда сообщаем об обнаружении и о том, что ждём. Без цепочки — просто сообщаем.
-    const decision = await this.runner.onOpened(row);
+    const awaitAnalysis = await this.analysisWillFollow();
+    const decision = await this.runner.onOpened(row, awaitAnalysis);
     if (decision === 'waiting' || decision === 'none')
       await this.notifications.push({
         severity: meta.severity === 'crit' ? 'crit' : 'warn',
@@ -974,7 +975,7 @@ export class IncidentsService {
           event: meta.severity === 'crit' ? 'incident_crit' : 'incident_warn',
           incidentId: row.id,
           kind,
-          awaitAnalysis: await this.analysisWillFollow(),
+          awaitAnalysis,
         },
         body:
           decision === 'waiting'

@@ -51,4 +51,24 @@ describe('EgressCheckService: прямой вход и запасной путь
     await expect(service.checkWithFallback({ id: 'target' }, [], async () => [])).resolves.toBeNull();
     expect(service.check).toHaveBeenCalledTimes(1);
   });
+
+  it('полная проверка получает отдельный таймаут больше максимального времени параллельных целей', async () => {
+    const exec = vi.fn(async () => ({ code: 0, stdout: '0 closed\nping fail\n', stderr: '' }));
+    const end = vi.fn();
+    const service = new EgressCheckService(
+      { sshTargetFor: async () => ({ target: { host: '1.2.3.4' } }) } as never,
+      { connect: async () => ({ exec, end }) } as never,
+      {
+        get: (key: string) => (key === 'PUBLIC_URL' ? 'https://panel.example.com' : undefined),
+      } as never,
+    );
+
+    const result = await service.check({ id: 'target' }, [], [], { force: true });
+    expect(result?.results[0]?.open).toBe(false);
+    expect(exec).toHaveBeenCalledWith(
+      expect.stringContaining('wait'),
+      expect.objectContaining({ timeoutMs: 15_000, label: 'проверка выхода с сервера' }),
+    );
+    expect(end).toHaveBeenCalledOnce();
+  });
 });

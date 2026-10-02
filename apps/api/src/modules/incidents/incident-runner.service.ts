@@ -354,8 +354,8 @@ export class IncidentRunnerService implements OnModuleInit {
   }
 
   /** Инцидент только что открыт — решаем сразу, не дожидаясь тика. */
-  async onOpened(row: IncidentRow): Promise<Decision> {
-    return this.decide(row, await this.settings.get());
+  async onOpened(row: IncidentRow, awaitAnalysis = false): Promise<Decision> {
+    return this.decide(row, await this.settings.get(), awaitAnalysis);
   }
 
   /**
@@ -370,6 +370,7 @@ export class IncidentRunnerService implements OnModuleInit {
   private async decide(
     row: IncidentRow,
     cfg: Awaited<ReturnType<IncidentsSettingsStore['get']>>,
+    awaitAnalysis = false,
   ): Promise<Decision> {
     if (!row.serverId) return 'none';
     const deferred = deferredStep(row);
@@ -390,7 +391,7 @@ export class IncidentRunnerService implements OnModuleInit {
     // «Наблюдать»: инцидент и уведомление есть, шагов панель не предлагает.
     if (policy === 'watch') return 'none';
     if (!autoAllowed) {
-      await this.propose(row, first, proposalReason(action.level, policy));
+      await this.propose(row, first, proposalReason(action.level, policy), undefined, false, awaitAnalysis);
       return 'proposed';
     }
     const graceLeft = row.openedAt.getTime() + T.graceMs - Date.now();
@@ -398,7 +399,7 @@ export class IncidentRunnerService implements OnModuleInit {
     // нельзя. Шаг предлагаем сразу (владелец может подтвердить), сама панель запустит его после паузы.
     if ((await this.autofixPauseLeft(row.serverId, row.kind, cfg)) > Math.max(graceLeft, 0)) {
       if (deferred) return 'none';
-      await this.propose(row, first, AUTOFIX_PAUSE_REASON, undefined, true);
+      await this.propose(row, first, AUTOFIX_PAUSE_REASON, undefined, true, awaitAnalysis);
       return 'proposed';
     }
     if (graceLeft > 0) return 'waiting';
@@ -872,6 +873,8 @@ export class IncidentRunnerService implements OnModuleInit {
     levelOverride?: ActionLevel,
     /** Шаг отложен паузой между автопочинками: после неё панель запустит его сама (см. `decide`). */
     autoAfterPause = false,
+    /** Первое сообщение нового дела ждёт автоматического разбора Джарвиса. */
+    awaitAnalysis = false,
   ): Promise<void> {
     const action = actionByKey(key);
     const level = levelOverride ?? action.level;
@@ -921,6 +924,7 @@ export class IncidentRunnerService implements OnModuleInit {
         event: 'needs_confirm',
         incidentId: row.id,
         kind: row.kind as IncidentKind,
+        ...(first && awaitAnalysis ? { awaitAnalysis: true } : {}),
         // Важность для Telegram — самого дела: предложение по критичному делу, если оно первое сообщение о
         // нём, приходит и ночью. Шаг «только вручную» по некритичному делу ночью не будит.
         severity: row.severity === 'crit' ? 'crit' : 'warn',

@@ -59,6 +59,8 @@ describe('ServersPage', () => {
     expect(rows[0]?.tagName).toBe('DIV');
     expect(rows[0]?.querySelector('button button')).toBeNull();
     expect(screen.queryAllByRole('article')).toHaveLength(0);
+    expect(screen.getAllByText('Агент v0.5.4').length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId('server-agent-version')[0]).toHaveTextContent('v0.5.4');
     // nl-ams-02: агента нет, SSH не пустил — связаться с сервером панели нечем.
     expect(
       within(rows[1] as HTMLElement).getAllByText('Недоступен: SSH не пускает, агента нет').length,

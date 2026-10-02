@@ -129,6 +129,9 @@ describe('доступность из разных стран', () => {
     expect(t).toMatch(/все они из одной страны/);
     expect(t).not.toMatch(/Не отвечает ни из одной страны/);
     expect(t).not.toMatch(/выключен, завис/);
+    const panelClosed = reachText(22, onlyRu, false);
+    expect(panelClosed).toMatch(/все они из одной страны и с сервера панели/);
+    expect(panelClosed).not.toMatch(/Не отвечает ни из одной страны/);
   });
   it('российские проверяющие расходятся — это не «закрыт только из России»', () => {
     const t = reachText(

@@ -34,7 +34,7 @@ import { incidentCase, type ReadDeps, runReadTool, toolsFor } from './assistant.
 import { runTool, type ToolDeps } from './assistant.tools.js';
 import { ReadDepsService } from './assistant-read-deps.service.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
-import { mergeReach, sameReachTarget } from './fleet-probe.logic.js';
+import { mergeReach, sameReachTarget, withPanelProbe } from './fleet-probe.logic.js';
 import {
   ANALYSIS_EXTRA,
   ANALYSIS_TOOLS,
@@ -600,7 +600,7 @@ export class IncidentAnalysisService implements OnModuleInit {
           ping: p.ping,
         }));
       checked['порт из разных стран'] = reach.length > 0;
-      if (result) this.evidenceReach.set(inc.id, result);
+      if (result) this.evidenceReach.set(inc.id, withPanelProbe(result, me.port, panelOpen));
       out.push(
         reachText(me.port, reach, panelOpen, me.agentStatus === 'online' && me.sshOk === true, {
           agentOnline: me.agentStatus === 'online',

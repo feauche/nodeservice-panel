@@ -183,7 +183,7 @@ describe('AssistantPage', () => {
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
     const card = await screen.findByTestId('reachability-card');
     expect(within(card).getByText(/Доступность de-fra-01 снаружи/)).toBeInTheDocument();
-    expect(within(card).getByText('443: закрыт со всех')).toBeInTheDocument();
+    expect(within(card).getByText('443: нет ответа с 3 проверенных точек')).toBeInTheDocument();
   });
 
   it('чип-подсказка отправляет вопрос', async () => {

@@ -106,7 +106,10 @@ export class EgressCheckService {
     const via = jump ? (await this.servers.sshTargetFor(jump.id)).target : undefined;
     const session = await this.ssh.connect(target, via ? { via } : {});
     try {
-      const { stdout } = await session.exec(command);
+      const { stdout } = await session.exec(command, {
+        timeoutMs: 15_000,
+        label: 'проверка выхода с сервера',
+      });
       const parsed = parseEgress(stdout, targets);
       return { via: jump?.name ?? null, ...parsed };
     } finally {
