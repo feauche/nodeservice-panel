@@ -31,6 +31,7 @@ export const MAINTENANCE_TIMEOUT_MS: Record<MaintenanceKind, number> = {
 
 /** `timeout -k 30 N cmd…`: по истечении — TERM, через 30 с — KILL. */
 const withTimeout = (sec: number, cmd: string) => `timeout -k 30 ${sec} ${cmd}`;
+const shellQuote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /**
  * Проверка (T0): ничего не меняет, кроме `apt-get update` (обновляет только индекс пакетов).
@@ -110,7 +111,11 @@ export interface StepSpec {
  * Шаги действий: каждый — отдельная SSH-команда, при ненулевом коде дальше не идём.
  * Шаг «Проверка после» добавляет сервис (общий для всех действий).
  */
-export function actionSteps(kind: Exclude<MaintenanceKind, 'check'>, agentRepo: string): StepSpec[] {
+export function actionSteps(
+  kind: Exclude<MaintenanceKind, 'check'>,
+  agentRepo: string,
+  agentWsUrls: string[] = [],
+): StepSpec[] {
   switch (kind) {
     case 'apt_upgrade':
       return [
@@ -200,6 +205,15 @@ export function actionSteps(kind: Exclude<MaintenanceKind, 'check'>, agentRepo: 
             // Старый агент работает до самого rename: копия рядом, потом атомарная замена.
             'cp "$NEW" "$BIN.new" && chmod 0755 "$BIN.new" && mv -f "$BIN.new" "$BIN"',
             'rm -rf "$DIR"',
+            ...(agentWsUrls.length
+              ? [
+                  'ENV_FILE="$' + '{NS_ENV_FILE:-/etc/nodeservice-agent.env}"',
+                  'TMP_ENV="$ENV_FILE.tmp"',
+                  'if [ -f "$ENV_FILE" ]; then grep -v "^NODESERVICE_WS_URLS=" "$ENV_FILE" > "$TMP_ENV" || true; else : > "$TMP_ENV"; fi',
+                  `printf '%s\\n' ${shellQuote(`NODESERVICE_WS_URLS=${agentWsUrls.join(',')}`)} >> "$TMP_ENV"`,
+                  'chmod 0600 "$TMP_ENV" && mv -f "$TMP_ENV" "$ENV_FILE"',
+                ]
+              : []),
             'systemctl restart nodeservice-agent',
             'sleep 2',
             'systemctl is-active nodeservice-agent >/dev/null',

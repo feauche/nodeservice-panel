@@ -66,6 +66,7 @@ interface ConnState {
   server?: ServerRow;
   version?: string;
   pubkey?: string;
+  route?: string;
   nonce?: Buffer;
   /** До входа: сообщение ещё проверяется — следующее ждать не будем. */
   pending?: boolean;
@@ -176,7 +177,8 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
       const server = state.server;
       if (server && state.stage === 'ready' && this.active.get(server.id) === ws) {
         this.active.delete(server.id);
-        void this.agents.markOffline(server, 'соединение закрыто');
+        // Сам разрыв ещё не означает offline: агент может уже переключаться на другой WSS/HTTPS-вход.
+        // Настраиваемый порог и свежий agentLastSeenAt проверяет AgentOfflineJob.
       }
     });
     ws.on('error', () => {});
@@ -209,6 +211,7 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
       state.server = server;
       state.version = hello.data.version;
       state.pubkey = hello.data.pubkey;
+      if (hello.data.route) state.route = hello.data.route;
       state.nonce = randomBytes(32);
       state.stage = 'challenged';
       this.send(ws, AGENT_MSG.challenge, { nonce: state.nonce.toString('base64') });
@@ -236,7 +239,12 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
       if (prev && prev !== ws) prev.terminate();
       // Агент вошёл — прежние отказы этому серверу закончились, счёт начинается заново.
       this.authFailures.delete(server.id);
-      await this.agents.markOnline(server, version);
+      await this.agents.markOnline(
+        server,
+        version,
+        undefined,
+        state.route ? { transport: 'websocket', route: state.route } : undefined,
+      );
       this.send(ws, AGENT_MSG.welcome, await this.agents.welcomeFor(server));
       return;
     }

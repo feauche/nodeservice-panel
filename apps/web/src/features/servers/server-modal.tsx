@@ -94,6 +94,53 @@ function formatUptime(sec: number | null | undefined): string {
   return `${m} мин`;
 }
 
+function routeHost(route: string | null): string | null {
+  if (!route) return null;
+  try {
+    return new URL(route).host;
+  } catch {
+    return route;
+  }
+}
+
+/** Выбранный вариант A: фактический канал одной спокойной строкой прямо под состоянием агента. */
+function AgentFact({ server, noPanel }: { server: Server; noPanel: boolean }) {
+  const status = noPanel
+    ? 'Нет связи с панелью'
+    : server.agentVersion
+      ? `${AGENT_STATUS_LABELS[server.agentStatus]} · ${server.agentVersion.startsWith('v') ? server.agentVersion : `v${server.agentVersion}`}`
+      : AGENT_STATUS_LABELS[server.agentStatus];
+  const showRoute = server.agentStatus === 'online' && server.agentTransport;
+  const fallback = server.agentTransport === 'https' || server.agentRouteFallback === true;
+  const host = routeHost(server.agentRoute);
+  return (
+    <span className="block min-w-0">
+      <span className={cn('block', noPanel && 'font-semibold text-warn')}>{status}</span>
+      {showRoute && (
+        <span
+          data-testid="agent-route"
+          className={cn(
+            'mt-1 block truncate text-[11.5px] leading-[1.4] font-normal text-text-3',
+            fallback && 'text-warn',
+          )}
+          title={server.agentRoute ?? undefined}
+        >
+          <span className="font-semibold">
+            {server.agentTransport === 'https' ? 'HTTPS' : 'WebSocket'} ·{' '}
+            {fallback ? 'запасной вход' : 'основной вход'}
+          </span>
+          {host && (
+            <>
+              <br />
+              {host}
+            </>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
 const SIDE_BTN =
   'h-9 w-full justify-start rounded-[10px] border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:bg-surface-3 hover:text-foreground';
 
@@ -225,18 +272,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
     ['Ресурсы', resources || '—'],
     ['Аптайм', formatUptime(metrics?.uptimeSec)],
     ['Проверка SSH', s.lastSshCheckAt ? formatAgo(s.lastSshCheckAt) : 'Ещё не было'],
-    [
-      'Агент',
-      noPanel ? (
-        <span key="a" className="font-semibold text-warn">
-          Нет связи с панелью
-        </span>
-      ) : s.agentVersion ? (
-        `${AGENT_STATUS_LABELS[s.agentStatus]} · ${s.agentVersion.startsWith('v') ? s.agentVersion : `v${s.agentVersion}`}`
-      ) : (
-        AGENT_STATUS_LABELS[s.agentStatus]
-      ),
-    ],
+    ['Агент', <AgentFact key="agent" server={s} noPanel={noPanel} />],
   ];
 
   const content = (

@@ -142,10 +142,13 @@ describe('maintenance scripts', () => {
       `while [ $# -gt 0 ]; do case "$1" in -o) OUT="$2"; shift 2 ;; *) URL="$1"; shift ;; esac; done; cp "${fixtures}/$(basename "$URL")" "$OUT"`,
     );
     const oldBin = join(root, 'nodeservice-agent');
+    const envFile = join(root, 'nodeservice-agent.env');
     writeFileSync(oldBin, '#!/bin/sh\necho v0.5.4\n');
+    writeFileSync(envFile, 'NODESERVICE_TOKEN=dead-token\nNODESERVICE_WS_URLS=wss://old.test/ws\n');
     chmodSync(oldBin, 0o755);
-    const env = { NS_TMP: tmp, NS_BIN: oldBin };
-    const [download, install] = actionSteps('agent_update', 'feauche/nodeservice-agent');
+    const env = { NS_TMP: tmp, NS_BIN: oldBin, NS_ENV_FILE: envFile };
+    const routes = ['wss://agents.test/api/agent/v1/ws', 'wss://backup.test/api/agent/v1/ws'];
+    const [download, install] = actionSteps('agent_update', 'feauche/nodeservice-agent', routes);
 
     const d = run(download?.command ?? '', { bin, env });
     expect(d.code, d.out).toBe(0);
@@ -154,6 +157,9 @@ describe('maintenance scripts', () => {
     expect(i.code, i.out).toBe(0);
     expect(i.out).toContain('агент: v9.9.9 · active');
     expect(readFileSync(oldBin, 'utf8')).toBe(fakeAgent);
+    expect(readFileSync(envFile, 'utf8')).toBe(
+      `NODESERVICE_TOKEN=dead-token\nNODESERVICE_WS_URLS=${routes.join(',')}\n`,
+    );
     expect(existsSync(join(tmp, 'ns-agent-update'))).toBe(false);
 
     // Испорченная сумма: скачивание падает, до замены не доходит, старый бинарь на месте.
@@ -166,6 +172,18 @@ describe('maintenance scripts', () => {
     expect(i2.code).not.toBe(0);
     expect(i2.out).toContain('нет скачанного бинаря');
     expect(readFileSync(oldBin, 'utf8')).toContain('v0.5.4');
+  });
+
+  it('обновление отключённого агента передаёт запасные маршруты через env, не трогая state.json', () => {
+    const install = actionSteps('agent_update', 'feauche/nodeservice-agent', [
+      'wss://agents.test/api/agent/v1/ws',
+      'wss://backup.test/api/agent/v1/ws',
+    ]).find((step) => step.key === 'install')?.command;
+    expect(install).toContain(
+      'NODESERVICE_WS_URLS=wss://agents.test/api/agent/v1/ws,wss://backup.test/api/agent/v1/ws',
+    );
+    expect(install).toContain('/etc/nodeservice-agent.env');
+    expect(install).not.toContain('state.json');
   });
 
   it('apt-команды неинтерактивны, ждут блокировку и идут под серверным timeout', () => {

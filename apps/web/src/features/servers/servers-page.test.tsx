@@ -64,7 +64,10 @@ describe('ServersPage', () => {
       within(rows[1] as HTMLElement).getAllByText('Недоступен: SSH не пускает, агента нет').length,
     ).toBeGreaterThan(0);
     await user.click(rows[0] as HTMLElement);
-    expect(await screen.findByRole('dialog', { name: 'de-fra-01' })).toBeInTheDocument();
+    const dialog = await screen.findByRole('dialog', { name: 'de-fra-01' });
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText('HTTPS · запасной вход')).toBeInTheDocument();
+    expect(within(dialog).getByText('agents-kz.example.net')).toBeInTheDocument();
     useServerModalStore.getState().close();
     // «Перезагрузка страницы»: монтируем заново — выбранный вид остаётся
     first.unmount();

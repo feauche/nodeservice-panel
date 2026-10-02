@@ -1,3 +1,4 @@
+import { createPublicKey, verify as edVerify } from 'node:crypto';
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -5,7 +6,11 @@ import {
   type AgentEnrollRequest,
   type AgentEnrollResponse,
   type AgentMetrics,
+  type AgentPulseRequest,
+  type AgentPulseResponse,
   type AgentWelcome,
+  agentPulsePayloadSchema,
+  agentPulseSigningText,
 } from '@nodeservice/shared';
 
 import { CryptoService } from '../../common/crypto/crypto.service.js';
@@ -16,7 +21,17 @@ import type { AuditActor } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
 import { ServersRepository } from '../servers/servers.repository.js';
 import { AutochecksStore } from '../settings/autochecks.store.js';
+import { configuredAgentWsUrls } from './agent-urls.js';
 import { VmWriterService } from './vm.service.js';
+
+const PULSE_CLOCK_SKEW_MS = 2 * 60_000;
+const PULSE_REPLAY_MAX = 10_000;
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+
+export interface AgentConnection {
+  transport: 'websocket' | 'https';
+  route?: string;
+}
 
 /** Актор записей Журнала от имени агента: системный, но с понятной подписью. */
 const agentActor = (serverName: string, serverId: string): AuditActor => ({
@@ -33,6 +48,8 @@ const agentActor = (serverName: string, serverId: string): AuditActor => ({
 export class AgentService {
   /** Серверы, которым прямо сейчас возвращаем «в сети»: сигнал и метрика приходят почти разом, запись в Журнале — одна. */
   private readonly reviving = new Set<string>();
+  /** Недавние id HTTPS pulse: подпись нельзя повторить в пределах допустимого окна времени. */
+  private readonly pulseIds = new Map<string, number>();
 
   constructor(
     private readonly servers: ServersRepository,
@@ -61,6 +78,9 @@ export class AgentService {
       agentVersion: req.version,
       agentEnrolledAt: new Date(),
       agentStatus: server.agentStatus === 'online' ? 'online' : 'pending',
+      agentTransport: null,
+      agentRoute: null,
+      agentRouteFallback: null,
     });
     await this.audit.record({
       action: 'server.agent.enrolled',
@@ -73,13 +93,18 @@ export class AgentService {
         ...(rebind ? { rebound: true } : {}),
       },
     });
-    return { serverId: server.id, serverName: server.name, wsUrl: this.wsUrl() };
+    const wsUrls = this.wsUrls();
+    return { serverId: server.id, serverName: server.name, wsUrl: wsUrls[0] as string, wsUrls };
   }
 
-  /** ws(s)-адрес шлюза: отдельный маршрут агентов, если он задан, иначе адрес панели. */
+  /** Первый ws(s)-адрес шлюза для старых агентов. */
   wsUrl(): string {
-    const base = this.config.get('AGENT_PUBLIC_URL') ?? this.config.get('PUBLIC_URL');
-    return `${base.replace(/\/+$/, '').replace(/^http/, 'ws')}/api/agent/v1/ws`;
+    return this.wsUrls()[0] as string;
+  }
+
+  /** Основной и запасные маршруты; обычный адрес панели всегда остаётся последним резервом. */
+  wsUrls(): string[] {
+    return configuredAgentWsUrls(this.config);
   }
 
   async findServer(id: string): Promise<ServerRow | undefined> {
@@ -92,16 +117,85 @@ export class AgentService {
       serverName: server.name,
       heartbeatSeconds: AGENT_HEARTBEAT_SECONDS,
       metricsSeconds: cfg.metricsEnabled ? cfg.metricsIntervalSeconds : 0,
+      wsUrls: this.wsUrls(),
     };
   }
 
+  /**
+   * Запасной HTTPS-канал. Подпись покрывает точную строку payload, id и время; короткое окно и кэш id
+   * не дают повторить перехваченный запрос. Ответ возвращает те же интервалы и маршруты, что WebSocket.
+   */
+  async pulse(req: AgentPulseRequest): Promise<AgentPulseResponse> {
+    const denied = () =>
+      problem(HttpStatus.UNAUTHORIZED, { detail: 'Подпись или срок запроса агента не подошли.' });
+    const sentAt = Date.parse(req.ts);
+    const now = Date.now();
+    if (!Number.isFinite(sentAt) || Math.abs(now - sentAt) > PULSE_CLOCK_SKEW_MS) throw denied();
+    this.expirePulseIds(now);
+    if (this.pulseIds.has(req.id)) throw denied();
+
+    let server = await this.servers.findById(req.serverId);
+    if (!server?.agentPubkey) throw denied();
+    let key: ReturnType<typeof createPublicKey>;
+    try {
+      key = createPublicKey({
+        key: Buffer.concat([ED25519_SPKI_PREFIX, Buffer.from(server.agentPubkey, 'base64')]),
+        format: 'der',
+        type: 'spki',
+      });
+    } catch {
+      throw denied();
+    }
+    const ok = edVerify(
+      null,
+      Buffer.from(agentPulseSigningText(req)),
+      key,
+      Buffer.from(req.signature, 'base64'),
+    );
+    if (!ok) throw denied();
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(req.payload);
+    } catch {
+      throw problem(HttpStatus.BAD_REQUEST, { detail: 'Payload агента не является JSON.' });
+    }
+    const parsed = agentPulsePayloadSchema.safeParse(payload);
+    if (!parsed.success)
+      throw problem(HttpStatus.BAD_REQUEST, { detail: 'Payload агента не соответствует протоколу.' });
+
+    this.pulseIds.set(req.id, now + PULSE_CLOCK_SKEW_MS);
+    if (parsed.data.route)
+      server = await this.syncConnection(server, { transport: 'https', route: parsed.data.route });
+    const alive = parsed.data.metrics
+      ? await this.handleMetrics(server, req.version, parsed.data.metrics)
+      : await this.touch(server.id, req.version);
+    if (!alive) throw denied();
+    return this.welcomeFor(server);
+  }
+
+  private expirePulseIds(now: number): void {
+    for (const [id, expiresAt] of this.pulseIds) if (expiresAt <= now) this.pulseIds.delete(id);
+    while (this.pulseIds.size >= PULSE_REPLAY_MAX) {
+      const oldest = this.pulseIds.keys().next().value;
+      if (typeof oldest !== 'string') break;
+      this.pulseIds.delete(oldest);
+    }
+  }
+
   /** `reason` — почему агент «вышел на связь» без нового подключения (в Журнал, словами). */
-  async markOnline(server: ServerRow, version: string, reason?: string): Promise<void> {
+  async markOnline(
+    server: ServerRow,
+    version: string,
+    reason?: string,
+    connection?: AgentConnection,
+  ): Promise<void> {
     const was = server.agentStatus;
     await this.servers.update(server.id, {
       agentStatus: 'online',
       agentVersion: version,
       agentLastSeenAt: new Date(),
+      ...(connection ? this.connectionPatch(connection) : {}),
     });
     if (was !== 'online')
       await this.audit.record({
@@ -157,5 +251,26 @@ export class AgentService {
     if (!(await this.touch(server.id, version))) return false;
     await this.vm.write(server.id, server.name, metrics);
     return true;
+  }
+
+  /** Записываем смену канала один раз; обычные сигналы не создают событий обновления сервера каждые 10 с. */
+  private async syncConnection(server: ServerRow, connection: AgentConnection): Promise<ServerRow> {
+    const patch = this.connectionPatch(connection);
+    if (
+      server.agentTransport === patch.agentTransport &&
+      server.agentRoute === patch.agentRoute &&
+      server.agentRouteFallback === patch.agentRouteFallback
+    )
+      return server;
+    return (await this.servers.update(server.id, patch)) ?? server;
+  }
+
+  private connectionPatch(connection: AgentConnection) {
+    const route = connection.route ?? null;
+    return {
+      agentTransport: connection.transport,
+      agentRoute: route,
+      agentRouteFallback: route ? route !== this.wsUrls()[0] : null,
+    } as const;
   }
 }

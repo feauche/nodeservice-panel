@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
+import { type AgentPulseRequest, agentPulseSigningText } from '@nodeservice/shared';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentService } from './agent.service.js';
-import { AgentOfflineJob } from './agent-offline.job.js';
+import { AGENT_OFFLINE_STARTUP_GRACE_MS, AgentOfflineJob } from './agent-offline.job.js';
 
 interface Row {
   id: string;
@@ -9,10 +11,13 @@ interface Row {
   agentStatus: string;
   agentVersion: string | null;
   agentLastSeenAt: Date | null;
+  agentTransport: 'websocket' | 'https' | null;
+  agentRoute: string | null;
+  agentRouteFallback: boolean | null;
 }
 
 /** Служба агентов на памяти: запись сервера — объект, Журнал — список. */
-function make(row: Row | null, agentPublicUrl?: string) {
+function make(row: Row | null, agentPublicUrl?: string, fallbacks: string[] = []) {
   const journal: Array<{ action: string; metadata?: Record<string, unknown> }> = [];
   const repo = {
     findById: async () => (row ? { ...row } : undefined),
@@ -41,7 +46,12 @@ function make(row: Row | null, agentPublicUrl?: string) {
     autochecks as never,
     vm as never,
     {
-      get: (key: string) => ({ PUBLIC_URL: 'https://panel.test/', AGENT_PUBLIC_URL: agentPublicUrl })[key],
+      get: (key: string) =>
+        ({
+          PUBLIC_URL: 'https://panel.test/',
+          AGENT_PUBLIC_URL: agentPublicUrl,
+          AGENT_FALLBACK_URLS: fallbacks,
+        })[key],
     } as never,
   );
   const job = new AgentOfflineJob(repo as never, agents, autochecks as never);
@@ -56,6 +66,9 @@ const server = (patch: Partial<Row> = {}): Row => ({
   agentStatus: 'online',
   agentVersion: '0.5.4',
   agentLastSeenAt: new Date(),
+  agentTransport: null,
+  agentRoute: null,
+  agentRouteFallback: null,
   ...patch,
 });
 
@@ -63,6 +76,7 @@ describe('AgentService: сигнал по открытому соединени�
   const prevEnv = process.env.NODE_ENV;
   afterEach(() => {
     process.env.NODE_ENV = prevEnv;
+    vi.useRealTimers();
   });
 
   it('сеть подвисла дольше порога, соединение выжило: сигналы возобновились — статус снова «в сети», в Журнале одна запись', async () => {
@@ -161,6 +175,19 @@ describe('AgentService: сигнал по открытому соединени�
     await ctx.job.tick();
     expect(ctx.offline()[0]?.metadata?.reason).toBe('сигнала от агента нет дольше 30 с');
   });
+
+  it('после старта панели даёт агентам минуту на переподключение', async () => {
+    process.env.NODE_ENV = 'production';
+    const row = server({ agentLastSeenAt: new Date(Date.now() - 35_000) });
+    const ctx = make(row);
+    await ctx.job.tick();
+    expect(row.agentStatus).toBe('online');
+    const job = ctx.job as unknown as { readyAt: number };
+    expect(job.readyAt - Date.now()).toBeGreaterThanOrEqual(AGENT_OFFLINE_STARTUP_GRACE_MS - 50);
+    job.readyAt = 0;
+    await ctx.job.tick();
+    expect(row.agentStatus).toBe('offline');
+  });
 });
 
 describe('AgentService: адрес WebSocket', () => {
@@ -169,5 +196,83 @@ describe('AgentService: адрес WebSocket', () => {
       'wss://agents.example.net/api/agent/v1/ws',
     );
     expect(make(server()).agents.wsUrl()).toBe('wss://panel.test/api/agent/v1/ws');
+  });
+
+  it('возвращает основной, запасные и обычный адрес панели без повторов', () => {
+    expect(
+      make(server(), 'https://agents.example.net/', [
+        'https://backup.example.net',
+        'https://panel.test/',
+      ]).agents.wsUrls(),
+    ).toEqual([
+      'wss://agents.example.net/api/agent/v1/ws',
+      'wss://backup.example.net/api/agent/v1/ws',
+      'wss://panel.test/api/agent/v1/ws',
+    ]);
+  });
+});
+
+describe('AgentService: запасной HTTPS pulse', () => {
+  const keys = generateKeyPairSync('ed25519');
+  const pubkey = (keys.publicKey.export({ format: 'der', type: 'spki' }) as Buffer)
+    .subarray(-32)
+    .toString('base64');
+
+  const request = (payload = '{}'): AgentPulseRequest => {
+    const req: AgentPulseRequest = {
+      v: 1,
+      serverId: '0192c000-0000-7000-8000-000000000001',
+      version: 'v0.7.0',
+      id: randomUUID(),
+      ts: new Date().toISOString(),
+      payload,
+      signature: '',
+    };
+    req.signature = sign(null, Buffer.from(agentPulseSigningText(req)), keys.privateKey).toString('base64');
+    return req;
+  };
+
+  it('принимает подписанный heartbeat, возвращает маршруты и не принимает повтор', async () => {
+    const row = server({
+      id: '0192c000-0000-7000-8000-000000000001',
+      agentStatus: 'offline',
+      agentPubkey: pubkey,
+    } as never);
+    const ctx = make(row, 'https://agents.test', ['https://backup.test']);
+    const req = request('{"route":"wss://backup.test/api/agent/v1/ws"}');
+
+    await expect(ctx.agents.pulse(req)).resolves.toMatchObject({
+      serverName: 'de-1',
+      heartbeatSeconds: 10,
+      wsUrls: [
+        'wss://agents.test/api/agent/v1/ws',
+        'wss://backup.test/api/agent/v1/ws',
+        'wss://panel.test/api/agent/v1/ws',
+      ],
+    });
+    expect(row.agentStatus).toBe('online');
+    expect(row).toMatchObject({
+      agentTransport: 'https',
+      agentRoute: 'wss://backup.test/api/agent/v1/ws',
+      agentRouteFallback: true,
+    });
+    await expect(ctx.agents.pulse(req)).rejects.toBeDefined();
+  });
+
+  it('отклоняет изменённый payload и просроченную подпись', async () => {
+    const row = server({
+      id: '0192c000-0000-7000-8000-000000000001',
+      agentPubkey: pubkey,
+    } as never);
+    const ctx = make(row);
+    const changed = request();
+    changed.payload = '{"metrics":{}}';
+    await expect(ctx.agents.pulse(changed)).rejects.toBeDefined();
+    await expect(ctx.agents.pulse(request('{"metrics":{}}'))).rejects.toBeDefined();
+
+    const old = request();
+    old.ts = new Date(Date.now() - 5 * 60_000).toISOString();
+    old.signature = sign(null, Buffer.from(agentPulseSigningText(old)), keys.privateKey).toString('base64');
+    await expect(ctx.agents.pulse(old)).rejects.toBeDefined();
   });
 });

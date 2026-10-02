@@ -132,18 +132,24 @@ describe('AgentGateway: до входа — одно короткое сообщ
     .subarray(-32)
     .toString('base64');
   const SERVER = { id: '0192d000-0000-7000-8000-000000000001', name: 'de-1', agentPubkey: pubkey };
-  const hello = envelope('hello', { serverId: SERVER.id, pubkey, version: '0.5.0' });
+  const hello = envelope('hello', {
+    serverId: SERVER.id,
+    pubkey,
+    version: 'v0.7.0',
+    route: 'wss://agents.test/api/agent/v1/ws',
+  });
 
   function setup(findServer: () => Promise<unknown> = async () => SERVER) {
-    const calls = { find: 0, online: 0, touched: 0 };
+    const calls = { find: 0, online: 0, onlineArgs: [] as unknown[][], touched: 0 };
     const gateway = new AgentGateway(
       {
         findServer: async () => {
           calls.find += 1;
           return findServer();
         },
-        markOnline: async () => {
+        markOnline: async (...args: unknown[]) => {
           calls.online += 1;
+          calls.onlineArgs.push(args);
         },
         welcomeFor: async () => ({ serverName: 'de-1', heartbeatSeconds: 10, metricsSeconds: 10 }),
         touch: async () => {
@@ -223,6 +229,10 @@ describe('AgentGateway: до входа — одно короткое сообщ
     await tick();
     expect(ws.sent.at(-1)?.type).toBe('welcome');
     expect(release).toHaveBeenCalledTimes(1);
+    expect(calls.onlineArgs[0]?.[3]).toEqual({
+      transport: 'websocket',
+      route: 'wss://agents.test/api/agent/v1/ws',
+    });
     // Сигналы подряд и сообщение крупнее «прихожей» — обычная работа, без разрыва.
     ws.emit('message', envelope('heartbeat', {}));
     ws.emit('message', envelope('heartbeat', {}, 8 * 1024));

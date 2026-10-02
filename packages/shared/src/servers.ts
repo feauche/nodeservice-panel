@@ -205,6 +205,10 @@ export const serverSchema = z.object({
   agentStatus: z.enum(AGENT_STATUSES),
   agentVersion: z.string().nullable(),
   agentLastSeenAt: z.iso.datetime().nullable(),
+  /** Фактический канал последнего сигнала; null у агентов до v0.7.0. */
+  agentTransport: z.enum(['websocket', 'https']).nullable(),
+  agentRoute: z.string().nullable(),
+  agentRouteFallback: z.boolean().nullable(),
   /** Последняя проверка SSH прошла успешно; null — ещё не проверяли. */
   sshOk: z.boolean().nullable(),
   lastSshCheckAt: z.iso.datetime({ offset: true }).nullable(),

@@ -85,6 +85,12 @@ export const servers = pgTable('servers', {
   agentVersion: text('agent_version'),
   agentEnrolledAt: timestamp('agent_enrolled_at', { withTimezone: true }),
   agentLastSeenAt: timestamp('agent_last_seen_at', { withTimezone: true }),
+  /** Последний подтверждённый канал агента: websocket / https (миграция 0053). */
+  agentTransport: text('agent_transport'),
+  /** Публичный маршрут, которым агент связался с панелью; секретов в адресе нет. */
+  agentRoute: text('agent_route'),
+  /** Маршрут не первый в актуальном списке панели. */
+  agentRouteFallback: boolean('agent_route_fallback'),
   sshOk: boolean('ssh_ok'),
   lastSshCheckAt: timestamp('last_ssh_check_at', { withTimezone: true }),
   lastSshOkAt: timestamp('last_ssh_ok_at', { withTimezone: true }),

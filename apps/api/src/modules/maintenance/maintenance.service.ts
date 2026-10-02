@@ -17,6 +17,7 @@ import { ClsService } from 'nestjs-cls';
 import { problem } from '../../common/filters/problem-details.filter.js';
 import type { Env } from '../../config/env.schema.js';
 import type { MaintenanceRunRow } from '../../infra/db/schema/index.js';
+import { configuredAgentWsUrls } from '../agent/agent-urls.js';
 import { type AuditActor, SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CLS_USER } from '../auth/cls-keys.js';
@@ -183,7 +184,9 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
     const connect = mk('connect', 'Подключение по SSH');
     if (kind === 'check')
       return [connect, mk('collect', 'Сбор данных о системе'), mk('release', 'Версия агента на GitHub')];
-    const action = actionSteps(kind, this.config.get('AGENT_REPO')).map((s) => mk(s.key, s.label));
+    const action = actionSteps(kind, this.config.get('AGENT_REPO'), configuredAgentWsUrls(this.config)).map(
+      (s) => mk(s.key, s.label),
+    );
     const tail = kind === 'agent_update' ? [mk('verify', 'Агент вышел на связь')] : [];
     return [connect, ...action, ...tail, mk('after', 'Проверка после')];
   }
@@ -305,7 +308,11 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
           };
         }
       } else {
-        for (const spec of actionSteps(row.kind, this.config.get('AGENT_REPO'))) {
+        for (const spec of actionSteps(
+          row.kind,
+          this.config.get('AGENT_REPO'),
+          configuredAgentWsUrls(this.config),
+        )) {
           await runStep(spec.key, async () => {
             await exec(spec.command, row.kind);
             return null;

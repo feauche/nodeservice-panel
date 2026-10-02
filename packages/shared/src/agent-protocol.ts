@@ -27,6 +27,8 @@ export const agentEnrollResponseSchema = z.object({
   serverName: z.string(),
   /** Куда подключаться по WebSocket (полный URL, ws:// или wss://). */
   wsUrl: z.string(),
+  /** Основной и запасные входы. wsUrl оставлен для старых агентов. */
+  wsUrls: z.array(z.string()).min(1).max(5).optional(),
 });
 export type AgentEnrollResponse = z.infer<typeof agentEnrollResponseSchema>;
 
@@ -49,6 +51,8 @@ export const agentHelloSchema = z.object({
   serverId: z.uuid(),
   pubkey: z.base64().min(40).max(60),
   version: z.string().min(1).max(50),
+  /** Публичный маршрут, по которому агент открыл это соединение. */
+  route: z.url().max(2_048).optional(),
 });
 export type AgentHello = z.infer<typeof agentHelloSchema>;
 
@@ -91,8 +95,53 @@ export const agentWelcomeSchema = z.object({
   heartbeatSeconds: z.number().int().min(5).max(120),
   /** 0 — метрики выключены в настройках. */
   metricsSeconds: z.number().int().min(0).max(600),
+  /** Свежий список маршрутов: агент сохраняет его без переустановки. */
+  wsUrls: z.array(z.string()).min(1).max(5).optional(),
 });
 export type AgentWelcome = z.infer<typeof agentWelcomeSchema>;
+
+/* ---------- HTTPS: запасной heartbeat и метрики ---------- */
+
+/** Содержимое подписанного payload. Строкой оно передаётся, чтобы подпись проверялась по тем же байтам. */
+export const agentPulsePayloadSchema = z.object({
+  metrics: agentMetricsSchema.optional(),
+  /** Публичный маршрут, которым пользуется запасной HTTPS-канал. */
+  route: z.url().max(2_048).optional(),
+});
+export type AgentPulsePayload = z.infer<typeof agentPulsePayloadSchema>;
+
+/** POST /api/agent/v1/pulse — запасной канал, когда прокси или сеть не пропускают WebSocket. */
+export const agentPulseRequestSchema = z.object({
+  v: z.literal(AGENT_PROTOCOL_VERSION),
+  serverId: z.uuid(),
+  version: z.string().min(1).max(50),
+  id: z.uuid(),
+  ts: z.iso.datetime(),
+  /** JSON-строка AgentPulsePayload; входит в подпись без повторной сериализации. */
+  payload: z
+    .string()
+    .min(2)
+    .max(16 * 1024),
+  signature: z.base64().min(80).max(100),
+});
+export type AgentPulseRequest = z.infer<typeof agentPulseRequestSchema>;
+
+export const agentPulseResponseSchema = agentWelcomeSchema;
+export type AgentPulseResponse = z.infer<typeof agentPulseResponseSchema>;
+
+/** Байты, подписываемые ed25519 для HTTPS pulse. Реализация зеркалится в агенте. */
+export function agentPulseSigningText(
+  request: Pick<AgentPulseRequest, 'serverId' | 'version' | 'id' | 'ts' | 'payload'>,
+): string {
+  return [
+    'nodeservice-agent-pulse-v1',
+    request.serverId,
+    request.version,
+    request.id,
+    request.ts,
+    request.payload,
+  ].join('\n');
+}
 
 export const agentErrorSchema = z.object({
   code: z.enum(['bad-envelope', 'auth-failed', 'unknown-server', 'protocol']),

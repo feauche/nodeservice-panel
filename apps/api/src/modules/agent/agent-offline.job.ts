@@ -5,6 +5,8 @@ import { ServersRepository } from '../servers/servers.repository.js';
 import { AutochecksStore } from '../settings/autochecks.store.js';
 import { AgentService } from './agent.service.js';
 
+export const AGENT_OFFLINE_STARTUP_GRACE_MS = 60_000;
+
 /**
  * Автопроверка «агент не в сети»: heartbeat молчит дольше порога из настроек → offline (+ Журнал).
  * Тик каждые 10 с; тумблер и порог — Настройки → Автопроверки. Обратно «в сети» сервер возвращает
@@ -13,6 +15,9 @@ import { AgentService } from './agent.service.js';
 @Injectable()
 export class AgentOfflineJob {
   private busy = false;
+  /** После рестарта агенты успевают переподключиться, прежде чем старые отметки считаются обрывом. */
+  private readonly readyAt =
+    process.env.NODE_ENV === 'test' ? 0 : Date.now() + AGENT_OFFLINE_STARTUP_GRACE_MS;
 
   constructor(
     private readonly servers: ServersRepository,
@@ -24,6 +29,7 @@ export class AgentOfflineJob {
   async tick(): Promise<void> {
     // В e2e джобы не тикают сами — тесты управляют состоянием напрямую (детерминизм).
     if (process.env.NODE_ENV === 'test') return;
+    if (Date.now() < this.readyAt) return;
     if (this.busy) return;
     this.busy = true;
     try {

@@ -35,7 +35,7 @@ describe('цели проверки выхода', () => {
     ];
     const list = egressTargets('nodeservice-panl.lumaxvds.org', { id: 'me' }, all);
     expect(list[0]).toEqual({
-      label: 'Панель NodeService',
+      label: 'Основной вход агента',
       host: 'nodeservice-panl.lumaxvds.org',
       port: 443,
       group: 'panel',
@@ -44,6 +44,16 @@ describe('цели проверки выхода', () => {
     expect(list.map((x) => x.label)).not.toContain('Плохой');
     expect(list.map((x) => x.label)).not.toContain('Казахстан');
     expect(list.filter((x) => x.group === 'foreign').length).toBeGreaterThan(0);
+  });
+
+  it('проверяет каждый независимый вход агента, а повторы убирает', () => {
+    const list = egressTargets(['panel.test', 'backup.test', 'panel.test'], { id: 'me' }, []).filter(
+      (target) => target.group === 'panel',
+    );
+    expect(list).toEqual([
+      { label: 'Основной вход агента', host: 'panel.test', port: 443, group: 'panel' },
+      { label: 'Запасной вход агента 1', host: 'backup.test', port: 443, group: 'panel' },
+    ]);
   });
 });
 

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Server } from '@nodeservice/shared';
 
 import type { Env } from '../../config/env.schema.js';
+import { configuredAgentWsUrls } from '../agent/agent-urls.js';
 import { ServersService } from '../servers/servers.service.js';
 import { SshService } from '../servers/ssh.service.js';
 import {
@@ -91,10 +92,11 @@ export class EgressCheckService {
     all: Server[],
     openFrom: readonly string[],
   ): Promise<EgressReport> {
-    // Проверяем именно тот маршрут, по которому должен держать WebSocket агент. Интерфейс панели может
-    // жить в Польше, а агентский вход — идти через другой reverse proxy или туннель.
-    const panelHost = new URL(this.config.get('AGENT_PUBLIC_URL') ?? this.config.get('PUBLIC_URL')).hostname;
-    const targets = egressTargets(panelHost, server, all);
+    // Проверяем все маршруты, которые получит агент. Один вход может быть закрыт сетью хостера, пока
+    // запасной в другой стране работает; в таком случае переустанавливать агент не требуется.
+    const panelHosts = configuredAgentWsUrls(this.config).map((value) => new URL(value).hostname);
+    const panelHost = panelHosts[0] as string;
+    const targets = egressTargets(panelHosts, server, all);
     const command = buildEgressCommand(targets, panelHost);
     const { target } = await this.servers.sshTargetFor(server.id);
     const jump = pickJump(

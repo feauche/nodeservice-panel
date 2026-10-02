@@ -44,7 +44,7 @@ const FOREIGN_SITES: EgressTarget[] = [
 
 /** Панель, российские серверы парка (по порту SSH) и сайты; всё проверено на безопасную форму. */
 export function egressTargets(
-  panelHost: string,
+  panelHosts: string | readonly string[],
   self: Pick<Server, 'id'>,
   all: Array<Pick<Server, 'id' | 'name' | 'host' | 'port' | 'country'>>,
 ): EgressTarget[] {
@@ -52,8 +52,16 @@ export function egressTargets(
     .filter((s) => s.id !== self.id && s.country.code === 'RU')
     .slice(0, 2)
     .map((s): EgressTarget => ({ label: s.name, host: s.host, port: s.port, group: 'ru' }));
-  const panel: EgressTarget = { label: 'Панель NodeService', host: panelHost, port: 443, group: 'panel' };
-  return [panel, ...fleetRu, ...RU_SITES, ...FOREIGN_SITES].filter((t) =>
+  const hosts = [...new Set(typeof panelHosts === 'string' ? [panelHosts] : panelHosts)];
+  const panel = hosts.map(
+    (host, index): EgressTarget => ({
+      label: index === 0 ? 'Основной вход агента' : `Запасной вход агента ${index}`,
+      host,
+      port: 443,
+      group: 'panel',
+    }),
+  );
+  return [...panel, ...fleetRu, ...RU_SITES, ...FOREIGN_SITES].filter((t) =>
     isSafeBlockCheckTarget(t.host, t.port, null),
   );
 }
