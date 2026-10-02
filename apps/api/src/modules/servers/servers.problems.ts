@@ -7,11 +7,17 @@ import { problem } from '../../common/filters/problem-details.filter.js';
 const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[A-Za-z]`, 'g');
 export const stripAnsi = (s: string): string => s.replace(ANSI_RE, '');
 
+const sshUnavailableDetail = (host: string, detail?: string): string => {
+  if (detail && /timed out while waiting for handshake/i.test(detail))
+    return `Соединение с ${host} открылось, но SSH-сервер не завершил рукопожатие вовремя. Повторите попытку; если ошибка остаётся, проверьте нагрузку sshd, MaxStartups, fail2ban и firewall.`;
+  return `Не удалось подключиться к ${host} по SSH${detail ? ` (${detail})` : ''}. Проверьте адрес, порт и firewall.`;
+};
+
 export const serverProblems = {
   sshUnreachable: (host: string, detail?: string) =>
     problem(HttpStatus.BAD_GATEWAY, {
       type: SERVER_PROBLEM.sshUnreachable,
-      detail: `Не удалось подключиться к ${host} по SSH${detail ? ` (${detail})` : ''}. Проверьте адрес, порт и firewall.`,
+      detail: sshUnavailableDetail(host, detail),
     }),
   sshAuth: (detail = 'Пароль или ключ не подошли.') =>
     problem(HttpStatus.BAD_REQUEST, { type: SERVER_PROBLEM.sshAuth, detail }),

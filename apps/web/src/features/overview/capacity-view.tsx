@@ -196,33 +196,19 @@ export function CapacityView() {
             </ul>
             <div className="relative hidden w-full max-w-full overflow-x-auto xl:block">
               <table
-                className="w-full min-w-[952px] table-fixed border-collapse text-[12.5px]"
+                className="w-full min-w-[760px] table-fixed border-collapse text-[12.5px]"
                 aria-label="Ёмкость нод"
               >
-                <colgroup>
-                  {/* Имени ноды — остаток, не меньше 180px: общая ширина 952 = 180 + сумма колонок ниже (ноутбук 1280 без прокрутки). */}
-                  <col />
-                  <col className="w-[92px]" />
-                  <col className="w-[100px]" />
-                  <col className="w-[100px]" />
-                  <col className="w-[136px]" />
-                  <col className="w-[100px]" />
-                  <col className="w-[88px]" />
-                  <col className="w-[104px]" />
-                  <col className="w-[44px]" />
-                </colgroup>
                 <thead>
                   <tr className="text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
-                    <th className="px-3 py-2.5 text-left">Нода</th>
-                    <th className="px-3 py-2.5 text-right whitespace-nowrap">В пик</th>
-                    <th className="px-3 py-2.5 text-left">Процессор</th>
-                    <th className="px-3 py-2.5 text-left">Память</th>
-                    <th className="px-3 py-2.5 text-left">Канал</th>
-                    <th className="px-3 py-2.5 text-left">Соединения</th>
-                    <th className="px-3 py-2.5 text-left">Упор</th>
-                    <th className="px-3 py-2.5 text-right">Ещё влезет</th>
-                    <th className="px-3 py-2.5">
-                      <span className="sr-only">Действия</span>
+                    <th className="px-4 py-2.5 text-left">
+                      <span className="grid grid-cols-[minmax(220px,1.5fr)_90px_minmax(116px,.75fr)_128px_34px] items-center gap-4">
+                        <span>Нода</span>
+                        <span className="text-right">В пик</span>
+                        <span>Первый упор</span>
+                        <span className="text-right">Ещё влезет</span>
+                        <span className="sr-only">Действия</span>
+                      </span>
                     </th>
                   </tr>
                 </thead>
@@ -493,55 +479,61 @@ function Row({ s, onMeasure, onManual }: { s: CapacityServer; onMeasure: () => v
       ? 'канал неизвестен'
       : `канал: ${{ manual: 'вручную', measured: 'замер', nic: 'сетевая карта' }[s.link.source]}`;
   return (
-    <tr className="border-t border-border align-middle">
-      <td className="px-3 py-2.5">
-        <button
-          type="button"
-          onClick={() => openServer(s.serverId)}
-          className="flex min-w-0 cursor-pointer items-center gap-2 text-left hover:underline"
-        >
-          {s.country && <CountryFlag code={s.country} size="sm" decorative />}
-          <b className="truncate text-[13px]">{s.name}</b>
-        </button>
-        <div className="truncate text-[11.5px] text-text-3" title={s.note ?? undefined}>
-          {role} · {linkNote}
-        </div>
-      </td>
-      <td className="px-3 py-2.5 text-right tabular-nums">
-        {s.onlinePeak == null ? <span className="text-text-3">—</span> : nf(s.onlinePeak)}
-      </td>
-      {CELL_KEYS.map((r) => (
-        <td key={r} className="px-3 py-2.5">
-          <Meter cell={s.cells[r]} lim={s.bottleneck === r} tone={s.tone} />
-        </td>
-      ))}
-      <td className="px-3 py-2.5">
-        {s.bottleneck ? (
-          <span
-            className={cn(
-              'inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold',
-              TONE_PILL[s.tone === 'ok' ? 'mute' : s.tone],
+    <tr className="border-t border-border">
+      <td className="px-4 py-3.5">
+        <div className="grid grid-cols-[minmax(220px,1.5fr)_90px_minmax(116px,.75fr)_128px_34px] items-center gap-4">
+          <div className="min-w-0">
+            <button
+              type="button"
+              onClick={() => openServer(s.serverId)}
+              className="flex min-w-0 cursor-pointer items-center gap-2 text-left hover:underline"
+            >
+              {s.country && <CountryFlag code={s.country} size="sm" decorative />}
+              <b className="truncate text-[13px]">{s.name}</b>
+            </button>
+            <div className="truncate text-[11.5px] text-text-3" title={s.note ?? undefined}>
+              {role} · {linkNote}
+            </div>
+          </div>
+          <div className="text-right tabular-nums">
+            {s.onlinePeak == null ? <span className="text-text-3">—</span> : nf(s.onlinePeak)}
+          </div>
+          <div>
+            {s.bottleneck ? (
+              <span
+                className={cn(
+                  'inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                  TONE_PILL[s.tone === 'ok' ? 'mute' : s.tone],
+                )}
+              >
+                {CAPACITY_RESOURCE_LABELS[s.bottleneck]}
+              </span>
+            ) : (
+              <span className="text-text-3">—</span>
             )}
-          >
-            {CAPACITY_RESOURCE_LABELS[s.bottleneck]}
-          </span>
-        ) : (
-          <span className="text-text-3">—</span>
-        )}
-      </td>
-      <td className="px-3 py-2.5 text-right">
-        <span
-          title={s.note ?? undefined}
-          className={cn(
-            'inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap',
-            TONE_PILL[s.left == null ? 'mute' : s.tone],
-          )}
-        >
-          {s.left != null ? `ещё ≈ ${nf(s.left)}` : STATUS_TEXT[s.status] || 'не посчитано'}
-        </span>
-      </td>
-      <td className="px-2 py-2.5 text-right">
-        <CapacityActions s={s} onMeasure={onMeasure} onManual={onManual} />
+          </div>
+          <div className="text-right">
+            <span
+              title={s.note ?? undefined}
+              className={cn(
+                'inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap',
+                TONE_PILL[s.left == null ? 'mute' : s.tone],
+              )}
+            >
+              {s.left != null ? `ещё ≈ ${nf(s.left)}` : STATUS_TEXT[s.status] || 'не посчитано'}
+            </span>
+          </div>
+          <CapacityActions s={s} onMeasure={onMeasure} onManual={onManual} />
+        </div>
+
+        <div className="mt-3 grid grid-cols-4 gap-4 pr-[50px]">
+          {CELL_KEYS.map((key) => (
+            <div key={key} className="min-w-0">
+              <div className="mb-1 text-[10.5px] text-text-3">{capital(CAPACITY_RESOURCE_LABELS[key])}</div>
+              <Meter cell={s.cells[key]} lim={s.bottleneck === key} tone={s.tone} />
+            </div>
+          ))}
+        </div>
       </td>
     </tr>
   );

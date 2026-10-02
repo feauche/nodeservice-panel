@@ -161,6 +161,17 @@ describe('AgentService: сигнал по открытому соединени�
     expect(ctx.journal).toEqual([]);
   });
 
+  it('heartbeat обновляет версию уже работающего агента после обновления', async () => {
+    const row = server({ agentVersion: '0.6.1' });
+    const ctx = make(row);
+
+    await ctx.agents.touch('s1', '0.8.2');
+
+    expect(row.agentVersion).toBe('0.8.2');
+    expect(row.agentStatus).toBe('online');
+    expect(ctx.journal).toEqual([]);
+  });
+
   it('сервера уже нет — сигнал сообщает об этом, а не пишет в пустоту', async () => {
     const ctx = make(null);
     expect(await ctx.agents.touch('s1', '0.5.4')).toBe(false);

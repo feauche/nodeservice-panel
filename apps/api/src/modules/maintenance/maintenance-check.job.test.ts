@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { MaintenanceCheckJob } from './maintenance-check.job.js';
 
-const check = (installed = '0.7.0', latest = 'v0.8.0') => ({
+const check = (installed: string | null = '0.7.0', latest = 'v0.8.0') => ({
   os: { id: 'ubuntu', version: '24.04', pretty: 'Ubuntu 24.04' },
   updates: { total: 0, security: 0 },
   rebootRequired: false,
   disk: { usedPct: 10, freeBytes: 100 },
-  agent: { installed, latest },
+  agent: { installed, latest, service: installed ? 'active' : 'missing' },
   supported: true,
   warnings: [],
 });
@@ -84,6 +84,56 @@ describe('MaintenanceCheckJob', () => {
     await job.run();
 
     expect(maintenance.scheduledAgentUpdate).not.toHaveBeenCalled();
+  });
+
+  it('installs an agent that is missing from the server', async () => {
+    const { job, maintenance, notifications } = setup([]);
+    maintenance.scheduledCheck
+      .mockResolvedValueOnce(check(null, 'v0.8.2'))
+      .mockResolvedValueOnce(check('v0.8.2', 'v0.8.2'))
+      .mockResolvedValueOnce(check('v0.8.2', 'v0.8.2'));
+
+    await job.run();
+
+    expect(maintenance.scheduledAgentUpdate).toHaveBeenCalledWith('s1', 'v0.8.2');
+    expect(notifications.push).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.stringContaining('Агент установлен или обновлён: 1 из 1') }),
+    );
+  });
+
+  it('repairs an installed agent whose service is stopped', async () => {
+    const { job, maintenance } = setup([]);
+    maintenance.scheduledCheck
+      .mockResolvedValueOnce({
+        ...check('v0.8.2', 'v0.8.2'),
+        agent: { installed: 'v0.8.2', latest: 'v0.8.2', service: 'inactive' },
+      })
+      .mockResolvedValueOnce(check('v0.8.2', 'v0.8.2'))
+      .mockResolvedValueOnce(check('v0.8.2', 'v0.8.2'));
+
+    await job.run();
+
+    expect(maintenance.scheduledAgentUpdate).toHaveBeenCalledWith('s1', 'v0.8.2');
+  });
+
+  it('a failed installation does not prevent installation on the rest of the fleet', async () => {
+    const { job, repo, maintenance, notifications } = setup([
+      { ok: false, error: 'SSH недоступен' },
+      { ok: true, error: null },
+      { ok: true, error: null },
+    ]);
+    maintenance.scheduledCheck.mockResolvedValue(check(null, 'v0.8.2'));
+
+    await job.run();
+
+    expect(maintenance.scheduledAgentUpdate).toHaveBeenCalledTimes(3);
+    expect(repo.saveCheckError).toHaveBeenCalledWith('s1', 'Автоустановка агента не удалась: SSH недоступен');
+    expect(notifications.push).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'warn',
+        body: expect.stringContaining('Не удалось установить или восстановить: 1 («A»)'),
+      }),
+    );
   });
 
   it('runs one daily sweep for the whole fleet, including a server with stale SSH status', async () => {

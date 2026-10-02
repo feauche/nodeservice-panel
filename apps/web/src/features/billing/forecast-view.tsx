@@ -32,11 +32,15 @@ function Kpi({ label, value, sub, testId }: { label: string; value: string; sub:
 
 function Weeks({ weeks, onOpen }: { weeks: BillingForecast['weeks']; onOpen: (itemId: string) => void }) {
   return (
-    <section className="flex flex-col rounded-2xl border border-border bg-surface px-5 py-4">
-      <h3 className="flex items-baseline justify-between text-[14px] font-semibold">
-        Ближайшие оплаты <span className="text-[12px] font-normal text-text-3">по неделям</span>
-      </h3>
-      <div className="mt-3 flex flex-col" data-testid="forecast-weeks">
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-surface">
+      <div className="flex h-[54px] flex-none items-center justify-between border-b border-border px-5">
+        <h3 className="text-[14px] font-semibold">Ближайшие оплаты</h3>
+        <span className="text-[12px] text-text-3">по неделям</span>
+      </div>
+      <div
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-4 [scrollbar-color:var(--color-border)_transparent]"
+        data-testid="forecast-weeks"
+      >
         {weeks.map((w, i) => (
           <div key={w.from} className={cn('py-2.5', i > 0 && 'border-t border-border')}>
             <div className="mb-1.5 flex items-baseline justify-between text-[12px] text-text-3">
@@ -85,65 +89,122 @@ function Weeks({ weeks, onOpen }: { weeks: BillingForecast['weeks']; onOpen: (it
   );
 }
 
-function Months({ months }: { months: BillingForecast['months'] }) {
+function Months({ months, weeks }: { months: BillingForecast['months']; weeks: BillingForecast['weeks'] }) {
   const values = months.map((m) => m.paidRubMinor + m.forecastRubMinor);
   const max = Math.max(1, ...values);
+  const now = new Date();
+  const currentIndex = months.findIndex(
+    (m) => m.year === now.getFullYear() && m.month === now.getMonth() + 1,
+  );
+  const focusIndex = currentIndex >= 0 ? currentIndex : months.findIndex((m) => m.forecastRubMinor > 0);
+  const focus = focusIndex >= 0 ? months[focusIndex] : months[0];
+  const weekMax = Math.max(1, ...weeks.map((w) => w.rubMinor));
   return (
-    <section className="flex flex-col rounded-2xl border border-border bg-surface px-5 py-4">
-      <h3 className="flex items-baseline justify-between text-[14px] font-semibold">
-        По месяцам <span className="text-[12px] font-normal text-text-3">оплачено и прогноз</span>
-      </h3>
-      <div className="mt-3 flex h-[200px] items-end gap-2.5" data-testid="forecast-months">
-        {months.map((m, i) => {
-          const total = values[i] ?? 0;
-          const current = i === 3;
-          return (
-            <div
-              key={`${m.year}-${m.month}`}
-              className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1.5"
-              title={`${MONTHS[m.month - 1]} ${m.year}: оплачено ${rub(m.paidRubMinor)}${m.forecastRubMinor ? `, ещё ≈ ${rub(m.forecastRubMinor)}` : ''}`}
-            >
-              <span className="text-[10.5px] text-text-2 tabular-nums">
-                {total > 0
-                  ? `${(total / 100_000).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} тыс.`
-                  : '—'}
-              </span>
-              <div
-                className="flex w-full max-w-[40px] flex-col-reverse overflow-hidden rounded-t-[7px] rounded-b-[3px]"
-                style={{ height: `${(total / max) * 150}px`, minHeight: total > 0 ? 3 : 0 }}
-              >
-                {m.paidRubMinor > 0 && (
-                  <i className="block bg-brand" style={{ height: `${(m.paidRubMinor / total) * 100}%` }} />
-                )}
-                {m.forecastRubMinor > 0 && (
-                  <i
-                    className="block border border-dashed border-brand"
-                    style={{
-                      height: `${(m.forecastRubMinor / total) * 100}%`,
-                      background:
-                        'repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-brand) 55%, transparent) 0 6px, color-mix(in srgb, var(--color-brand) 22%, transparent) 6px 12px)',
-                    }}
-                  />
-                )}
-              </div>
-              <span className={cn('text-[11px]', current ? 'font-semibold text-foreground' : 'text-text-3')}>
-                {MONTHS[m.month - 1]}
-              </span>
-            </div>
-          );
-        })}
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-surface">
+      <div className="flex h-[54px] flex-none items-center justify-between border-b border-border px-5">
+        <h3 className="text-[14px] font-semibold">План расходов</h3>
+        <span className="text-[12px] text-text-3">оплачено и прогноз</span>
       </div>
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-[11.5px] text-text-2">
-        <span className="inline-flex items-center gap-1.5">
-          <i className="size-2.5 rounded-[3px] bg-brand" />
-          Оплачено по курсу дня оплаты
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <i className="size-2.5 rounded-[3px] border border-dashed border-brand bg-brand-soft" />
-          Прогноз по сегодняшнему курсу
-        </span>
+      <div className="flex min-h-0 flex-1 flex-col px-5 py-4">
+        <div className="flex h-[190px] flex-none items-end gap-2.5" data-testid="forecast-months">
+          {months.map((m, i) => {
+            const total = values[i] ?? 0;
+            const current = i === focusIndex;
+            return (
+              <div
+                key={`${m.year}-${m.month}`}
+                className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1.5"
+                title={`${MONTHS[m.month - 1]} ${m.year}: оплачено ${rub(m.paidRubMinor)}${m.forecastRubMinor ? `, ещё ≈ ${rub(m.forecastRubMinor)}` : ''}`}
+              >
+                <span className="text-[10.5px] text-text-2 tabular-nums">
+                  {total > 0
+                    ? `${(total / 100_000).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} тыс.`
+                    : '—'}
+                </span>
+                <div
+                  className="flex w-full max-w-[40px] flex-col-reverse overflow-hidden rounded-t-[7px] rounded-b-[3px]"
+                  style={{ height: `${(total / max) * 145}px`, minHeight: total > 0 ? 3 : 0 }}
+                >
+                  {m.paidRubMinor > 0 && (
+                    <i className="block bg-brand" style={{ height: `${(m.paidRubMinor / total) * 100}%` }} />
+                  )}
+                  {m.forecastRubMinor > 0 && (
+                    <i
+                      className="block border border-dashed border-brand"
+                      style={{
+                        height: `${(m.forecastRubMinor / total) * 100}%`,
+                        background:
+                          'repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-brand) 55%, transparent) 0 6px, color-mix(in srgb, var(--color-brand) 22%, transparent) 6px 12px)',
+                      }}
+                    />
+                  )}
+                </div>
+                <span
+                  className={cn('text-[11px]', current ? 'font-semibold text-foreground' : 'text-text-3')}
+                >
+                  {MONTHS[m.month - 1]}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-[11.5px] text-text-2">
+          <span className="inline-flex items-center gap-1.5">
+            <i className="size-2.5 rounded-[3px] bg-brand" />
+            Оплачено по курсу дня оплаты
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <i className="size-2.5 rounded-[3px] border border-dashed border-brand bg-brand-soft" />
+            Прогноз по сегодняшнему курсу
+          </span>
+        </div>
+        {focus && (
+          <div className="mt-4 grid grid-cols-3 gap-2.5 border-t border-border pt-4">
+            <MonthStat label="Оплачено" value={rub(focus.paidRubMinor)} />
+            <MonthStat label="Ещё до конца месяца" value={`≈ ${rub(focus.forecastRubMinor)}`} />
+            <MonthStat
+              label="Итого за месяц"
+              value={`≈ ${rub(focus.paidRubMinor + focus.forecastRubMinor)}`}
+            />
+          </div>
+        )}
+        <div className="mt-4 min-h-0 border-t border-border pt-4">
+          <h4 className="m-0 text-[12px] font-semibold">Нагрузка по ближайшим неделям</h4>
+          <div className="mt-2 grid gap-2">
+            {weeks.slice(0, 4).map((w, i) => (
+              <div
+                key={w.from}
+                className="grid grid-cols-[76px_minmax(0,1fr)_88px] items-center gap-2.5 text-[11px]"
+              >
+                <span className="truncate text-text-3">
+                  {i === 0
+                    ? 'Эта неделя'
+                    : `${day(w.from)} – ${day(new Date(Date.parse(w.to) - 1).toISOString())}`}
+                </span>
+                <span className="h-1.5 overflow-hidden rounded-full bg-surface-3">
+                  <i
+                    className="block h-full rounded-full bg-brand"
+                    style={{ width: `${(w.rubMinor / weekMax) * 100}%` }}
+                  />
+                </span>
+                <b className="text-right font-medium tabular-nums">≈ {rub(w.rubMinor)}</b>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </section>
+  );
+}
+
+function MonthStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-[11px] bg-surface-2 px-3 py-2.5">
+      <span className="block truncate text-[10.5px] text-text-3">{label}</span>
+      <b className="mt-0.5 block truncate text-[14px] tabular-nums" title={value}>
+        {value}
+      </b>
+    </div>
   );
 }
 
@@ -215,9 +276,9 @@ export function ForecastView({ onOpenItem }: { onOpenItem: (itemId: string) => v
           Курса ЦБ сейчас нет — суммы в $ и € в рубли не пересчитаны, итоги неполные.
         </p>
       )}
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 xl:h-[610px] xl:grid-cols-2">
         <Weeks weeks={f.weeks} onOpen={onOpenItem} />
-        <Months months={f.months} />
+        <Months months={f.months} weeks={f.weeks} />
       </div>
     </div>
   );

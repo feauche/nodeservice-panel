@@ -100,7 +100,12 @@ export class MaintenanceCheckJob {
       // отметки не будет и после перезапуска панель повторит общий проход целиком.
       if (fullSweep) await this.repo.completeDailySweep();
 
-      const outdated: Array<{ id: string; name: string; from: string; to: string }> = [];
+      const agentWork: Array<{
+        id: string;
+        name: string;
+        to: string;
+        mode: 'install' | 'repair' | 'update';
+      }> = [];
       let checked = 0;
       let checkFailed = 0;
       let deferred = 0;
@@ -114,27 +119,48 @@ export class MaintenanceCheckJob {
           checkFailed += 1;
           continue;
         }
-        if (
+        const serviceBroken = check.agent.service !== 'active';
+        const outdated = Boolean(
           check.agent.installed &&
-          check.agent.latest &&
-          compareVersions(check.agent.installed, check.agent.latest) < 0
-        )
-          outdated.push({ id: row.id, name: row.name, from: check.agent.installed, to: check.agent.latest });
+            check.agent.latest &&
+            compareVersions(check.agent.installed, check.agent.latest) < 0,
+        );
+        // Суточное обслуживание отвечает и за первоначальную установку/восстановление агента.
+        // Раньше сервер без бинарника или с остановленной службой просто пропускался навсегда.
+        if (check.agent.latest && (!check.agent.installed || serviceBroken || outdated))
+          agentWork.push({
+            id: row.id,
+            name: row.name,
+            to: check.agent.latest,
+            mode: !check.agent.installed ? 'install' : serviceBroken ? 'repair' : 'update',
+          });
       }
 
       let updated = 0;
       let stopped: { name: string; error: string } | null = null;
-      // Проверяем весь парк до начала обновлений: если один сервер не обновился, остальные устаревшие
-      // не попадут в следующую пятиминутку и серия действительно остановится до следующего суточного цикла.
-      for (const row of outdated) {
+      const repairFailed: Array<{ name: string; error: string }> = [];
+      // Раскатку новой версии останавливаем при первой ошибке. Установку отсутствующего агента и
+      // восстановление службы продолжаем по остальному парку: эти ошибки относятся к конкретному серверу.
+      for (const row of agentWork) {
         const result = await this.maintenance.scheduledAgentUpdate(row.id, row.to).catch((err) => ({
           ok: false,
           error: (err as Error).message,
         }));
         if (!result.ok) {
-          stopped = { name: row.name, error: result.error ?? 'неизвестная ошибка' };
-          this.log.warn(`Автообновление агента ${row.name}: ${stopped.error}`);
-          break;
+          const failed = { name: row.name, error: result.error ?? 'неизвестная ошибка' };
+          this.log.warn(`Автообслуживание агента ${row.name}: ${failed.error}`);
+          // Ошибка установки на одном конкретном сервере (например, недоступен SSH) не должна
+          // оставлять без агента все остальные. При ошибке раскатки новой версии серию по-прежнему
+          // останавливаем: это может быть проблема самого релиза.
+          if (row.mode === 'update') {
+            stopped = failed;
+            break;
+          }
+          await this.repo
+            .saveCheckError(row.id, `Автоустановка агента не удалась: ${failed.error}`)
+            .catch(() => undefined);
+          repairFailed.push(failed);
+          continue;
         }
         updated += 1;
       }
@@ -142,9 +168,9 @@ export class MaintenanceCheckJob {
       if (checked > 0 || deferred > 0)
         await this.notifications.push({
           center: true,
-          severity: stopped || checkFailed > 0 || deferred > 0 ? 'warn' : 'ok',
+          severity: stopped || repairFailed.length > 0 || checkFailed > 0 || deferred > 0 ? 'warn' : 'ok',
           title: fullSweep
-            ? stopped || checkFailed > 0 || deferred > 0
+            ? stopped || repairFailed.length > 0 || checkFailed > 0 || deferred > 0
               ? 'Суточное обслуживание требует внимания'
               : 'Суточное обслуживание завершено'
             : checkFailed > 0 || deferred > 0
@@ -152,16 +178,19 @@ export class MaintenanceCheckJob {
               : 'Повтор обслуживания завершён',
           body: [
             `Запланировано: ${candidates.length} · проверено: ${checked}${deferred > 0 ? ` · отложено: ${deferred}` : ''}`,
-            outdated.length > 0
-              ? `Агент обновлён: ${updated} из ${outdated.length}`
+            agentWork.length > 0
+              ? `Агент установлен или обновлён: ${updated} из ${agentWork.length}`
               : 'Версии агентов актуальны',
             checkFailed > 0 ? `Не удалось проверить: ${checkFailed}` : null,
+            repairFailed.length > 0
+              ? `Не удалось установить или восстановить: ${repairFailed.length} (${repairFailed.map((x) => `«${x.name}»`).join(', ')})`
+              : null,
             stopped ? `Серия остановлена на «${stopped.name}»: ${stopped.error}` : null,
           ]
             .filter(Boolean)
             .join('\n'),
           link: { to: '/servers', label: 'Открыть серверы' },
-          ...(fullSweep && (stopped || checkFailed > 0 || deferred > 0)
+          ...(fullSweep && (stopped || repairFailed.length > 0 || checkFailed > 0 || deferred > 0)
             ? { telegram: { event: 'maintenance' as const } }
             : {}),
         });

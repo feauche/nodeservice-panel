@@ -215,7 +215,9 @@ export class AgentService {
    * статус ведёт она. false — сервера уже нет: шлюзу пора закрыть соединение.
    */
   async touch(serverId: string, version: string): Promise<boolean> {
-    const row = await this.servers.update(serverId, { agentLastSeenAt: new Date() });
+    // Версия приходит с каждым heartbeat/pulse. После обновления процесс может остаться в статусе
+    // online, поэтому ожидание перехода offline → online оставляло в карточке старую версию навсегда.
+    const row = await this.servers.update(serverId, { agentLastSeenAt: new Date(), agentVersion: version });
     if (!row) return false;
     if (row.agentStatus === 'online' || row.agentStatus === 'installing' || this.reviving.has(serverId))
       return true;
