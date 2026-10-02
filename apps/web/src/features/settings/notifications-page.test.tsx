@@ -86,6 +86,8 @@ describe('NotificationsPage', () => {
     ];
     renderPage(NotificationsPage, '/settings/notifications');
     const [broken, fine] = (await screen.findAllByTestId('tg-row')) as [HTMLElement, HTMLElement];
+    expect(screen.getByText('Есть ошибка доставки')).toBeInTheDocument();
+    expect(screen.getByText('Ошибки доставки')).toBeInTheDocument();
     // Тест трёхнедельной давности остаётся в строке, но «зелёным» чат больше не выглядит.
     expect(within(broken).getByText(/тест доставлен/)).toBeInTheDocument();
     const failed = within(broken).getByText(

@@ -103,8 +103,23 @@ function TelegramMark() {
   );
 }
 
+/** Ненавязчивая нумерация сохраняет привычные карточки, но объясняет, к какой задаче они относятся. */
+function NotificationGroupHeader({ number, title, hint }: { number: number; title: string; hint: string }) {
+  return (
+    <header className={cn('flex items-center gap-2.5 px-0.5', number > 1 && 'mt-1.5')}>
+      <span className="grid size-[22px] flex-none place-items-center rounded-[7px] bg-brand/12 text-[11px] font-bold text-brand">
+        {number}
+      </span>
+      <div className="min-w-0">
+        <h3 className="m-0 font-heading text-[13.5px] font-semibold tracking-[-0.01em]">{title}</h3>
+        <p className="m-0 mt-px text-[11.5px] text-text-3 max-sm:hidden">{hint}</p>
+      </div>
+    </header>
+  );
+}
+
 /**
- * «Настройки → Уведомления» (витрина `telegram-settings-variants.html`: L2 + T1 + K1 + M2). Чат —
+ * «Настройки → Уведомления» (утверждённая витрина `telegram-notifications-0.47-variants.html`). Чат —
  * одна строка-ссылка `tgram://токен/чат:тема`; у строки «Отправить тест» и «Удалить», ниже
  * «Добавить чат». После сохранения токен виден только маской.
  */
@@ -148,6 +163,30 @@ export function NotificationsPage() {
   const badProxy = proxyChanged && draft.proxy.trim() !== '' && !isValidTelegramProxy(draft.proxy.trim());
   const invalid = draft.rows.some(badUrl) || badProxy;
   const setRows = (rows: Row[]) => setDraft({ ...draft, rows });
+  const deliveries = q.data.destinations
+    .map((destination) => destination.lastDelivery)
+    .filter((mark): mark is NonNullable<typeof mark> => mark !== null);
+  const latestDelivery = deliveries.reduce<(typeof deliveries)[number] | null>(
+    (latest, mark) => (!latest || mark.at > latest.at ? mark : latest),
+    null,
+  );
+  const failedDeliveries = q.data.destinations.filter(
+    (destination) => destination.lastDelivery?.ok === false,
+  ).length;
+  const failedDestinations = q.data.destinations.filter((destination) => {
+    const { lastDelivery, lastTest } = destination;
+    const latest = lastDelivery && (!lastTest || lastDelivery.at > lastTest.at) ? lastDelivery : lastTest;
+    return latest?.ok === false;
+  }).length;
+  const freshTestFailed = Object.values(results).some((result) => !result.ok);
+  const telegramState =
+    q.data.destinations.length === 0
+      ? { label: 'Telegram не подключён', dot: 'bg-text-3', tone: 'text-text-3' }
+      : failedDestinations > 0 || freshTestFailed
+        ? { label: 'Есть ошибка доставки', dot: 'bg-crit', tone: 'text-crit' }
+        : latestDelivery?.ok
+          ? { label: 'Telegram работает', dot: 'bg-ok', tone: 'text-text-2' }
+          : { label: 'Telegram настроен', dot: 'bg-brand', tone: 'text-text-2' };
 
   const runTest = async (r: Row) => {
     setTesting(r.key);
@@ -202,10 +241,46 @@ export function NotificationsPage() {
         icon={BellIcon}
         title="Уведомления"
         description="Куда и что присылать в Telegram. Колокольчик в панели получает всё, как и раньше."
+        aside={
+          <span
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-[11.5px] font-semibold',
+              telegramState.tone,
+            )}
+          >
+            <span className={cn('size-[7px] rounded-full', telegramState.dot)} aria-hidden="true" />
+            {telegramState.label}
+          </span>
+        }
+      />
+      <NotificationGroupHeader
+        number={1}
+        title="Подключение Telegram"
+        hint="Чаты, бот и сетевой доступ к Telegram"
       />
       <SettingsCard
         title="Чаты Telegram"
         hint="Одна строка — один чат. Можно разные боты и разные чаты, в том числе темы в группах."
+        footer={
+          <div className="grid w-full grid-cols-3 divide-x divide-border max-sm:grid-cols-1 max-sm:divide-x-0 max-sm:divide-y">
+            <div className="px-3 py-0.5 first:pl-0 max-sm:px-0 max-sm:py-2">
+              <span className="block text-[10.5px] text-text-3">Последняя доставка</span>
+              <b className="text-[12px] font-semibold">
+                {latestDelivery ? formatAgo(latestDelivery.at) : 'ещё не было'}
+              </b>
+            </div>
+            <div className="px-3 py-0.5 max-sm:px-0 max-sm:py-2">
+              <span className="block text-[10.5px] text-text-3">Ошибки доставки</span>
+              <b className={cn('text-[12px] font-semibold', failedDeliveries ? 'text-crit' : 'text-ok')}>
+                {failedDeliveries || 'нет'}
+              </b>
+            </div>
+            <div className="px-3 py-0.5 max-sm:px-0 max-sm:py-2">
+              <span className="block text-[10.5px] text-text-3">Расширенный формат</span>
+              <b className="text-[12px] font-semibold">{draft.delivery.rich ? 'включён' : 'выключен'}</b>
+            </div>
+          </div>
+        }
       >
         <div className="flex flex-col gap-2 py-3">
           {draft.rows.map((r) => {
@@ -338,23 +413,33 @@ export function NotificationsPage() {
               Добавить чат
             </button>
           </div>
-          <div className="mt-2 rounded-[10px] border border-border bg-bg-2 px-3 py-2.5 text-[12px] text-text-3">
-            <span className="block">
-              <span className="mr-1.5 inline-block align-[-4px]">
-                <TelegramMark />
+          <details className="group/help mt-2 rounded-[10px] border border-border bg-bg-2 text-[12px] text-text-3">
+            <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 font-medium text-text-2 marker:hidden">
+              <TelegramMark />
+              Как подключить бота, группу или тему
+              <span
+                className="ml-auto text-text-3 transition-transform group-open/help:rotate-180"
+                aria-hidden="true"
+              >
+                ⌄
               </span>
-              Формат:{' '}
-              <code className="font-mono text-[11.5px] break-all text-text-2">
-                tgram://токен_бота/id_чата
-              </code>
-              , для темы в группе — <code className="font-mono text-[11.5px] text-text-2">:номер_темы</code> в
-              конце.
-            </span>
-            <span className="mt-1 block">
-              Личный чат — ваш id (положительное число), группа — начинается с -100. Токен даёт @BotFather, id
-              чата — @userinfobot или ссылка на любое сообщение. В личном чате сначала нажмите у бота «Старт».
-            </span>
-          </div>
+            </summary>
+            <div className="border-t border-border px-3 py-2.5">
+              <span className="block">
+                Формат:{' '}
+                <code className="font-mono text-[11.5px] break-all text-text-2">
+                  tgram://токен_бота/id_чата
+                </code>
+                , для темы в группе — <code className="font-mono text-[11.5px] text-text-2">:номер_темы</code>{' '}
+                в конце.
+              </span>
+              <span className="mt-1 block">
+                Личный чат — ваш id (положительное число), группа — начинается с -100. Токен даёт @BotFather,
+                id чата — @userinfobot или ссылка на любое сообщение. В личном чате сначала нажмите у бота
+                «Старт».
+              </span>
+            </div>
+          </details>
         </div>
         <SettingsRow
           stack
@@ -392,9 +477,11 @@ export function NotificationsPage() {
           />
         </SettingsRow>
       </SettingsCard>
-
-      <WatchdogCard />
-
+      <NotificationGroupHeader
+        number={2}
+        title="Какие сообщения отправлять"
+        hint="Сначала общие события, затем отдельные виды инцидентов"
+      />
       <SettingsCard title="Что присылать" hint="Одинаково для всех чатов.">
         {TELEGRAM_EVENT_GROUPS.map((g) => (
           <div key={g.title} className="pt-2">
@@ -483,7 +570,11 @@ export function NotificationsPage() {
           </div>
         ))}
       </SettingsCard>
-
+      <NotificationGroupHeader
+        number={3}
+        title="Как доставлять сообщения"
+        hint="Оформление, звук, повторы и ночной режим"
+      />
       <SettingsCard title="Как присылать" hint="Звук, склейка сбоев и напоминания.">
         <SettingsRow
           label="Один сбой сервера — одно уведомление со звуком"
@@ -600,7 +691,12 @@ export function NotificationsPage() {
           />
         </SettingsRow>
       </SettingsCard>
-
+      <NotificationGroupHeader
+        number={4}
+        title="Резервная тревога"
+        hint="Сообщит о полном падении панели независимо от самой панели"
+      />
+      <WatchdogCard />
       <SaveBar
         dirty={dirty}
         pending={update.isPending}
