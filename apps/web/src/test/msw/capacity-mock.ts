@@ -3,7 +3,7 @@ import { HttpResponse, http } from 'msw';
 
 import { mockServers } from './servers-mock';
 
-/** Мок ёмкости: те же ноды, что в витрине `capacity-variants.html` (Германия-1 упирается в канал 1 Гбит). */
+/** Мок ёмкости: те же ноды, что в витрине показаний (Германия-1 упирается в канал 1 Гбит). */
 export const mockCapacity = { measured: [] as string[], manual: new Map<string, number | null>() };
 
 const cell = (

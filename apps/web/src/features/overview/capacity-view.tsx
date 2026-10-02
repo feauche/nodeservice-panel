@@ -47,13 +47,6 @@ const when = (iso: string | null) =>
 const TIME = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' });
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-const TONE_PILL = {
-  ok: 'bg-ok-soft text-ok',
-  warn: 'bg-warn-soft text-warn',
-  crit: 'bg-crit-soft text-crit',
-  mute: 'bg-surface-2 text-text-3',
-} as const;
-
 const STATUS_TEXT: Record<CapacityServer['status'], string> = {
   ok: '',
   few_data: 'мало данных',
@@ -63,8 +56,8 @@ const STATUS_TEXT: Record<CapacityServer['status'], string> = {
 };
 
 /**
- * «Обзор» → «Ёмкость» (витрина `capacity-variants.html`, A1): плитки по парку и таблица нод — загрузка в час
- * пик по четырём ресурсам с чертой безопасного потолка, упор и сколько ещё людей влезет.
+ * «Обзор» → «Ёмкость» (витрина `capacity-0.58-readings-variants.html`, вариант A): спокойная таблица
+ * показаний с одним итоговым вердиктом по каждой ноде.
  */
 export function CapacityView() {
   const q = useCapacity();
@@ -76,11 +69,8 @@ export function CapacityView() {
   if (q.isPending)
     return (
       <div className="flex flex-col gap-4" data-testid="capacity-loading">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-[112px] rounded-2xl" />
-          ))}
-        </div>
+        <Skeleton className="h-8 w-full rounded-[9px]" />
+        <Skeleton className="h-[92px] rounded-2xl" />
         <Skeleton className="h-[360px] rounded-2xl" />
       </div>
     );
@@ -92,6 +82,7 @@ export function CapacityView() {
     );
 
   const exits = c.servers.filter((s) => s.role !== 'other');
+  const critical = exits.filter((s) => s.tone === 'crit' && s.left != null).length;
   const soonText =
     c.growthPctWeek == null
       ? 'Рост пока не виден: нужно 2 недели онлайна'
@@ -132,22 +123,29 @@ export function CapacityView() {
         <Banner>Хранилище метрик не ответило — нагрузка серверов сейчас неизвестна.</Banner>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Kpi
+      <div className="grid overflow-hidden rounded-2xl border border-border bg-surface sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryMetric
+          caps="Итог"
+          value={
+            c.counted === 0
+              ? 'Нет расчёта'
+              : critical > 0
+                ? `${critical} ${nodeWord(critical)} почти без запаса`
+                : 'Запас есть'
+          }
+          tone={critical > 0 ? 'crit' : undefined}
+          sub={
+            c.left == null
+              ? 'недостаточно данных для общего итога'
+              : `суммарно можно добавить ≈ ${nf(c.left)} пользователей${c.counted < exits.length ? ` · по ${c.counted} из ${exits.length} нод` : ''}`
+          }
+        />
+        <SummaryMetric
           caps="Онлайн в пик"
           value={c.onlinePeak == null ? '—' : nf(c.onlinePeak)}
           sub={c.peakAt ? `${when(c.peakAt)} · ${exits.length} нод` : 'онлайна пока не было'}
         />
-        <Kpi
-          caps="Влезет ещё"
-          value={c.left == null ? '—' : `≈ ${nf(c.left)}`}
-          sub={
-            c.left == null
-              ? 'пока не посчитано ни по одной ноде'
-              : `до безопасного потолка${c.onlinePeak ? ` · +${nf(Math.round((c.left / c.onlinePeak) * 100))} %` : ''}${c.counted < exits.length ? ` · по ${c.counted} из ${exits.length} нод` : ''}`
-          }
-        />
-        <Kpi
+        <SummaryMetric
           caps="Упор парка"
           value={c.bottleneck ? capital(CAPACITY_RESOURCE_LABELS[c.bottleneck]) : '—'}
           tone={c.bottleneck ? 'crit' : undefined}
@@ -157,23 +155,24 @@ export function CapacityView() {
               : 'ещё не известен'
           }
         />
-        <Kpi
-          caps={
-            c.growthPctWeek != null && c.growthPctWeek > 0
-              ? `При росте +${nf(c.growthPctWeek)} % в неделю`
-              : 'Рост онлайна'
-          }
+        <SummaryMetric
+          caps="Следующий предел"
           value={c.soonest && c.growthPctWeek && c.growthPctWeek > 0 ? `≈ ${c.soonest.days} дн.` : '—'}
-          sub={soonText}
+          sub={
+            c.soonest && c.growthPctWeek && c.growthPctWeek > 0
+              ? `${c.soonest.name} · при росте +${nf(c.growthPctWeek)} % в неделю`
+              : soonText
+          }
         />
       </div>
 
       <section className="min-w-0 rounded-2xl border border-border bg-surface">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div>
-            <h2 className="font-heading text-[14.5px] font-bold">Ноды: в час пик и сколько ещё влезет</h2>
+            <h2 className="font-heading text-[14.5px] font-bold">Показания нод</h2>
             <p className="m-0 mt-0.5 text-[12px] text-text-3">
-              Полоса — загрузка в пик, черта — безопасный потолок. Выделено — во что нода упрётся первой.
+              Безопасные пределы: процессор {CAPACITY_LIMIT_PCT.cpu} %, память {CAPACITY_LIMIT_PCT.mem} %,
+              канал {CAPACITY_LIMIT_PCT.net} %, соединения {CAPACITY_LIMIT_PCT.conn} %.
             </p>
           </div>
         </div>
@@ -196,17 +195,20 @@ export function CapacityView() {
             </ul>
             <div className="relative hidden w-full max-w-full overflow-x-auto xl:block">
               <table
-                className="w-full min-w-[760px] table-fixed border-collapse text-[12.5px]"
+                className="w-full min-w-[1050px] table-fixed border-collapse text-[12.5px]"
                 aria-label="Ёмкость нод"
               >
                 <thead>
                   <tr className="text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
                     <th className="px-4 py-2.5 text-left">
-                      <span className="grid grid-cols-[minmax(220px,1.5fr)_90px_minmax(116px,.75fr)_128px_34px] items-center gap-4">
+                      <span className="grid grid-cols-[minmax(190px,1.25fr)_64px_repeat(4,minmax(92px,.72fr))_minmax(210px,1.35fr)_34px] items-center gap-3">
                         <span>Нода</span>
                         <span className="text-right">В пик</span>
-                        <span>Первый упор</span>
-                        <span className="text-right">Ещё влезет</span>
+                        <span>Процессор</span>
+                        <span>Память</span>
+                        <span>Канал</span>
+                        <span>Соединения</span>
+                        <span>Вердикт</span>
                         <span className="sr-only">Действия</span>
                       </span>
                     </th>
@@ -265,7 +267,16 @@ function Banner({ children }: { children: ReactNode }) {
   );
 }
 
-function Kpi({
+function nodeWord(value: number): string {
+  const mod100 = value % 100;
+  if (mod100 >= 11 && mod100 <= 14) return 'нод';
+  const mod10 = value % 10;
+  if (mod10 === 1) return 'нода';
+  if (mod10 >= 2 && mod10 <= 4) return 'ноды';
+  return 'нод';
+}
+
+function SummaryMetric({
   caps,
   value,
   sub,
@@ -277,11 +288,11 @@ function Kpi({
   tone?: 'crit' | undefined;
 }) {
   return (
-    <div className="flex flex-col gap-1.5 rounded-2xl border border-border bg-surface p-4">
+    <div className="flex min-w-0 flex-col gap-1.5 border-border p-4 max-sm:border-t max-sm:first:border-t-0 sm:[&:nth-child(n+3)]:border-t sm:[&:nth-child(even)]:border-l xl:border-t-0 xl:border-l xl:first:border-l-0">
       <div className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">{caps}</div>
       <div
         className={cn(
-          'font-heading text-[28px] leading-none font-bold tracking-[-0.02em] whitespace-nowrap tabular-nums',
+          'truncate font-heading text-[23px] leading-none font-bold tracking-[-0.02em] tabular-nums',
           tone === 'crit' && 'text-crit',
         )}
       >
@@ -295,12 +306,15 @@ function Kpi({
 function Meter({ cell, lim, tone }: { cell: CapacityCell; lim: boolean; tone: CapacityServer['tone'] }) {
   const u = cell.usedPct;
   const color =
-    u == null ? '' : u >= cell.limitPct ? 'bg-crit' : u >= cell.limitPct * 0.8 ? 'bg-warn' : 'bg-brand';
+    u == null ? '' : lim && tone === 'crit' ? 'bg-crit' : lim && tone === 'warn' ? 'bg-warn' : 'bg-brand';
   return (
-    <div className="flex min-w-0 flex-col gap-1">
+    <div
+      className="flex min-w-0 flex-col gap-1.5"
+      title={[cell.detail, `безопасный предел ${cell.limitPct} %`].filter(Boolean).join(' · ')}
+    >
       <div
         className={cn(
-          'text-right text-[11.5px] tabular-nums',
+          'text-left text-[12px] tabular-nums',
           lim && tone === 'crit'
             ? 'font-bold text-crit'
             : lim && tone === 'warn'
@@ -312,24 +326,14 @@ function Meter({ cell, lim, tone }: { cell: CapacityCell; lim: boolean; tone: Ca
       >
         {u == null ? '—' : `${u.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} %`}
       </div>
-      <div className="relative h-2 overflow-hidden rounded-full bg-surface-3">
+      <div className="relative h-1 overflow-hidden rounded-full bg-surface-3">
         {u != null && (
           <i
             className={cn('absolute inset-y-0 left-0 rounded-full', color)}
             style={{ width: `${Math.min(100, u)}%` }}
           />
         )}
-        <em
-          className="absolute -inset-y-0.5 w-0.5 bg-text-3/70"
-          style={{ left: `${cell.limitPct}%` }}
-          aria-hidden="true"
-        />
       </div>
-      {cell.detail && (
-        <div className="truncate text-[11px] text-text-3" title={cell.detail}>
-          {cell.detail}
-        </div>
-      )}
     </div>
   );
 }
@@ -389,23 +393,14 @@ function CapacityCard({
   onMeasure: () => void;
   onManual: () => void;
 }) {
-  const leftTone = s.left == null ? 'mute' : s.tone;
+  const role = s.role === 'exit' ? 'нода' : s.role === 'bridge' ? 'мост' : 'не нода';
+  const linkNote =
+    s.link.source === 'none'
+      ? 'канал неизвестен'
+      : `канал: ${{ manual: 'вручную', measured: 'замер', nic: 'сетевая карта' }[s.link.source]}`;
   return (
     <li className="min-w-0 rounded-[14px] border border-border bg-bg-2/45 p-3.5">
       <div className="flex min-w-0 items-center gap-2.5">
-        <span
-          className={cn(
-            'size-2 flex-none rounded-full',
-            s.tone === 'crit'
-              ? 'bg-crit shadow-[0_0_10px_var(--color-crit)]'
-              : s.tone === 'warn'
-                ? 'bg-warn'
-                : s.tone === 'ok'
-                  ? 'bg-ok'
-                  : 'bg-text-3',
-          )}
-          aria-hidden="true"
-        />
         <button
           type="button"
           onClick={() => openServer(s.serverId)}
@@ -413,8 +408,8 @@ function CapacityCard({
         >
           <span className="min-w-0">
             <b className="block truncate text-[13.5px]">{s.name}</b>
-            <span className="block text-[11.5px] text-text-3">
-              В пик {s.onlinePeak == null ? '—' : nf(s.onlinePeak)}
+            <span className="block truncate text-[11.5px] text-text-3">
+              {role} · {linkNote} · в пик {s.onlinePeak == null ? '—' : nf(s.onlinePeak)}
             </span>
           </span>
           {s.country && <CountryFlag code={s.country} size="sm" decorative />}
@@ -422,51 +417,17 @@ function CapacityCard({
         <CapacityActions s={s} onMeasure={onMeasure} onManual={onManual} className="size-9 flex-none" />
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border pt-3 sm:grid-cols-4 xl:grid-cols-2">
         {CELL_KEYS.map((key) => (
-          <div key={key} className="min-w-0 rounded-[10px] bg-surface-2 p-2.5">
-            <div className="mb-1.5 text-[10.5px] text-text-3">{capital(CAPACITY_RESOURCE_LABELS[key])}</div>
+          <div key={key} className="min-w-0">
+            <div className="mb-1 text-[10.5px] text-text-3">{capital(CAPACITY_RESOURCE_LABELS[key])}</div>
             <Meter cell={s.cells[key]} lim={s.bottleneck === key} tone={s.tone} />
           </div>
         ))}
       </div>
 
-      <div className="mt-3 flex items-center gap-3 border-t border-border pt-3">
-        <span
-          className={cn(
-            'inline-flex rounded-[8px] px-2 py-1 text-[11px] font-semibold',
-            TONE_PILL[s.bottleneck ? (s.tone === 'ok' ? 'mute' : s.tone) : 'mute'],
-          )}
-        >
-          {s.bottleneck
-            ? `Упор: ${CAPACITY_RESOURCE_LABELS[s.bottleneck]}`
-            : STATUS_TEXT[s.status] || 'Без упора'}
-        </span>
-        <span className="ml-auto text-right">
-          <span className="block text-[10.5px] text-text-3">Ещё влезет</span>
-          <b className={cn('text-[17px] leading-none tabular-nums', TONE_PILL[leftTone].split(' ')[1])}>
-            {s.left == null ? '—' : `≈ ${nf(s.left)}`}
-          </b>
-        </span>
-      </div>
-
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={onMeasure}
-          className="inline-flex h-11 cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-2 text-[12px] font-semibold text-text-2 hover:text-foreground"
-        >
-          <GaugeIcon className="size-4" aria-hidden="true" />
-          Замерить
-        </button>
-        <button
-          type="button"
-          onClick={onManual}
-          className="inline-flex h-11 cursor-pointer items-center justify-center gap-1.5 rounded-[10px] bg-brand px-2 text-[12px] font-semibold text-white hover:bg-brand-hover"
-        >
-          <PencilIcon className="size-4" aria-hidden="true" />
-          Указать канал
-        </button>
+      <div className="mt-3 border-t border-border pt-3">
+        <Verdict server={s} />
       </div>
     </li>
   );
@@ -480,8 +441,8 @@ function Row({ s, onMeasure, onManual }: { s: CapacityServer; onMeasure: () => v
       : `канал: ${{ manual: 'вручную', measured: 'замер', nic: 'сетевая карта' }[s.link.source]}`;
   return (
     <tr className="border-t border-border">
-      <td className="px-4 py-3.5">
-        <div className="grid grid-cols-[minmax(220px,1.5fr)_90px_minmax(116px,.75fr)_128px_34px] items-center gap-4">
+      <td className="px-4 py-3">
+        <div className="grid grid-cols-[minmax(190px,1.25fr)_64px_repeat(4,minmax(92px,.72fr))_minmax(210px,1.35fr)_34px] items-center gap-3">
           <div className="min-w-0">
             <button
               type="button"
@@ -498,44 +459,62 @@ function Row({ s, onMeasure, onManual }: { s: CapacityServer; onMeasure: () => v
           <div className="text-right tabular-nums">
             {s.onlinePeak == null ? <span className="text-text-3">—</span> : nf(s.onlinePeak)}
           </div>
-          <div>
-            {s.bottleneck ? (
-              <span
-                className={cn(
-                  'inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                  TONE_PILL[s.tone === 'ok' ? 'mute' : s.tone],
-                )}
-              >
-                {CAPACITY_RESOURCE_LABELS[s.bottleneck]}
-              </span>
-            ) : (
-              <span className="text-text-3">—</span>
-            )}
-          </div>
-          <div className="text-right">
-            <span
-              title={s.note ?? undefined}
-              className={cn(
-                'inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap',
-                TONE_PILL[s.left == null ? 'mute' : s.tone],
-              )}
-            >
-              {s.left != null ? `ещё ≈ ${nf(s.left)}` : STATUS_TEXT[s.status] || 'не посчитано'}
-            </span>
-          </div>
-          <CapacityActions s={s} onMeasure={onMeasure} onManual={onManual} />
-        </div>
-
-        <div className="mt-3 grid grid-cols-4 gap-4 pr-[50px]">
           {CELL_KEYS.map((key) => (
-            <div key={key} className="min-w-0">
-              <div className="mb-1 text-[10.5px] text-text-3">{capital(CAPACITY_RESOURCE_LABELS[key])}</div>
-              <Meter cell={s.cells[key]} lim={s.bottleneck === key} tone={s.tone} />
-            </div>
+            <Meter key={key} cell={s.cells[key]} lim={s.bottleneck === key} tone={s.tone} />
           ))}
+          <Verdict server={s} />
+          <CapacityActions s={s} onMeasure={onMeasure} onManual={onManual} />
         </div>
       </td>
     </tr>
+  );
+}
+
+function Verdict({ server: s }: { server: CapacityServer }) {
+  const resource = s.bottleneck ? CAPACITY_RESOURCE_LABELS[s.bottleneck] : null;
+  const used = s.bottleneck ? s.cells[s.bottleneck].usedPct : null;
+  const title =
+    s.left == null
+      ? STATUS_TEXT[s.status] || 'Недостаточно данных'
+      : s.tone === 'crit'
+        ? s.left <= 0
+          ? 'Безопасный запас исчерпан'
+          : `Осталось ≈ ${nf(s.left)}`
+        : `Можно добавить ≈ ${nf(s.left)}`;
+  const detail =
+    resource && used != null
+      ? `Первым ограничит: ${resource} ${Math.round(used)} %`
+      : s.note || 'Вердикт появится после накопления данных.';
+  return (
+    <div
+      title={s.note ?? undefined}
+      className={cn(
+        'min-w-0 border-l-2 pl-3',
+        s.tone === 'crit'
+          ? 'border-crit'
+          : s.tone === 'warn'
+            ? 'border-warn'
+            : s.tone === 'ok'
+              ? 'border-ok'
+              : 'border-border-2',
+      )}
+    >
+      <div
+        className={cn(
+          'truncate text-[12px] font-semibold',
+          s.tone === 'crit'
+            ? 'text-crit'
+            : s.tone === 'warn'
+              ? 'text-warn'
+              : s.tone === 'ok'
+                ? 'text-ok'
+                : 'text-text-2',
+        )}
+      >
+        {title}
+      </div>
+      <div className="mt-0.5 truncate text-[10.5px] text-text-3">{detail}</div>
+    </div>
   );
 }
 

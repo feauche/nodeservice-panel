@@ -22,7 +22,7 @@ export const Route = createFileRoute('/')({
 
 /**
  * «Обзор»: вкладки «Сейчас / Статистика / Ёмкость» в шапке (витрины `stats-switch-variants.html`, вариант 1, и
- * `capacity-variants.html`, A1).
+ * `capacity-0.58-readings-variants.html`, вариант A).
  */
 function Overview() {
   const search = Route.useSearch();
