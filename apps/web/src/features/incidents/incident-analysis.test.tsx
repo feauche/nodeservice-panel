@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -134,7 +134,7 @@ describe('IncidentAnalysis', () => {
     expect(inc.analysis?.status).toBe('cancelled');
     expect(screen.queryByRole('button', { name: 'Отменить разбор' })).not.toBeInTheDocument();
     // Отменённый разбор не «оживает»: дольше, чем шёл бы весь разбор, вывода нет.
-    await new Promise((r) => setTimeout(r, 1200));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 1200)));
     expect(screen.queryByText(/Процессор загружен без пауз/)).not.toBeInTheDocument();
     expect(screen.getByText('Разбор отменён.')).toBeInTheDocument();
     mockAnalysis.stepMs = 20;

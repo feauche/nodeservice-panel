@@ -67,7 +67,7 @@ function preflightOk() {
 }
 
 describe('terminal store', () => {
-  afterEach(() => useTerminalStore.getState().close());
+  afterEach(() => act(() => useTerminalStore.getState().close()));
 
   it('open заполняет сервер, повторный open заменяет, close очищает', () => {
     const { open, close } = useTerminalStore.getState();
@@ -87,7 +87,7 @@ describe('TerminalHost / TerminalWindow', () => {
     vi.stubGlobal('WebSocket', MockWebSocket);
   });
   afterEach(() => {
-    useTerminalStore.getState().close();
+    act(() => useTerminalStore.getState().close());
     vi.unstubAllGlobals();
   });
 
@@ -273,8 +273,10 @@ describe('терминал поверх разделов (настоящие м�
     preflightOk();
   });
   afterEach(() => {
-    useTerminalStore.getState().close();
-    useServerModalStore.getState().close();
+    act(() => {
+      useTerminalStore.getState().close();
+      useServerModalStore.getState().close();
+    });
     vi.unstubAllGlobals();
   });
 

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { CountryFlag, hasFlag } from './country-flag';
@@ -14,7 +14,7 @@ describe('CountryFlag', () => {
   it('рядом с названием флаг декоративный: без подписи для читалок', async () => {
     const { container } = render(<CountryFlag code="NL" decorative />);
     await screen.findByTestId('country-flag-loading').catch(() => null);
-    await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => expect(container.querySelector('img')).not.toBeNull());
     const img = container.querySelector('img');
     expect(img).not.toBeNull();
     expect(img).toHaveAttribute('alt', '');

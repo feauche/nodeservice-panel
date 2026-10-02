@@ -600,7 +600,8 @@ export class IncidentAnalysisService implements OnModuleInit {
           ping: p.ping,
         }));
       checked['порт из разных стран'] = reach.length > 0;
-      if (result) this.evidenceReach.set(inc.id, withPanelProbe(result, me.port, panelOpen));
+      if (result)
+        this.evidenceReach.set(inc.id, withPanelProbe({ ...result, purpose: 'ssh' }, me.port, panelOpen));
       out.push(
         reachText(me.port, reach, panelOpen, me.agentStatus === 'online' && me.sshOk === true, {
           agentOnline: me.agentStatus === 'online',

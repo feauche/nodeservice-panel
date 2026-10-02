@@ -6,8 +6,10 @@ import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
-/** Версия панели — из package.json; показывается внизу меню. */
-const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf8')) as { version: string };
+/** Версия панели — из package.json; показывается в верхней панели. */
+const pkg = JSON.parse(readFileSync(path.resolve(import.meta.dirname, 'package.json'), 'utf8')) as {
+  version: string;
+};
 
 /** Короткий хэш коммита: в Docker приходит build-arg (в контексте сборки нет .git), локально — из git. */
 function commit(): string {
@@ -37,7 +39,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
-  resolve: { alias: { '@': path.resolve(__dirname, './src') } },
+  resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
   server: {
     port: 5173,
     host: true,

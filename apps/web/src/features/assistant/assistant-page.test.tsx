@@ -1,5 +1,5 @@
 import { ASSISTANT_MESSAGE_MAX, type AssistantMessage } from '@nodeservice/shared';
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -238,8 +238,11 @@ describe('AssistantPage', () => {
   describe('«Джарвис думает» и переходы между разделами', () => {
     const typing = () => screen.queryByRole('status', { name: 'Джарвис думает' });
     // Тестовый роутер не знает про «/other» в типах приложения.
-    const go = (router: unknown, to: string) =>
-      (router as { navigate: (o: { to: string }) => Promise<unknown> }).navigate({ to });
+    const go = async (router: unknown, to: string) => {
+      await act(async () => {
+        await (router as { navigate: (o: { to: string }) => Promise<unknown> }).navigate({ to });
+      });
+    };
     const setup = () => {
       try {
         localStorage.clear();
@@ -273,7 +276,7 @@ describe('AssistantPage', () => {
       // Запрос ещё идёт: индикатор на месте сразу, поле ввода занято, вопрос показан один раз.
       expect(await screen.findByRole('status', { name: 'Джарвис думает' })).toBeInTheDocument();
       expect(await screen.findByLabelText('Сообщение Джарвису')).toBeDisabled();
-      expect(screen.getAllByText('Второй вопрос')).toHaveLength(1);
+      await waitFor(() => expect(screen.getAllByText('Второй вопрос')).toHaveLength(1));
 
       // Ответ пришёл: индикатора нет, поле свободно.
       await waitFor(() => expect(typing()).toBeNull(), { timeout: 4000 });
@@ -293,14 +296,24 @@ describe('AssistantPage', () => {
       await go(router, '/assistant');
 
       expect(await screen.findByRole('status', { name: 'Джарвис думает' })).toBeInTheDocument();
-      expect(screen.getAllByText('Вопрос в новом чате')).toHaveLength(1);
-      expect(
-        screen.queryByText('Спросите об инцидентах, серверах или о том, как что-то починить'),
-      ).toBeNull();
+      await waitFor(() =>
+        expect(
+          within(screen.getByTestId('assistant-messages')).getAllByText('Вопрос в новом чате'),
+        ).toHaveLength(1),
+      );
+      await waitFor(() =>
+        expect(
+          screen.queryByText('Спросите об инцидентах, серверах или о том, как что-то починить'),
+        ).toBeNull(),
+      );
 
       await waitFor(() => expect(typing()).toBeNull(), { timeout: 4000 });
       // Беседа открылась сама: вопрос показан из истории, ответ на месте, поле свободно.
-      await waitFor(() => expect(screen.getAllByText('Вопрос в новом чате')).toHaveLength(1));
+      await waitFor(() =>
+        expect(
+          within(screen.getByTestId('assistant-messages')).getAllByText('Вопрос в новом чате'),
+        ).toHaveLength(1),
+      );
       await waitFor(() => expect(Object.values(mockAssistant.messages)[0]?.length).toBe(2));
       await waitFor(() => expect(screen.getByLabelText('Сообщение Джарвису')).not.toBeDisabled());
     });

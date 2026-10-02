@@ -24,6 +24,17 @@ describe('ReachabilityCard (B1)', () => {
     expect(screen.getByText('443: открыт с 2 из 3')).toBeInTheDocument();
   });
 
+  it('в разборе инцидента явно отделяет SSH и ICMP от пользовательского порта ноды', () => {
+    const result = sampleReach('Финляндия - 1', 'open');
+    result.purpose = 'ssh';
+    result.probes[0] = { ...(result.probes[0] as (typeof result.probes)[number]), ping: 23 };
+    render(<ReachabilityCard result={result} />);
+    expect(screen.getByText('Доступность SSH сервера Финляндия - 1')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'SSH 22' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'ICMP-пинг' })).toBeInTheDocument();
+    expect(within(screen.getByRole('table')).getByText('23 мс')).toBeInTheDocument();
+  });
+
   it('не ответивший проверяющий показан строкой с причиной и не считается в шапке', () => {
     const r = sampleReach('de-1', 'open');
     r.probes[1] = {

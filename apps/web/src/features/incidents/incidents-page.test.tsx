@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { delay, http } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -287,7 +287,7 @@ describe('IncidentsPage', () => {
     expect(await screen.findByText('Пока спокойно', undefined, { timeout: 400 })).toBeInTheDocument();
     expect(screen.queryAllByTestId('incident-row')).toHaveLength(0);
     // И после перечитывания — тоже пусто.
-    await delay(700);
+    await act(async () => delay(700));
     expect(screen.getByText('Пока спокойно')).toBeInTheDocument();
     expect(screen.queryAllByTestId('incident-row')).toHaveLength(0);
   });
@@ -366,7 +366,7 @@ describe('IncidentsPage', () => {
     mockIncidents.items = mockIncidents.items.slice(0, 12);
     slowList(300);
     const seen = watchList();
-    await queryClient.invalidateQueries({ queryKey: ['incidents'] });
+    await act(async () => queryClient.invalidateQueries({ queryKey: ['incidents'] }));
     await screen.findByText(/3–12 из 12/, undefined, { timeout: 3000 });
     await waitFor(() => expect(screen.getByTestId('incidents-list')).toHaveAttribute('aria-busy', 'false'));
     expect(rowNumbers()).toEqual(range(3, 12));
@@ -394,7 +394,7 @@ describe('IncidentsPage', () => {
     await screen.findByText('Пока спокойно');
     // Решённые появились снова — столько же, границы страниц те же.
     mockIncidents.items = again;
-    await queryClient.invalidateQueries({ queryKey: ['incidents'] });
+    await act(async () => queryClient.invalidateQueries({ queryKey: ['incidents'] }));
     await screen.findByText(/1–10 из 45/);
     slowList(300);
     const seen = watchList();

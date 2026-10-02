@@ -365,6 +365,7 @@ export class NodeAnomalyJob {
       windowMin: minutes,
       result,
       portKnown: Boolean(inbound?.port),
+      nodePort: inbound?.port ?? null,
       payment,
       // Сервер работает: закрытый порт ноды тогда не «сервер отключили».
       serverAlive: alive,

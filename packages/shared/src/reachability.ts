@@ -4,6 +4,8 @@ import { z } from 'zod';
 export const REACH_VERDICTS = ['reachable', 'closed_everywhere', 'partial', 'unknown'] as const;
 export const reachabilityResultSchema = z.object({
   target: z.object({ name: z.string(), address: z.string() }),
+  /** Что именно проверяет карточка. В разборе инцидента это SSH, а не пользовательский порт ноды. */
+  purpose: z.enum(['ssh', 'node', 'generic']).optional(),
   probes: z.array(
     z.object({
       from: z.string(),

@@ -613,6 +613,15 @@ describe('вход сервера-выхода', () => {
     expect(ruOnly.detail).not.toContain('💳');
   });
 
+  it('первичное дело и Telegram называют пользовательский порт и не выдают его за SSH или пинг', () => {
+    const r = drop(down, { nodePort: 443, serverAlive: true });
+    expect(r.detail).toContain(
+      'Проверяется пользовательский порт ноды 443 (VPN-трафик), а не SSH и не ICMP-пинг.',
+    );
+    expect(r.detail).toContain('Из России:');
+    expect(r.detail).toContain('Из-за рубежа:');
+  });
+
   it('из России порт молчит, из-за рубежа проверить нечем: сервер «недоступным» не называем, вывод без «вероятнее всего»', () => {
     const r = drop(base, { payment: soon });
     expect(r.kind).toBe('node_blocked');

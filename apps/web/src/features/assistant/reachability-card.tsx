@@ -32,13 +32,22 @@ export function ReachabilityCard({ result }: { result: ReachabilityResult }) {
   const ports = result.ports.map((p) => p.port);
   const answered = result.probes.filter((p) => p.ok).length;
   const dnsBad = !result.dns.consistent;
+  const purpose = result.purpose ?? 'generic';
+  const targetLabel =
+    purpose === 'ssh'
+      ? `Доступность SSH сервера ${result.target.name}`
+      : purpose === 'node'
+        ? `Доступность пользовательского порта ноды ${result.target.name}`
+        : `Доступность ${result.target.name} снаружи`;
+  const portLabel = (port: number) =>
+    purpose === 'ssh' ? `SSH ${port}` : purpose === 'node' ? `Порт ноды ${port}` : `Порт ${port}`;
   return (
     <figure
       data-testid="reachability-card"
       className="m-0 mt-2.5 overflow-hidden rounded-[12px] border border-border bg-surface-2"
     >
       <figcaption className="flex flex-wrap items-baseline gap-x-2 border-b border-border px-3 py-2 text-[13px] font-semibold">
-        Доступность {result.target.name} снаружи
+        {targetLabel}
         <span className="text-[12px] font-normal text-text-3">
           с {answered} {answered === 1 ? 'проверенной точки' : 'проверенных точек'}
         </span>
@@ -58,21 +67,26 @@ export function ReachabilityCard({ result }: { result: ReachabilityResult }) {
               )}
             </div>
             {pr.ok ? (
-              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-                {ports.map((p) => {
-                  const r = pr.ports.find((x) => x.port === p);
-                  return (
-                    <span key={p} className="inline-flex items-center gap-1.5">
-                      <span className="text-text-3">{p}</span>
-                      {r ? (
-                        <Cell open={r.open} ms={r.ms} />
-                      ) : (
-                        <span className="text-text-3">Не проверялся</span>
-                      )}
-                    </span>
-                  );
-                })}
-              </div>
+              <>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                  {ports.map((p) => {
+                    const r = pr.ports.find((x) => x.port === p);
+                    return (
+                      <span key={p} className="inline-flex items-center gap-1.5">
+                        <span className="text-text-3">{portLabel(p)}</span>
+                        {r ? (
+                          <Cell open={r.open} ms={r.ms} />
+                        ) : (
+                          <span className="text-text-3">Не проверялся</span>
+                        )}
+                      </span>
+                    );
+                  })}
+                </div>
+                <div className="mt-1 text-text-3">
+                  ICMP-пинг: {pr.ping !== null ? `${pr.ping} мс` : 'нет ответа'}
+                </div>
+              </>
             ) : (
               <div className="mt-1 text-text-3">Не ответил: {pr.error ?? 'нет данных'}</div>
             )}
@@ -92,9 +106,12 @@ export function ReachabilityCard({ result }: { result: ReachabilityResult }) {
                   scope="col"
                   className="px-3 py-1.5 text-center text-[11.5px] font-semibold text-text-3"
                 >
-                  Порт {p}
+                  {portLabel(p)}
                 </th>
               ))}
+              <th scope="col" className="px-3 py-1.5 text-center text-[11.5px] font-semibold text-text-3">
+                ICMP-пинг
+              </th>
               <th scope="col" className="px-3 py-1.5 text-center text-[11.5px] font-semibold text-text-3">
                 DNS
               </th>
@@ -124,6 +141,9 @@ export function ReachabilityCard({ result }: { result: ReachabilityResult }) {
                     Не ответил: {pr.error ?? 'нет данных'}
                   </td>
                 )}
+                <td className="px-3 py-1.5 text-center tabular-nums text-text-3">
+                  {pr.ok ? (pr.ping !== null ? `${pr.ping} мс` : '—') : '—'}
+                </td>
                 <td
                   className={cn(
                     'px-3 py-1.5 text-center tabular-nums',

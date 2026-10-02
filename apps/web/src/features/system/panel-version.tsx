@@ -57,7 +57,7 @@ export function PanelVersion({ version, build }: { version: string; build: strin
             : `NodeService v${shownVersion}${build ? ` · ${build}` : ''}`
         }
         className={cn(
-          'inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] border px-2.5 font-mono text-[11px] font-semibold transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
+          'inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-[10px] border px-2.5 font-mono text-[11px] font-semibold transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
           available
             ? 'border-warn/40 bg-warn-soft text-warn hover:border-warn/60 hover:bg-warn-soft/80'
             : 'border-border bg-surface text-text-3 hover:border-border-2 hover:text-text-2',

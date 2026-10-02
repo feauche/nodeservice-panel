@@ -636,6 +636,8 @@ export function describeAnomaly(input: {
   windowMin: number;
   result: BlockCheckResult;
   portKnown: boolean;
+  /** Пользовательский порт ноды из Remnawave. Это не SSH-порт сервера и не ICMP-пинг. */
+  nodePort?: number | null | undefined;
   /**
    * Оплаты сервера из «Биллинга», у которых срок прошёл или наступит в ближайшие сутки. null — «Биллинг»
    * не спрашивали (ноды нет среди серверов панели) или он не ответил: про оплату панель тогда не знает.
@@ -674,6 +676,11 @@ export function describeAnomaly(input: {
   const facts = payment ?? NO_PAYMENT_FACTS;
   const pct = before > 0 ? Math.round(((before - after) / before) * 100) : 0;
   const lines = [`Онлайн: ${before} → ${after} (−${pct} %) за ${minutesText(windowMin)}`];
+  if (input.nodePort)
+    lines.push(
+      '',
+      `Проверяется пользовательский порт ноды ${input.nodePort} (VPN-трафик), а не SSH и не ICMP-пинг.`,
+    );
   const confirmed = result.probes.length > 0 && result.verdict !== 'ok';
   const rental = /аренд|rent/i.test(nodeName);
   const agentOn = Boolean(input.serverAlive);
