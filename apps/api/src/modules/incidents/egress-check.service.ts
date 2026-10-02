@@ -66,12 +66,34 @@ export class EgressCheckService {
     return value;
   }
 
+  /**
+   * Сначала пробуем войти прямо сейчас напрямую. Поле `sshOk` в карточке — результат прошлой проверки:
+   * оно могло остаться зелёным, хотя маршрут от панели уже пропал. Если прямой вход не удался, свежая
+   * встречная проверка находит серверы парка, с которых порт открыт, и проверка повторяется через один из
+   * них. Так кнопка «Выяснить почему» действительно пробует оба пути, которые обещает человеку.
+   */
+  async checkWithFallback(
+    server: Pick<Server, 'id'>,
+    all: Server[],
+    discoverOpenFrom: () => Promise<readonly string[]>,
+    opts: { force?: boolean } = {},
+  ): Promise<EgressReport | null> {
+    const direct = await this.check(server, all, [], opts);
+    if (direct) return direct;
+    const openFrom = await discoverOpenFrom().catch(() => []);
+    if (openFrom.length === 0) return null;
+    // Первая попытка сохранила null в коротком кэше — повтор через ступеньку всегда должен быть свежим.
+    return this.check(server, all, openFrom, { force: true });
+  }
+
   private async run(
     server: Pick<Server, 'id'>,
     all: Server[],
     openFrom: readonly string[],
   ): Promise<EgressReport> {
-    const panelHost = new URL(this.config.get('PUBLIC_URL')).hostname;
+    // Проверяем именно тот маршрут, по которому должен держать WebSocket агент. Интерфейс панели может
+    // жить в Польше, а агентский вход — идти через другой reverse proxy или туннель.
+    const panelHost = new URL(this.config.get('AGENT_PUBLIC_URL') ?? this.config.get('PUBLIC_URL')).hostname;
     const targets = egressTargets(panelHost, server, all);
     const command = buildEgressCommand(targets, panelHost);
     const { target } = await this.servers.sshTargetFor(server.id);

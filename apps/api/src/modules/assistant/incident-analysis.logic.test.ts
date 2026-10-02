@@ -10,6 +10,7 @@ import {
   dataBlock,
   entryAbsentText,
   freshCheckText,
+  NETWORK_RULES,
   nodeAbsentWhy,
   nodeNowText,
   nodeOfIncident,
@@ -131,6 +132,11 @@ describe('инструменты и промпты разбора', () => {
     expect(s).toContain('замени обычными словами');
     expect(s).toContain('а не для программиста');
     expect(s).toContain('а не ISO-строкой');
+  });
+  it('Джарвис не связывает ICMP и TCP с наличием сайта маскировки', () => {
+    expect(NETWORK_RULES).toContain('ICMP-пинг, TCP-порт и имя маскировки — три разные вещи');
+    expect(NETWORK_RULES).toContain('Имя маскировки не нужно ни для ICMP, ни для TCP');
+    expect(NETWORK_RULES).toContain('доступность решает TCP-порт');
   });
   it('правило требует сверять похожие сбои у других серверов, прежде чем винить хостера именно этого сервера', () => {
     const s = analysisSystem('novice');

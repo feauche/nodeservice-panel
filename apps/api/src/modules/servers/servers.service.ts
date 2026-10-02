@@ -825,7 +825,11 @@ export class ServersService {
   }
 
   private agentInstallParams(token: string) {
-    return { repo: this.config.get('AGENT_REPO'), token, panel: this.config.get('PUBLIC_URL') };
+    return {
+      repo: this.config.get('AGENT_REPO'),
+      token,
+      panel: this.config.get('AGENT_PUBLIC_URL') ?? this.config.get('PUBLIC_URL'),
+    };
   }
 
   /** Новый токен подключения агента (прежние живые отзываются); `tokenId` — чтобы отозвать именно его. */

@@ -123,14 +123,11 @@ export class AgentPendingJob {
   }
 
   private async explain(s: Server, all: Server[]): Promise<void> {
-    // Панель сама до сервера не заходит — ищем, откуда он доступен, и заходим через тот сервер.
-    const openFrom =
-      s.sshOk === true
-        ? []
-        : (await this.blockCheck.countryReach(s.host, s.port, s.id, all)).results
-            .filter((r) => r.open)
-            .map((r) => r.from);
-    const report = await this.egress.check(s, all, openFrom);
+    const report = await this.egress.checkWithFallback(s, all, async () =>
+      (await this.blockCheck.countryReach(s.host, s.port, s.id, all)).results
+        .filter((r) => r.open)
+        .map((r) => r.from),
+    );
     const verdict = report ? egressVerdict(report) : 'unknown';
     const body = !report
       ? `Агент установлен, но за 3 минуты не вышел на связь, и зайти на сервер, чтобы выяснить почему, не удалось ни напрямую, ни через другие серверы парка. Проверьте сервер у хостера. На самом сервере причину покажет команда «journalctl -u nodeservice-agent -n 20 --no-pager -l».`

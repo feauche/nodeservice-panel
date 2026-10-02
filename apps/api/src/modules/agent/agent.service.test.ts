@@ -12,7 +12,7 @@ interface Row {
 }
 
 /** Служба агентов на памяти: запись сервера — объект, Журнал — список. */
-function make(row: Row | null) {
+function make(row: Row | null, agentPublicUrl?: string) {
   const journal: Array<{ action: string; metadata?: Record<string, unknown> }> = [];
   const repo = {
     findById: async () => (row ? { ...row } : undefined),
@@ -40,7 +40,9 @@ function make(row: Row | null) {
     audit as never,
     autochecks as never,
     vm as never,
-    {} as never,
+    {
+      get: (key: string) => ({ PUBLIC_URL: 'https://panel.test/', AGENT_PUBLIC_URL: agentPublicUrl })[key],
+    } as never,
   );
   const job = new AgentOfflineJob(repo as never, agents, autochecks as never);
   const online = () => journal.filter((e) => e.action === 'server.agent.online');
@@ -158,5 +160,14 @@ describe('AgentService: сигнал по открытому соединени�
     process.env.NODE_ENV = 'production';
     await ctx.job.tick();
     expect(ctx.offline()[0]?.metadata?.reason).toBe('сигнала от агента нет дольше 30 с');
+  });
+});
+
+describe('AgentService: адрес WebSocket', () => {
+  it('использует отдельный внешний маршрут агентов и убирает завершающий слеш', () => {
+    expect(make(server(), 'https://agents.example.net/').agents.wsUrl()).toBe(
+      'wss://agents.example.net/api/agent/v1/ws',
+    );
+    expect(make(server()).agents.wsUrl()).toBe('wss://panel.test/api/agent/v1/ws');
   });
 });

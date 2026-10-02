@@ -52,6 +52,7 @@ import { CLS_USER } from '../auth/cls-keys.js';
 import { PanelLifecycleService } from '../health/panel-lifecycle.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { esc } from '../notifications/telegram/telegram.format.js';
+import { backupBlocks } from '../notifications/telegram/telegram.rich.js';
 import { TelegramService } from '../notifications/telegram/telegram.service.js';
 import { decryptFile, encryptFile, isEncrypted } from './backup-crypto.js';
 import { BackupError, BackupToolError, explainBackupError, rawErrorText } from './backup-errors.js';
@@ -596,15 +597,34 @@ export class BackupsService implements OnModuleInit {
     ]
       .filter(Boolean)
       .join(', ');
-    const caption = `🗄 <b>Резервная копия NodeService</b>\n${esc(when)} (${esc(zoneLabel(at, tz))}) · ${esc(mb(size))}\n${esc(parts)} · ${encrypted ? 'с паролем' : '⚠ без пароля'}\n\n<i>Восстановить: «Настройки → Резервные копии» → «Восстановить из файла».</i>`;
+    const zone = zoneLabel(at, tz);
+    const sizeText = mb(size);
+    const caption = `🗄 <b>Резервная копия NodeService</b>\n${esc(when)} (${esc(zone)}) · ${esc(sizeText)}\n${esc(parts)} · ${encrypted ? 'с паролем' : '⚠ без пароля'}\n\n<i>Восстановить: «Настройки → Резервные копии» → «Восстановить из файла».</i>`;
+    const rich = await this.telegram.richEnabled();
     if (size > TELEGRAM_FILE_LIMIT_BYTES) {
-      await this.telegram.sendTo(
-        d,
-        `${caption}\n\nФайл больше 50 МБ — Telegram его не примет. Скачайте копию в панели.`,
-      );
-      return { ok: false, note: 'Telegram: файл больше 50 МБ' };
+      const note = 'Файл больше 50 МБ — Telegram его не примет. Скачайте копию в панели.';
+      if (rich)
+        await this.telegram.sendRichTo(
+          d,
+          `${caption}\n\n${note}`,
+          backupBlocks({ when, zone, size: sizeText, contents: parts, encrypted, fileNote: note }),
+        );
+      else await this.telegram.sendTo(d, `${caption}\n\n${note}`);
+      return { ok: false, note: 'файл больше 50 МБ' };
     }
-    const res = await this.telegram.sendFileTo(d, { path, name }, caption);
+    // Telegram не умеет прикрепить документ внутрь sendRichMessage. Поэтому карточка приходит первой,
+    // а архив — коротким ответом на неё: визуально это одна связка и файл не теряется среди уведомлений.
+    let replyTo: number | null = null;
+    if (rich) {
+      const summary = await this.telegram.sendRichTo(
+        d,
+        caption,
+        backupBlocks({ when, zone, size: sizeText, contents: parts, encrypted }),
+      );
+      if (summary.ok) replyTo = summary.messageId;
+    }
+    const fileCaption = replyTo === null ? caption : '📎 <b>Архив резервной копии</b>';
+    const res = await this.telegram.sendFileTo(d, { path, name }, fileCaption, replyTo);
     return res.ok ? { ok: true, note: null } : { ok: false, note: res.error.slice(0, 200) };
   }
 

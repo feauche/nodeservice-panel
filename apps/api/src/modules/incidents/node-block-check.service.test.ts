@@ -93,13 +93,13 @@ describe('проверка порта ноды: почему не состоял
 describe('проверка порта ноды: смешанная картина', () => {
   const all = [srv('exit', 'DE'), srv('ru1', 'RU'), srv('ru2', 'RU'), srv('ru3', 'RU'), srv('nl', 'NL')];
 
-  it('с одного российского сервера проходит, с двух нет — «порт отвечает не отовсюду», из-за рубежа не стучимся', async () => {
+  it('с одного российского сервера проходит, с двух нет — «порт отвечает не отовсюду»; зарубежный результат тоже сохраняется', async () => {
     const { svc, calls } = setup({ ru1: OK, ru2: DEAD, ru3: DEAD, nl: PORT });
     const r = await svc.check('n', '1.2.3.4', 443, 'site.ru', 'exit', all);
     // Сервер отвечает: это не «недоступен» и не «блокировка IP из России».
     expect(r.verdict).toBe('partial');
-    expect(r.foreign).toEqual([]);
-    expect(calls).not.toContain('nl');
+    expect(r.foreign).toHaveLength(1);
+    expect(calls).toContain('nl');
   });
 
   it('из России не отвечает, а из-за рубежа проверки нет — названа настоящая причина, а не «зарубежных серверов нет»', async () => {
@@ -153,7 +153,7 @@ describe('проверка порта ноды: смешанная картин�
       verdict: 'partial',
       detail: 'Порт отвечает не каждый раз: подключение прошло в 1 из 3 попыток.',
     });
-    expect(r.foreign).toEqual([]);
+    expect(r.foreign).toHaveLength(1);
   });
 
   it('из России не отвечает никому, из-за рубежа отвечает — блокировка IP; не отвечает и там — недоступен', async () => {

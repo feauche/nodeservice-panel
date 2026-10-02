@@ -58,6 +58,8 @@ class FakeTelegram {
   networkDown = false;
   /** Следующие N отправок оборвутся; нужно для проверки порядка адресной очереди. */
   sendFailuresRemaining = 0;
+  /** Следующая отправка получает настоящий ответ Bot API 429 с указанной паузой. */
+  retryAfterSeconds: number | null = null;
   async call<T>(
     token: string,
     method: string,
@@ -70,6 +72,16 @@ class FakeTelegram {
     if (this.sendFailuresRemaining > 0 && (method === 'sendMessage' || method === 'sendRichMessage')) {
       this.sendFailuresRemaining -= 1;
       throw new Error('socket hang up');
+    }
+    if (this.retryAfterSeconds && (method === 'sendMessage' || method === 'sendRichMessage')) {
+      const retryAfterSeconds = this.retryAfterSeconds;
+      this.retryAfterSeconds = null;
+      return {
+        ok: false,
+        status: 429,
+        description: 'Too Many Requests: retry later',
+        retryAfterSeconds,
+      };
     }
     if (method === 'sendRichMessage' && this.richMode === 'old-server')
       return { ok: false, status: 404, description: 'Not Found: method not found' };
@@ -922,6 +934,20 @@ describe('telegram e2e', () => {
     expect(await outboxCount()).toBe(0);
     expect(await tgs.retryOutbox()).toBe(0);
     expect(tg.ids).toHaveLength(deliveredBefore + 1);
+  });
+
+  it('ответ 429 откладывает адресную очередь ровно на retry_after Telegram', async () => {
+    await fresh();
+    const tgs = app.get(TelegramService);
+    tg.retryAfterSeconds = 137;
+    const before = Date.now();
+    await tgs.dispatch({ event: 'maintenance', title: 'Дождаться разрешения Telegram' });
+    const queued = await app
+      .get<Db>(DB)
+      .execute<{ next_attempt_at: string }>(sql`select next_attempt_at from telegram_outbox limit 1`);
+    const next = new Date(queued.rows[0]?.next_attempt_at ?? 0).getTime();
+    expect(next).toBeGreaterThanOrEqual(before + 137_000);
+    expect(next).toBeLessThanOrEqual(Date.now() + 137_500);
   });
 
   it('обрыв при утренней сводке не теряет накопленное за тихие часы', async () => {

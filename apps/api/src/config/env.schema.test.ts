@@ -30,5 +30,12 @@ describe('validateEnv', () => {
   it('не принимает кривые URL и порт вне диапазона', () => {
     expect(() => validateEnv({ ...valid, DATABASE_URL: 'not a url' })).toThrow();
     expect(() => validateEnv({ ...valid, PORT: '70000' })).toThrow();
+    expect(() => validateEnv({ ...valid, AGENT_PUBLIC_URL: 'not a url' })).toThrow();
+  });
+
+  it('принимает отдельный внешний адрес агентов', () => {
+    expect(validateEnv({ ...valid, AGENT_PUBLIC_URL: 'https://agents.example.net' }).AGENT_PUBLIC_URL).toBe(
+      'https://agents.example.net',
+    );
   });
 });

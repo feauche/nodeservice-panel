@@ -11,7 +11,7 @@ const TOKEN = 'nse_SECRET-token';
 type Exec = (command: string, opts: SshExecStreamOptions) => Promise<{ code: number }>;
 
 /** Служба серверов на памяти: одна запись сервера, SSH-сессия — заглушка с заданным исходом установки. */
-function make(agentStatus: string, exec: Exec, connect?: () => Promise<never>) {
+function make(agentStatus: string, exec: Exec, connect?: () => Promise<never>, agentPublicUrl?: string) {
   const now = new Date();
   const row: Record<string, unknown> = {
     id: 's1',
@@ -77,7 +77,12 @@ function make(agentStatus: string, exec: Exec, connect?: () => Promise<never>) {
     { randomToken: () => TOKEN.slice(4), sha256Hex: (v: string) => `hash:${v}` } as never,
     { record: async (e: never) => void journal.push(e) } as never,
     {
-      get: (k: string) => ({ PUBLIC_URL: 'https://panel.test', AGENT_REPO: 'feauche/nodeservice-agent' })[k],
+      get: (k: string) =>
+        ({
+          PUBLIC_URL: 'https://panel.test',
+          AGENT_PUBLIC_URL: agentPublicUrl,
+          AGENT_REPO: 'feauche/nodeservice-agent',
+        })[k],
     } as never,
     {} as never,
   );
@@ -196,6 +201,18 @@ describe('ServersService: установка агента', () => {
     expect(at('curl')).toBeLessThan(at('mv -f "$S" "$S.prev"'));
     // Привязку не удаляем до скачивания: прежнего «rm -f …state.json» в начале команды больше нет.
     expect(issued.installCommand).not.toMatch(/rm -f \/var\/lib/);
+  });
+
+  it('отдельный внешний вход агентов используется при установке вместо адреса интерфейса', async () => {
+    const ctx = make('not_installed', async () => ({ code: 0 }), undefined, 'https://agents.example.net');
+    const issued = await ctx.svc.issueEnrollmentToken('s1');
+    expect(issued.installCommand).toBe(
+      agentInstallCommand({
+        repo: 'feauche/nodeservice-agent',
+        token: TOKEN,
+        panel: 'https://agents.example.net',
+      }),
+    );
   });
 });
 

@@ -165,19 +165,18 @@ export class NodeBlockCheckService {
     const probes = tried.filter(probeSaw);
     if (probes.length === 0) return unchecked(blindReason(tried), sni || null);
     const ruVerdict = combineVerdicts(probes);
-    // Из России порт молчит — тот же вопрос, что владелец решает руками («по SSH из России не заходит,
-    // а через VPN заходит»): стучимся в тот же порт с зарубежных серверов парка. Только порт, без TLS.
+    // Тот же порт проверяем и из-за рубежа всегда, а не только когда он целиком молчит из России. Поэтому
+    // первое сообщение об аномалии и последующий разбор Джарвиса опираются на одну географию: видно и
+    // частичную фильтрацию, и нормальный зарубежный маршрут. За рубежом достаточно TCP, без TLS/SNI.
     let foreign: BlockProbeResult[] = [];
     // Почему встречной проверки нет: зарубежных серверов в парке нет — или они есть, но проверка с них
     // не получилась. «Проверить нечем» про второй случай было бы неправдой.
     let foreignUnchecked: BlockUncheckedReason | null = null;
-    if (ruVerdict === 'unreachable') {
-      const abroad = pickForeignProbes(self, allServers);
-      const triedAbroad = await Promise.all(abroad.map((p) => this.probeFrom(p, address, port, null, true)));
-      foreign = triedAbroad.filter(probeSaw);
-      if (foreign.length === 0)
-        foreignUnchecked = abroad.length === 0 ? 'no_probers' : blindReason(triedAbroad);
-    }
+    const abroad = pickForeignProbes(self, allServers);
+    const triedAbroad = await Promise.all(abroad.map((p) => this.probeFrom(p, address, port, null, true)));
+    foreign = triedAbroad.filter(probeSaw);
+    if (foreign.length === 0)
+      foreignUnchecked = abroad.length === 0 ? 'no_probers' : blindReason(triedAbroad);
     return {
       nodeName,
       address,

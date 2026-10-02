@@ -11,6 +11,8 @@ export type TelegramCall<T> =
       ok: false;
       status: number;
       description: string;
+      /** Telegram 429: через сколько секунд разрешено повторить запрос. */
+      retryAfterSeconds?: number;
       /** Группа стала супергруппой: Telegram называет новый номер чата, по старому писать больше нельзя. */
       migrateToChatId?: string;
     };
@@ -21,7 +23,7 @@ interface TelegramReply<T> {
   result?: T;
   description?: string;
   error_code?: number;
-  parameters?: { migrate_to_chat_id?: number | string };
+  parameters?: { migrate_to_chat_id?: number | string; retry_after?: number };
 }
 
 /** Отказ Telegram в общей форме; новый номер чата — только если Telegram его назвал. */
@@ -30,10 +32,14 @@ function refusal<T>(
   res: { status: number; statusText: string },
 ): TelegramCall<T> {
   const moved = json?.parameters?.migrate_to_chat_id;
+  const retryAfter = json?.parameters?.retry_after;
   return {
     ok: false,
     status: json?.error_code ?? res.status,
     description: json?.description ?? res.statusText,
+    ...(typeof retryAfter === 'number' && Number.isFinite(retryAfter) && retryAfter > 0
+      ? { retryAfterSeconds: retryAfter }
+      : {}),
     ...(moved !== undefined && moved !== null ? { migrateToChatId: String(moved) } : {}),
   };
 }

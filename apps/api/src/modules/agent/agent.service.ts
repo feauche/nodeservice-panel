@@ -76,10 +76,10 @@ export class AgentService {
     return { serverId: server.id, serverName: server.name, wsUrl: this.wsUrl() };
   }
 
-  /** ws(s)-адрес шлюза из PUBLIC_URL. */
+  /** ws(s)-адрес шлюза: отдельный маршрут агентов, если он задан, иначе адрес панели. */
   wsUrl(): string {
-    const base = this.config.get('PUBLIC_URL');
-    return `${base.replace(/^http/, 'ws')}/api/agent/v1/ws`;
+    const base = this.config.get('AGENT_PUBLIC_URL') ?? this.config.get('PUBLIC_URL');
+    return `${base.replace(/\/+$/, '').replace(/^http/, 'ws')}/api/agent/v1/ws`;
   }
 
   async findServer(id: string): Promise<ServerRow | undefined> {

@@ -31,6 +31,7 @@ async function make(env: 'test' | 'production', opts: { explainFails?: boolean }
     installedAt?: number;
     installRunning?: boolean;
     updateFails?: boolean;
+    countryChecks?: number;
   } = {};
   const servers = {
     list: async () => [{ ...row }],
@@ -45,9 +46,10 @@ async function make(env: 'test' | 'production', opts: { explainFails?: boolean }
     },
   };
   const egress = {
-    check: async () => {
+    checkWithFallback: async (_server: unknown, _all: unknown, discover: () => Promise<unknown>) => {
       hooks.duringExplain?.();
       if (opts.explainFails) throw new Error('сбой проверки');
+      await discover();
       return null;
     },
   };
@@ -55,7 +57,12 @@ async function make(env: 'test' | 'production', opts: { explainFails?: boolean }
     servers as never,
     serversRepo as never,
     egress as never,
-    { countryReach: async () => ({ results: [], blind: 'no_probers' }) } as never,
+    {
+      countryReach: async () => {
+        hooks.countryChecks = (hooks.countryChecks ?? 0) + 1;
+        return { results: [], blind: 'no_probers' };
+      },
+    } as never,
     { push: async (n: { title: string; body?: string }) => void pushed.push(n) } as never,
     { record: async (e: { action: string }) => void journal.push(e) } as never,
   );
@@ -82,6 +89,8 @@ describe('AgentPendingJob: «Ожидает агента» не висит ве�
     expect(ctx.row.agentStatus).toBe('offline');
     expect(ctx.offline()).toHaveLength(1);
     expect(ctx.offline()[0]?.metadata).toEqual({ reason: 'не вышел на связь за 3 минуты после установки' });
+    // Даже при прошлой зелёной отметке SSH после прямой неудачи ищется свежий запасной путь.
+    expect(ctx.hooks.countryChecks).toBe(1);
 
     // Дальше сервер ведёт детекция инцидентов — джоба к нему не возвращается.
     await ctx.job.run(t0 + 400_000);

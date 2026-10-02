@@ -144,6 +144,35 @@ export function digestBlocks(rows: Array<{ time: string; title: string }>, more:
   ];
 }
 
+/** Резервная копия: отдельная rich-карточка, а сам архив приходит следующим сообщением ответом на неё. */
+export function backupBlocks(input: {
+  when: string;
+  zone: string;
+  size: string;
+  contents: string;
+  encrypted: boolean;
+  fileNote?: string | null;
+}): RichBlock[] {
+  return [
+    { type: 'heading', size: 3, text: '🗄 Резервная копия NodeService' },
+    {
+      type: 'table',
+      is_bordered: true,
+      is_striped: true,
+      is_compact: true,
+      cells: [
+        [cell('Создана', true), cell(`${input.when} (${input.zone})`)],
+        [cell('Размер', true), cell(input.size)],
+        [cell('Внутри', true), cell(input.contents)],
+        [cell('Защита', true), cell(input.encrypted ? 'Паролем' : 'Без пароля')],
+      ],
+    },
+    ...(!input.encrypted ? [{ type: 'paragraph' as const, text: '⚠ Архив не защищён паролем.' }] : []),
+    ...(input.fileNote ? [{ type: 'paragraph' as const, text: input.fileNote }] : []),
+    { type: 'footer', text: 'Восстановить: Настройки → Резервные копии → Восстановить из файла.' },
+  ];
+}
+
 /**
  * Образец для кнопки «Проверить»: по нему владелец видит, показывает ли его Telegram расширенное оформление.
  * Видны заголовок и таблица — можно включать; вместо сообщения «не поддерживается» — приложение нужно обновить.

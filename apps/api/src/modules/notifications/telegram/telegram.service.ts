@@ -111,7 +111,9 @@ const RESOLVED_DEDUP_MS = 10 * 60_000;
 const RICH_RETRY_MS = 60 * 60_000;
 
 /** Итог отправки. `plain` — сообщение ушло по-старому, потому что Telegram не принял расширенное оформление. */
-type SendResult = { ok: true; messageId: number; plain?: string } | { ok: false; error: string };
+type SendResult =
+  | { ok: true; messageId: number; plain?: string }
+  | { ok: false; error: string; retryAfterSeconds?: number };
 
 /** Уже подготовленное сообщение одному чату: правила и тихие часы второй раз к нему не применяются. */
 interface TelegramOutboxPayload {
@@ -362,7 +364,10 @@ export class TelegramService {
     d: LiveDestination,
     method: 'sendMessage' | 'sendRichMessage',
     body: Record<string, unknown>,
-  ): Promise<{ ok: true; messageId: number } | { ok: false; error: string; rejected: boolean }> {
+  ): Promise<
+    | { ok: true; messageId: number }
+    | { ok: false; error: string; rejected: boolean; retryAfterSeconds?: number }
+  > {
     const call = (chatId: string) =>
       this.client
         .call<{ message_id: number }>(d.token, method, { ...body, chat_id: chatId }, d.proxy ?? null)
@@ -381,6 +386,7 @@ export class TelegramService {
       ok: false,
       error: describeTelegramError(res.status, res.description),
       rejected: method === 'sendRichMessage' && isRichRejected(res.status, res.description),
+      ...(res.retryAfterSeconds ? { retryAfterSeconds: res.retryAfterSeconds } : {}),
     };
   }
 
@@ -583,15 +589,19 @@ export class TelegramService {
         if (trouble) undelivered.push(trouble);
         if (!res.ok) {
           this.log.warn(`Telegram (${d.chatId}): ${res.error}`);
-          await this.enqueueDelivery(d.id, {
-            text,
-            buttons,
-            replyTo,
-            silent,
-            rich,
-            incidentId: m.incidentId ?? null,
-            event: m.event,
-          });
+          await this.enqueueDelivery(
+            d.id,
+            {
+              text,
+              buttons,
+              replyTo,
+              silent,
+              rich,
+              incidentId: m.incidentId ?? null,
+              event: m.event,
+            },
+            res.retryAfterSeconds,
+          );
           continue;
         }
         if (m.incidentId && own === null && m.event !== 'resolved') {
@@ -616,13 +626,19 @@ export class TelegramService {
   }
 
   /** Неудача одного чата не влияет на уже доставленные: повторяется только этот адресат. */
-  private async enqueueDelivery(destinationId: string, payload: TelegramOutboxPayload): Promise<void> {
+  private async enqueueDelivery(
+    destinationId: string,
+    payload: TelegramOutboxPayload,
+    retryAfterSeconds?: number,
+  ): Promise<void> {
     await this.db
       .insert(telegramOutbox)
       .values({
         destinationId,
         payload: payload as unknown as Record<string, unknown>,
-        nextAttemptAt: new Date(Date.now() + 30_000),
+        nextAttemptAt: new Date(
+          Date.now() + (retryAfterSeconds ? Math.min(86_400, retryAfterSeconds) * 1_000 : 30_000),
+        ),
       })
       .catch((err: unknown) =>
         this.log.warn(
@@ -716,7 +732,9 @@ export class TelegramService {
           continue;
         }
         const attempts = row.attempts + 1;
-        const waitMs = Math.min(6 * 60 * 60_000, 30_000 * 2 ** Math.min(attempts, 9));
+        const waitMs = result.retryAfterSeconds
+          ? Math.min(86_400, result.retryAfterSeconds) * 1_000
+          : Math.min(6 * 60 * 60_000, 30_000 * 2 ** Math.min(attempts, 9));
         await this.db
           .update(telegramOutbox)
           .set({ attempts, lastError: result.error, nextAttemptAt: new Date(now.getTime() + waitMs) })
@@ -766,6 +784,24 @@ export class TelegramService {
     return this.store.live(await this.store.load());
   }
 
+  /** Включено ли расширенное оформление для служебных сообщений, которые отправляются в выбранный чат. */
+  async richEnabled(): Promise<boolean> {
+    return (await this.store.load()).delivery.rich;
+  }
+
+  /** Rich-карточка в конкретный чат с обычным HTML как запасным вариантом. */
+  async sendRichTo(
+    d: LiveDestination,
+    html: string,
+    rich: RichBlock[],
+    silent = false,
+  ): Promise<{ ok: true; messageId: number } | { ok: false; error: string }> {
+    const res = await this.send(d, html, [], null, silent, rich);
+    const trouble = await this.noteDelivery(d, res);
+    if (trouble) await this.warnUndelivered([trouble]);
+    return res.ok ? { ok: true, messageId: res.messageId } : res;
+  }
+
   /** Текст в указанный чат (без правил «что присылать»: это служебные сообщения о копиях). */
   async sendTo(
     d: LiveDestination,
@@ -783,9 +819,12 @@ export class TelegramService {
     d: LiveDestination,
     file: { path: string; name: string },
     caption: string,
+    replyTo: number | null = null,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const fields: Record<string, string> = { chat_id: d.chatId, caption, parse_mode: 'HTML' };
     if (d.topic !== null) fields.message_thread_id = String(d.topic);
+    if (replyTo !== null)
+      fields.reply_parameters = JSON.stringify({ message_id: replyTo, allow_sending_without_reply: true });
     const call = (chatId: string) =>
       this.client.sendFile(d.token, { ...fields, chat_id: chatId }, file, d.proxy ?? null).catch(() => null);
     let res = await call(d.chatId);
@@ -873,15 +912,19 @@ export class TelegramService {
         this.log.warn(`Telegram (${d.chatId}): ${res.error}`);
         // Сводка уже атомарно снята из app_meta. Сохраняем готовую адресную доставку в PostgreSQL,
         // иначе обрыв ровно после тихих часов удалил бы всю ночь событий без повторной попытки.
-        await this.enqueueDelivery(d.id, {
-          text,
-          buttons,
-          replyTo: null,
-          silent: false,
-          rich,
-          incidentId: null,
-          event: 'maintenance',
-        });
+        await this.enqueueDelivery(
+          d.id,
+          {
+            text,
+            buttons,
+            replyTo: null,
+            silent: false,
+            rich,
+            incidentId: null,
+            event: 'maintenance',
+          },
+          res.retryAfterSeconds,
+        );
       }
     }
     await this.warnUndelivered(undelivered);

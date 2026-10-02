@@ -44,14 +44,15 @@ export class EgressController {
     const all = await this.servers.list();
     const server = all.find((s) => s.id === id);
     if (!server) throw serverProblems.notFound();
-    // Панель сама до сервера не заходит — ищем, откуда он доступен, и заходим через тот сервер.
-    const openFrom =
-      server.sshOk === true
-        ? []
-        : (await this.blockCheck.countryReach(server.host, server.port, server.id, all)).results
-            .filter((r) => r.open)
-            .map((r) => r.from);
-    const report = await this.egress.check(server, all, openFrom, { force: true });
+    const report = await this.egress.checkWithFallback(
+      server,
+      all,
+      async () =>
+        (await this.blockCheck.countryReach(server.host, server.port, server.id, all)).results
+          .filter((r) => r.open)
+          .map((r) => r.from),
+      { force: true },
+    );
     const last = this.egress.lastFor(id);
     return { report: report && last ? egressDto(last.value, last.at, server.host) : null };
   }

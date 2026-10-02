@@ -9,6 +9,11 @@ export const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   /** Публичный адрес панели (для ссылок, cookie-домена, CORS). */
   PUBLIC_URL: z.url().default('http://localhost:5173'),
+  /**
+   * Отдельный внешний вход для агентов. Полезен, когда часть серверов не может выйти к стране панели:
+   * адрес должен проксировать /api/agent/v1/enroll и /api/agent/v1/ws в тот же API.
+   */
+  AGENT_PUBLIC_URL: z.url().optional(),
   /** VictoriaMetrics: приём метрик агентов (import) и чтение (PromQL). */
   VM_URL: z.url().default('http://127.0.0.1:8428'),
   /** GitHub-репозиторий агента: релизы с бинарями и install.sh. */

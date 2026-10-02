@@ -92,8 +92,10 @@ class FakeTools implements BackupTools {
 class FakeTelegram {
   files: Array<Record<string, string>> = [];
   texts: string[] = [];
+  rich: Array<Record<string, unknown>> = [];
   async call<T>(_t: string, method: string, body: Record<string, unknown>): Promise<TelegramCall<T>> {
     if (method === 'sendMessage') this.texts.push(String(body.text));
+    if (method === 'sendRichMessage') this.rich.push(body);
     if (method === 'getMe') return { ok: true, result: { username: 'bot' } as T };
     if (method === 'getChat') return { ok: true, result: { title: 'чат', type: 'private' } as T };
     return { ok: true, result: { message_id: 1 } as T };
@@ -275,6 +277,29 @@ describe('резервные копии e2e', () => {
   });
 
   it('копия вручную: зашифрована, проверена, отправлена файлом в Telegram; хранятся последние 2', async () => {
+    const telegram = (await agent.get('/api/settings/telegram').expect(200)).body as {
+      destinations: Array<{ id: string }>;
+    };
+    destinationId = telegram.destinations[0]?.id ?? '';
+    await putSettings({
+      keep: 2,
+      password: 'секрет',
+      telegram: {
+        enabled: true,
+        target: 'notifications',
+        destinationId,
+        ownUrl: null,
+        notifyFailure: true,
+      },
+      extra: { enabled: true, paths: ['/etc/nginx'] },
+    }).expect(200);
+    await agent
+      .put('/api/settings/telegram')
+      .set(CSRF_HEADER, csrf)
+      .send({
+        delivery: { groupPerServer: true, silentWarnings: true, remindHours: 2, rich: true },
+      })
+      .expect(200);
     for (let i = 0; i < 3; i += 1) {
       await agent.post('/api/backups/run').set(CSRF_HEADER, csrf).send({}).expect(202);
       await waitIdle();
@@ -290,9 +315,13 @@ describe('резервные копии e2e', () => {
     });
     expect(r.items[0]?.contents).toEqual({ db: true, env: true, metrics: false, paths: 1 });
     expect(tg.files).toHaveLength(3);
-    expect(tg.files[0]?.caption).toContain('Резервная копия NodeService');
-    expect(tg.files[0]?.caption).toContain('база, ключи');
-    expect(tg.files[0]?.caption).toContain('с паролем');
+    expect(tg.rich).toHaveLength(3);
+    const blocks =
+      (tg.rich[0]?.rich_message as { blocks?: Array<Record<string, unknown>> } | undefined)?.blocks ?? [];
+    expect(blocks[0]).toMatchObject({ type: 'heading', text: '🗄 Резервная копия NodeService' });
+    expect(blocks.some((block) => block.type === 'table')).toBe(true);
+    expect(tg.files[0]?.caption).toContain('Архив резервной копии');
+    expect(tg.files[0]?.reply_parameters).toContain('message_id');
     expect(readdirSync(store).filter((f) => f.endsWith('.enc'))).toHaveLength(2);
   });
 

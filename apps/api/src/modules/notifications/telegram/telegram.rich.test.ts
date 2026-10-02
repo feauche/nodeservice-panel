@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  backupBlocks,
   bodyBlocks,
   digestBlocks,
   isRichRejected,
@@ -133,6 +134,25 @@ describe('расширенное оформление Telegram', () => {
       'table',
       'footer',
     ]);
+  });
+
+  it('резервная копия — rich-карточка с таблицей и честным предупреждением о защите', () => {
+    const blocks = backupBlocks({
+      when: '2 октября, 03:10',
+      zone: 'Омск',
+      size: '18,4 МБ',
+      contents: 'база, ключи, метрики',
+      encrypted: false,
+    });
+    expect(blocks[0]).toEqual({ type: 'heading', size: 3, text: '🗄 Резервная копия NodeService' });
+    expect(table(blocks[1])).toEqual([
+      ['Создана', '2 октября, 03:10 (Омск)'],
+      ['Размер', '18,4 МБ'],
+      ['Внутри', 'база, ключи, метрики'],
+      ['Защита', 'Без пароля'],
+    ]);
+    expect(blocks[2]).toEqual({ type: 'paragraph', text: '⚠ Архив не защищён паролем.' });
+    expect(blocks.at(-1)?.type).toBe('footer');
   });
 
   it('образец для кнопки «Проверить» содержит заголовок и таблицу', () => {
