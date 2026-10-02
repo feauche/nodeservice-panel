@@ -133,11 +133,13 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
    * Суточный запуск (джоба): занято — просто пропуск; ждём конца, чтобы идти по серверам по одному.
    * Только свои команды: сторонний скрипт по расписанию не запускается, даже если его сюда передали.
    */
-  async scheduled(serverId: string, check: ServerCheckKey): Promise<void> {
-    if (!SERVER_CHECK_AUTO_KEYS.includes(check)) return;
-    if (this.active.has(serverId)) return;
-    const { done } = await this.launch(serverId, check, 'auto', SYSTEM_ACTOR);
+  async scheduled(serverId: string, check: ServerCheckKey): Promise<ServerCheckRun | null> {
+    if (!SERVER_CHECK_AUTO_KEYS.includes(check)) return null;
+    if (this.active.has(serverId)) return null;
+    const { run, done } = await this.launch(serverId, check, 'auto', SYSTEM_ACTOR);
     await done;
+    const finished = await this.repo.findById(run.id);
+    return finished ? toCheckRun(finished) : null;
   }
 
   private async launch(

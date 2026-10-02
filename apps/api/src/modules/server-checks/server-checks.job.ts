@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { ServersRepository } from '../servers/servers.repository.js';
 import { AutochecksStore } from '../settings/autochecks.store.js';
 import { ServerChecksService } from './server-checks.service.js';
@@ -20,6 +20,7 @@ export class ServerChecksJob {
     private readonly servers: ServersRepository,
     private readonly checks: ServerChecksService,
     private readonly autochecks: AutochecksStore,
+    private readonly notifications: NotificationsService,
   ) {}
 
   @Interval(10 * 60_000)
@@ -35,11 +36,43 @@ export class ServerChecksJob {
       if (!(await this.autochecks.get()).serverChecksEnabled) return;
       const alive = (await this.servers.list()).filter((s) => s.sshOk !== false);
       const names = new Map(alive.map((s) => [s.id, s.name]));
-      for (const due of await this.checks.dueLightChecks(alive.map((s) => s.id))) {
-        await this.checks.scheduled(due.serverId, due.check).catch((err) => {
+      const dueChecks = await this.checks.dueLightChecks(alive.map((s) => s.id));
+      let ok = 0;
+      let failed = 0;
+      let skipped = 0;
+      let improved = 0;
+      let worse = 0;
+      for (const due of dueChecks) {
+        const previous = (await this.checks.history(due.serverId, due.check, 1).catch(() => []))[0];
+        let launchFailed = false;
+        const current = await this.checks.scheduled(due.serverId, due.check).catch((err) => {
+          launchFailed = true;
           this.log.warn(`Проверка ${due.check} на ${names.get(due.serverId)}: ${(err as Error).message}`);
+          return null;
         });
+        if (!current) {
+          if (launchFailed) failed += 1;
+          else skipped += 1;
+          continue;
+        }
+        if (current.status === 'ok') ok += 1;
+        else failed += 1;
+        if (previous && previous.status !== 'ok' && current.status === 'ok') improved += 1;
+        if (previous?.status === 'ok' && current.status !== 'ok') worse += 1;
       }
+      if (ok + failed > 0)
+        await this.notifications.push({
+          center: true,
+          severity: failed > 0 || worse > 0 ? 'warn' : 'ok',
+          title: failed > 0 ? 'Автопроверки завершены с ошибками' : 'Автопроверки серверов завершены',
+          body: [
+            `Запланировано: ${dueChecks.length} · успешно: ${ok} · ошибок: ${failed}${skipped > 0 ? ` · занято: ${skipped}` : ''}`,
+            improved > 0 || worse > 0
+              ? `По сравнению с прошлым запуском: лучше — ${improved}, хуже — ${worse}`
+              : 'Состояние относительно прошлого запуска не ухудшилось',
+          ].join('\n'),
+          link: { to: '/servers', label: 'Открыть серверы' },
+        });
     } finally {
       this.busy = false;
     }

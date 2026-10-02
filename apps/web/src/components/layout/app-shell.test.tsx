@@ -24,12 +24,24 @@ describe('AppShell · меню пользователя', () => {
     resetNavGroupState();
   });
 
-  it('в рейле открыты все разделы: Обзор, Серверы, Инциденты, Журнал, Настройки, Джарвис и База знаний', async () => {
-    renderPage(Page, '/', ['/login', '/lock', '/servers', '/incidents', '/settings', '/settings/security']);
+  it('в рейле открыты основные разделы и у Уведомлений виден счётчик', async () => {
+    renderPage(Page, '/', [
+      '/login',
+      '/lock',
+      '/servers',
+      '/incidents',
+      '/notifications',
+      '/settings',
+      '/settings/security',
+    ]);
     expect(await screen.findByRole('link', { name: 'Серверы' })).toHaveAttribute('href', '/servers');
     expect(screen.getByRole('link', { name: 'Обзор' })).toHaveAttribute('href', '/');
     expect(screen.getByRole('link', { name: 'Журнал' })).toHaveAttribute('href', '/audit');
     expect(screen.getByRole('link', { name: /Инциденты/ })).toHaveAttribute('href', '/incidents');
+    expect(await screen.findByRole('link', { name: /Уведомления/ })).toHaveAttribute(
+      'href',
+      '/notifications',
+    );
     expect(screen.getByRole('link', { name: 'Настройки' })).toHaveAttribute('href', '/settings');
     expect(screen.getByRole('link', { name: 'Джарвис' })).toHaveAttribute('href', '/assistant');
     expect(screen.getByRole('link', { name: 'База знаний' })).toHaveAttribute('href', '/knowledge');

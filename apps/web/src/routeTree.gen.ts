@@ -16,6 +16,7 @@ import { Route as IncidentsRouteImport } from './routes/incidents';
 import { Route as KnowledgeRouteImport } from './routes/knowledge';
 import { Route as LockRouteImport } from './routes/lock';
 import { Route as LoginRouteImport } from './routes/login';
+import { Route as NotificationsRouteImport } from './routes/notifications';
 import { Route as ServersRouteImport } from './routes/servers';
 import { Route as SettingsRouteImport } from './routes/settings';
 import { Route as SetupRouteImport } from './routes/setup';
@@ -68,6 +69,11 @@ const LockRoute = LockRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any);
+const NotificationsRoute = NotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
   getParentRoute: () => rootRouteImport,
 } as any);
 const ServersRoute = ServersRouteImport.update({
@@ -169,6 +175,7 @@ export interface FileRoutesByFullPath {
   '/knowledge': typeof KnowledgeRoute;
   '/lock': typeof LockRoute;
   '/login': typeof LoginRoute;
+  '/notifications': typeof NotificationsRoute;
   '/servers': typeof ServersRoute;
   '/settings': typeof SettingsRouteWithChildren;
   '/setup': typeof SetupRoute;
@@ -196,6 +203,7 @@ export interface FileRoutesByTo {
   '/knowledge': typeof KnowledgeRoute;
   '/lock': typeof LockRoute;
   '/login': typeof LoginRoute;
+  '/notifications': typeof NotificationsRoute;
   '/servers': typeof ServersRoute;
   '/setup': typeof SetupRoute;
   '/incidents/$id': typeof IncidentsIdRoute;
@@ -223,6 +231,7 @@ export interface FileRoutesById {
   '/knowledge': typeof KnowledgeRoute;
   '/lock': typeof LockRoute;
   '/login': typeof LoginRoute;
+  '/notifications': typeof NotificationsRoute;
   '/servers': typeof ServersRoute;
   '/settings': typeof SettingsRouteWithChildren;
   '/setup': typeof SetupRoute;
@@ -252,6 +261,7 @@ export interface FileRouteTypes {
     | '/knowledge'
     | '/lock'
     | '/login'
+    | '/notifications'
     | '/servers'
     | '/settings'
     | '/setup'
@@ -279,6 +289,7 @@ export interface FileRouteTypes {
     | '/knowledge'
     | '/lock'
     | '/login'
+    | '/notifications'
     | '/servers'
     | '/setup'
     | '/incidents/$id'
@@ -305,6 +316,7 @@ export interface FileRouteTypes {
     | '/knowledge'
     | '/lock'
     | '/login'
+    | '/notifications'
     | '/servers'
     | '/settings'
     | '/setup'
@@ -333,6 +345,7 @@ export interface RootRouteChildren {
   KnowledgeRoute: typeof KnowledgeRoute;
   LockRoute: typeof LockRoute;
   LoginRoute: typeof LoginRoute;
+  NotificationsRoute: typeof NotificationsRoute;
   ServersRoute: typeof ServersRoute;
   SettingsRoute: typeof SettingsRouteWithChildren;
   SetupRoute: typeof SetupRoute;
@@ -394,6 +407,13 @@ declare module '@tanstack/react-router' {
       path: '/login';
       fullPath: '/login';
       preLoaderRoute: typeof LoginRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    '/notifications': {
+      id: '/notifications';
+      path: '/notifications';
+      fullPath: '/notifications';
+      preLoaderRoute: typeof NotificationsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     '/servers': {
@@ -559,6 +579,7 @@ const rootRouteChildren: RootRouteChildren = {
   KnowledgeRoute: KnowledgeRoute,
   LockRoute: LockRoute,
   LoginRoute: LoginRoute,
+  NotificationsRoute: NotificationsRoute,
   ServersRoute: ServersRoute,
   SettingsRoute: SettingsRouteWithChildren,
   SetupRoute: SetupRoute,

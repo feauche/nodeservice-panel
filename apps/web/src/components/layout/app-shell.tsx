@@ -1,6 +1,7 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
   AlertTriangleIcon,
+  BellIcon,
   BookOpenIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -28,7 +29,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useEventsStream } from '@/features/events/use-events-stream';
 import { useOpenIncidentsCount } from '@/features/incidents/incidents-api';
-import { NotificationBell } from '@/features/notifications/notification-bell';
+import { useNotifications } from '@/features/notifications/notifications-api';
 import { useSecurityOverview } from '@/features/security/security-api';
 import { useIdleLock } from '@/features/security/use-idle-lock';
 import { isSectionOpen, LOCKED_HINT } from '@/lib/stages';
@@ -50,6 +51,7 @@ const NAV = [
   { to: '/', label: 'Обзор', icon: LayoutGridIcon },
   { to: '/servers', label: 'Серверы', icon: ServerIcon },
   { to: '/incidents', label: 'Инциденты', icon: AlertTriangleIcon },
+  { to: '/notifications', label: 'Уведомления', icon: BellIcon },
   { to: '/settings', label: 'Настройки', icon: SettingsIcon },
 ] as const;
 /** «Серверы» раскрываются в подпункты: список серверов, провайдеры, Remnawave и биллинг. */
@@ -419,11 +421,13 @@ function NavList({
   collapsed,
   mode,
   openIncidents,
+  unreadNotifications,
   onNavigate,
 }: {
   collapsed: boolean;
   mode: 'rail' | 'drawer';
   openIncidents: number | undefined;
+  unreadNotifications: number | undefined;
   onNavigate?: () => void;
 }) {
   const hideLabels = mode === 'rail' && collapsed;
@@ -443,7 +447,13 @@ function NavList({
             collapsed={collapsed}
             mode={mode}
             onNavigate={onNavigate}
-            badge={n.to === '/incidents' ? openIncidents : undefined}
+            badge={
+              n.to === '/incidents'
+                ? openIncidents
+                : n.to === '/notifications'
+                  ? unreadNotifications
+                  : undefined
+            }
           />
         ),
       )}
@@ -462,7 +472,13 @@ function NavList({
 }
 
 /** Телефон: гамбургер в шапке открывает выезжающее слева меню — полную копию боковой колонки. */
-function MobileNav({ openIncidents }: { openIncidents: number | undefined }) {
+function MobileNav({
+  openIncidents,
+  unreadNotifications,
+}: {
+  openIncidents: number | undefined;
+  unreadNotifications: number | undefined;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
@@ -494,6 +510,7 @@ function MobileNav({ openIncidents }: { openIncidents: number | undefined }) {
               collapsed={false}
               mode="drawer"
               openIncidents={openIncidents}
+              unreadNotifications={unreadNotifications}
               onNavigate={() => setOpen(false)}
             />
           </nav>
@@ -522,6 +539,8 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
   const security = useSecurityOverview();
   useIdleLock(security.data?.policy.lockAfterMinutes ?? 0);
   const openIncidents = useOpenIncidentsCount();
+  const notifications = useNotifications();
+  const unreadNotifications = notifications.data?.unread;
   const [collapsed, setCollapsed] = useState(readRail);
   useEffect(() => {
     try {
@@ -557,7 +576,12 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
             collapsed && 'px-0',
           )}
         >
-          <NavList collapsed={collapsed} mode="rail" openIncidents={openIncidents} />
+          <NavList
+            collapsed={collapsed}
+            mode="rail"
+            openIncidents={openIncidents}
+            unreadNotifications={unreadNotifications}
+          />
           <button
             type="button"
             onClick={() => setCollapsed((v) => !v)}
@@ -591,7 +615,7 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
       {/* Правая часть — одно скруглённое «окно» поверх холста, со своей шапкой. На телефоне — во весь экран. */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-[inset_0_1px_0_var(--ns-inset-hi),0_0_0_1px_var(--ns-hairline)] max-md:rounded-none max-md:border-0 max-md:shadow-none">
         <header className="flex h-[58px] min-w-0 flex-none items-center gap-3 border-b border-border px-5 max-md:gap-2 max-md:px-3">
-          <MobileNav openIncidents={openIncidents} />
+          <MobileNav openIncidents={openIncidents} unreadNotifications={unreadNotifications} />
           <button
             type="button"
             disabled
@@ -605,7 +629,6 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
             </kbd>
           </button>
           <div className="flex-1" />
-          <NotificationBell />
           <ThemeMenu />
           <UserMenu />
         </header>

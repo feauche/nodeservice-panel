@@ -39,6 +39,8 @@ export interface PushInput {
   link?: NotificationLink | null;
   /** Про какой сервер: в title/body пишем токен `{server}`, имя подставится при показе (переименование видно сразу). */
   server?: { id: string; name: string; host?: string | null } | null;
+  /** Сохранить информационный или успешный результат в разделе отчётов. */
+  center?: boolean;
   /**
    * То же событие в Telegram (R6): тип для тумблера и инцидент, чтобы «Починилось» ушло ответом на
    * исходное сообщение. Уходит независимо от того, попадает ли уведомление в колокольчик.
@@ -401,8 +403,8 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
       // В фоне: медленный Telegram не должен задерживать инцидент или обслуживание.
       else void this.telegram.dispatch(m);
     }
-    // В колокольчик — только то, что требует внимания. Остальное есть в Журнале.
-    if (!IMPORTANT.has(input.severity)) return;
+    // Обычные info/ok остаются в Журнале; фоновые сводки явно сохраняются в разделе отчётов.
+    if (!input.center && !IMPORTANT.has(input.severity)) return;
     try {
       const row = await this.repo.insert({
         severity: input.severity,

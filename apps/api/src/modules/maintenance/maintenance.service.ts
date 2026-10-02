@@ -1,6 +1,7 @@
 import { HttpStatus, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  compareVersions,
   MAINTENANCE_CHECK_INTERVAL_HOURS,
   MAINTENANCE_KIND_LABELS,
   MAINTENANCE_PROBLEM,
@@ -105,10 +106,32 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
 
   /** Плановая проверка (джоба): актор — система, конфликт с идущим запуском — просто пропуск.
    *  Ждёт завершения, чтобы джоба шла по серверам по одному, а не открывала SSH ко всем сразу. */
-  async scheduledCheck(serverId: string): Promise<void> {
-    if (this.active.has(serverId)) return;
+  async scheduledCheck(serverId: string): Promise<MaintenanceCheck | null | undefined> {
+    if (this.active.has(serverId)) return undefined;
     const { done } = await this.launch(serverId, 'check', SYSTEM_ACTOR);
     await done;
+    const state = await this.repo.getState(serverId);
+    return state?.checkError ? null : (state?.check ?? null);
+  }
+
+  /** Автообновление после суточной проверки: ждём и сам запуск, и проверку нового heartbeat. */
+  async scheduledAgentUpdate(
+    serverId: string,
+    expectedVersion: string,
+  ): Promise<{ ok: boolean; error: string | null }> {
+    if (this.active.has(serverId)) return { ok: false, error: 'сервер уже обслуживается' };
+    const { run, done } = await this.launch(serverId, 'agent_update', SYSTEM_ACTOR);
+    await done;
+    const finished = await this.repo.getRun(run.id);
+    if (!finished) return { ok: false, error: 'результат обновления не найден' };
+    if (finished.status !== 'ok') return { ok: false, error: finished.error };
+    const server = await this.serversRepo.findById(serverId);
+    if (!server?.agentVersion || compareVersions(server.agentVersion, expectedVersion) < 0)
+      return {
+        ok: false,
+        error: `агент вышел на связь с версией ${server?.agentVersion ?? 'неизвестно'}, ожидалась ${expectedVersion}`,
+      };
+    return { ok: true, error: null };
   }
 
   /** Запуск по кнопке: актор — администратор из сессии. */
@@ -400,8 +423,6 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
     else if (check.updates && check.updates.total > 0) found.push(`обновлений: ${check.updates.total}`);
     if (check.disk.usedPct !== null && check.disk.usedPct >= 85)
       found.push(`диск ${Math.round(check.disk.usedPct)} %`);
-    if (check.agent.installed && check.agent.latest && check.agent.installed !== check.agent.latest)
-      found.push(`агент ${check.agent.installed} → ${check.agent.latest}`);
     if (found.length === 0) return;
     const server = await this.serversRepo.findById(serverId);
     await this.notifications.push({

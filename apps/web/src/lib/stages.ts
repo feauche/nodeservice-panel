@@ -20,6 +20,7 @@ export const OPEN_SECTIONS: ReadonlySet<string> = new Set<string>([
   '/audit',
   '/incidents',
   '/incidents/autofix',
+  '/notifications',
   // R4 (досрочно, для чекпоинта): чат Джарвиса, база знаний и настройка ключа Джарвиса.
   '/assistant',
   '/knowledge',
