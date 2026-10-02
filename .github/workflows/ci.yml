@@ -63,6 +63,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Shell сценарии релиза
+        run: bash infra/scripts/release-source.test.sh
+
       - name: Upload web build
         uses: actions/upload-artifact@v4
         with:

@@ -15,7 +15,7 @@ set -euo pipefail
 
 REPO_SSH="${NODESERVICE_REPO_SSH:-git@github.com:feauche/nodeservice-panel.git}"
 REPO_HTTPS="${NODESERVICE_REPO_HTTPS:-https://github.com/feauche/nodeservice-panel.git}"
-BRANCH="${NODESERVICE_BRANCH:-main}"
+SOURCE_REF="${NODESERVICE_REF:-${NODESERVICE_BRANCH:-latest}}"
 APP_DIR="${NODESERVICE_DIR:-/opt/nodeservice}"
 export NODESERVICE_DIR="$APP_DIR"
 DEPLOY_KEY="/root/.ssh/nodeservice_deploy"
@@ -39,6 +39,35 @@ info() { echo -e "[i] $1"; }
 warn() { echo -e "${Y}[!] $1${N}"; }
 die()  { echo -e "${R}[-] $1${N}" >&2; exit 1; }
 ask()  { local p="$1" d="${2:-}" a; read -rp "$p${d:+ [$d]}: " a </dev/tty; printf '%s' "${a:-$d}"; }
+
+latest_release_tag() {
+    local repo="${NODESERVICE_PANEL_REPO:-feauche/nodeservice-panel}" body tag
+    body=$(curl -fsSL --connect-timeout 5 --max-time 15 \
+        -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+        "https://api.github.com/repos/$repo/releases/latest") || return 1
+    tag=$(sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$body" | head -n 1)
+    [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+    printf '%s\n' "$tag"
+}
+
+# В обычной установке берём последний прошедший CI релиз, а не промежуточный main.
+# NODESERVICE_REF=main оставляет явный тестовый режим; NODESERVICE_BRANCH сохранён для старых команд.
+checkout_source_ref() {
+    local ref="$SOURCE_REF" target=""
+    git -C "$APP_DIR" fetch --quiet --tags origin || return 1
+    if [[ "$ref" == "latest" ]]; then
+        ref=$(latest_release_tag) || return 1
+    fi
+    if git -C "$APP_DIR" rev-parse --verify --quiet "origin/$ref^{commit}" >/dev/null; then
+        target="origin/$ref"
+    elif git -C "$APP_DIR" rev-parse --verify --quiet "$ref^{commit}" >/dev/null; then
+        target="$ref"
+    else
+        return 1
+    fi
+    git -C "$APP_DIR" checkout --quiet --detach "$target" || return 1
+    info "Код выбран: $ref."
+}
 
 # Ждёт healthy у api до ~3 минут; при провале печатает лог и завершает скрипт.
 wait_api_healthy() {
@@ -138,7 +167,7 @@ fi
 step "Исходники"
 if [[ ! -d "$APP_DIR/.git" ]]; then
     if GIT_TERMINAL_PROMPT=0 git ls-remote --quiet "$REPO_HTTPS" >/dev/null 2>&1; then
-        git clone --branch "$BRANCH" --depth 1 "$REPO_HTTPS" "$APP_DIR"
+        git clone --branch main --depth 1 "$REPO_HTTPS" "$APP_DIR"
     else
         mkdir -p -m 700 /root/.ssh
         [[ -f "$DEPLOY_KEY" ]] || ssh-keygen -t ed25519 -N '' -C "nodeservice-deploy@$(hostname)" -f "$DEPLOY_KEY" >/dev/null
@@ -151,13 +180,13 @@ if [[ ! -d "$APP_DIR/.git" ]]; then
         read -rp "Добавил ключ — нажми Enter, чтобы продолжить... " _ </dev/tty
         ssh-keyscan -t ed25519 github.com >> /root/.ssh/known_hosts 2>/dev/null || true
         export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-        git clone --branch "$BRANCH" --depth 1 "$REPO_SSH" "$APP_DIR" || die "Клонирование не удалось: проверь, что ключ добавлен."
+        git clone --branch main --depth 1 "$REPO_SSH" "$APP_DIR" || die "Клонирование не удалось: проверь, что ключ добавлен."
     fi
+    checkout_source_ref || die "Не нашёл '$SOURCE_REF' (для latest нужен GitHub Release с тегом vX.Y.Z)."
 else
-    # Повторный запуск (например, после неудачной сборки): подтягиваем свежий код ветки.
+    # Повторный запуск (например, после неудачной сборки): подтягиваем тот же канал.
     [[ -f "$DEPLOY_KEY" ]] && export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-    if git -C "$APP_DIR" fetch --quiet --depth 1 origin "$BRANCH" && git -C "$APP_DIR" checkout --quiet --detach FETCH_HEAD; then
-        info "Код обновлён до последнего коммита ветки $BRANCH."
+    if checkout_source_ref; then
         [[ -f "$ENV_FILE" ]] && sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$(git -C "$APP_DIR" rev-parse --short HEAD)/" "$ENV_FILE"
     else
         warn "Не удалось обновить код — продолжаю с тем, что есть в $APP_DIR."

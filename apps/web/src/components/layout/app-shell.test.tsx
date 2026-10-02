@@ -45,6 +45,7 @@ describe('AppShell · меню пользователя', () => {
     expect(screen.getByRole('link', { name: 'Настройки' })).toHaveAttribute('href', '/settings');
     expect(screen.getByRole('link', { name: 'Джарвис' })).toHaveAttribute('href', '/assistant');
     expect(screen.getByRole('link', { name: 'База знаний' })).toHaveAttribute('href', '/knowledge');
+    expect(await screen.findByTestId('panel-version')).toHaveTextContent('v0.55.0');
   });
 
   it('«Серверы» раскрываются в «Все серверы» и «Провайдеры»; шеврон сворачивает подпункты', async () => {
@@ -103,6 +104,38 @@ describe('AppShell · меню пользователя', () => {
     );
     await user.keyboard('{Escape}');
     await user.click(screen.getByRole('button', { name: 'Развернуть меню' }));
+  });
+
+  it('вариант A: версия в шапке, а новый релиз открывает детали и команду', async () => {
+    server.use(
+      http.get('/api/system/release', () =>
+        HttpResponse.json({
+          currentVersion: '0.55.0',
+          latestVersion: '0.56.0',
+          status: 'available',
+          checkedAt: '2026-10-02T10:00:00.000Z',
+          release: {
+            name: 'NodeService Panel v0.56.0',
+            url: 'https://github.com/feauche/nodeservice-panel/releases/tag/v0.56.0',
+            publishedAt: '2026-10-02T09:00:00.000Z',
+            notes: '## Что изменилось\n- Надёжнее доставка.\n- Новая диагностика.',
+          },
+        }),
+      ),
+    );
+    renderPage(Page, '/', ['/login', '/lock']);
+    const user = userEvent.setup();
+    const indicator = await screen.findByRole('button', { name: 'Доступна v0.56.0' });
+    expect(indicator).toBeInTheDocument();
+    await user.click(indicator);
+    expect(await screen.findByRole('dialog', { name: 'Версия NodeService' })).toHaveTextContent(
+      'Надёжнее доставка.',
+    );
+    expect(screen.getByText('nodeservice update')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Открыть GitHub Release' })).toHaveAttribute(
+      'href',
+      'https://github.com/feauche/nodeservice-panel/releases/tag/v0.56.0',
+    );
   });
 
   it('«Выйти» сначала спрашивает; logout не вызывается до «Да»', async () => {

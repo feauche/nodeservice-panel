@@ -7,6 +7,8 @@ import { PanelAlertsService, PanelAlertsStore } from './panel-alerts.service.js'
 import { PanelDiskJob } from './panel-disk.job.js';
 import { PanelLifecycleService } from './panel-lifecycle.service.js';
 import { PanelPulse } from './panel-pulse.js';
+import { PanelReleaseController } from './panel-release.controller.js';
+import { PanelReleaseService } from './panel-release.service.js';
 import { WatchdogController } from './watchdog.controller.js';
 import { WatchdogService } from './watchdog.service.js';
 
@@ -18,12 +20,13 @@ import { WatchdogService } from './watchdog.service.js';
 @Global()
 @Module({
   imports: [ServersModule],
-  controllers: [HealthController, WatchdogController],
+  controllers: [HealthController, WatchdogController, PanelReleaseController],
   providers: [
     PanelPulse,
     PanelAlertsStore,
     PanelAlertsService,
     PanelLifecycleService,
+    PanelReleaseService,
     PanelDiskJob,
     WatchdogService,
     StepUpGuard,

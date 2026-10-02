@@ -1,0 +1,83 @@
+# Стабильный релиз панели: git tag v* → полные проверки → GitHub Release.
+# `nodeservice update` выбирает последний опубликованный релиз; main остаётся каналом для теста.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Проверка и публикация
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: nodeservice
+          POSTGRES_PASSWORD: nodeservice
+          POSTGRES_DB: nodeservice_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U nodeservice" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://nodeservice:nodeservice@localhost:5432/nodeservice_test
+      REDIS_URL: redis://localhost:6379
+      CI: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Версия тега совпадает с панелью
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          package="$(node -p "require('./package.json').version")"
+          [[ "$tag" == "$package" ]] || { echo "Тег v$tag, а package.json $package"; exit 1; }
+
+      - name: Зависимости
+        run: pnpm install --frozen-lockfile
+
+      - name: Полная проверка
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+          bash infra/scripts/release-source.test.sh
+
+      - name: Описание из журнала изменений
+        shell: bash
+        run: |
+          node --input-type=module <<'JS' > release-notes.md
+          import { CHANGELOG } from './packages/shared/dist/changelog.js';
+          const version = process.env.GITHUB_REF_NAME.replace(/^v/, '');
+          const release = CHANGELOG.find((entry) => entry.version === version);
+          if (!release) throw new Error(`Нет CHANGELOG для ${version}`);
+          console.log('## Что изменилось\n');
+          for (const item of release.items) console.log(`- ${item}`);
+          console.log('\n## Обновление\n\n```bash\nnodeservice update\n```');
+          JS
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: NodeService Panel ${{ github.ref_name }}
+          body_path: release-notes.md

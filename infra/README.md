@@ -24,7 +24,7 @@ Settings → Deploy keys), сгенерирует `infra/.env` с секрета
 |---|---|
 | `nodeservice status` | контейнеры, версия кода |
 | `nodeservice logs [api]` | логи |
-| `nodeservice update [ref]` | бэкап → git fetch (по умолчанию `origin/main`) → сборка → перезапуск; миграции применяет api при старте |
+| `nodeservice update [ref]` | бэкап → git fetch → последний стабильный тег `vX.Y.Z` → сборка → перезапуск; `nodeservice update main` ставит тестовую ветку; миграции применяет api при старте |
 | `nodeservice rollback` | вернуть предыдущий образ api |
 | `nodeservice backup [--to user@host:/dir]` | полный бэкап одним архивом `nodeservice-backup-<время>.tar.gz` (дамп БД + `.env` + meta) в `/opt/nodeservice/backups`, 14 дней; `--to` — копия по scp или в папку |
 | `nodeservice restore <файл> [--yes]` | восстановить из архива на работающей панели: секреты из бэкапа переносятся в `.env`, БД заменяется (прежняя сохраняется как `nodeservice_pre_restore_*`), api перезапускается |

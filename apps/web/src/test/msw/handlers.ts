@@ -191,6 +191,20 @@ export const handlers = [
   ...notificationsHandlers,
   ...knowledgeHandlers,
   ...assistantHandlers,
+  http.get('/api/system/release', () =>
+    HttpResponse.json({
+      currentVersion: '0.55.0',
+      latestVersion: '0.55.0',
+      status: 'current',
+      checkedAt: '2026-10-02T10:00:00.000Z',
+      release: {
+        name: 'NodeService Panel v0.55.0',
+        url: 'https://github.com/feauche/nodeservice-panel/releases/tag/v0.55.0',
+        publishedAt: '2026-10-02T09:00:00.000Z',
+        notes: 'Первый стабильный релиз панели.',
+      },
+    }),
+  ),
   http.get('/api/settings/snippets', () => {
     if (!mockState.authenticated) return problem(401, AUTH_PROBLEM.unauthenticated, 'Требуется вход');
     return HttpResponse.json(mockSnippets);

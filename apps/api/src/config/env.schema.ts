@@ -45,6 +45,8 @@ export const envSchema = z.object({
   VM_URL: z.url().default('http://127.0.0.1:8428'),
   /** GitHub-репозиторий агента: релизы с бинарями и install.sh. */
   AGENT_REPO: z.string().default('feauche/nodeservice-agent'),
+  /** GitHub-репозиторий панели: последний стабильный Release для индикатора в шапке. */
+  PANEL_REPO: z.string().default('feauche/nodeservice-panel'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),
 
   DATABASE_URL: z.url().default('postgres://nodeservice:nodeservice@localhost:5432/nodeservice'),

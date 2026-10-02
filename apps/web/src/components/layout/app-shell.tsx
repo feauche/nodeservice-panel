@@ -32,6 +32,7 @@ import { useOpenIncidentsCount } from '@/features/incidents/incidents-api';
 import { useNotifications } from '@/features/notifications/notifications-api';
 import { useSecurityOverview } from '@/features/security/security-api';
 import { useIdleLock } from '@/features/security/use-idle-lock';
+import { PanelVersion } from '@/features/system/panel-version';
 import { isSectionOpen, LOCKED_HINT } from '@/lib/stages';
 import { cn } from '@/lib/utils';
 import { UserMenu } from './user-menu';
@@ -598,16 +599,6 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
             />
             <span className={cn('whitespace-nowrap', collapsed && 'hidden')}>Свернуть меню</span>
             <span className="flex-1" />
-            <span
-              data-testid="app-version"
-              title={`NodeService ${APP_VERSION}${APP_BUILD ? ` · ${APP_BUILD}` : ''}`}
-              className={cn(
-                'shrink-0 rounded-full border border-border px-1.5 py-[1px] font-mono text-[10px] text-text-3',
-                collapsed && 'hidden',
-              )}
-            >
-              v{APP_VERSION}
-            </span>
           </button>
         </nav>
       </aside>
@@ -629,6 +620,7 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
             </kbd>
           </button>
           <div className="flex-1" />
+          <PanelVersion version={APP_VERSION} build={APP_BUILD} />
           <ThemeMenu />
           <UserMenu />
         </header>

@@ -31,6 +31,18 @@ stale_api_images() {
     return 0
 }
 
+# Тег появляется до окончания GitHub Actions. Берём `releases/latest`: GitHub отдаёт его только
+# после успешной публикации workflow. Строгая проверка не даёт ответу API стать аргументом git.
+latest_release_tag() {
+    local repo="${NODESERVICE_PANEL_REPO:-feauche/nodeservice-panel}" body tag
+    body=$(curl -fsSL --connect-timeout 5 --max-time 15 \
+        -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+        "https://api.github.com/repos/$repo/releases/latest") || return 1
+    tag=$(sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$body" | head -n 1)
+    [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+    printf '%s\n' "$tag"
+}
+
 # Чистка после удачного обновления: прежние образы панели (кроме текущего и отката), образы без тега и кэш
 # сборки старше недели — свежий кэш остаётся, чтобы следующая сборка шла быстро. Ошибка чистки обновление
 # неудачным не делает: всё под `|| true`. Берёт COMPOSE и цвета сообщений из основной части скрипта.
@@ -68,7 +80,7 @@ APP_DIR="${NODESERVICE_DIR:-/opt/nodeservice}"
 export NODESERVICE_DIR="$APP_DIR"
 ENV_FILE="$APP_DIR/infra/.env"
 COMPOSE=(docker compose -f "$APP_DIR/infra/compose.yaml" --env-file "$ENV_FILE")
-REF="${1:-main}"
+REF="${1:-latest}"
 G='\033[0;32m'; C='\033[0;36m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 die() { echo -e "${R}[-] $1${N}" >&2; exit 1; }
 [[ -d "$APP_DIR/.git" ]] || die "Нет git-репозитория в $APP_DIR."
@@ -113,7 +125,6 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
 fi
 
 before=$(git rev-parse --short HEAD)
-echo -e "${C}==> Код: $before → $REF${N}"
 if ! git fetch --all --tags --prune --quiet; then
     if [[ "$(git remote get-url origin)" == https://* ]]; then
         switch_to_deploy_key
@@ -122,6 +133,12 @@ if ! git fetch --all --tags --prune --quiet; then
         die "git fetch не удался — проверь сеть и deploy-ключ."
     fi
 fi
+# Обычное обновление не берёт промежуточный commit из main: только прошедший все
+# проверки тег vX.Y.Z. Для теста конкретного commit/ветки остаётся `nodeservice update main`.
+if [[ "$REF" == "latest" ]]; then
+    REF=$(latest_release_tag) || die "Не удалось узнать последний стабильный GitHub Release."
+fi
+echo -e "${C}==> Код: $before → $REF${N}"
 # Сначала ветка на origin (локальная могла устареть), потом тег/commit.
 if git rev-parse --verify --quiet "origin/$REF" >/dev/null; then
     git checkout --quiet --detach "origin/$REF"

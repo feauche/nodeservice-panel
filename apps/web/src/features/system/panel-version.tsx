@@ -1,0 +1,165 @@
+import { CheckIcon, CopyIcon, ExternalLinkIcon } from 'lucide-react';
+import { useState } from 'react';
+
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
+import { usePanelRelease } from './panel-release-api';
+
+const UPDATE_COMMAND = 'nodeservice update';
+
+function releaseLines(notes: string | null | undefined): string[] {
+  if (!notes) return [];
+  return notes
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#') && !line.startsWith('```'))
+    .map((line) =>
+      line
+        .replace(/^[-*]\s+/, '')
+        .replace(/\[([^\]]+)]\(https?:\/\/[^)]+\)/g, '$1')
+        .replace(/\*\*(.+?)\*\*/g, '$1'),
+    )
+    .filter((line) => !/^full changelog:?/i.test(line) && line !== UPDATE_COMMAND)
+    .slice(0, 8);
+}
+
+function ruDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).format(
+    new Date(value),
+  );
+}
+
+export function PanelVersion({ version, build }: { version: string; build: string }) {
+  const release = usePanelRelease();
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const available = release.data?.status === 'available' && release.data.latestVersion;
+  const shownVersion = version === 'dev' ? (release.data?.currentVersion ?? version) : version;
+  const lines = releaseLines(release.data?.release?.notes);
+
+  const copy = async () => {
+    await navigator.clipboard?.writeText(UPDATE_COMMAND);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1_500);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <button
+        type="button"
+        data-testid="panel-version"
+        onClick={() => setOpen(true)}
+        title={
+          available
+            ? `Установлена v${shownVersion} · доступна v${available}`
+            : `NodeService v${shownVersion}${build ? ` · ${build}` : ''}`
+        }
+        className={cn(
+          'inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] border px-2.5 font-mono text-[11px] font-semibold transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
+          available
+            ? 'border-warn/40 bg-warn-soft text-warn hover:border-warn/60 hover:bg-warn-soft/80'
+            : 'border-border bg-surface text-text-3 hover:border-border-2 hover:text-text-2',
+        )}
+      >
+        <span
+          aria-hidden="true"
+          className={cn(
+            'size-1.5 rounded-full',
+            available ? 'bg-warn shadow-[0_0_8px_var(--ns-warn)]' : 'bg-text-3/60',
+          )}
+        />
+        {available ? <span className="font-sans">Доступна v{available}</span> : <span>v{shownVersion}</span>}
+      </button>
+
+      <DialogContent className="max-h-[calc(100dvh-40px)] gap-0 overflow-hidden rounded-2xl border-border bg-surface p-0 sm:max-w-[520px]">
+        <DialogHeader className="border-b border-border px-5 py-4 pr-12">
+          <DialogTitle className="font-heading text-[17px]">Версия NodeService</DialogTitle>
+          <DialogDescription>Стабильные версии панели публикуются как GitHub Release.</DialogDescription>
+        </DialogHeader>
+
+        <div className="min-h-0 overflow-y-auto p-5">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded-xl border border-border bg-surface-2/50 p-3.5">
+              <div className="text-[11px] font-semibold tracking-[0.08em] text-text-3 uppercase">
+                Установлена
+              </div>
+              <div className="mt-1.5 font-mono text-[17px] font-semibold text-foreground">
+                v{shownVersion}
+              </div>
+              {build && <div className="mt-1 text-[11.5px] text-text-3">{build}</div>}
+            </div>
+            <div
+              className={cn(
+                'rounded-xl border p-3.5',
+                available ? 'border-warn/35 bg-warn-soft/45' : 'border-border bg-surface-2/50',
+              )}
+            >
+              <div className="text-[11px] font-semibold tracking-[0.08em] text-text-3 uppercase">
+                Последний релиз
+              </div>
+              <div className={cn('mt-1.5 font-mono text-[17px] font-semibold', available && 'text-warn')}>
+                {release.data?.latestVersion ? `v${release.data.latestVersion}` : '—'}
+              </div>
+              {release.data?.release?.publishedAt && (
+                <div className="mt-1 text-[11.5px] text-text-3">
+                  {ruDate(release.data.release.publishedAt)}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {available ? (
+            <div className="mt-4">
+              <div className="flex items-center gap-2 text-[13px] font-semibold text-warn">
+                <span className="size-2 rounded-full bg-warn shadow-[0_0_10px_var(--ns-warn)]" />
+                Доступна новая версия
+              </div>
+              {lines.length > 0 && (
+                <ul className="mt-3 grid gap-2 pl-0 text-[12.5px] leading-relaxed text-text-2">
+                  {lines.map((line) => (
+                    <li key={line} className="flex gap-2">
+                      <span className="mt-[7px] size-1 shrink-0 rounded-full bg-text-3" />
+                      <span>{line}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-4 rounded-xl border border-border bg-[#0b0e14] p-3">
+                <div className="mb-2 text-[11.5px] text-text-3">Обновить на сервере панели:</div>
+                <div className="flex items-center gap-2">
+                  <code className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-foreground">
+                    {UPDATE_COMMAND}
+                  </code>
+                  <Button type="button" size="sm" variant="outline" onClick={() => void copy()}>
+                    {copied ? <CheckIcon /> : <CopyIcon />}
+                    {copied ? 'Скопировано' : 'Копировать'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : release.data?.status === 'unavailable' || release.isError ? (
+            <p className="mt-4 rounded-xl border border-border bg-surface-2/50 p-3 text-[12.5px] leading-relaxed text-text-2">
+              Установленная версия известна, но GitHub сейчас не ответил. Панель повторит проверку сама.
+            </p>
+          ) : (
+            <p className="mt-4 flex items-center gap-2 text-[12.5px] text-ok">
+              <CheckIcon className="size-4" /> Установлена последняя стабильная версия.
+            </p>
+          )}
+        </div>
+
+        {release.data?.release?.url && (
+          <div className="flex justify-end border-t border-border bg-surface-2/35 px-5 py-3.5">
+            <Button asChild variant="outline">
+              <a href={release.data.release.url} target="_blank" rel="noreferrer">
+                <ExternalLinkIcon /> Открыть GitHub Release
+              </a>
+            </Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
