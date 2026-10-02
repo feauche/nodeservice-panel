@@ -107,7 +107,9 @@ export class EgressCheckService {
     const session = await this.ssh.connect(target, via ? { via } : {});
     try {
       const { stdout } = await session.exec(command, {
-        timeoutMs: 15_000,
+        // DNS и TCP у каждой цели ограничены внутри команды и идут параллельно; оставляем запас на
+        // медленный DNS-резолвер и передачу результата по SSH.
+        timeoutMs: 30_000,
         label: 'проверка выхода с сервера',
       });
       const parsed = parseEgress(stdout, targets);

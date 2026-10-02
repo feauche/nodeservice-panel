@@ -119,6 +119,50 @@ describe('внутренние оповещения панели о себе с�
     });
   });
 
+  describe('панель потеряла обзор сети серверов', () => {
+    it('одна системная тревога заменяет повторы по серверам, после восстановления приходит итог', async () => {
+      const { svc, pushes } = make();
+      await svc.connectivityDown(7, T0);
+      await svc.connectivityDown(9, at(60_000));
+      await svc.connectivityUp(at(8 * 60_000));
+      await svc.connectivityUp(at(9 * 60_000));
+
+      expect(pushes.map((p) => [p.severity, p.title])).toEqual([
+        ['warn', 'Панель не может перепроверить связь с серверами'],
+        ['ok', 'Панель снова видит сеть серверов'],
+      ]);
+      expect(pushes[0]).toMatchObject({
+        link: { to: '/servers', label: 'Открыть серверы' },
+        telegram: { event: 'panel_health' },
+      });
+      expect(pushes[0]?.body).toContain('независимо проверить 7 серверов');
+      expect(pushes[0]?.body).toContain('не будет объявлять эти серверы выключенными');
+      expect(pushes[1]).toMatchObject({ center: true, telegram: { event: 'panel_health' } });
+      expect(pushes[1]?.body).toContain('после 8 мин');
+    });
+
+    it('повторный сбой в те же сутки не создаёт тревогу и поэтому не создаёт ложное восстановление', async () => {
+      const { svc, pushes } = make();
+      await svc.connectivityDown(3, T0);
+      await svc.connectivityUp(at(HOUR));
+      await svc.connectivityDown(2, at(2 * HOUR));
+      await svc.connectivityUp(at(3 * HOUR));
+      expect(pushes.map((p) => p.title)).toEqual([
+        'Панель не может перепроверить связь с серверами',
+        'Панель снова видит сеть серверов',
+      ]);
+    });
+
+    it('открытое состояние переживает перезапуск панели', async () => {
+      const first = make();
+      await first.svc.connectivityDown(4, T0);
+      const after = make(first.saved);
+      await after.svc.connectivityDown(4, at(5 * 60_000));
+      await after.svc.connectivityUp(at(10 * 60_000));
+      expect(after.pushes.map((p) => p.title)).toEqual(['Панель снова видит сеть серверов']);
+    });
+  });
+
   describe('база не отвечает', () => {
     it('отметки не читаются и не пишутся — оповещение всё равно уходит, а повтор в те же сутки держится в памяти', async () => {
       const pushes: PushInput[] = [];

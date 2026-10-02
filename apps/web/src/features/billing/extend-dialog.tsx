@@ -8,7 +8,7 @@ import {
   type Provider,
 } from '@nodeservice/shared';
 import { CheckIcon, Loader2Icon, Undo2Icon } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { DialogPrimaryButton } from '@/components/dialog-actions';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -70,6 +70,7 @@ export function ExtendDialog({
   const [days, setDays] = useState('');
   const [until, setUntil] = useState('');
   const [log, setLog] = useState<LogRow[]>([]);
+  const running = useRef(false);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: заполняем при открытии окна
   useEffect(() => {
@@ -82,11 +83,18 @@ export function ExtendDialog({
       toLocalInput(
         (item.periodUnit === 'once'
           ? new Date(Date.parse(item.paidUntil) + 30 * 86_400_000)
-          : addBillingPeriod(new Date(item.paidUntil), item.periodUnit, item.periodCount)
+          : addBillingPeriod(
+              new Date(item.paidUntil),
+              item.periodUnit,
+              item.periodCount,
+              item.billingTimeZone,
+              item.billingDay,
+            )
         ).toISOString(),
       ),
     );
     setLog([]);
+    running.current = false;
   }, [open, item?.id]);
 
   if (!cur) return null;
@@ -125,10 +133,12 @@ export function ExtendDialog({
     });
 
   const run = async (body: Pick<BillingExtend, 'period' | 'days' | 'until'>, label: string) => {
+    if (running.current) return;
     if (count && !amountOk) {
       toast.error('Укажите сумму оплаты или снимите галочку «Учесть оплату».');
       return;
     }
+    running.current = true;
     try {
       const res = await extend.mutateAsync({
         id: cur.id,
@@ -151,6 +161,8 @@ export function ExtendDialog({
       setCount(false);
     } catch (err) {
       toast.error(apiErrorMessage(err));
+    } finally {
+      running.current = false;
     }
   };
 
@@ -212,7 +224,7 @@ export function ExtendDialog({
                   key={q.key}
                   type="button"
                   disabled={busy}
-                  onClick={() => void run(q.body, `+${q.label}`)}
+                  onClick={(event) => event.detail <= 1 && void run(q.body, `+${q.label}`)}
                   className={cn(
                     'h-10 min-w-0 cursor-pointer truncate rounded-[10px] border px-2 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-brand',
                     q.main
@@ -250,7 +262,9 @@ export function ExtendDialog({
                   type="button"
                   className={SMALL_BTN}
                   disabled={busy || !(daysNum >= 1)}
-                  onClick={() => void run({ days: daysNum }, `+${daysLabel(daysNum)}`)}
+                  onClick={(event) =>
+                    event.detail <= 1 && void run({ days: daysNum }, `+${daysLabel(daysNum)}`)
+                  }
                 >
                   Продлить
                 </button>
@@ -273,7 +287,9 @@ export function ExtendDialog({
                   type="button"
                   className={SMALL_BTN}
                   disabled={busy || !untilIso}
-                  onClick={() => untilIso && void run({ until: untilIso }, 'Дата установлена')}
+                  onClick={(event) =>
+                    event.detail <= 1 && untilIso && void run({ until: untilIso }, 'Дата установлена')
+                  }
                 >
                   Установить
                 </button>

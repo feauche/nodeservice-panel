@@ -97,14 +97,16 @@ export const NODE_LINK_BY_LABELS: Record<NodeLinkBy, string> = {
   ip: 'найдена по IP-адресу сервера',
 };
 
-/** Что зонд видел в последний раз: контейнер работает / остановлен / не найден. */
-export const NODE_STATES = ['running', 'stopped', 'none'] as const;
+/** Что зонд видел: контейнер работает / падает в цикле / остановлен / не найден / Docker лежит. */
+export const NODE_STATES = ['running', 'restarting', 'stopped', 'none', 'docker_down'] as const;
 export const nodeStateSchema = z.enum(NODE_STATES);
 export type NodeState = z.infer<typeof nodeStateSchema>;
 export const NODE_STATE_LABELS: Record<NodeState, string> = {
   running: 'контейнер найден, работает',
+  restarting: 'контейнер падает и перезапускается по кругу',
   stopped: 'контейнер найден, остановлен',
   none: 'контейнер не найден',
+  docker_down: 'служба Docker не отвечает',
 };
 
 export const tagsSchema = z

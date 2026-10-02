@@ -210,11 +210,19 @@ function RemnawaveTile() {
       </span>
       <div className="min-w-0">
         <div className="text-[13.5px] font-semibold">
-          Remnawave: {s.stats.nodesOnline} из {s.stats.nodesTotal} нод на связи
+          {s.error
+            ? 'Remnawave: свежих данных нет'
+            : `Remnawave: ${s.stats.nodesOnline} из ${s.stats.nodesTotal} нод на связи`}
         </div>
         <div className="text-[12px] text-text-3">
-          {nodesOnline(s.nodes)} онлайн на нодах · {s.stats.users.total} пользователей ·{' '}
-          {formatByteTotal(s.stats.trafficBytesLifetime)} трафика
+          {s.error ? (
+            <>Последние успешные данные {s.checkedAt ? formatWhen(s.checkedAt) : 'неизвестно когда'}</>
+          ) : (
+            <>
+              {nodesOnline(s.nodes)} онлайн на нодах · {s.stats.users.total} пользователей ·{' '}
+              {formatByteTotal(s.stats.trafficBytesLifetime)} трафика
+            </>
+          )}
         </div>
       </div>
     </Link>
@@ -253,6 +261,7 @@ export function OverviewPage() {
   const items = servers.data?.items ?? [];
   const byId = new Map((metrics.data?.servers ?? []).map((m) => [m.serverId, m]));
   const fleet = metrics.data?.fleet;
+  const metricsKnown = metrics.data?.vmOk === true;
   const judged = items.map((s) => ({ server: s, ...serverState(s, byId.get(s.id)) }));
   const okCount = judged.filter((j) => j.health === 'ok').length;
   const warnCount = judged.filter((j) => j.health === 'warn').length;
@@ -304,7 +313,8 @@ export function OverviewPage() {
     }));
   const attention = [...incidentRows, ...healthRows];
 
-  const noMetricsAtAll = items.length > 0 && items.every((s) => (byId.get(s.id)?.cpuPct ?? null) === null);
+  const noMetricsAtAll =
+    metricsKnown && items.length > 0 && items.every((s) => (byId.get(s.id)?.cpuPct ?? null) === null);
   const cpuAvg = avg(items.map((s) => byId.get(s.id)?.cpuPct ?? null));
   const memAvg = avg(items.map((s) => byId.get(s.id)?.memPct ?? null));
   const rxNow = sum(items.map((s) => byId.get(s.id)?.netRxBps ?? null));
@@ -318,9 +328,18 @@ export function OverviewPage() {
   return (
     <div className="flex flex-col gap-4">
       {incCounts && incCounts.open > 0 && <IncidentsBanner open={incCounts.open} crit={incCounts.crit} />}
-      {metrics.data?.vmOk === false && (
+      {metrics.isPending && <Skeleton className="h-[37px] rounded-[10px]" />}
+      {metrics.isError && (
+        <p className="rounded-[10px] border border-crit/30 bg-crit-soft px-3.5 py-2 text-[12.5px] text-text-2">
+          Метрики сейчас неизвестны: {apiErrorMessage(metrics.error)}{' '}
+          <button type="button" className="cursor-pointer underline" onClick={() => void metrics.refetch()}>
+            Повторить
+          </button>
+        </p>
+      )}
+      {!metrics.isError && metrics.data?.vmOk === false && (
         <p className="rounded-[10px] border border-warn/30 bg-warn-soft/50 px-3.5 py-2 text-[12.5px] text-text-2">
-          Хранилище метрик недоступно — показываю без графиков.
+          Хранилище метрик недоступно — нагрузка и трафик сейчас неизвестны.
         </p>
       )}
 
@@ -371,7 +390,15 @@ export function OverviewPage() {
           caps="Средний CPU"
           value={cpuAvg === null ? '—' : formatPct(cpuAvg)}
           unit={cpuAvg === null ? undefined : '%'}
-          status={cpuAvg === null ? 'Ждёт агента' : cpuAvg > 85 ? 'Высокая нагрузка' : 'В норме'}
+          status={
+            !metricsKnown
+              ? 'Нет данных'
+              : cpuAvg === null
+                ? 'Ждёт агента'
+                : cpuAvg > 85
+                  ? 'Высокая нагрузка'
+                  : 'В норме'
+          }
           tone={cpuAvg === null ? 'muted' : cpuAvg > 85 ? 'warn' : 'ok'}
           spark={fleet?.cpuAvgSpark ?? []}
         />
@@ -379,7 +406,7 @@ export function OverviewPage() {
           caps="Трафик сейчас"
           value={trafficNow === null ? '—' : `↓ ${rx.value} · ↑ ${tx.value}`}
           unit={trafficNow === null ? undefined : rx.unit === tx.unit ? rx.unit : `${rx.unit} / ${tx.unit}`}
-          status={trafficNow === null ? 'Ждёт агента' : 'Приём · отдача'}
+          status={!metricsKnown ? 'Нет данных' : trafficNow === null ? 'Ждёт агента' : 'Приём · отдача'}
           tone={trafficNow === null ? 'muted' : 'ok'}
           spark={fleet?.trafficRxSpark ?? []}
         />
@@ -387,7 +414,7 @@ export function OverviewPage() {
           caps="Соединений сейчас"
           value={conntrackNow === null ? '—' : Math.round(conntrackNow).toLocaleString('ru-RU')}
           unit={conntrackNow === null ? undefined : 'conntrack'}
-          status={conntrackNow === null ? 'Ждёт агента' : 'Весь парк'}
+          status={!metricsKnown ? 'Нет данных' : conntrackNow === null ? 'Ждёт агента' : 'Весь парк'}
           tone={conntrackNow === null ? 'muted' : 'ok'}
           spark={fleet?.conntrackSpark ?? []}
         />
@@ -409,18 +436,43 @@ export function OverviewPage() {
                 attention.length > 0 ? 'bg-warn-soft text-warn' : 'bg-ok-soft text-ok',
               )}
             >
-              {attention.length}
+              {openIncidents.isPending || openIncidents.isError ? '—' : attention.length}
             </span>
           }
         >
-          {attention.length === 0 ? (
+          {openIncidents.isPending ? (
+            <div className="flex h-[190px] flex-col gap-2 py-2">
+              <Skeleton className="h-12 rounded-[10px]" />
+              <Skeleton className="h-12 rounded-[10px]" />
+              <Skeleton className="h-12 rounded-[10px]" />
+            </div>
+          ) : openIncidents.isError ? (
+            <div className="grid h-[190px] place-items-center text-center text-[12.5px] text-crit">
+              <p>
+                Не удалось загрузить инциденты.{' '}
+                <button
+                  type="button"
+                  className="cursor-pointer underline"
+                  onClick={() => void openIncidents.refetch()}
+                >
+                  Повторить
+                </button>
+              </p>
+            </div>
+          ) : attention.length === 0 ? (
             <div className="grid h-[190px] place-items-center">
               <div className="flex flex-col items-center gap-2 text-center">
                 <span className="grid size-10 place-items-center rounded-full bg-ok-soft text-ok">
                   <CheckIcon className="size-5" aria-hidden="true" />
                 </span>
-                <p className="text-[13.5px] font-semibold">Всё спокойно</p>
-                <p className="text-[12.5px] text-text-3">Проблем на серверах не найдено.</p>
+                <p className="text-[13.5px] font-semibold">
+                  {metricsKnown ? 'Всё спокойно' : 'Часть состояния неизвестна'}
+                </p>
+                <p className="text-[12.5px] text-text-3">
+                  {metricsKnown
+                    ? 'Проблем на серверах не найдено.'
+                    : 'Нагрузку и диск сейчас проверить нельзя.'}
+                </p>
               </div>
             </div>
           ) : (
@@ -449,7 +501,11 @@ export function OverviewPage() {
                   <ActivityIcon className="size-5" aria-hidden="true" />
                 </span>
                 <p className="text-[13.5px] font-semibold">Пока нет данных</p>
-                <p className="text-[12.5px] text-text-3">Трафик появится, когда агент выйдет на связь.</p>
+                <p className="text-[12.5px] text-text-3">
+                  {metricsKnown
+                    ? 'Трафик появится, когда агент выйдет на связь.'
+                    : 'Хранилище метрик или запрос сейчас недоступны.'}
+                </p>
               </div>
             </div>
           ) : (
@@ -483,7 +539,20 @@ export function OverviewPage() {
           </Link>
         }
       >
-        {events.data && events.data.items.length > 0 ? (
+        {events.isPending ? (
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-12 rounded-[10px]" />
+            <Skeleton className="h-12 rounded-[10px]" />
+            <Skeleton className="h-12 rounded-[10px]" />
+          </div>
+        ) : events.isError ? (
+          <p className="py-4 text-[12.5px] text-crit">
+            Не удалось загрузить события.{' '}
+            <button type="button" className="cursor-pointer underline" onClick={() => void events.refetch()}>
+              Повторить
+            </button>
+          </p>
+        ) : events.data && events.data.items.length > 0 ? (
           <ul className="flex flex-col">
             {events.data.items.slice(0, 6).map((e) => {
               const Icon = CATEGORY_ICON[e.category] ?? CogIcon;

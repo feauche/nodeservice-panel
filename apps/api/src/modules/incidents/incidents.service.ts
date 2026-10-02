@@ -29,6 +29,7 @@ import type { IncidentRow, ServerRow } from '../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
 import { BillingService } from '../billing/billing.service.js';
+import { PanelAlertsService } from '../health/panel-alerts.service.js';
 import { MaintenanceService } from '../maintenance/maintenance.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { ServersRepository } from '../servers/servers.repository.js';
@@ -70,6 +71,8 @@ export const SSH_DOWN_FOR_MS = process.env.NODE_ENV === 'test' ? 0 : 2 * 60_000;
 const HOST_PROBE_TTL_MS = 60_000;
 /** Проверка порта «из каждой страны» — раз в 3 минуты на сервер. */
 const REACH_TTL_MS = process.env.NODE_ENV === 'test' ? 0 : 3 * 60_000;
+/** Сетевые перепроверки разных серверов: быстрее последовательного обхода, без SSH-шторма по всему парку. */
+const CONNECTIVITY_CONCURRENCY = 4;
 /** Связь пропала с другими серверами за это время — сбой считается одновременным: общая причина. */
 const FLEET_WINDOW_MS = 30 * 60_000;
 /** Дело о падении онлайна узнаётся по первой строке текста: «Онлайн: 396 → 0 …». */
@@ -122,6 +125,13 @@ export class IncidentsService {
   private readonly exceededSince = new Map<string, number>();
   /** С какой неудачной проверки SSH у сервера идёт серия неудач (без единого успеха). */
   private readonly sshDownSince = new Map<string, number>();
+  /** Два независимых одинаковых сетевых снимка подряд защищают от флаппинга одного проверяющего. */
+  private readonly reachStable = new Map<
+    string,
+    { sampleAt: number; signature: string; consecutive: number }
+  >();
+  /** Только для подменённой проверки в unit-тестах; в работе время снимка берётся из reachCache. */
+  private syntheticReachSample = 0;
   /** Порог «SSH недоступен»; в e2e подменяется, как probeHost. */
   sshDownForMs = SSH_DOWN_FOR_MS;
   private readonly bootAt = Date.now();
@@ -140,6 +150,7 @@ export class IncidentsService {
     private readonly servers: ServersService,
     private readonly blockCheck: NodeBlockCheckService,
     private readonly egress: EgressCheckService,
+    private readonly panelAlerts: PanelAlertsService,
   ) {}
 
   /**
@@ -441,13 +452,9 @@ export class IncidentsService {
     const cfg = await this.settings.get();
     const rows = await this.serversRepo.list();
     const connectivityReady = Date.now() - this.bootAt >= STARTUP_GRACE_MS;
+    // Сначала правила, которые читают уже готовые данные. Долгая сеть одного сервера не должна задерживать
+    // порог диска другого сервера и очередной тик автопочинки.
     for (const server of rows) {
-      if (connectivityReady) {
-        const offlineLongEnough =
-          server.agentStatus === 'offline' &&
-          (!server.agentLastSeenAt || Date.now() - server.agentLastSeenAt.getTime() >= AGENT_OFFLINE_FOR_MS);
-        await this.evalConnectivity(server, offlineLongEnough);
-      }
       await this.evalNode(server);
       await this.evalThreshold(
         server,
@@ -473,6 +480,26 @@ export class IncidentsService {
     }
     this.metrics.remember(latest);
     await this.runner.autoTick();
+
+    if (connectivityReady) {
+      let cursor = 0;
+      let panelBlind = 0;
+      const worker = async () => {
+        while (cursor < rows.length) {
+          const server = rows[cursor++];
+          if (!server) return;
+          const offlineLongEnough =
+            server.agentStatus === 'offline' &&
+            (!server.agentLastSeenAt ||
+              Date.now() - server.agentLastSeenAt.getTime() >= AGENT_OFFLINE_FOR_MS);
+          if ((await this.evalConnectivity(server, offlineLongEnough)) === 'panel_blind') panelBlind += 1;
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(CONNECTIVITY_CONCURRENCY, rows.length) }, worker));
+      const report =
+        panelBlind > 0 ? this.panelAlerts.connectivityDown(panelBlind) : this.panelAlerts.connectivityUp();
+      await report.catch(() => undefined);
+    }
   }
 
   /** Зонд контейнера (NodeProbeJob или тест) сообщает состояние; отсюда решаем про инцидент. */
@@ -510,7 +537,11 @@ export class IncidentsService {
     }
     const state = this.metrics.nodeState(server.id);
     if (state === undefined) return;
-    const down = state === 'stopped' || (state === 'none' && server.nodeWatch === 'on');
+    const down =
+      state === 'stopped' ||
+      state === 'restarting' ||
+      state === 'docker_down' ||
+      (state === 'none' && server.nodeWatch === 'on');
     if (down) {
       if (!existing)
         await this.openIncident(
@@ -518,7 +549,11 @@ export class IncidentsService {
           'node_down',
           state === 'none'
             ? 'Контейнер ноды не найден, хотя нода на этом сервере должна быть.'
-            : 'Контейнер ноды остановлен или упал — нода не работает.',
+            : state === 'docker_down'
+              ? 'Служба Docker на сервере не отвечает — состояние контейнера проверить нельзя, нода не работает.'
+              : state === 'restarting'
+                ? 'Контейнер ноды падает при запуске и перезапускается по кругу — нода не работает.'
+                : 'Контейнер ноды остановлен или упал — нода не работает.',
         );
     } else if (quiet) {
       await this.autoResolve(existing);
@@ -544,11 +579,15 @@ export class IncidentsService {
    * с переустановкой. SSH не пускает при живом агенте → «SSH недоступен». Уже открытые «Агент не в сети»,
    * «SSH недоступен» и «Похоже на блокировку» при недоступном сервере сливаются в одно дело.
    */
-  private async evalConnectivity(server: ServerRow, agentOff: boolean): Promise<void> {
+  private async evalConnectivity(
+    server: ServerRow,
+    agentOff: boolean,
+  ): Promise<'checked' | 'panel_blind' | 'coverage_blind'> {
     const sshDown = server.sshOk === false;
     const sshConfirmed = this.sshDownConfirmed(server);
     const hostDown = agentOff ? !(await this.hostAnswers(server)) : false;
     const suspect = agentOff && (hostDown || sshDown);
+    if (!suspect) this.reachStable.delete(server.id);
     // С панели не достучаться — это ещё не «сервер лёг»: панель смотрит из одной сети. Спрашиваем по
     // серверу парка в каждой стране; открыт хоть откуда-то — сервер жив, закрыт путь из части сетей.
     const reach = suspect ? await this.countryReachCached(server) : null;
@@ -558,10 +597,37 @@ export class IncidentsService {
     // обычные «Агент не в сети» и «SSH недоступен».
     const allOpen = anyOpen && !hostDown && seen.every((r) => r.open);
     const partial = anyOpen && !allOpen;
-    const serverDown = suspect && !anyOpen;
+    // Пустой список означает «проверка не состоялась», а не «все подтвердили недоступность».
+    // Иначе обрыв исходящей сети самой панели превращается в критичный инцидент на каждом сервере.
+    const serverDown = suspect && seen.length > 0 && !anyOpen;
     /** Среди проверяющих есть зарубежный: только тогда «не отвечает ни из одной страны» — проверенный факт. */
     const abroad = seen.some((r) => r.country !== null && r.country !== 'RU');
     const open = await this.repo.findOpen(server.id, 'server_down');
+    if (suspect && seen.length === 0) {
+      const panelBlind = reach?.blind === 'ssh' || reach?.blind === 'no_answer';
+      if (!panelBlind) {
+        // Проверяющих нет или адрес нельзя проверить: честно оставляем прежнее дело без изменения,
+        // но отдельные подтверждённые сигналы агента и SSH по-прежнему записываем.
+        const agentBack = server.agentStatus === 'online' || server.agentStatus === 'not_installed';
+        await this.evalBinary(server, 'agent_offline', agentOff, agentBack);
+        await this.evalBinary(server, 'ssh_down', sshConfirmed, !sshDown);
+      }
+      return panelBlind ? 'panel_blind' : 'coverage_blind';
+    }
+    if (suspect) {
+      const signature = `${hostDown ? 'panel-closed' : 'panel-open'}|${seen
+        .map((r) => `${r.from}:${r.country ?? '-'}:${r.open ? 'open' : 'closed'}`)
+        .sort()
+        .join('|')}`;
+      const sampleAt = this.reachCache.get(server.id)?.at ?? ++this.syntheticReachSample;
+      const prev = this.reachStable.get(server.id);
+      const consecutive =
+        prev?.signature === signature ? prev.consecutive + (prev.sampleAt === sampleAt ? 0 : 1) : 1;
+      this.reachStable.set(server.id, { sampleAt, signature, consecutive });
+      // Один свежий снимок ещё не открывает, не закрывает и не меняет вид дела. Потеря одной точки
+      // проверки поэтому не вызывает цепочку «починилось → сервер недоступен → починилось».
+      if (consecutive < 2) return 'checked';
+    }
     await this.evalPartialReach(server, partial, seen, !hostDown, {
       serverDown,
       agentOnline: server.agentStatus === 'online',
@@ -573,7 +639,7 @@ export class IncidentsService {
           open,
           'Сервер жив: порт SSH открыт из части стран — это не отключение, а недоступность из части сетей (отдельное дело).',
         );
-      return;
+      return 'checked';
     }
     if (serverDown) {
       // Порт SSH с панели открывается — сервер включён: «выключен» и «проверьте оплату» тут были бы неправдой.
@@ -644,7 +710,7 @@ export class IncidentsService {
             );
         }
       }
-      return;
+      return 'checked';
     }
     // Закрываем, только если сервер действительно ответил: агент на связи или порт SSH открылся. Дело,
     // открытое проверкой онлайна у сервера без агента (аренда), закрывает перепроверка онлайна.
@@ -661,6 +727,7 @@ export class IncidentsService {
     const agentBack = server.agentStatus === 'online' || server.agentStatus === 'not_installed';
     await this.evalBinary(server, 'agent_offline', agentOff, agentBack);
     await this.evalBinary(server, 'ssh_down', sshConfirmed, !sshDown);
+    return 'checked';
   }
 
   /**

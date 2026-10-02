@@ -3,6 +3,8 @@ import { Link } from '@tanstack/react-router';
 import {
   BellIcon,
   CheckCircle2Icon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   CircleAlertIcon,
   HardDriveDownloadIcon,
   RefreshCwIcon,
@@ -53,6 +55,27 @@ const STATUS: Record<NotificationSeverity, string> = {
   warn: 'нужно внимание',
   crit: 'критично',
 };
+
+function dayLabel(value: string): string {
+  const date = new Date(value);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return 'Сегодня';
+  if (date.toDateString() === yesterday.toDateString()) return 'Вчера';
+  return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(date);
+}
+
+function groupByDay(items: Notification[]): Array<{ day: string; items: Notification[] }> {
+  const groups: Array<{ day: string; items: Notification[] }> = [];
+  for (const item of items) {
+    const day = dayLabel(item.createdAt);
+    const current = groups.at(-1);
+    if (current?.day === day) current.items.push(item);
+    else groups.push({ day, items: [item] });
+  }
+  return groups;
+}
 
 export function NotificationsCenterPage() {
   const query = useNotifications();
@@ -122,7 +145,14 @@ export function NotificationsCenterPage() {
       {query.isPending && <LoadingCards />}
       {query.isError && (
         <div className="rounded-[14px] border border-crit/30 bg-crit-soft px-4 py-5 text-[13px] text-crit">
-          {apiErrorMessage(query.error)}
+          {apiErrorMessage(query.error)}{' '}
+          <button
+            type="button"
+            className="cursor-pointer font-semibold underline"
+            onClick={() => void query.refetch()}
+          >
+            Повторить
+          </button>
         </div>
       )}
       {query.data && visible.length === 0 && (
@@ -135,9 +165,18 @@ export function NotificationsCenterPage() {
         </div>
       )}
       {visible.length > 0 && (
-        <div className="grid grid-cols-1 gap-2.5 xl:grid-cols-2">
-          {visible.map((n) => (
-            <ReportCard key={n.id} notification={n} />
+        <div className="space-y-5">
+          {groupByDay(visible).map((group) => (
+            <section key={group.day} aria-label={group.day}>
+              <h2 className="mb-2.5 text-[11px] font-semibold tracking-[0.08em] text-text-3 uppercase">
+                {group.day}
+              </h2>
+              <div className="space-y-2.5">
+                {group.items.map((n) => (
+                  <ReportCard key={n.id} notification={n} />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}
@@ -175,6 +214,7 @@ function Metric({ label, value, note }: { label: string; value: number; note: st
 }
 
 function ReportCard({ notification: n }: { notification: Notification }) {
+  const [expanded, setExpanded] = useState(false);
   const look = LOOK[n.severity];
   const Icon =
     categoryOf(n) === 'maintenance'
@@ -183,6 +223,7 @@ function ReportCard({ notification: n }: { notification: Notification }) {
         ? HardDriveDownloadIcon
         : look.Icon;
   const serverId = n.link ? serverIdFromLink(n.link.to) : null;
+  const hasDetails = Boolean(n.body && (n.body.length > 420 || n.body.split('\n').length > 6));
   return (
     <article
       className={cn(
@@ -205,8 +246,35 @@ function ReportCard({ notification: n }: { notification: Notification }) {
         </span>
       </div>
       {n.body && (
-        <div className="border-t border-border bg-bg-2/55 px-4 py-3 text-[12.5px] leading-relaxed whitespace-pre-line text-text-2">
-          {n.body}
+        <div className="border-t border-border bg-bg-2/55 px-4 py-3">
+          <div
+            className={cn(
+              'text-[12.5px] leading-relaxed whitespace-pre-line text-text-2',
+              hasDetails &&
+                !expanded &&
+                'max-h-24 overflow-hidden [mask-image:linear-gradient(#000_65%,transparent)]',
+            )}
+          >
+            {n.body}
+          </div>
+          {hasDetails && (
+            <button
+              type="button"
+              onClick={() => setExpanded((value) => !value)}
+              className="mt-2 inline-flex cursor-pointer items-center gap-1 text-[11.5px] font-semibold text-brand hover:underline"
+              aria-expanded={expanded}
+            >
+              {expanded ? (
+                <>
+                  Свернуть <ChevronUpIcon className="size-3.5" />
+                </>
+              ) : (
+                <>
+                  Показать подробности <ChevronDownIcon className="size-3.5" />
+                </>
+              )}
+            </button>
+          )}
         </div>
       )}
       {n.link && (
@@ -232,8 +300,8 @@ function ReportCard({ notification: n }: { notification: Notification }) {
 
 function LoadingCards() {
   return (
-    <div className="grid grid-cols-1 gap-2.5 xl:grid-cols-2">
-      {[0, 1, 2, 3].map((n) => (
+    <div className="space-y-2.5">
+      {[0, 1, 2].map((n) => (
         <div key={n} className="h-32 animate-pulse rounded-[14px] border border-border bg-surface" />
       ))}
     </div>

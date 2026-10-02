@@ -73,20 +73,45 @@ async function getJson(url: string, apiKey: string): Promise<Record<string, unkn
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch (err) {
-    throw new RemnawaveApiError(`Remnawave (${url}) не отвечает: ${(err as Error).message}`, 'unreachable');
+    throw new RemnawaveApiError(`Remnawave не отвечает: ${connectionErrorText(err)}`, 'unreachable');
   }
   if (res.status === 401 || res.status === 403)
     throw new RemnawaveApiError(
       'Remnawave ответила «доступ запрещён»: токен неверный, отозван или просрочен.',
       'unauthorized',
     );
-  if (!res.ok)
-    throw new RemnawaveApiError(`Remnawave (${url}) ответила ошибкой: HTTP ${res.status}.`, 'unreachable');
+  if (!res.ok) throw new RemnawaveApiError(`Remnawave ответила ошибкой HTTP ${res.status}.`, 'unreachable');
   try {
     return (await res.json()) as Record<string, unknown>;
   } catch {
-    throw new RemnawaveApiError(`Remnawave (${url}) ответила не тем, что мы ждали (не JSON).`, 'unreachable');
+    throw new RemnawaveApiError('Remnawave вернула повреждённый ответ вместо данных.', 'unreachable');
   }
+}
+
+function errorCode(err: unknown): string | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 4 && current && typeof current === 'object'; depth += 1) {
+    const record = current as Record<string, unknown>;
+    if (typeof record.code === 'string') return record.code;
+    current = record.cause;
+  }
+  return null;
+}
+
+/** Точная русская причина без URL, внутренних имён undici и английского системного текста. */
+export function connectionErrorText(err: unknown): string {
+  const code = errorCode(err);
+  const name = err instanceof Error ? err.name : '';
+  if (code === 'CERT_HAS_EXPIRED') return 'TLS-сертификат панели истёк';
+  if (code === 'DEPTH_ZERO_SELF_SIGNED_CERT' || code === 'SELF_SIGNED_CERT_IN_CHAIN')
+    return 'TLS-сертификат панели самоподписанный и не считается доверенным';
+  if (code === 'ERR_TLS_CERT_ALTNAME_INVALID') return 'TLS-сертификат выпущен для другого домена';
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'домен не разрешается через DNS';
+  if (code === 'ECONNREFUSED') return 'HTTPS-порт панели отклоняет соединение';
+  if (code === 'ETIMEDOUT' || name === 'TimeoutError' || name === 'AbortError')
+    return `панель не ответила за ${FETCH_TIMEOUT_MS / 1_000} секунд`;
+  if (code === 'ECONNRESET') return 'панель оборвала HTTPS-соединение';
+  return 'не удалось установить защищённое HTTPS-соединение';
 }
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -241,12 +266,15 @@ export class HttpRemnawaveClient implements RemnawaveClient {
     const port = Number(domain.split(':')[1] ?? 443);
     try {
       const cert = await new Promise<PeerCertificate>((resolve, reject) => {
-        const socket = tlsConnect({ host, port, servername: host, timeout: TLS_TIMEOUT_MS }, () => {
-          const c = socket.getPeerCertificate();
-          socket.end();
-          if (!c || Object.keys(c).length === 0) reject(new Error('сертификат не отдан'));
-          else resolve(c);
-        });
+        const socket = tlsConnect(
+          { host, port, servername: host, timeout: TLS_TIMEOUT_MS, rejectUnauthorized: false },
+          () => {
+            const c = socket.getPeerCertificate();
+            socket.end();
+            if (!c || Object.keys(c).length === 0) reject(new Error('сертификат не отдан'));
+            else resolve(c);
+          },
+        );
         socket.on('error', reject);
         socket.on('timeout', () => {
           socket.destroy();
@@ -262,12 +290,12 @@ export class HttpRemnawaveClient implements RemnawaveClient {
         note: null,
       };
     } catch (err) {
-      this.log.debug(`Сертификат ${host}:${port}: ${(err as Error).message}`);
+      this.log.debug(`Сертификат ${host}:${port}: ${connectionErrorText(err)}`);
       return {
         status: 'unknown',
         expiresAt: null,
         daysLeft: null,
-        note: 'Не удалось проверить сертификат панели по HTTPS.',
+        note: `Не удалось проверить сертификат панели: ${connectionErrorText(err)}.`,
       };
     }
   }

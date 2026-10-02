@@ -109,6 +109,7 @@ describe('parseContainers', () => {
   it('поля разобраны, нулевое время Docker превращается в null', () => {
     const r = parseContainers(OUT);
     expect(r.docker).toBe(true);
+    expect(r.dockerRunning).toBe(true);
     expect(r.containers).toHaveLength(3);
     expect(r.containers[0]).toMatchObject({
       name: 'remnanode',
@@ -131,8 +132,23 @@ describe('parseContainers', () => {
     expect(a).not.toContain('remnanode');
   });
   it('нет docker и пустой список — без падения', () => {
-    expect(parseContainers('@@nodocker\n')).toEqual({ docker: false, containers: [], attention: [] });
-    expect(parseContainers('@@empty\n')).toEqual({ docker: true, containers: [], attention: [] });
+    expect(parseContainers('@@nodocker\n')).toEqual({
+      docker: false,
+      dockerRunning: false,
+      containers: [],
+      attention: [],
+    });
+    expect(parseContainers('@@empty\n')).toEqual({
+      docker: true,
+      dockerRunning: true,
+      containers: [],
+      attention: [],
+    });
+    expect(parseContainers('@@dockerdown\n')).toMatchObject({
+      docker: true,
+      dockerRunning: false,
+      containers: [],
+    });
     expect(parseContainers('мусор без разделителей').containers).toEqual([]);
   });
 });

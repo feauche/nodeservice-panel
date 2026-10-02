@@ -3,7 +3,7 @@ import type { Duplex } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { Injectable, Logger } from '@nestjs/common';
 import { EMPTY_FACTS, type ServerFacts } from '@nodeservice/shared';
-import { Client, type ConnectConfig } from 'ssh2';
+import { Client, type ClientChannel, type ConnectConfig } from 'ssh2';
 import { externalAddresses } from './addresses.js';
 import { serverProblems } from './servers.problems.js';
 import { normalizePrivateKey, privateKeyProblem } from './ssh-key.js';
@@ -251,10 +251,13 @@ export class SshService {
           const timeoutMs = opts.timeoutMs ?? EXEC_TIMEOUT_MS;
           const name = opts.label ?? commandHead(command);
           let settled = false;
+          let commandStream: ClientChannel | null = null;
+          let abortTimer: NodeJS.Timeout | null = null;
           const finish = (fn: () => void) => {
             if (settled) return;
             settled = true;
             clearTimeout(timer);
+            if (abortTimer) clearTimeout(abortTimer);
             pending.delete(lost);
             opts.signal?.removeEventListener('abort', onAbort);
             fn();
@@ -267,8 +270,28 @@ export class SshService {
             );
           }, timeoutMs);
           const onAbort = () => {
-            client.end();
-            finish(() => reject(serverProblems.sshCommand(name, 'отменено')));
+            if (!commandStream) {
+              client.end();
+              finish(() => reject(serverProblems.sshCommand(name, 'отменено')));
+              return;
+            }
+            // Сначала просим SSH-сервер завершить именно удалённый процесс и закрываем его канал.
+            // Закрытие всего TCP без сигнала могло оставить apt или shell работать сиротой.
+            try {
+              commandStream.signal('TERM');
+            } catch {
+              // Канал мог закрыться одновременно с отменой.
+            }
+            try {
+              commandStream.close();
+            } catch {
+              // Закрытый ssh2-канал уже не требует дополнительного действия.
+            }
+            abortTimer = setTimeout(() => {
+              client.end();
+              finish(() => reject(serverProblems.sshCommand(name, 'отменено')));
+            }, 2_000);
+            abortTimer.unref?.();
           };
           if (opts.signal?.aborted) {
             onAbort();
@@ -281,13 +304,20 @@ export class SshService {
               finish(() => reject(serverProblems.sshCommand(name, err.message)));
               return;
             }
+            commandStream = stream;
             // UTF-8 может разрываться между чанками — декодеры копят «хвост» до полного символа.
             const out = new StringDecoder('utf8');
             const errDec = new StringDecoder('utf8');
             stream.on('data', (d: Buffer) => opts.onData?.(out.write(d)));
             stream.stderr.on('data', (d: Buffer) => opts.onData?.(errDec.write(d)));
             if (opts.input !== undefined) stream.end(opts.input);
-            stream.on('close', (code: number | null) => finish(() => resolve({ code: code ?? -1 })));
+            stream.on('close', (code: number | null) =>
+              finish(() =>
+                opts.signal?.aborted
+                  ? reject(serverProblems.sshCommand(name, 'отменено'))
+                  : resolve({ code: code ?? -1 }),
+              ),
+            );
           });
         }),
       exec: (command, opts = {}) => runPlain(asRoot(command), opts.label ?? commandHead(command), opts),

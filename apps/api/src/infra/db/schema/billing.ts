@@ -33,6 +33,10 @@ export const billingItems = pgTable(
     periodUnit: text('period_unit').$type<BillingPeriodUnit>().notNull(),
     periodCount: integer('period_count').notNull().default(1),
     paidUntil: timestamp('paid_until', { withTimezone: true }).notNull(),
+    /** Исходное число меся: 31 не теряется после короткого февраля. */
+    billingDay: integer('billing_day').notNull().default(1),
+    /** Календарь, в котором был задан срок. */
+    billingTimeZone: text('billing_time_zone').notNull().default('Europe/Moscow'),
     autoCharge: boolean('auto_charge').notNull().default(false),
     remindDays: integer('remind_days'),
     note: text('note'),

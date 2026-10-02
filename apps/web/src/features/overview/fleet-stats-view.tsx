@@ -124,34 +124,53 @@ function Empty({ children }: { children: ReactNode }) {
 }
 
 function Bars({ values, labels }: { values: number[]; labels: string[] }) {
+  const [selected, setSelected] = useState(Math.max(0, values.length - 1));
   const max = Math.max(1, ...values);
   const w = 1000;
   const h = 180;
   const bw = (w / values.length) * 0.62;
   return (
-    <svg
-      viewBox={`0 0 ${w} ${h}`}
-      preserveAspectRatio="none"
-      className="block h-[180px] w-full"
-      role="img"
-      aria-label="Трафик по дням"
-    >
-      {values.map((v, i) => (
-        <rect
-          // biome-ignore lint/suspicious/noArrayIndexKey: столбцы идут по порядку времени
-          key={i}
-          x={(i / values.length) * w + (w / values.length - bw) / 2}
-          y={h - (v / max) * h}
-          width={bw}
-          height={(v / max) * h}
-          rx={3}
-          fill="var(--color-brand)"
-          opacity={i === values.length - 1 ? 1 : 0.75}
-        >
-          <title>{`${labels[i]}: ${bytesText(v)}`}</title>
-        </rect>
-      ))}
-    </svg>
+    <>
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        className="block h-[180px] w-full"
+        role="img"
+        aria-label="Трафик по дням"
+      >
+        {values.map((v, i) => {
+          return (
+            // biome-ignore lint/a11y/useSemanticElements: столбец SVG выбирается касанием и клавиатурой
+            <rect
+              // biome-ignore lint/suspicious/noArrayIndexKey: столбцы идут по порядку времени
+              key={i}
+              x={(i / values.length) * w + (w / values.length - bw) / 2}
+              y={h - (v / max) * h}
+              width={bw}
+              height={(v / max) * h}
+              rx={3}
+              fill="var(--color-brand)"
+              opacity={i === selected ? 1 : 0.68}
+              role="button"
+              tabIndex={0}
+              aria-label={`${labels[i]}: ${bytesText(v)}`}
+              onClick={() => setSelected(i)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') setSelected(i);
+              }}
+            />
+          );
+        })}
+        <title>Трафик по дням</title>
+      </svg>
+      <div className="mt-1 flex items-center justify-between gap-3 text-[11.5px] text-text-3">
+        <span>{labels[0] ?? '—'}</span>
+        <b className="text-center font-medium text-foreground">
+          {labels[selected] ?? '—'} · {bytesText(values[selected] ?? 0)}
+        </b>
+        <span>{labels.at(-1) ?? '—'}</span>
+      </div>
+    </>
   );
 }
 
@@ -215,6 +234,7 @@ const TD = 'border-t border-border px-2.5 py-2 text-[12.5px]';
  */
 export function FleetStatsView() {
   const [period, setPeriodRaw] = useState<FleetStatsPeriod>(readPeriod);
+  const [explainOpen, setExplainOpen] = useState(false);
   const setPeriod = (p: FleetStatsPeriod) => {
     setPeriodRaw(p);
     try {
@@ -232,12 +252,15 @@ export function FleetStatsView() {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
         <Caps>Итоги {forLabel}</Caps>
-        <span
-          className="text-text-3"
-          title="Сравнение — с прошлым таким же периодом. Метрики серверов хранятся 90 дней. Трафик и нагрузка — по данным агентов, доступность — по инцидентам «агент/SSH недоступен»."
+        <button
+          type="button"
+          className="grid size-8 cursor-pointer place-items-center rounded-[8px] text-text-3 hover:bg-surface-2 hover:text-foreground"
+          aria-label="Как считается"
+          aria-expanded={explainOpen}
+          onClick={() => setExplainOpen((v) => !v)}
         >
-          <InfoIcon className="size-3.5" aria-label="Как считается" />
-        </span>
+          <InfoIcon className="size-3.5" aria-hidden="true" />
+        </button>
         <span className="flex-1" />
         <Segmented
           label="Период статистики"
@@ -246,6 +269,12 @@ export function FleetStatsView() {
           items={FLEET_STATS_PERIODS.map((p) => ({ key: p, label: FLEET_STATS_PERIOD_LABELS[p] }))}
         />
       </div>
+      {explainOpen && (
+        <p className="-mt-2 rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-[12px] text-text-2">
+          Сравнение — с прошлым таким же периодом. Метрики хранятся 90 дней; трафик и нагрузка идут от
+          агентов, доступность — от инцидентов.
+        </p>
+      )}
 
       {q.isError ? (
         <p

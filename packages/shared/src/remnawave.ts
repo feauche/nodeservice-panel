@@ -87,7 +87,10 @@ export const REMNAWAVE_CERT_CHECK_INTERVAL_MIN = 30;
 export const remnawaveStatusSchema = z.object({
   connected: z.boolean(),
   domain: z.string().nullable(),
+  /** Время последнего успешного чтения. При ошибке не меняется. */
   checkedAt: z.iso.datetime().nullable(),
+  /** Время последней попытки, успешной или нет. */
+  lastAttemptAt: z.iso.datetime().nullable().optional(),
   /** Почему последняя проверка не удалась; null — всё в порядке или ещё не проверяли. */
   error: z.string().nullable(),
   stats: remnawaveStatsSchema.nullable(),

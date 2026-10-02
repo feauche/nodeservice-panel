@@ -4,8 +4,11 @@ import { ApiOkResponse, ApiOperation, ApiProduces, ApiTags } from '@nestjs/swagg
 import { AUDIT_EXPORT_MAX, AUDIT_SSE_EVENT, type AuditEntry, auditActionLabel } from '@nodeservice/shared';
 import type { Request, Response } from 'express';
 import { from, interval, merge, Observable } from 'rxjs';
-import { map, mergeMap } from 'rxjs/operators';
+import { map, mergeMap, takeUntil } from 'rxjs/operators';
 
+import { CurrentSession } from '../auth/auth.decorators.js';
+import type { SessionRecord } from '../auth/session.store.js';
+import { SessionChannelsService } from '../auth/session-channels.service.js';
 import { AuditExportQueryDto, AuditListQueryDto, AuditListResponseDto } from './audit.dto.js';
 import { AuditEvents } from './audit.events.js';
 import { AuditRepository } from './audit.repository.js';
@@ -45,6 +48,7 @@ export class AuditController {
   constructor(
     private readonly repo: AuditRepository,
     private readonly events: AuditEvents,
+    private readonly channels: SessionChannelsService,
   ) {}
 
   @Get()
@@ -61,7 +65,10 @@ export class AuditController {
   @Sse('stream')
   @Header('X-Accel-Buffering', 'no')
   @ApiOperation({ summary: 'Журнал: SSE-лента новых записей' })
-  stream(@Headers('last-event-id') lastEventId?: string): Observable<MessageEvent> {
+  stream(
+    @CurrentSession() session: SessionRecord,
+    @Headers('last-event-id') lastEventId?: string,
+  ): Observable<MessageEvent> {
     const replay$ =
       lastEventId && /^\d{1,15}$/.test(lastEventId)
         ? from(this.repo.since(Number(lastEventId))).pipe(mergeMap((rows) => from(rows)))
@@ -73,7 +80,7 @@ export class AuditController {
       map((e): MessageEvent => ({ type: AUDIT_SSE_EVENT, id: String(e.seq), data: e })),
     );
     const ping$ = interval(SSE_PING_MS).pipe(map((): MessageEvent => ({ type: 'ping', data: '' })));
-    return merge(entries$, ping$);
+    return merge(entries$, ping$).pipe(takeUntil(this.channels.revoked(session.id)));
   }
 
   @Get('export')

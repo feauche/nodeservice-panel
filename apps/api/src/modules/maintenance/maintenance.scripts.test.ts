@@ -186,18 +186,22 @@ describe('maintenance scripts', () => {
     expect(install).not.toContain('state.json');
   });
 
-  it('apt-команды неинтерактивны, ждут блокировку и идут под серверным timeout', () => {
+  it('apt-команды неинтерактивны и ждут блокировку; upgrade переживает обрыв SSH', () => {
     for (const kind of ['apt_upgrade', 'cleanup', 'unattended_enable'] as const) {
       for (const step of actionSteps(kind, 'x/y')) {
         if (!step.command.includes('apt-get')) continue;
         expect(step.command, step.key).toContain('DEBIAN_FRONTEND=noninteractive');
         expect(step.command, step.key).toContain('DPkg::Lock::Timeout');
-        expect(step.command, step.key).toMatch(/timeout -k 30 \d+ apt-get/);
+        if (!(kind === 'apt_upgrade' && step.key === 'upgrade'))
+          expect(step.command, step.key).toMatch(/timeout -k 30 \d+ apt-get/);
       }
     }
     const upgrade = actionSteps('apt_upgrade', 'x/y').find((s) => s.key === 'upgrade')?.command ?? '';
     expect(upgrade).toContain('--with-new-pkgs');
     expect(upgrade).toContain('force-confold');
     expect(upgrade).not.toContain('dist-upgrade');
+    expect(upgrade).toContain('systemd-run --unit=nodeservice-upgrade');
+    expect(upgrade).toContain('/run/nodeservice-upgrade.exit');
+    expect(upgrade).not.toMatch(/timeout -k 30 \d+ apt-get.*upgrade/);
   });
 });

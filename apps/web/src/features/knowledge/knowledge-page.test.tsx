@@ -396,8 +396,8 @@ describe('KnowledgePage', () => {
       const boom = () => {
         throw new Error('QuotaExceededError');
       };
-      const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(boom);
-      const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(boom);
+      const set = vi.spyOn(localStorage, 'setItem').mockImplementation(boom);
+      const get = vi.spyOn(localStorage, 'getItem').mockImplementation(boom);
       try {
         const { user } = await openNew();
         await user.type(contentField(), 'Пишем без хранилища');

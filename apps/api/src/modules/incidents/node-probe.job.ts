@@ -8,7 +8,7 @@ import { IncidentsService } from './incidents.service.js';
 /**
  * Зонд контейнера ноды: раз в 15 с по SSH от root спрашиваем `docker inspect` у каждого сервера
  * с рабочим SSH. Агент в песочнице контейнер видеть не может, поэтому источник — панель.
- * `true`/`false` → состояние (сменилось — инцидент судится сразу), `none` (контейнера нет) → не судим.
+ * Состояние Docker и контейнера различается; сменилось — инцидент судится сразу.
  */
 export const PROBE_INTERVAL_MS = 15_000;
 
@@ -38,7 +38,13 @@ export class NodeProbeJob {
           const probe = await this.runner.sshProbe(row.id, NODE_PROBE);
           await this.incidents.probeNodeState(
             row.id,
-            probe === 'true' ? 'running' : probe === 'false' ? 'stopped' : probe === 'none' ? 'none' : null,
+            probe === 'running' ||
+              probe === 'restarting' ||
+              probe === 'stopped' ||
+              probe === 'none' ||
+              probe === 'docker_down'
+              ? probe
+              : null,
           );
         }
       };

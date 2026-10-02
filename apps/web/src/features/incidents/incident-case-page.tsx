@@ -249,7 +249,7 @@ export function IncidentCasePage({ id }: { id: string }) {
                   <Kv
                     k="Контейнер ноды"
                     v={nodeShort(inc.snapshot.node)}
-                    crit={inc.snapshot.node === 'stopped'}
+                    crit={['stopped', 'restarting', 'docker_down'].includes(inc.snapshot.node ?? '')}
                   />
                   <Kv
                     k="Агент"
@@ -404,8 +404,18 @@ export function IncidentCasePage({ id }: { id: string }) {
 const plural = (n: number) => (n === 1 ? 'раз' : n < 5 ? 'раза' : 'раз');
 const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v)} %`);
 /** Короткое состояние контейнера — длинная подпись из реестра ломает узкую колонку. */
-const nodeShort = (v: 'running' | 'stopped' | 'none' | null) =>
-  v === 'running' ? 'Работает' : v === 'stopped' ? 'Остановлен' : v === 'none' ? 'Не найден' : '—';
+const nodeShort = (v: 'running' | 'restarting' | 'stopped' | 'docker_down' | 'none' | null) =>
+  v === 'running'
+    ? 'Работает'
+    : v === 'restarting'
+      ? 'Перезапускается'
+      : v === 'docker_down'
+        ? 'Docker недоступен'
+        : v === 'stopped'
+          ? 'Остановлен'
+          : v === 'none'
+            ? 'Не найден'
+            : '—';
 const agentText = (status: string | null, version: string | null) => {
   if (!status) return '—';
   const label =

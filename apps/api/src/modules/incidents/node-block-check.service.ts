@@ -76,9 +76,13 @@ export class NodeBlockCheckService {
     const session = await this.ssh.connect(target);
     try {
       // Сбой самой команды — не «панель не зашла на проверяющий»: причину в тексте называем свою.
-      const res = await session.exec(command).catch((err: unknown) => {
-        throw new ProbeRunError(err instanceof Error ? err.message : String(err));
-      });
+      // Полная проверка может выполнить до 30 TLS-запросов (10 размеров × 3 повтора). Общий SSH-лимит
+      // 20 секунд обрывал исправную, но медленную сеть раньше собственных таймаутов команды.
+      const res = await session
+        .exec(command, { timeoutMs: 150_000, label: 'проверка доступности ноды' })
+        .catch((err: unknown) => {
+          throw new ProbeRunError(err instanceof Error ? err.message : String(err));
+        });
       return { stdout: res.stdout, code: res.code };
     } finally {
       session.end();
@@ -110,7 +114,9 @@ export class NodeBlockCheckService {
           from: prober.name,
           verdict: 'unreachable',
           detail: ran
-            ? 'Проверка на проверяющем сервере не завершилась.'
+            ? err instanceof Error && /таймаут/i.test(err.message)
+              ? 'Проверка на проверяющем сервере не уложилась в 150 секунд.'
+              : 'Проверка на проверяющем сервере не завершилась.'
             : 'Не удалось подключиться к пробующему серверу.',
           stalledAtKb: null,
           error: ran ? 'run' : 'ssh',

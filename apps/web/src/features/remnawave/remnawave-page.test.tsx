@@ -122,6 +122,7 @@ describe('RemnawavePage', () => {
     mockRemnawave.connected = true;
     mockRemnawave.domain = 'vpn-panel.example.com';
     mockRemnawave.checkedAt = '2026-09-27T10:00:00.000Z';
+    mockRemnawave.lastAttemptAt = '2026-09-27T10:05:00.000Z';
     mockRemnawave.error = 'таймаут подключения';
     mockRemnawave.stats = {
       users: { total: 870, active: 812, disabled: 14, limited: 3, expired: 41 },

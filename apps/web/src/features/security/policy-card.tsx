@@ -1,6 +1,7 @@
 import { IDLE_MINUTES_OPTIONS, LOCK_AFTER_OPTIONS, type SecurityPolicy } from '@nodeservice/shared';
 import { useEffect, useState } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import { SaveBar, SettingsCard, SettingsRow, Toggle } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -73,6 +74,7 @@ export function PolicyCard() {
   const d = draft ?? saved;
   return (
     <>
+      <UnsavedChangesGuard dirty={dirty} />
       <SettingsCard title="Политика" hint="Действует для всех сессий сразу после сохранения.">
         <div>
           <SettingsRow

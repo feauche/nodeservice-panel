@@ -24,7 +24,12 @@ const t = (label: string, group: EgressTarget['group']): EgressTarget => ({
   port: 443,
   group,
 });
-const r = (target: EgressTarget, open: boolean): EgressResult => ({ target, open, ms: open ? 20 : null });
+const r = (target: EgressTarget, open: boolean): EgressResult => ({
+  target,
+  open,
+  dnsFailed: false,
+  ms: open ? 20 : null,
+});
 
 describe('цели проверки выхода', () => {
   it('панель, российские серверы парка (не сам), сайты; опасные адреса отброшены', () => {
@@ -77,6 +82,14 @@ describe('вывод словами', () => {
     expect(egressVerdict({ results: [r(panel, true), r(ya, false), r(g, true)] })).toBe('ru_cut');
     expect(egressVerdict({ results: [r(panel, false), r(ya, true), r(g, true)] })).toBe('panel_cut');
     expect(egressVerdict({ results: [] })).toBe('unknown');
+  });
+
+  it('сбой DNS не выдаёт за фильтрацию сети и не предлагает неверное письмо о файрволе', () => {
+    const dns = { ...r(ya, false), dnsFailed: true };
+    const rep = { via: null, results: [dns, r(g, true)], panelPing: null };
+    expect(egressVerdict(rep)).toBe('unknown');
+    expect(egressText(rep)).toMatch(/не работает DNS/);
+    expect(egressText(rep)).not.toMatch(/фильтрация у хостера/);
   });
 });
 

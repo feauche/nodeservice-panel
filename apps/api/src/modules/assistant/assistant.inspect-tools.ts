@@ -101,6 +101,10 @@ export async function runInspectTool(
     if (name === 'inspect_containers') {
       const r = await ctx.probe.containers(s.id);
       if (!r.docker) return none('На сервере не найден docker: контейнеров нет. Скажите об этом прямо.');
+      if (!r.dockerRunning)
+        return none(
+          'Docker установлен, но его служба не отвечает. Состояние контейнеров неизвестно: нельзя утверждать, что контейнеров нет или нода не установлена.',
+        );
       const running = r.containers.filter((c) => c.state === 'running').length;
       return out({
         total: r.containers.length,

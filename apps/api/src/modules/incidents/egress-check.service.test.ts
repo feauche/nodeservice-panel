@@ -67,7 +67,7 @@ describe('EgressCheckService: прямой вход и запасной путь
     expect(result?.results[0]?.open).toBe(false);
     expect(exec).toHaveBeenCalledWith(
       expect.stringContaining('wait'),
-      expect.objectContaining({ timeoutMs: 15_000, label: 'проверка выхода с сервера' }),
+      expect.objectContaining({ timeoutMs: 30_000, label: 'проверка выхода с сервера' }),
     );
     expect(end).toHaveBeenCalledOnce();
   });

@@ -134,6 +134,8 @@ export class BillingService {
       periodUnit: row.periodUnit,
       periodCount: row.periodCount,
       paidUntil: row.paidUntil.toISOString(),
+      billingDay: row.billingDay,
+      billingTimeZone: row.billingTimeZone,
       autoCharge: row.autoCharge,
       remindDays: row.remindDays,
       note: row.note,
@@ -180,7 +182,8 @@ export class BillingService {
     }
   }
 
-  private values(body: BillingItemUpsert) {
+  private values(body: BillingItemUpsert, timeZone: string, billingDay?: number) {
+    const paidUntil = new Date(body.paidUntil);
     return {
       kind: body.kind,
       title: body.title,
@@ -191,16 +194,38 @@ export class BillingService {
       currency: body.currency,
       periodUnit: body.periodUnit,
       periodCount: body.periodUnit === 'once' ? 1 : body.periodCount,
-      paidUntil: new Date(body.paidUntil),
+      paidUntil,
+      billingDay: billingDay ?? localDate(paidUntil, timeZone).d,
+      billingTimeZone: timeZone,
       autoCharge: body.periodUnit === 'once' ? false : body.autoCharge,
       remindDays: body.remindDays,
       note: body.note || null,
     };
   }
 
+  /** Панель не имитирует платежи за пропущенные месяцы: такую карточку нужно сверить вручную. */
+  private autoChargeIsStale(
+    row: Pick<BillingItemRow, 'paidUntil' | 'periodUnit' | 'periodCount' | 'billingTimeZone' | 'billingDay'>,
+    now: Date,
+  ): boolean {
+    if (row.periodUnit === 'once' || row.paidUntil > now) return false;
+    const next = extendTarget(
+      row.paidUntil,
+      { period: true },
+      row.periodUnit,
+      row.periodCount,
+      row.billingTimeZone,
+      row.billingDay,
+    );
+    return next !== null && next <= now;
+  }
+
   async create(body: BillingItemUpsert): Promise<BillingItem> {
     await this.validate(body);
-    const [row] = await this.db.insert(billingItems).values(this.values(body)).returning();
+    const timeZone = validTz(await this.notifications.timeZone().catch(() => DEFAULT_TZ));
+    const values = this.values(body, timeZone);
+    if (values.autoCharge && this.autoChargeIsStale(values, new Date())) values.autoCharge = false;
+    const [row] = await this.db.insert(billingItems).values(values).returning();
     if (!row) throw new Error('Оплата не записалась');
     this.audit.extend({
       target: { type: 'billing', id: row.id, display: row.title },
@@ -213,7 +238,12 @@ export class BillingService {
   async update(id: string, body: BillingItemUpsert): Promise<BillingItem> {
     const before = await this.findRow(id);
     await this.validate(body);
-    const v = this.values(body);
+    const paidUntilChanged = new Date(body.paidUntil).getTime() !== before.paidUntil.getTime();
+    const timeZone = paidUntilChanged
+      ? validTz(await this.notifications.timeZone().catch(() => DEFAULT_TZ))
+      : before.billingTimeZone;
+    const v = this.values(body, timeZone, paidUntilChanged ? undefined : before.billingDay);
+    if (v.autoCharge && this.autoChargeIsStale(v, new Date())) v.autoCharge = false;
     const [row] = await this.db
       .update(billingItems)
       .set({
@@ -258,16 +288,24 @@ export class BillingService {
 
   async setArchived(id: string, archived: boolean): Promise<BillingItem> {
     const before = await this.findRow(id);
+    const disableStaleAuto = !archived && before.autoCharge && this.autoChargeIsStale(before, new Date());
     const [row] = await this.db
       .update(billingItems)
-      .set({ archivedAt: archived ? new Date() : null, updatedAt: new Date() })
+      .set({
+        archivedAt: archived ? new Date() : null,
+        ...(disableStaleAuto ? { autoCharge: false } : {}),
+        updatedAt: new Date(),
+      })
       .where(eq(billingItems.id, id))
       .returning();
     if (!row)
       throw problem(HttpStatus.NOT_FOUND, { type: BILLING_PROBLEM.notFound, detail: 'Оплата не найдена.' });
     this.audit.extend({
       target: { type: 'billing', id: row.id, display: before.title },
-      metadata: { archived },
+      metadata: {
+        archived,
+        ...(disableStaleAuto ? { autoChargeDisabled: 'просрочено больше периода' } : {}),
+      },
     });
     return this.toDto(row);
   }
@@ -283,6 +321,15 @@ export class BillingService {
   ): Promise<{ item: BillingItemRow; payment: BillingPaymentRow }> {
     const rate = await this.rates.rate(row.currency, paidAt);
     return this.db.transaction(async (tx) => {
+      const [item] = await tx
+        .update(billingItems)
+        .set({ paidUntil: to, notifiedState: null, notifiedAt: null, updatedAt: new Date() })
+        .where(and(eq(billingItems.id, row.id), eq(billingItems.paidUntil, row.paidUntil)))
+        .returning();
+      if (!item)
+        throw problem(HttpStatus.CONFLICT, {
+          detail: 'Срок уже изменился в другом запросе. Обновите карточку.',
+        });
       const [payment] = await tx
         .insert(billingPayments)
         .values({
@@ -297,11 +344,6 @@ export class BillingService {
           extendedTo: to,
           actorDisplay,
         })
-        .returning();
-      const [item] = await tx
-        .update(billingItems)
-        .set({ paidUntil: to, notifiedState: null, notifiedAt: null, updatedAt: new Date() })
-        .where(eq(billingItems.id, row.id))
         .returning();
       if (!payment || !item) throw new Error('Продление не записалось');
       return { item, payment };
@@ -327,7 +369,14 @@ export class BillingService {
 
   async extend(id: string, req: BillingExtend): Promise<{ item: BillingItem; payment: BillingPayment }> {
     const row = await this.findRow(id);
-    const to = extendTarget(row.paidUntil, req, row.periodUnit, row.periodCount);
+    const to = extendTarget(
+      row.paidUntil,
+      req,
+      row.periodUnit,
+      row.periodCount,
+      row.billingTimeZone,
+      row.billingDay,
+    );
     if (!to)
       throw problem(HttpStatus.BAD_REQUEST, {
         detail: 'Разовую оплату продлевают на число дней или до точной даты.',
@@ -432,7 +481,13 @@ export class BillingService {
       await tx.delete(billingPayments).where(eq(billingPayments.id, p.id));
       return tx
         .update(billingItems)
-        .set({ paidUntil: p.extendedFrom, notifiedState: null, notifiedAt: null, updatedAt: new Date() })
+        .set({
+          paidUntil: p.extendedFrom,
+          ...(p.actorDisplay === AUTO_CHARGE_ACTOR ? { autoCharge: false } : {}),
+          notifiedState: null,
+          notifiedAt: null,
+          updatedAt: new Date(),
+        })
         .where(eq(billingItems.id, item.id))
         .returning();
     });
@@ -892,10 +947,26 @@ export class BillingService {
       );
     let n = 0;
     for (let row of due) {
-      for (let i = 0; i < 60 && row.paidUntil <= now; i += 1) {
-        const to = extendTarget(row.paidUntil, { period: true }, row.periodUnit, row.periodCount);
-        if (!to) break;
-        const res = await this.recordExtend(row, to, true, row.amountMinor, AUTO_CHARGE_ACTOR, row.paidUntil);
+      let to = extendTarget(
+        row.paidUntil,
+        { period: true },
+        row.periodUnit,
+        row.periodCount,
+        row.billingTimeZone,
+        row.billingDay,
+      );
+      // За старую просрочку учитываем только один текущий платёж, а дату догоняем без вымышленных оплат.
+      for (let i = 0; to && to <= now && i < 400; i += 1)
+        to = extendTarget(
+          to,
+          { period: true },
+          row.periodUnit,
+          row.periodCount,
+          row.billingTimeZone,
+          row.billingDay,
+        );
+      if (to) {
+        const res = await this.recordExtend(row, to, true, row.amountMinor, AUTO_CHARGE_ACTOR, now);
         row = res.item;
         n += 1;
       }

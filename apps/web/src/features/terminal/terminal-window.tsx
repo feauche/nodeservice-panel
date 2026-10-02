@@ -326,12 +326,25 @@ export function TerminalWindow({
                 <DropdownMenuLabel className="px-2.5 pt-1.5 pb-1 text-[10.5px] font-semibold tracking-[0.1em] text-text-3 uppercase">
                   Сниппеты
                 </DropdownMenuLabel>
-                {(snippets.data?.items.length ?? 0) === 0 ? (
+                {snippets.isPending ? (
+                  <div className="px-2.5 py-2 text-[12.5px] text-text-3">Загружаю…</div>
+                ) : snippets.isError || !snippets.data ? (
+                  <div className="px-2.5 py-2 text-[12.5px] text-crit">
+                    <p>Не удалось загрузить сниппеты.</p>
+                    <button
+                      type="button"
+                      className="mt-1 cursor-pointer text-brand underline"
+                      onClick={() => void snippets.refetch()}
+                    >
+                      Повторить
+                    </button>
+                  </div>
+                ) : snippets.data.items.length === 0 ? (
                   <div className="px-2.5 py-2 text-[12.5px] text-text-3">
                     Пока пусто. Добавьте команды, которые вводите чаще всего.
                   </div>
                 ) : (
-                  snippets.data?.items.map((sn) => (
+                  snippets.data.items.map((sn) => (
                     <DropdownMenuItem
                       key={sn.id}
                       onSelect={() => insertSnippet(sn.command)}

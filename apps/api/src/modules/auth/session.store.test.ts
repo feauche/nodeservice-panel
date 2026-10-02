@@ -7,6 +7,7 @@ import { CryptoService } from '../../common/crypto/crypto.service.js';
 import type { Env } from '../../config/env.schema.js';
 import type { SecurityPolicyStore } from './security-policy.store.js';
 import { SessionStore } from './session.store.js';
+import { SessionChannelsService } from './session-channels.service.js';
 import { deleteByPattern, testValkey } from './test-valkey.js';
 
 const values: Partial<Env> = {
@@ -31,7 +32,7 @@ describe('SessionStore (Valkey)', () => {
 
   beforeAll(async () => {
     valkey = testValkey();
-    store = new SessionStore(valkey, new CryptoService(config), policy, config);
+    store = new SessionStore(valkey, new CryptoService(config), policy, new SessionChannelsService(), config);
     await deleteByPattern(valkey, `user:${userId}:*`);
   });
   afterAll(async () => {

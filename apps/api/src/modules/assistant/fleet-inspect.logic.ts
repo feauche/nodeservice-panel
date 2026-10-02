@@ -25,6 +25,7 @@ export const CONTAINERS_COMMAND = SH(
   [
     '# ns-inspect:containers',
     'command -v docker >/dev/null 2>&1 || { echo "@@nodocker"; exit 0; }',
+    'docker info >/dev/null 2>&1 || { echo "@@dockerdown"; exit 0; }',
     `ids=$(docker ps -aq 2>/dev/null | head -${CONTAINERS_MAX})`,
     '[ -n "$ids" ] || { echo "@@empty"; exit 0; }',
     'docker inspect -f "{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.RestartCount}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.State.StartedAt}}|{{.State.FinishedAt}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}" $ids 2>&1',
@@ -44,7 +45,10 @@ export interface ContainerInfo {
 }
 
 export interface ContainersResult {
+  /** Клиент Docker установлен. */
   docker: boolean;
+  /** Демон Docker отвечает. false не означает, что контейнеров нет. */
+  dockerRunning: boolean;
   containers: ContainerInfo[];
   /** Что бросается в глаза: остановлен, много перезапусков, убит по памяти, нездоров. */
   attention: string[];
@@ -53,7 +57,15 @@ export interface ContainersResult {
 const zeroTime = (s: string): string | null => (!s || s.startsWith('0001-') ? null : s);
 
 export function parseContainers(stdout: string): ContainersResult {
-  if (stdout.includes('@@nodocker')) return { docker: false, containers: [], attention: [] };
+  if (stdout.includes('@@nodocker'))
+    return { docker: false, dockerRunning: false, containers: [], attention: [] };
+  if (stdout.includes('@@dockerdown'))
+    return {
+      docker: true,
+      dockerRunning: false,
+      containers: [],
+      attention: ['Служба Docker не отвечает: состояние контейнеров неизвестно.'],
+    };
   const containers: ContainerInfo[] = [];
   for (const line of stdout.split('\n')) {
     const f = line.trim().split('|');
@@ -79,7 +91,7 @@ export function parseContainers(stdout: string): ContainersResult {
     if (c.restarts >= 3) attention.push(`${c.name}: ${c.restarts} перезапусков`);
     if (c.health === 'unhealthy') attention.push(`${c.name}: проверка здоровья не проходит`);
   }
-  return { docker: true, containers, attention };
+  return { docker: true, dockerRunning: true, containers, attention };
 }
 
 /* ---------- порты ---------- */

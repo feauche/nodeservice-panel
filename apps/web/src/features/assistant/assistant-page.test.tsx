@@ -484,6 +484,27 @@ describe('AssistantPage', () => {
     expect(await screen.findByText('Перезапустить контейнер ноды')).toBeInTheDocument();
   });
 
+  it('многострочное сообщение сохраняет абзацы и отступы в запросе и пузыре', async () => {
+    mockAssistant.enabled = true;
+    renderPage(AssistantPage, '/assistant');
+    const user = userEvent.setup();
+    const message = 'Проверь два пункта:\n\n  1. Первый сервер\n  2. Второй сервер\n\nНе объединяй строки.';
+    await user.click(await screen.findByLabelText('Сообщение Джарвису'));
+    await user.paste(message);
+    await user.click(screen.getByRole('button', { name: 'Отправить' }));
+
+    const bubbles = await screen.findAllByTestId('assistant-user-message');
+    const bubble = bubbles.at(-1);
+    expect(bubble).toHaveTextContent(message, { normalizeWhitespace: false });
+    expect(bubble).toHaveClass('whitespace-pre-wrap', 'break-words');
+    await waitFor(() => {
+      const saved = Object.values(mockAssistant.messages)
+        .flat()
+        .find((item) => item.role === 'user');
+      expect(saved?.content).toBe(message);
+    });
+  });
+
   it('оптимистичный пузырь не гаснет, если такой же текст уже есть в истории', async () => {
     // Регрессия: раньше пузырь снимался по совпадению текста, и повтор того же вопроса
     // (частый случай для быстрых вопросов) гас до ответа. Снимаем только по приросту истории.

@@ -162,7 +162,13 @@ export function EgressDetails({ server }: { server: Server }) {
                       {r.label === 'Панель NodeService' ? 'NodeService' : r.label}
                     </span>
                     <span className={cn('flex-none', r.open ? 'text-ok' : 'text-crit')}>
-                      {r.open ? (r.ms !== null ? `${r.ms} мс` : 'открыто') : 'не подключается'}
+                      {r.dnsFailed
+                        ? 'DNS не отвечает'
+                        : r.open
+                          ? r.ms !== null
+                            ? `${r.ms} мс`
+                            : 'открыто'
+                          : 'не подключается'}
                     </span>
                   </div>
                 );

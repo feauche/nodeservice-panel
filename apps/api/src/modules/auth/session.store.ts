@@ -7,6 +7,7 @@ import { CryptoService } from '../../common/crypto/crypto.service.js';
 import type { Env } from '../../config/env.schema.js';
 import { VALKEY } from '../../infra/valkey/valkey.module.js';
 import { SecurityPolicyStore } from './security-policy.store.js';
+import { SessionChannelsService } from './session-channels.service.js';
 
 export type Amr = Me['amr'][number];
 
@@ -59,6 +60,7 @@ export class SessionStore {
     @Inject(VALKEY) private readonly valkey: Redis,
     private readonly crypto: CryptoService,
     private readonly policy: SecurityPolicyStore,
+    private readonly channels: SessionChannelsService,
     config: ConfigService<Env, true>,
   ) {
     // Стартовое значение из env; дальше idle берётся из политики безопасности (Настройки → Безопасность).
@@ -146,6 +148,7 @@ export class SessionStore {
     const multi = this.valkey.multi().del(SESSION_PREFIX + sid);
     if (userId) multi.srem(userIndexKey(userId), sid);
     await multi.exec();
+    this.channels.revoke([sid]);
   }
 
   async destroyAllForUser(userId: string): Promise<number> {
@@ -155,6 +158,7 @@ export class SessionStore {
     for (const id of ids) multi.del(SESSION_PREFIX + id);
     multi.del(userIndexKey(userId));
     await multi.exec();
+    this.channels.revoke(ids);
     return ids.length;
   }
 
@@ -186,6 +190,7 @@ export class SessionStore {
     for (const id of ids) multi.del(SESSION_PREFIX + id);
     multi.srem(userIndexKey(userId), ...ids);
     await multi.exec();
+    this.channels.revoke(ids);
     return ids.length;
   }
 }

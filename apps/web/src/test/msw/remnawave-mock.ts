@@ -56,6 +56,7 @@ export const mockRemnawave: {
   connected: boolean;
   domain: string | null;
   checkedAt: string | null;
+  lastAttemptAt: string | null;
   error: string | null;
   stats: RemnawaveStats | null;
   nodes: RemnawaveNode[];
@@ -64,6 +65,7 @@ export const mockRemnawave: {
   connected: false,
   domain: null,
   checkedAt: null,
+  lastAttemptAt: null,
   error: null,
   stats: null,
   nodes: [],
@@ -79,6 +81,7 @@ export function seedRemnawave(): void {
     connected: false,
     domain: null,
     checkedAt: null,
+    lastAttemptAt: null,
     error: null,
     stats: null,
     nodes: [],
@@ -112,6 +115,7 @@ function status(): RemnawaveStatus {
     connected: mockRemnawave.connected,
     domain: mockRemnawave.domain,
     checkedAt: mockRemnawave.checkedAt,
+    lastAttemptAt: mockRemnawave.lastAttemptAt,
     error: mockRemnawave.error,
     stats: mockRemnawave.stats,
     nodes: withServers(mockRemnawave.nodes),
@@ -126,9 +130,11 @@ const problem = (status_: number, type: string, detail: string) =>
   );
 
 function connectNow(): void {
+  const now = new Date().toISOString();
   Object.assign(mockRemnawave, {
     connected: true,
-    checkedAt: new Date().toISOString(),
+    checkedAt: now,
+    lastAttemptAt: now,
     error: null,
     stats: STATS,
     nodes: NODES,

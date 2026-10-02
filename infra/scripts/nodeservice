@@ -14,7 +14,10 @@ wait_api_healthy() {
     local st=starting
     for _ in $(seq 1 60); do
         st=$(docker inspect -f '{{.State.Health.Status}}' nodeservice-api-1 2>/dev/null || echo starting)
-        [[ "$st" == "healthy" ]] && return 0
+        if [[ "$st" == "healthy" ]] && "${COMPOSE[@]}" exec -T api node -e \
+            "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+            return 0
+        fi
         sleep 3
     done
     "${COMPOSE[@]}" logs --tail=80 api || true
@@ -68,12 +71,25 @@ case "$cmd" in
     update) exec bash "$APP_DIR/infra/scripts/update.sh" "$@" ;;
     rollback)
         docker image inspect nodeservice-api:prev >/dev/null 2>&1 || die "Предыдущего образа нет."
+        rollback_code=$(cat "$APP_DIR/backups/.last-pre-update-code" 2>/dev/null || true)
+        rollback_version=$(cat "$APP_DIR/backups/.last-pre-update-version" 2>/dev/null || true)
+        rollback_backup=$(cat "$APP_DIR/backups/.last-pre-update" 2>/dev/null || true)
+        if [[ "$rollback_code" =~ ^[0-9a-f]{7,40}$ ]] && git -C "$APP_DIR" cat-file -e "$rollback_code^{commit}" 2>/dev/null; then
+            git -C "$APP_DIR" checkout --quiet --detach "$rollback_code"
+        fi
+        if [[ "$rollback_version" =~ ^v?[0-9A-Za-z._-]+$ ]]; then
+            sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$rollback_version/" "$ENV_FILE"
+        fi
         cur=$("${COMPOSE[@]}" config --images | grep nodeservice-api)
         docker tag nodeservice-api:prev "$cur"
         # Тег в конфиге не изменился — без --force-recreate compose оставит старый контейнер.
         "${COMPOSE[@]}" up -d --force-recreate api || true
-        wait_api_healthy || die "Откатный образ тоже не поднялся — смотри лог выше."
-        echo -e "${G}Откат выполнен.${N} Код в git остался новым — следующий update пересоберёт его." ;;
+        if ! wait_api_healthy; then
+            [[ -n "$rollback_backup" ]] && printf 'Копия перед обновлением: %s\nВосстановить: nodeservice restore %q\n' "$rollback_backup" "$rollback_backup"
+            die "Откатный образ тоже не поднялся — вероятно, обновление изменило схему базы."
+        fi
+        echo -e "${G}Прежние код и образ возвращены.${N}"
+        [[ -n "$rollback_backup" ]] && printf 'Копия базы перед обновлением: %s\n' "$rollback_backup" ;;
     backup) exec bash "$APP_DIR/infra/scripts/backup.sh" "$@" ;;
     restore) exec bash "$APP_DIR/infra/scripts/restore.sh" "$@" ;;
     cli)    [[ $# -ge 1 ]] || die "Укажи команду: nodeservice cli setup-token"; "${COMPOSE[@]}" exec api node dist/cli.js "$@" ;;

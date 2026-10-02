@@ -45,7 +45,13 @@ const NEW_GROUP = '-1005550001';
 
 /** Поддельный Bot API: записывает вызовы; чаты, начинающиеся с -100999, «не найдены». */
 class FakeTelegram {
-  calls: Array<{ token: string; method: string; body: Record<string, unknown>; proxy?: string | null }> = [];
+  calls: Array<{
+    token: string;
+    method: string;
+    body: Record<string, unknown>;
+    proxy?: string | null;
+    at: number;
+  }> = [];
   private next = 100;
   /** message_id каждого успешного sendMessage — по порядку. */
   ids: number[] = [];
@@ -66,7 +72,7 @@ class FakeTelegram {
     body: Record<string, unknown>,
     proxy?: string | null,
   ): Promise<TelegramCall<T>> {
-    this.calls.push({ token, method, body, proxy: proxy ?? null });
+    this.calls.push({ token, method, body, proxy: proxy ?? null, at: Date.now() });
     if (this.networkDown && (method === 'sendMessage' || method === 'sendRichMessage'))
       throw new Error('socket hang up');
     if (this.sendFailuresRemaining > 0 && (method === 'sendMessage' || method === 'sendRichMessage')) {
@@ -557,11 +563,14 @@ describe('telegram e2e', () => {
     expect(tg.sent().at(-1)?.body.disable_notification).toBeUndefined();
     expect(await digest()).toEqual([]);
 
-    // Контейнер поднялся: «Починилось» не критично — ждёт утра.
+    // Контейнер поднялся: ночная тревога уже разбудила владельца, поэтому «Починилось» приходит сразу,
+    // тихо и ответом на неё.
     await svc.probeNodeState(serverId, 'running');
     await notes.settle();
-    expect(tg.sent().length).toBe(before + 1);
-    expect((await digest()).map((d) => d.event)).toEqual(['resolved']);
+    expect(tg.sent().length).toBe(before + 2);
+    expect(tg.sent().at(-1)?.body.disable_notification).toBe(true);
+    expect(tg.sent().at(-1)?.body.reply_parameters).toBeDefined();
+    expect(await digest()).toEqual([]);
 
     // Тумблер «Нужно ваше „Да“» выключен: само открытие критичного инцидента он не глушит.
     await put({ events: { needs_confirm: false } });
@@ -614,7 +623,7 @@ describe('telegram e2e', () => {
     });
     await notes.settle();
     expect(tg.sent().length).toBe(before);
-    expect((await digest()).map((d) => d.event)).toEqual(['resolved', 'needs_confirm', 'fix_failed']);
+    expect((await digest()).map((d) => d.event)).toEqual(['needs_confirm', 'fix_failed']);
 
     await svc.probeNodeState(serverId, 'running');
     await notes.settle();
@@ -708,6 +717,10 @@ describe('telegram e2e', () => {
         .parse((await agent.get('/api/notifications').expect(200)).body)
         .items.filter((n) => n.title === 'Сообщения в Telegram не доходят');
     const send = (n: number) => tgs.dispatch({ event: 'maintenance', title: `Проверка доставки ${n}` });
+    const retryNow = async () => {
+      await db.execute(sql`update telegram_outbox set next_attempt_at = now() - interval '1 second'`);
+      await tgs.retryOutbox();
+    };
 
     await send(1);
     await send(2);
@@ -723,8 +736,11 @@ describe('telegram e2e', () => {
     });
     expect(await bell()).toHaveLength(0);
 
-    // Третья неудача подряд — одно предупреждение на оба чата (беда одна); четвёртая в те же сутки — второго нет.
+    // Новые вести уже не обгоняют первую: они лежат следом в outbox. Три настоящие попытки доставки
+    // первой вести дают одно предупреждение на оба чата; следующие в те же сутки второго не создают.
     await send(3);
+    await retryNow();
+    await retryNow();
     const warned = await bell();
     expect(warned).toHaveLength(1);
     expect(warned[0]?.severity).toBe('warn');
@@ -742,10 +758,13 @@ describe('telegram e2e', () => {
     expect(JSON.stringify(logged)).not.toContain(TOKEN);
 
     // Позже сломался ещё один чат — о нём своё предупреждение: вчерашнее про другие чаты его не заслоняет.
+    await db.execute(sql`delete from telegram_outbox`);
     await put({
       destinations: [...chats.destinations.map((d) => ({ id: d.id })), { url: `tgram://${TOKEN}/-1009992` }],
     });
     for (const n of [5, 6, 7]) await send(n);
+    await retryNow();
+    await retryNow();
     const later = await bell();
     expect(later).toHaveLength(2);
     expect(later[0]?.body).toBe(
@@ -952,6 +971,32 @@ describe('telegram e2e', () => {
     expect(next).toBeLessThanOrEqual(Date.now() + 137_500);
   });
 
+  it('массовые события одного чата отправляются по очереди с заданным темпом', async () => {
+    await fresh({
+      delivery: { groupPerServer: false, silentWarnings: true, remindHours: 2, rich: false },
+    });
+    const tgs = app.get(TelegramService);
+    tgs.deliveryPaceMs = 25;
+    const before = tg.sent().length;
+    try {
+      await Promise.all([
+        tgs.dispatch({ event: 'maintenance', title: 'Массовое событие 1' }),
+        tgs.dispatch({ event: 'maintenance', title: 'Массовое событие 2' }),
+        tgs.dispatch({ event: 'maintenance', title: 'Массовое событие 3' }),
+      ]);
+    } finally {
+      tgs.deliveryPaceMs = 0;
+    }
+    const sent = tg.sent().slice(before);
+    expect(sent.map((call) => textOf(call))).toEqual([
+      expect.stringContaining('Массовое событие 1'),
+      expect.stringContaining('Массовое событие 2'),
+      expect.stringContaining('Массовое событие 3'),
+    ]);
+    expect((sent[1]?.at ?? 0) - (sent[0]?.at ?? 0)).toBeGreaterThanOrEqual(20);
+    expect((sent[2]?.at ?? 0) - (sent[1]?.at ?? 0)).toBeGreaterThanOrEqual(20);
+  });
+
   it('обрыв при утренней сводке не теряет накопленное за тихие часы', async () => {
     await fresh();
     const tgs = app.get(TelegramService);
@@ -1054,7 +1099,7 @@ describe('telegram e2e', () => {
     notes.analysisWaitMs = 60_000;
     const lose = async () => {
       await db.execute(
-        sql`update servers set agent_status = 'offline', ssh_ok = false where id = ${serverId}`,
+        sql`update servers set agent_status = 'offline', ssh_ok = true where id = ${serverId}`,
       );
       await svc.evaluate(noMetrics);
       await notes.settle();
@@ -1068,7 +1113,7 @@ describe('telegram e2e', () => {
     // 14:00:00 — сервер пропал: дело открыто, колокольчик сразу, Telegram ждёт разбора Джарвиса.
     let before = tg.sent().length;
     await lose();
-    const down = await repo.findOpen(serverId, 'server_down');
+    const down = await repo.findOpen(serverId, 'agent_offline');
     expect(down).toBeTruthy();
     expect(tg.sent().length).toBe(before);
     expect(await pendingCount()).toBe(1);
@@ -1077,10 +1122,10 @@ describe('telegram e2e', () => {
     await back();
     expect(tg.sent().length).toBe(before + 1);
     const note = tg.sent().at(-1);
-    expect(textOf(note)).toContain('✅ <b>Короткий сбой, дело уже закрыто: Сервер недоступен</b>');
+    expect(textOf(note)).toContain('✅ <b>Короткий сбой уже прошёл: Агент не в сети');
     expect(textOf(note)).toContain('<b>tg-host</b>');
     expect(textOf(note)).toContain('<b>Длился с момента обнаружения:</b> меньше минуты');
-    expect(textOf(note)).toContain('<b>Чем закончилось:</b> Сервер снова на связи: агент и SSH отвечают.');
+    expect(textOf(note)).toContain('<b>Сейчас:</b> в норме — проблема исчезла сама.');
     expect(note?.body.disable_notification).toBe(true);
     expect(await pendingCount()).toBe(0);
 
@@ -1102,7 +1147,7 @@ describe('telegram e2e', () => {
     before = tg.sent().length;
     await lose();
     expect(tg.sent().length).toBe(before + 1);
-    expect(textOf(tg.sent().at(-1))).toContain('🔴 <b>Сервер недоступен</b>');
+    expect(textOf(tg.sent().at(-1))).toContain('🟠 <b>Агент не в сети');
     expect(await pendingCount()).toBe(0);
     const alertId = tg.ids.at(-1);
     await back();
@@ -1119,18 +1164,18 @@ describe('telegram e2e', () => {
     await lose();
     await back();
     expect(tg.sent().length).toBe(before + 1);
-    expect(textOf(tg.sent().at(-1))).toContain('Короткий сбой, дело уже закрыто: Сервер недоступен');
+    expect(textOf(tg.sent().at(-1))).toContain('Короткий сбой уже прошёл: Агент не в сети');
     expect(tg.sent().at(-1)?.body.disable_notification).toBe(true);
-    await put({ events: { incident_crit: false } });
+    await put({ events: { needs_confirm: false } });
     await lose();
     await back();
     expect(tg.sent().length).toBe(before + 1);
-    await put({ events: { resolved: true, incident_crit: true } });
+    await put({ events: { resolved: true, needs_confirm: true } });
 
     // Закрыли вручную в панели, пока тревога ждала разбора, — она не приходит вовсе.
     before = tg.sent().length;
     await lose();
-    const manual = await repo.findOpen(serverId, 'server_down');
+    const manual = await repo.findOpen(serverId, 'agent_offline');
     expect(await pendingCount()).toBe(1);
     await agent.post(`/api/incidents/${manual?.id}/resolve`).set(CSRF_HEADER, csrf).expect(200);
     await notes.flushDeferred();

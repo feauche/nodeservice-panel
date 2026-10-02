@@ -9,7 +9,11 @@ import { appMeta } from '../../infra/db/schema/index.js';
 const KEY = 'settings.remnawave';
 
 interface Snapshot {
+  /** Последнее успешное чтение. Старые сохранённые снимки уже используют это поле. */
   checkedAt: string;
+  lastAttemptAt?: string;
+  failureSince?: string | null;
+  outageNotified?: boolean;
   error: string | null;
   stats: RemnawaveStats | null;
   nodes: RemnawaveNode[];

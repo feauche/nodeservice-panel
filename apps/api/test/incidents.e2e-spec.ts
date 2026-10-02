@@ -887,6 +887,41 @@ describe('incidents e2e', () => {
     expect(audit.items.some((e) => e.action === 'incident.opened')).toBe(true);
   });
 
+  it('закрытие дела сначала останавливает SSH-команду и только затем снимает занятость сервера', async () => {
+    const db = app.get<Db>(DB);
+    await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);
+    const repo = app.get(IncidentsRepository);
+    const opened = await repo.open({
+      serverId,
+      serverName: 'inc-host',
+      kind: 'disk_high',
+      severity: 'warn',
+      title: 'Диск заполняется · inc-host',
+      detail: 'Проверка отмены.',
+      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+    });
+    const id = opened?.id ?? '';
+    app.get(IncidentMetricsService).setForTest(serverId, { disk: 94 });
+    ssh.holdAptClean = true;
+    const abortedBefore = ssh.aptCleanAborted;
+    try {
+      await agent.post(`/api/incidents/${id}/actions/apt_clean/run`).set(CSRF_HEADER, csrf).expect(202);
+      for (let i = 0; i < 50 && ssh.aptCleanStarted === 0; i += 1)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(ssh.aptCleanStarted).toBeGreaterThan(0);
+      const resolved = incidentSchema.parse(
+        (await agent.post(`/api/incidents/${id}/resolve`).set(CSRF_HEADER, csrf).expect(200)).body,
+      );
+      expect(ssh.aptCleanAborted).toBeGreaterThan(abortedBefore);
+      expect(resolved.attempts[0]).toMatchObject({ status: 'failed' });
+      expect(resolved.attempts[0]?.steps.find((step) => step.key === 'action')?.note).toContain(
+        'закрыт администратором',
+      );
+    } finally {
+      ssh.holdAptClean = false;
+    }
+  });
+
   it('осмотр диска: поток вывода не затирает статус шагов; чистить нечего — чистка не предлагается', async () => {
     const db = app.get<Db>(DB);
     await db.execute(sql`update servers set agent_status = 'online' where id = ${serverId}`);

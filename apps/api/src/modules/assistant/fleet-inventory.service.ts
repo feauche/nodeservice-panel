@@ -40,6 +40,12 @@ export class FleetInventoryService {
     await this.servers.get(id);
     try {
       const [c, p] = await Promise.all([this.probe.containers(id), this.probe.ports(id)]);
+      // Пустой список при лежащем dockerd не является снимком сервера. Оставляем прежний снимок,
+      // чтобы не создать ложное расхождение «контейнер удалён».
+      if (c.docker && !c.dockerRunning)
+        throw problem(HttpStatus.FAILED_DEPENDENCY, {
+          detail: 'Служба Docker не отвечает; прежний снимок контейнеров сохранён.',
+        });
       const inventory: Omit<ServerInventory, 'at'> = {
         docker: c.docker,
         containers: c.containers

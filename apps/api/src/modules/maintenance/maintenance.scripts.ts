@@ -4,9 +4,8 @@ import type { MaintenanceCheck, MaintenanceKind } from '@nodeservice/shared';
  * Скрипты обслуживания: выполняются по SSH от root на Debian/Ubuntu через login-shell (sh/bash),
  * всё неинтерактивно (DEBIAN_FRONTEND, confold — конфиги не трогаем), без dist-upgrade и без
  * удаления пакетов. Маркер `# ns-maint:<kind>[:<step>]` в первой строке — по нему тестовый sshd
- * и логи узнают команду. Длинные apt-команды обёрнуты в серверный `timeout`: если панель
- * оборвёт SSH по своему (чуть большему) таймауту, apt/dpkg уже получат сигнал и закроют
- * транзакцию, а не останутся сиротами.
+ * и логи узнают команду. Обновление пакетов запускается отдельной systemd-задачей: обрыв SSH
+ * или предел наблюдения панели не убивает apt/dpkg посреди транзакции. Короткие команды имеют timeout.
  */
 
 const ENV = 'export DEBIAN_FRONTEND=noninteractive LC_ALL=C LANG=C';
@@ -16,14 +15,13 @@ const APT_OPTS = `${APT_LOCK} -o Dpkg::Options::=--force-confdef -o Dpkg::Option
 
 /** Серверные таймауты шагов (секунды): чуть меньше панельных, чтобы команда завершилась сама. */
 const T_UPDATE = 5 * 60;
-const T_UPGRADE = 22 * 60;
 const T_CLEANUP = 8 * 60;
 const T_INSTALL = 4 * 60;
 
 /** Панельные таймауты по видам (мс): apt upgrade может идти долго, проверка — нет. */
 export const MAINTENANCE_TIMEOUT_MS: Record<MaintenanceKind, number> = {
   check: 4 * 60_000,
-  apt_upgrade: 25 * 60_000,
+  apt_upgrade: 90 * 60_000,
   agent_update: 3 * 60_000,
   cleanup: 10 * 60_000,
   unattended_enable: 6 * 60_000,
@@ -32,6 +30,33 @@ export const MAINTENANCE_TIMEOUT_MS: Record<MaintenanceKind, number> = {
 /** `timeout -k 30 N cmd…`: по истечении — TERM, через 30 с — KILL. */
 const withTimeout = (sec: number, cmd: string) => `timeout -k 30 ${sec} ${cmd}`;
 const shellQuote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
+
+/** apt upgrade живёт отдельно от SSH; повторный запуск ждёт уже идущую задачу, а не стартует вторую. */
+function detachedAptUpgrade(command: string): string {
+  const worker = [
+    ENV,
+    `${command} > /var/log/nodeservice-upgrade.log 2>&1`,
+    'rc=$?',
+    'printf "%s\\n" "$rc" > /run/nodeservice-upgrade.exit',
+    'exit "$rc"',
+  ].join('; ');
+  return [
+    'UNIT=nodeservice-upgrade.service',
+    'LOG=/var/log/nodeservice-upgrade.log',
+    'RESULT=/run/nodeservice-upgrade.exit',
+    'if systemctl is-active --quiet "$UNIT"; then',
+    '  echo "Обновление уже выполняется отдельно от SSH — продолжаю ждать."',
+    'else',
+    '  rm -f "$LOG" "$RESULT"',
+    `  systemd-run --unit=nodeservice-upgrade --collect --description="NodeService: обновление пакетов" /bin/sh -c ${shellQuote(worker)} >/dev/null`,
+    '  echo "Обновление запущено отдельной системной задачей; обрыв SSH его не остановит."',
+    'fi',
+    'while systemctl is-active --quiet "$UNIT"; do sleep 10; done',
+    'cat "$LOG" 2>/dev/null || true',
+    '[ -s "$RESULT" ] || { echo "Не найден итог системной задачи; смотрите journalctl -u nodeservice-upgrade"; exit 1; }',
+    'exit "$(cat "$RESULT")"',
+  ].join('\n');
+}
 
 /**
  * Проверка (T0): ничего не меняет, кроме `apt-get update` (обновляет только индекс пакетов).
@@ -127,7 +152,9 @@ export function actionSteps(
         {
           key: 'upgrade',
           label: 'Установка обновлений',
-          command: `# ns-maint:apt_upgrade:upgrade\n${ENV}\n${withTimeout(T_UPGRADE, `apt-get -y --with-new-pkgs ${APT_OPTS} upgrade`)}`,
+          command: `# ns-maint:apt_upgrade:upgrade\n${detachedAptUpgrade(
+            `apt-get -y --with-new-pkgs ${APT_OPTS} upgrade`,
+          )}`,
         },
       ];
     case 'cleanup':

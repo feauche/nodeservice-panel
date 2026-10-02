@@ -22,13 +22,22 @@ describe('CapacityView', () => {
     expect(within(first).getByText('канал', { selector: 'span' })).toBeInTheDocument();
     expect(within(first).getByText(/канал: вручную/)).toBeInTheDocument();
     expect(within(first).getByText('890 из 1000 Мбит/с')).toBeInTheDocument();
+
+    const cards = screen.getByRole('list', { name: 'Ёмкость нод на узком экране' });
+    const firstCard = within(cards).getAllByRole('listitem')[0] as HTMLElement;
+    expect(within(firstCard).getByText('В пик 910')).toBeInTheDocument();
+    expect(within(firstCard).getByText('Упор: канал')).toBeInTheDocument();
+    expect(within(firstCard).getByText('≈ 60')).toBeInTheDocument();
+    expect(within(firstCard).getByRole('button', { name: 'Замерить' })).toBeInTheDocument();
+    expect(within(firstCard).getByRole('button', { name: 'Указать канал' })).toBeInTheDocument();
   });
 
   it('замер канала: предупреждение про трафик, затем результат', async () => {
     renderPage(CapacityView, '/');
     const user = userEvent.setup();
     const name = mockServers.items[1]?.name ?? '';
-    await user.click(await screen.findByRole('button', { name: `Действия: ${name}` }));
+    const cards = await screen.findByRole('list', { name: 'Ёмкость нод на узком экране' });
+    await user.click(within(cards).getByRole('button', { name: `Действия: ${name}` }));
     await user.click(await screen.findByRole('menuitem', { name: 'Замерить канал…' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/до ≈ 2 ГБ трафика/)).toBeInTheDocument();
@@ -40,7 +49,8 @@ describe('CapacityView', () => {
   it('канал вручную: проверка числа, сохранение', async () => {
     renderPage(CapacityView, '/');
     const user = userEvent.setup();
-    const menus = await screen.findAllByRole('button', { name: /^Действия: / });
+    const cards = await screen.findByRole('list', { name: 'Ёмкость нод на узком экране' });
+    const menus = within(cards).getAllByRole('button', { name: /^Действия: / });
     await user.click(menus[2] as HTMLElement);
     await user.click(await screen.findByRole('menuitem', { name: 'Указать канал вручную…' }));
     const dialog = await screen.findByRole('dialog');

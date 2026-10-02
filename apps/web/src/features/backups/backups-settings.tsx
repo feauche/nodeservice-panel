@@ -13,6 +13,7 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Combobox } from '@/components/ui/combobox';
 import { Input } from '@/components/ui/input';
+import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import {
   NumberField,
   Pill,
@@ -193,6 +194,7 @@ export function BackupSettingsForm({
 
   return (
     <>
+      <UnsavedChangesGuard dirty={dirty} />
       <SettingsCard title="Расписание" hint="Когда панель делает копию сама.">
         <SettingsRow
           label="Делать копии автоматически"

@@ -51,9 +51,7 @@ export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
     postcheck: { kind: 'metric_below', metric: 'disk', marginPct: 5, samples: 1 },
   },
   apt_clean: {
-    command: SH(
-      'export DEBIAN_FRONTEND=noninteractive; apt-get -o DPkg::Lock::Timeout=120 clean 2>&1; apt-get -y -o DPkg::Lock::Timeout=120 autoremove --purge 2>&1; true',
-    ),
+    command: SH('export DEBIAN_FRONTEND=noninteractive; apt-get -o DPkg::Lock::Timeout=120 clean 2>&1'),
     precheck: ['agent_online', 'disk_not_full', 'no_other_action'],
     postcheck: { kind: 'metric_below', metric: 'disk', marginPct: 5, samples: 1 },
   },
@@ -100,7 +98,7 @@ export const ACTION_SPECS: Partial<Record<ActionKey, ActionSpec>> = {
     command: SH(
       `${FIND_NODE}; [ -n "$N" ] || { echo "контейнер ноды не найден"; exit 3; }; docker restart "$N" 2>&1`,
     ),
-    containerCheck: `${FIND_NODE}; docker inspect -f '{{.State.Running}}' "$N" 2>/dev/null`,
+    containerCheck: `${FIND_NODE}; docker inspect -f '{{.State.Status}}' "$N" 2>/dev/null`,
     precheck: ['agent_online', 'no_other_action'],
     // Метрика выбирается по виду инцидента (cpu_high → cpu, mem_high → mem) в исполнителе.
     postcheck: { kind: 'metric_below', metric: 'cpu', marginPct: 10, samples: 3 },

@@ -20,6 +20,7 @@ export interface EgressTarget {
 export interface EgressResult {
   target: EgressTarget;
   open: boolean;
+  dnsFailed: boolean;
   ms: number | null;
 }
 
@@ -74,7 +75,7 @@ export function buildEgressCommand(targets: EgressTarget[], panelHost: string): 
   const lines = ['# ns-egress'];
   targets.forEach((t, i) => {
     lines.push(
-      `(s=$(date +%s%N); if timeout 5 bash -c "exec 3<>/dev/tcp/${t.host}/${t.port}" 2>/dev/null; then e=$(date +%s%N); echo "${i} open $(( (e-s)/1000000 ))"; else echo "${i} closed"; fi) &`,
+      `(s=$(date +%s%N); if command -v getent >/dev/null 2>&1 && ! timeout 5 getent ahosts ${t.host} >/dev/null 2>&1; then echo "${i} dns"; elif timeout 5 bash -c "exec 3<>/dev/tcp/${t.host}/${t.port}" 2>/dev/null; then e=$(date +%s%N); echo "${i} open $(( (e-s)/1000000 ))"; else echo "${i} closed"; fi) &`,
     );
   });
   const ping = isSafeBlockCheckTarget(panelHost, 443, null) ? panelHost : '';
@@ -100,10 +101,16 @@ export function parseEgress(
     const line = raw.trim();
     if (line === 'ping ok') panelPing = true;
     else if (line === 'ping fail') panelPing = false;
-    const m = line.match(/^(\d+) (open|closed)(?: (\d+))?$/);
+    const m = line.match(/^(\d+) (open|closed|dns)(?: (\d+))?$/);
     const index = m ? Number(m[1]) : -1;
     const target = targets[index];
-    if (m && target) seen.set(index, { target, open: m[2] === 'open', ms: m[3] ? Number(m[3]) : null });
+    if (m && target)
+      seen.set(index, {
+        target,
+        open: m[2] === 'open',
+        dnsFailed: m[2] === 'dns',
+        ms: m[3] ? Number(m[3]) : null,
+      });
   }
   const results = targets.flatMap((_, index) => (seen.has(index) ? [seen.get(index) as EgressResult] : []));
   return { results, panelPing };
@@ -117,6 +124,8 @@ export function egressVerdict(r: Pick<EgressReport, 'results'>): EgressVerdict {
   const ru = g('ru');
   const foreign = g('foreign');
   if (r.results.length === 0) return 'unknown';
+  // Пока DNS не работает, закрытые доменные цели ничего не говорят о фильтрации маршрута.
+  if (r.results.some((x) => x.dnsFailed)) return 'unknown';
   if (r.results.every((x) => !x.open)) return 'no_internet';
   if (r.results.every((x) => x.open)) return 'ok';
   if (anyOpen(foreign) && allClosed(panel) && allClosed(ru)) return 'ru_and_panel_cut';
@@ -146,14 +155,17 @@ export function egressText(r: EgressReport): string {
     : 'Куда сервер может выйти (проверка с самого сервера):';
   const lines = r.results.map(
     (x) =>
-      `• ${x.target.label} — ${x.open ? `открыто${x.ms !== null ? ` (${x.ms} мс)` : ''}` : 'не подключается'}`,
+      `• ${x.target.label} — ${x.dnsFailed ? 'имя не разрешается через DNS' : x.open ? `открыто${x.ms !== null ? ` (${x.ms} мс)` : ''}` : 'не подключается'}`,
   );
   const verdict = egressVerdict(r);
   const ping =
     r.panelPing === true && r.results.some((x) => x.target.group === 'panel' && !x.open)
       ? ' Пинг до панели при этом проходит: дорога есть, а подключения режутся — это фильтрация, а не обрыв.'
       : '';
-  return `${head}\n${lines.join('\n')}\nЧто это значит: ${MEANING[verdict]}${ping}`;
+  const meaning = r.results.some((x) => x.dnsFailed)
+    ? 'На сервере не работает DNS для части или всех доменных имён. Сначала исправьте DNS и повторите проверку: по этим результатам нельзя делать вывод о фильтрации сети.'
+    : MEANING[verdict];
+  return `${head}\n${lines.join('\n')}\nЧто это значит: ${meaning}${ping}`;
 }
 
 /** Кого взять «ступенькой», если панель до сервера не достаёт: сервер парка, откуда порт открыт; не Россия. */
@@ -186,6 +198,13 @@ const ADVICE: Record<EgressVerdict, string> = {
 
 /** Готовое обращение к хостеру: что не работает, что работает, почему это не наш файрвол. */
 export function hosterText(r: EgressReport, serverHost: string): string {
+  const dns = r.results.filter((x) => x.dnsFailed).map((x) => x.target.host);
+  if (dns.length > 0)
+    return [
+      'Здравствуйте.',
+      `На сервере ${serverHost} не разрешаются доменные имена: ${dns.join(', ')}.`,
+      'Проверьте настройки DNS на сервере и доступность DNS-резолвера. После исправления мы повторим проверку TCP-подключений.',
+    ].join('\n');
   const closed = r.results
     .filter((x) => !x.open)
     .map((x) => `${x.target.label} (${x.target.host}:${x.target.port})`);
@@ -204,14 +223,23 @@ export function hosterText(r: EgressReport, serverHost: string): string {
 /** Для окна сервера: результат, итог, фраза, совет и текст для хостера. */
 export function egressDto(r: EgressReport, checkedAt: Date, serverHost: string): EgressReportDto {
   const verdict = egressVerdict(r);
+  const dnsFailed = r.results.some((x) => x.dnsFailed);
   return {
     checkedAt: checkedAt.toISOString(),
     via: r.via,
     verdict,
-    headline: HEADLINE[verdict],
-    advice: ADVICE[verdict],
+    headline: dnsFailed ? 'На сервере не работает DNS.' : HEADLINE[verdict],
+    advice: dnsFailed
+      ? 'Проверьте /etc/resolv.conf и доступность DNS-резолвера, затем повторите проверку.'
+      : ADVICE[verdict],
     panelPing: r.panelPing,
-    results: r.results.map((x) => ({ label: x.target.label, group: x.target.group, open: x.open, ms: x.ms })),
+    results: r.results.map((x) => ({
+      label: x.target.label,
+      group: x.target.group,
+      open: x.open,
+      dnsFailed: x.dnsFailed,
+      ms: x.ms,
+    })),
     hosterText: hosterText(r, serverHost),
   };
 }

@@ -6,6 +6,7 @@ import {
 import { RotateCcwIcon, TriangleAlertIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import {
   BarButton,
   NumberField,
@@ -175,6 +176,7 @@ export function IncidentsSettingsPage() {
 
   return (
     <div className="flex flex-col gap-3.5">
+      <UnsavedChangesGuard dirty={dirty} />
       <SectionHeader
         icon={TriangleAlertIcon}
         title="Инциденты"

@@ -8,6 +8,7 @@ import {
 import { ActivityIcon, RotateCcwIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useAutochecks, useUpdateAutochecks } from './settings-api';
@@ -154,6 +155,7 @@ export function AutochecksPage() {
 
   return (
     <div className="flex flex-col gap-3.5">
+      <UnsavedChangesGuard dirty={dirty} />
       <SectionHeader
         icon={ActivityIcon}
         title="Автопроверки"

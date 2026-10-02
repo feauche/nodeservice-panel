@@ -38,6 +38,10 @@ export class FakeSsh {
   execLog: string[] = [];
   /** Сколько «временных файлов старше часа» осмотр диска находит на тестовом сервере. */
   inspectTmpGb = 3.5;
+  /** Задержать apt-get clean до закрытия SSH-канала — проверка настоящей отмены действия. */
+  holdAptClean = false;
+  aptCleanStarted = 0;
+  aptCleanAborted = 0;
   /** Обслуживание: сколько обновлений «видит» apt и падает ли шаг с этим маркером. */
   /** Проверка доступности: ответы проверяющих по очереди (open | closed), пустая очередь — open. */
   reachQueue: Array<'open' | 'closed'> = [];
@@ -94,6 +98,10 @@ export class FakeSsh {
           });
           client.on('session', (accept) => {
             const session = accept();
+            session.on('signal', (acceptSignal) => {
+              if (this.holdAptClean) this.aptCleanAborted += 1;
+              acceptSignal?.();
+            });
             let ptyCols = 80;
             session.on('pty', (acceptPty, _rejectPty, info) => {
               ptyCols = (info as { cols?: number }).cols ?? 80;
@@ -237,6 +245,17 @@ export class FakeSsh {
                 for (let i = 0; i < 160; i++) stream.write(`${i}.0G\t/var/lib/каталог-${i}\n`);
                 stream.write(`Временных файлов старше часа: ${this.inspectTmpGb.toFixed(1)} ГБ\n`);
                 stream.exit(0);
+              } else if (
+                this.holdAptClean &&
+                info.command.includes('apt-get') &&
+                info.command.includes('clean')
+              ) {
+                this.aptCleanStarted += 1;
+                stream.write('apt clean начат\n');
+                stream.on('close', () => {
+                  this.aptCleanAborted += 1;
+                });
+                return;
               } else if (info.command.includes('authorized_keys')) {
                 const m = info.command.match(/echo '([^']+)'/);
                 if (m?.[1] && !this.installedKeys.includes(m[1])) this.installedKeys.push(m[1]);

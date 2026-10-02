@@ -8,7 +8,7 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 import { outageDuration } from '../notifications/telegram/telegram.format.js';
 
 /** Поводы, по которым панель говорит о себе самой. */
-export type PanelAlertReason = 'crash' | 'metrics' | 'disk';
+export type PanelAlertReason = 'crash' | 'metrics' | 'disk' | 'connectivity';
 
 /** О каждом поводе — не чаще раза в сутки. */
 export const PANEL_ALERT_EVERY_MS = 24 * 60 * 60_000;
@@ -22,6 +22,8 @@ interface ReasonMark {
   open?: boolean;
   /** Метрики: с какого момента не записываются (для «не записывались 12 мин»). */
   since?: string | null;
+  /** Для повода с восстановлением: о текущем сбое действительно успели сообщить. */
+  notified?: boolean;
 }
 export type PanelAlertsState = Partial<Record<PanelAlertReason, ReasonMark>>;
 
@@ -186,6 +188,57 @@ export class PanelAlertsService {
       severity: 'ok',
       title: 'Метрики снова записываются',
       body: `Не записывались ${outageDuration(now.getTime() - since)}: на графиках за это время будет пробел.`,
+      telegram: { event: 'panel_health' },
+    });
+  }
+
+  /**
+   * Панель не смогла зайти ни на один сервер, с которого должна была перепроверить доступность парка.
+   * Это один сбой наблюдения самой панели, поэтому не превращаем его в критичный инцидент каждого сервера.
+   */
+  async connectivityDown(servers: number, now = new Date()): Promise<void> {
+    const state = await this.withState((st) => {
+      const mark = st.connectivity;
+      if (mark?.open) return { send: false, skipped: mark.skipped };
+      const send = !mark || now.getTime() - Date.parse(mark.sentAt) >= PANEL_ALERT_EVERY_MS;
+      st.connectivity = {
+        sentAt: send ? now.toISOString() : mark.sentAt,
+        skipped: send ? 0 : mark.skipped + 1,
+        open: true,
+        since: now.toISOString(),
+        notified: send,
+      };
+      return { send, skipped: mark?.skipped ?? 0 };
+    });
+    if (!state.send) return;
+    await this.notifications.push({
+      severity: 'warn',
+      title: 'Панель не может перепроверить связь с серверами',
+      body: `Панель не смогла войти ни на один сервер парка, чтобы независимо проверить ${servers} ${servers === 1 ? 'сервер' : 'серверов'}, с которыми пропала связь. Пока обзор сети не восстановится, панель не будет объявлять эти серверы выключенными: причина может быть в сети самой панели. Уже открытые дела сохранены без ложного закрытия.`,
+      link: { to: '/servers', label: 'Открыть серверы' },
+      telegram: { event: 'panel_health' },
+    });
+  }
+
+  /** Обзор сети восстановился после системного предупреждения. */
+  async connectivityUp(now = new Date()): Promise<void> {
+    const outage = await this.withState((st) => {
+      const mark = st.connectivity;
+      if (!mark?.open) return null;
+      const since = mark.since ? Date.parse(mark.since) : Date.parse(mark.sentAt);
+      const notified = mark.notified === true;
+      mark.open = false;
+      mark.since = null;
+      mark.notified = false;
+      return notified ? since : null;
+    });
+    if (outage === null) return;
+    await this.notifications.push({
+      severity: 'ok',
+      title: 'Панель снова видит сеть серверов',
+      body: `Независимая проверка доступности снова работает после ${outageDuration(now.getTime() - outage)}. Следующий проход уточнит состояние каждого сервера по отдельности.`,
+      center: true,
+      link: { to: '/servers', label: 'Открыть серверы' },
       telegram: { event: 'panel_health' },
     });
   }

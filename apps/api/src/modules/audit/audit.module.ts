@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
+import { SessionChannelsModule } from '../auth/session-channels.module.js';
 import { AuditController } from './audit.controller.js';
 import { AuditEvents } from './audit.events.js';
 import { AuditInterceptor } from './audit.interceptor.js';
@@ -20,7 +21,7 @@ export class AuditCoreModule {}
 
 /** HTTP-обвязка Журнала: страница, SSE, экспорт и глобальный интерсептор @Audit(). */
 @Module({
-  imports: [AuditCoreModule],
+  imports: [AuditCoreModule, SessionChannelsModule],
   controllers: [AuditController],
   providers: [{ provide: APP_INTERCEPTOR, useClass: AuditInterceptor }],
 })

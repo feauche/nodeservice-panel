@@ -1,11 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
-  TERMINAL_HISTORY_DAYS,
   TERMINAL_TRANSCRIPT_MAX,
   type TerminalSessionDetail,
   type TerminalSessionInfo,
 } from '@nodeservice/shared';
-import { and, desc, eq, gte, lt, type SQL, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, type SQL, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { type TerminalSessionRow, terminalSessions } from '../../infra/db/schema/index.js';
@@ -168,11 +167,5 @@ export class TerminalSessionsRepository {
     if (!row) return null;
     const { chunk, length, ...rest } = row;
     return { ...toInfo({ ...rest, transcript: '' }), transcript: chunk, offset, length: Number(length) };
-  }
-
-  /** Старые сессии удаляются при открытии новой — без отдельной джобы. */
-  async prune(): Promise<void> {
-    const cutoff = new Date(Date.now() - TERMINAL_HISTORY_DAYS * 86_400_000);
-    await this.db.delete(terminalSessions).where(lt(terminalSessions.startedAt, cutoff));
   }
 }

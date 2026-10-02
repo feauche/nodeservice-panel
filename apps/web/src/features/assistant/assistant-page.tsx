@@ -558,7 +558,10 @@ function MessageRow({
   if (message.role === 'user')
     return (
       <div className="flex max-w-[80%] flex-row-reverse gap-2.5 self-end animate-in fade-in-0 slide-in-from-bottom-1 duration-200">
-        <div className="rounded-[14px] border border-brand/30 bg-brand-soft px-3.5 py-2.5 text-[13px] leading-relaxed text-foreground">
+        <div
+          data-testid="assistant-user-message"
+          className="rounded-[14px] border border-brand/30 bg-brand-soft px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap break-words text-foreground"
+        >
           {message.content}
         </div>
       </div>

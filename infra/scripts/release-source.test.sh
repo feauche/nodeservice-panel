@@ -36,5 +36,19 @@ if check_update_source "$TMP/bad.json" >/dev/null 2>&1; then
 fi
 [[ ! -e /tmp/nodeservice-injected ]]
 
+extract_backup_name() {
+    NODESERVICE_UPDATE_LIB=1 bash -c '
+      source "$1/infra/scripts/update.sh"
+      backup_name_from_panel_output "$2"
+    ' _ "$ROOT" "$1"
+}
+[[ "$(extract_backup_name 'nodeservice-backup-20261002-151500.tar.gz (18.4 МБ)')" == 'nodeservice-backup-20261002-151500.tar.gz' ]]
+[[ "$(extract_backup_name 'nodeservice-backup-20261002-151500.tar.gz.enc (18.4 МБ, с паролем)')" == 'nodeservice-backup-20261002-151500.tar.gz.enc' ]]
+if extract_backup_name '$(touch /tmp/nodeservice-backup-injected)' >/dev/null 2>&1; then
+    echo "опасное имя копии принято" >&2
+    exit 1
+fi
+[[ ! -e /tmp/nodeservice-backup-injected ]]
+
 bash -n "$ROOT/infra/scripts/install.sh" "$ROOT/infra/scripts/update.sh" "$ROOT/infra/scripts/nodeservice"
 echo "release-source-ok"

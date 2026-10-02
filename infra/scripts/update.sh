@@ -43,6 +43,21 @@ latest_release_tag() {
     printf '%s\n' "$tag"
 }
 
+# Имя копии из ответа внутреннего API; чужой текст не должен стать путём shell-команды.
+backup_name_from_panel_output() {
+    local name
+    name=$(sed -n '1s/^\(nodeservice-backup-[0-9A-Za-z_-]\{6,40\}\.tar\.gz\(\.enc\)\?\).*/\1/p' <<<"${1:-}")
+    [[ -n "$name" ]] || return 1
+    printf '%s\n' "$name"
+}
+
+restore_hint() {
+    local backup="${1:-}"
+    [[ -n "$backup" ]] || return 0
+    echo -e "${Y:-}Если новая миграция изменила базу, полный возврат:${N:-}"
+    printf '  nodeservice restore %q\n' "$backup"
+}
+
 # Чистка после удачного обновления: прежние образы панели (кроме текущего и отката), образы без тега и кэш
 # сборки старше недели — свежий кэш остаётся, чтобы следующая сборка шла быстро. Ошибка чистки обновление
 # неудачным не делает: всё под `|| true`. Берёт COMPOSE и цвета сообщений из основной части скрипта.
@@ -125,6 +140,8 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
 fi
 
 before=$(git rev-parse --short HEAD)
+OLD_VERSION=$(sed -n 's/^NODESERVICE_VERSION=//p' "$ENV_FILE" | head -n 1)
+[[ -n "$OLD_VERSION" ]] || OLD_VERSION="$before"
 if ! git fetch --all --tags --prune --quiet; then
     if [[ "$(git remote get-url origin)" == https://* ]]; then
         switch_to_deploy_key
@@ -168,20 +185,32 @@ fetch("http://127.0.0.1:" + (process.env.PORT || 3000) + "/api/internal/backups/
   })
   .catch((e) => { console.error(e.message); process.exit(1); });' 2>&1
 }
+PRE_UPDATE_BACKUP=""
 if [[ -f "$APP_DIR/backups/.skip-before-update" ]]; then
     echo -e "${Y}Копия перед обновлением выключена в панели — пропускаю.${N}"
 elif out=$(panel_backup); then
     echo -e "${G}Копия панели перед обновлением: $out${N}"
+    if name=$(backup_name_from_panel_output "$out"); then PRE_UPDATE_BACKUP="$APP_DIR/backups/$name"; fi
 else
     echo -e "${Y}Панель не сделала копию (${out:-нет ответа}) — делаю консольную: БД + .env.${N}"
     bash "$APP_DIR/infra/scripts/backup.sh"
+    PRE_UPDATE_BACKUP=$(ls -t "$APP_DIR"/backups/nodeservice-backup-*.tar.gz* 2>/dev/null | head -n 1 || true)
 fi
+if [[ -n "$PRE_UPDATE_BACKUP" ]]; then
+    printf '%s\n' "$PRE_UPDATE_BACKUP" > "$APP_DIR/backups/.last-pre-update"
+    chmod 600 "$APP_DIR/backups/.last-pre-update"
+else
+    rm -f "$APP_DIR/backups/.last-pre-update"
+fi
+printf '%s\n' "$before" > "$APP_DIR/backups/.last-pre-update-code"
+printf '%s\n' "$OLD_VERSION" > "$APP_DIR/backups/.last-pre-update-version"
+chmod 600 "$APP_DIR/backups/.last-pre-update-code" "$APP_DIR/backups/.last-pre-update-version"
 
 echo -e "${C}==> Сборка образа api ($after)${N}"
 sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$after/" "$ENV_FILE"
 export APP_COMMIT="$after" APP_BUILT_AT="$(date -u +%Y-%m-%d)"
 if ! "${COMPOSE[@]}" build api; then
-    sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$before/" "$ENV_FILE"
+    sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
     git checkout --quiet --detach "$before"
     die "Сборка не удалась. Старая версия $before продолжает работать, код возвращён на неё."
 fi
@@ -196,7 +225,30 @@ done
 if [[ "$st" != "healthy" ]]; then
     "${COMPOSE[@]}" logs --tail=80 api || true
     echo -e "${Y}api не поднялся после обновления (статус: $st).${N}"
-    die "Откат на предыдущий образ: nodeservice rollback"
+    echo -e "${Y}Автоматически возвращаю прежние код и образ ($before).${N}"
+    sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
+    git checkout --quiet --detach "$before" || true
+    rollback_image=$("${COMPOSE[@]}" config --images | grep nodeservice-api || true)
+    rolled_back=0
+    if [[ -n "$rollback_image" ]] && docker image inspect nodeservice-api:prev >/dev/null 2>&1; then
+        docker tag nodeservice-api:prev "$rollback_image"
+        "${COMPOSE[@]}" up -d --force-recreate api >/dev/null 2>&1 || true
+        old_st=starting
+        for _ in $(seq 1 60); do
+            old_st=$(docker inspect -f '{{.State.Health.Status}}' nodeservice-api-1 2>/dev/null || echo starting)
+            if [[ "$old_st" == "healthy" ]] && "${COMPOSE[@]}" exec -T api node -e \
+                "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+                rolled_back=1
+                break
+            fi
+            sleep 3
+        done
+    fi
+    restore_hint "$PRE_UPDATE_BACKUP"
+    if (( rolled_back == 1 )); then
+        die "Новая версия не запустилась; прежние код и образ возвращены автоматически. Проверь панель и логи."
+    fi
+    die "Новая версия и откатный образ не запустились. Восстанови указанную выше копию."
 fi
 cleanup_old_images || true
 echo -e "${G}Обновлено: $before → $after.${N} Откат при необходимости: nodeservice rollback"

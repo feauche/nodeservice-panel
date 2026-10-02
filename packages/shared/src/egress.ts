@@ -40,6 +40,8 @@ export const egressReportSchema = z.object({
       label: z.string(),
       group: z.enum(EGRESS_GROUPS),
       open: z.boolean(),
+      /** Имя цели не разрешилось на самом проверяемом сервере; TCP в этом случае не проверялся. */
+      dnsFailed: z.boolean().optional(),
       ms: z.number().nullable(),
     }),
   ),

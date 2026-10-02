@@ -89,7 +89,13 @@ export function periodBounds(
  * Разовая — не больше одного раза. Ограничение 400 — на случай «каждый день» на год.
  */
 export function occurrencesUntil(
-  item: { paidUntil: Date; periodUnit: BillingPeriodUnit; periodCount: number },
+  item: {
+    paidUntil: Date;
+    periodUnit: BillingPeriodUnit;
+    periodCount: number;
+    billingDay?: number;
+    billingTimeZone?: string;
+  },
   from: Date,
   to: Date,
 ): number {
@@ -99,12 +105,13 @@ export function occurrencesUntil(
     // Просрочено до начала периода — долг считаем один раз, дальше идём от сегодняшнего дня.
     n = 1;
     if (item.periodUnit === 'once') return n;
-    while (d < from && n < 400) d = addBillingPeriod(d, item.periodUnit, item.periodCount);
+    while (d < from && n < 400)
+      d = addBillingPeriod(d, item.periodUnit, item.periodCount, item.billingTimeZone, item.billingDay);
   }
   while (d < to && n < 400) {
     n += 1;
     if (item.periodUnit === 'once') break;
-    d = addBillingPeriod(d, item.periodUnit, item.periodCount);
+    d = addBillingPeriod(d, item.periodUnit, item.periodCount, item.billingTimeZone, item.billingDay);
   }
   return n;
 }
@@ -115,10 +122,12 @@ export function extendTarget(
   req: { period?: boolean | undefined; days?: number | undefined; until?: string | undefined },
   unit: BillingPeriodUnit,
   count: number,
+  timeZone = 'UTC',
+  billingDay?: number,
 ): Date | null {
   if (req.until) return new Date(req.until);
   if (req.days) return new Date(paidUntil.getTime() + req.days * DAY_MS);
-  if (req.period && unit !== 'once') return addBillingPeriod(paidUntil, unit, count);
+  if (req.period && unit !== 'once') return addBillingPeriod(paidUntil, unit, count, timeZone, billingDay);
   return null;
 }
 
@@ -133,7 +142,13 @@ export { billingDueInWords as dueInWords } from '@nodeservice/shared';
  * не больше одного раза. Ограничение — на случай «каждый день» на год.
  */
 export function occurrenceDates(
-  item: { paidUntil: Date; periodUnit: BillingPeriodUnit; periodCount: number },
+  item: {
+    paidUntil: Date;
+    periodUnit: BillingPeriodUnit;
+    periodCount: number;
+    billingDay?: number;
+    billingTimeZone?: string;
+  },
   from: Date,
   to: Date,
   cap = 400,
@@ -143,12 +158,13 @@ export function occurrenceDates(
   if (d < from) {
     out.push({ at: from, overdue: true });
     if (item.periodUnit === 'once') return out;
-    while (d < from && out.length < cap) d = addBillingPeriod(d, item.periodUnit, item.periodCount);
+    while (d < from && out.length < cap)
+      d = addBillingPeriod(d, item.periodUnit, item.periodCount, item.billingTimeZone, item.billingDay);
   }
   while (d < to && out.length < cap) {
     out.push({ at: d, overdue: false });
     if (item.periodUnit === 'once') break;
-    d = addBillingPeriod(d, item.periodUnit, item.periodCount);
+    d = addBillingPeriod(d, item.periodUnit, item.periodCount, item.billingTimeZone, item.billingDay);
   }
   return out;
 }

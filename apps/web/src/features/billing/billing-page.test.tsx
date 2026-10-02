@@ -68,6 +68,19 @@ describe('BillingPage', () => {
     expect(mockBilling.payments[0]?.id).toBe(counted?.id);
   });
 
+  it('двойной клик по сроку записывает только одно продление', async () => {
+    renderPage(Page, '/servers/billing', ['/servers']);
+    await waitFor(() => expect(cards().length).toBe(6));
+    const user = userEvent.setup();
+    const card = cards().find((c) => within(c).queryByText('de-fra-01 · VPS 2 ГБ'));
+    if (!card) throw new Error('нет карточки');
+    await user.click(within(card).getByRole('button', { name: 'Продлить' }));
+    const dialog = await screen.findByRole('dialog');
+    const before = mockBilling.payments.length;
+    await user.dblClick(within(dialog).getByRole('button', { name: '30 дней' }));
+    await waitFor(() => expect(mockBilling.payments).toHaveLength(before + 1));
+  });
+
   it('новая оплата: сервер — список с поиском и необязателен; сертификат на двух серверах сохраняется', async () => {
     renderPage(Page, '/servers/billing', ['/servers']);
     await waitFor(() => expect(cards().length).toBe(6));

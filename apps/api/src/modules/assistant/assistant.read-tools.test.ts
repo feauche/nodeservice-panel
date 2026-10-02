@@ -543,6 +543,7 @@ describe('осмотр по SSH (J2)', () => {
     nodeLogs: async () => ({ found: true, lines: 0, masked: 0, text: '' }),
     containers: async () => ({
       docker: true,
+      dockerRunning: true,
       containers: [container],
       attention: ['remnanode: убит из-за нехватки памяти (OOM)'],
     }),
@@ -585,9 +586,30 @@ describe('осмотр по SSH (J2)', () => {
     const none = await call(
       'inspect_containers',
       { serverId: 'de-1' },
-      withProbe({ containers: async () => ({ docker: false, containers: [], attention: [] }) }),
+      withProbe({
+        containers: async () => ({
+          docker: false,
+          dockerRunning: false,
+          containers: [],
+          attention: [],
+        }),
+      }),
     );
     expect(none.out.content).toContain('не найден docker');
+    const down = await call(
+      'inspect_containers',
+      { serverId: 'de-1' },
+      withProbe({
+        containers: async () => ({
+          docker: true,
+          dockerRunning: false,
+          containers: [],
+          attention: [],
+        }),
+      }),
+    );
+    expect(down.out.content).toContain('служба не отвечает');
+    expect(down.out.content).toContain('нельзя утверждать');
   });
 
   it('порты: сколько доступно на всех адресах и оговорка про файрвол; нет ss — честное сообщение', async () => {

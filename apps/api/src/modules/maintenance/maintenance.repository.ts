@@ -10,11 +10,14 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
 import {
+  appMeta,
   type MaintenanceRunRow,
   type MaintenanceStateRow,
   maintenanceRuns,
   maintenanceState,
 } from '../../infra/db/schema/index.js';
+
+const DAILY_SWEEP_KEY = 'maintenance.daily-sweep.completed-at';
 
 export function toRun(r: MaintenanceRunRow, withLog = true): MaintenanceRun {
   return {
@@ -44,6 +47,28 @@ export class MaintenanceRepository {
     return this.db.select().from(maintenanceState);
   }
 
+  /**
+   * Общая отметка суточного прохода. Она нужна отдельно от состояния сервера: ручная проверка
+   * одного сервера не должна сдвигать расписание всего парка и дробить проход на весь день.
+   */
+  async lastDailySweepAt(): Promise<Date | null> {
+    const row = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, DAILY_SWEEP_KEY) });
+    if (!row) return null;
+    const at = new Date(row.value);
+    return Number.isNaN(at.getTime()) ? null : at;
+  }
+
+  async completeDailySweep(at = new Date()): Promise<void> {
+    const value = at.toISOString();
+    await this.db
+      .insert(appMeta)
+      .values({ key: DAILY_SWEEP_KEY, value, updatedAt: at })
+      .onConflictDoUpdate({
+        target: appMeta.key,
+        set: { value, updatedAt: at },
+      });
+  }
+
   async saveCheck(serverId: string, check: MaintenanceCheck): Promise<void> {
     const now = new Date();
     await this.db
@@ -60,10 +85,12 @@ export class MaintenanceRepository {
     const now = new Date();
     await this.db
       .insert(maintenanceState)
-      .values({ serverId, checkedAt: now, check: null, checkError: error, updatedAt: now })
+      .values({ serverId, checkedAt: null, check: null, checkError: error, updatedAt: now })
       .onConflictDoUpdate({
         target: maintenanceState.serverId,
-        set: { checkedAt: now, checkError: error, updatedAt: now },
+        // checkedAt — время последней успешной проверки. Ошибка не должна выдавать попытку за
+        // готовый результат и откладывать повтор ещё на сутки.
+        set: { checkError: error, updatedAt: now },
       });
   }
 

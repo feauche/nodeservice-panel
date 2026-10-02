@@ -20,7 +20,7 @@ export function DialogActions({ className, ...props }: ComponentProps<'div'>) {
 }
 
 const BASE =
-  'inline-flex h-11 min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-[11px] border px-4 text-[13.5px] font-semibold leading-[1.2] transition-[background,border-color,filter] duration-150 focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[210px] [&_svg]:size-4';
+  'inline-flex h-11 min-w-0 w-full flex-none cursor-pointer items-center justify-center gap-2 rounded-[11px] border px-4 text-[13.5px] font-semibold leading-[1.2] transition-[background,border-color,filter] duration-150 focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:flex-1 sm:max-w-[210px] [&_svg]:size-4';
 
 export function DialogPrimaryButton({ className, type = 'button', ...props }: ComponentProps<'button'>) {
   return (
@@ -28,7 +28,7 @@ export function DialogPrimaryButton({ className, type = 'button', ...props }: Co
       type={type}
       className={cn(
         BASE,
-        'border-transparent bg-cta text-cta-foreground hover:bg-(--ns-cta-hover)',
+        'max-sm:order-first border-transparent bg-cta text-cta-foreground hover:bg-(--ns-cta-hover)',
         className,
       )}
       {...props}
@@ -42,7 +42,7 @@ export function DialogSecondaryButton({ className, type = 'button', ...props }: 
       type={type}
       className={cn(
         BASE,
-        'border-border bg-surface-2 text-text-2 hover:bg-surface-3 hover:text-foreground',
+        'max-sm:order-last border-border bg-surface-2 text-text-2 hover:bg-surface-3 hover:text-foreground',
         className,
       )}
       {...props}

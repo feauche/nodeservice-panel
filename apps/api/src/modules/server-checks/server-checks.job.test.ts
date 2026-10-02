@@ -4,7 +4,12 @@ import { ServerChecksJob } from './server-checks.job.js';
 
 describe('ServerChecksJob', () => {
   it('saves one fleet report with comparison to the previous run', async () => {
-    const servers = { list: vi.fn().mockResolvedValue([{ id: 's1', name: 'A', sshOk: true }]) };
+    const servers = {
+      list: vi.fn().mockResolvedValue([
+        { id: 's1', name: 'A', sshOk: true },
+        { id: 's2', name: 'B', sshOk: false },
+      ]),
+    };
     const checks = {
       dueLightChecks: vi.fn().mockResolvedValue([{ serverId: 's1', check: 'cpu' }]),
       history: vi.fn().mockResolvedValue([{ status: 'failed' }]),
@@ -28,6 +33,9 @@ describe('ServerChecksJob', () => {
         body: expect.stringContaining('лучше — 1, хуже — 0'),
       }),
     );
+    const report = notifications.push.mock.calls[0]?.[0]?.body as string;
+    expect(report).toContain('• A: успешно · исправилось');
+    expect(report).toContain('• B: пропущено — SSH недоступен');
   });
 
   it('marks a failed check as attention required', async () => {

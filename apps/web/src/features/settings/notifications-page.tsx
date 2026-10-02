@@ -21,6 +21,7 @@ import {
 import { BellIcon, Loader2Icon, PlusIcon, SendIcon, Trash2Icon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import { formatAgo } from '@/features/security/security-format';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -237,6 +238,7 @@ export function NotificationsPage() {
 
   return (
     <div className="flex flex-col gap-3.5">
+      <UnsavedChangesGuard dirty={dirty} />
       <SectionHeader
         icon={BellIcon}
         title="Уведомления"

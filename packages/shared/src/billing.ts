@@ -72,20 +72,83 @@ export function billingPeriodLabel(unit: BillingPeriodUnit, count: number): stri
   return `каждые ${count} ${plural(count, f[unit])}`;
 }
 
-/** Следующая дата по периоду: месяц — то же число следующего месяца (с поправкой на короткие). */
-export function addBillingPeriod(from: Date, unit: BillingPeriodUnit, count: number): Date {
-  const d = new Date(from);
-  if (unit === 'day') d.setUTCDate(d.getUTCDate() + count);
-  else if (unit === 'week') d.setUTCDate(d.getUTCDate() + 7 * count);
-  else if (unit === 'month' || unit === 'year') {
-    const months = unit === 'month' ? count : 12 * count;
-    const day = d.getUTCDate();
-    d.setUTCDate(1);
-    d.setUTCMonth(d.getUTCMonth() + months);
-    const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
-    d.setUTCDate(Math.min(day, last));
+function zonedParts(at: Date, timeZone: string) {
+  try {
+    const p = Object.fromEntries(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        hourCycle: 'h23',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+        .formatToParts(at)
+        .map((x) => [x.type, x.value]),
+    );
+    const n = (key: string) => Number(p[key] ?? 0);
+    return { y: n('year'), m: n('month'), d: n('day'), h: n('hour'), min: n('minute'), s: n('second') };
+  } catch {
+    return {
+      y: at.getUTCFullYear(),
+      m: at.getUTCMonth() + 1,
+      d: at.getUTCDate(),
+      h: at.getUTCHours(),
+      min: at.getUTCMinutes(),
+      s: at.getUTCSeconds(),
+    };
   }
-  return d;
+}
+
+function zonedMoment(
+  p: { y: number; m: number; d: number; h: number; min: number; s: number },
+  ms: number,
+  timeZone: string,
+): Date {
+  const wall = Date.UTC(p.y, p.m - 1, p.d, p.h, p.min, p.s, ms);
+  const offset = (at: Date) => {
+    const z = zonedParts(at, timeZone);
+    return Date.UTC(z.y, z.m - 1, z.d, z.h, z.min, z.s) - Math.floor(at.getTime() / 1000) * 1000;
+  };
+  const first = wall - offset(new Date(wall));
+  return new Date(wall - offset(new Date(first)));
+}
+
+/** Следующая дата по местному календарю; `billingDay` сохраняет 29–31 число после февраля. */
+export function addBillingPeriod(
+  from: Date,
+  unit: BillingPeriodUnit,
+  count: number,
+  timeZone = 'UTC',
+  billingDay?: number,
+): Date {
+  const p = zonedParts(from, timeZone);
+  if (unit === 'day' || unit === 'week') {
+    const shifted = new Date(Date.UTC(p.y, p.m - 1, p.d + count * (unit === 'week' ? 7 : 1)));
+    return zonedMoment(
+      { ...p, y: shifted.getUTCFullYear(), m: shifted.getUTCMonth() + 1, d: shifted.getUTCDate() },
+      from.getUTCMilliseconds(),
+      timeZone,
+    );
+  }
+  if (unit === 'month' || unit === 'year') {
+    const months = unit === 'month' ? count : 12 * count;
+    const target = new Date(Date.UTC(p.y, p.m - 1 + months, 1));
+    const last = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+    return zonedMoment(
+      {
+        ...p,
+        y: target.getUTCFullYear(),
+        m: target.getUTCMonth() + 1,
+        d: Math.min(billingDay ?? p.d, last),
+      },
+      from.getUTCMilliseconds(),
+      timeZone,
+    );
+  }
+  return new Date(from);
 }
 
 /** Сумма из копеек: «1 290 ₽», «€9.50», «$6». */
@@ -117,6 +180,8 @@ export const billingItemSchema = z.object({
   periodCount: z.number().int().min(1),
   /** До какого момента оплачено — когда нужна следующая оплата. */
   paidUntil: z.string(),
+  billingDay: z.number().int().min(1).max(31).optional(),
+  billingTimeZone: z.string().optional(),
   /** Автоплатёж у провайдера: в срок панель сама продлит и учтёт сумму. */
   autoCharge: z.boolean(),
   /** За сколько дней напоминать; null — как в настройках уведомлений. */

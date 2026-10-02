@@ -28,6 +28,7 @@ function make(list: Server[], probeOver: Record<string, unknown> = {}) {
   const probe = {
     containers: vi.fn(async () => ({
       docker: true,
+      dockerRunning: true,
       containers: [
         {
           name: 'remnanode',
@@ -102,7 +103,7 @@ describe('FleetInventoryService', () => {
       containers: async () => {
         calls += 1;
         if (calls === 1) throw new Error('ssh');
-        return { docker: true, containers: [], attention: [] };
+        return { docker: true, dockerRunning: true, containers: [], attention: [] };
       },
     });
     vi.useFakeTimers();
@@ -112,5 +113,20 @@ describe('FleetInventoryService', () => {
     expect(await first).toBe(1);
     expect(second).toBe(0);
     vi.useRealTimers();
+  });
+
+  it('лежащий Docker не заменяет прежний снимок ложным пустым списком', async () => {
+    const { service, saved } = make([srv('a', { inventory: inv(30) })], {
+      containers: async () => ({
+        docker: true,
+        dockerRunning: false,
+        containers: [],
+        attention: ['Служба Docker не отвечает'],
+      }),
+    });
+    const err = await service.refresh('a').catch((e) => e);
+    expect(err).toBeInstanceOf(HttpException);
+    expect(saved).toEqual([]);
+    expect(JSON.stringify((err as HttpException).getResponse())).toContain('Docker не отвечает');
   });
 });

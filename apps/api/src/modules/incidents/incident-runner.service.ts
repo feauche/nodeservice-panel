@@ -69,7 +69,7 @@ const T = TEST
  * Зонд контейнера ноды по SSH от root: `true` / `false` / `none` (контейнера нет). Как ищется контейнер —
  * см. FIND_NODE: команда одна на зонд, действия и журнал ноды.
  */
-export const NODE_PROBE = `${FIND_NODE}; [ -n "$N" ] && docker inspect -f '{{.State.Running}}' "$N" 2>/dev/null || echo none`;
+export const NODE_PROBE = `${FIND_NODE}; docker info >/dev/null 2>&1 || { echo docker_down; exit 0; }; [ -n "$N" ] || { echo none; exit 0; }; S=$(docker inspect -f '{{.State.Status}}' "$N" 2>/dev/null) || { echo stopped; exit 0; }; case "$S" in running|restarting) echo "$S" ;; *) echo stopped ;; esac`;
 
 /** Итоги проверки «куда сервер может выйти», при которых агенту до панели не дойти: переустановка не поможет. */
 const PANEL_CUT: ReadonlySet<EgressVerdict> = new Set(['panel_cut', 'ru_and_panel_cut']);
@@ -166,6 +166,9 @@ export class IncidentRunnerService implements OnModuleInit {
   private readonly log = new Logger(IncidentRunnerService.name);
   /** id попыток, которые реально идут в этом процессе. Есть в БД, но нет здесь — осиротела. */
   private readonly active = new Set<string>();
+  /** Реальная отмена SSH-команды и завершение фоновой задачи по попытке. */
+  private readonly controllers = new Map<string, AbortController>();
+  private readonly jobs = new Map<string, Promise<void>>();
   /** serverId → incidentId с идущим действием. */
   private readonly busy = new Map<string, string>();
   /** Куски вывода пишутся в БД строго по очереди — иначе параллельные read-modify-write затирают друг друга. */
@@ -218,13 +221,20 @@ export class IncidentRunnerService implements OnModuleInit {
 
   /** Инцидент закрывают руками, пока действие идёт — попытку обрываем, чтобы не висела «выполняется». */
   async cancelRunning(incidentId: string, note: string): Promise<void> {
-    let serverId: string | null = null;
+    const before = await this.repo.findById(incidentId);
+    if (!before) return;
+    const runningIds = before.attempts.filter((a) => a.status === 'running').map((a) => a.id);
+    for (const id of runningIds) this.controllers.get(id)?.abort();
+    // «Прервано» ставим только после того, как SSH-процесс действительно отпустил соединение и finally
+    // снял занятость сервера. Пока ждём, параллельное действие стартовать не сможет.
+    await Promise.allSettled(
+      runningIds.flatMap((id) => (this.jobs.has(id) ? [this.jobs.get(id) as Promise<void>] : [])),
+    );
     await this.locked(incidentId, async () => {
       const row = await this.repo.findById(incidentId);
       if (!row) return;
       const running = row.attempts.filter((a) => a.status === 'running');
       if (running.length === 0) return;
-      serverId = row.serverId;
       for (const a of running) this.active.delete(a.id);
       await this.repo.update(incidentId, {
         attempts: row.attempts.map((a) => (a.status === 'running' ? abortAttempt(a, note) : a)),
@@ -236,7 +246,6 @@ export class IncidentRunnerService implements OnModuleInit {
         ],
       });
     });
-    if (serverId && this.busy.get(serverId) === incidentId) this.busy.delete(serverId);
   }
 
   /**
@@ -328,17 +337,22 @@ export class IncidentRunnerService implements OnModuleInit {
     });
     this.busy.set(row.serverId, incidentId);
     this.active.add(attempt.id);
-    const job = this.run(incidentId, attempt.id, key, by)
+    const controller = new AbortController();
+    this.controllers.set(attempt.id, controller);
+    const job = this.run(incidentId, attempt.id, key, by, controller.signal)
       .catch((err) => {
         if (err instanceof AttemptAborted) return;
         this.log.warn(`действие ${key} по инциденту ${incidentId}: ${(err as Error).message}`);
       })
       .finally(() => {
         this.active.delete(attempt.id);
+        this.controllers.delete(attempt.id);
+        this.jobs.delete(attempt.id);
         if (this.busy.get(row.serverId as string) === incidentId) this.busy.delete(row.serverId as string);
         this.inflight.delete(job);
       });
     this.inflight.add(job);
+    this.jobs.set(attempt.id, job);
     return updated ?? row;
   }
 
@@ -491,6 +505,7 @@ export class IncidentRunnerService implements OnModuleInit {
     attemptId: string,
     key: ActionKey,
     by: 'auto' | 'manual',
+    signal: AbortSignal,
   ): Promise<void> {
     const spec = ACTION_SPECS[key];
     const action = actionByKey(key);
@@ -529,7 +544,7 @@ export class IncidentRunnerService implements OnModuleInit {
     // только чтение) и запуск, остановленный пред-проверкой, его не сдвигают: там панель сама ничего не чинила.
     if (by === 'auto' && action.level !== 'T0')
       await this.repo.update(incidentId, { lastAutofixAt: new Date() });
-    const act = await this.execute(spec, serverId, incidentId, attemptId);
+    const act = await this.execute(spec, serverId, incidentId, attemptId, signal);
     if (!act.ok) {
       await this.step(incidentId, attemptId, 'action', 'failed', act.note);
       await this.rollback(spec, serverId, incidentId, attemptId, action.rollbackNote);
@@ -646,6 +661,7 @@ export class IncidentRunnerService implements OnModuleInit {
     serverId: string,
     incidentId: string,
     attemptId: string,
+    signal: AbortSignal,
   ): Promise<{ ok: boolean; note: string }> {
     const t0 = Date.now();
     const secs = () => `${((Date.now() - t0) / 1000).toFixed(1)} с`;
@@ -663,6 +679,7 @@ export class IncidentRunnerService implements OnModuleInit {
         await this.appendLog(incidentId, attemptId, `$ ${spec.command}\n`);
         const res = await session.execStream(spec.command, {
           timeoutMs: T.execTimeoutMs,
+          signal,
           onData: (chunk: string) => void this.appendLog(incidentId, attemptId, chunk),
         });
         if (res.code !== 0) return { ok: false, note: `код возврата ${res.code}` };
@@ -670,13 +687,18 @@ export class IncidentRunnerService implements OnModuleInit {
           const chk = await session.exec(spec.containerCheck);
           const out = chk.stdout.trim();
           await this.appendLog(incidentId, attemptId, `$ ${spec.containerCheck}\n${out || '(пусто)'}\n`);
-          if (out === 'false') return { ok: false, note: 'контейнер не поднялся' };
+          if (out !== 'running')
+            return {
+              ok: false,
+              note: out === 'restarting' ? 'контейнер падает при запуске' : 'контейнер не поднялся',
+            };
         }
         return { ok: true, note: `выполнено за ${secs()}` };
       } finally {
         session.end();
       }
     } catch (err) {
+      if (signal.aborted) throw new AttemptAborted();
       return { ok: false, note: errorText(err).slice(0, 160) };
     }
   }
@@ -690,14 +712,18 @@ export class IncidentRunnerService implements OnModuleInit {
     const pc = spec.postcheck;
     if (pc.kind === 'none') return { ok: true, note: 'проверка не нужна' };
     if (pc.kind === 'node_up') {
-      // Контейнер запущен: docker inspect по SSH каждые probeMs; SSH не вышло — состояние из зонда панели.
+      // Один короткий `running` бывает между падениями restart-loop. Успех — только два независимых
+      // замера подряд; `restarting` успехом никогда не считается.
       const deadline = Date.now() + T.xrayTimeoutMs;
+      let runningSamples = 0;
       while (Date.now() < deadline) {
         const probe = await this.sshProbe(serverId, NODE_PROBE);
-        if (probe === 'true') return { ok: true, note: 'контейнер ноды запущен' };
+        const running =
+          probe === 'running' || (probe === null && this.metrics.nodeRunning(serverId) === true);
+        runningSamples = running ? runningSamples + 1 : 0;
+        if (runningSamples >= 2) return { ok: true, note: 'контейнер ноды стабильно работает' };
         if (probe === 'none') return { ok: false, note: 'контейнера remnanode на сервере нет' };
-        if (probe === null && this.metrics.nodeRunning(serverId) === true)
-          return { ok: true, note: 'контейнер ноды запущен' };
+        if (probe === 'docker_down') return { ok: false, note: 'служба Docker не отвечает' };
         await sleep(T.probeMs);
       }
       return { ok: false, note: `контейнер не запустился за ${Math.round(T.xrayTimeoutMs / 1000)} с` };
@@ -1018,7 +1044,7 @@ export class IncidentRunnerService implements OnModuleInit {
   ): Promise<void> {
     await this.locked(incidentId, async () => {
       const row = await this.repo.findById(incidentId);
-      if (!row) return;
+      if (!row) throw new AttemptAborted();
       // Попытку уже оборвали (закрыли инцидент, сторож) — ход в памяти останавливается, ничего не пишет.
       if (!row.attempts.some((a) => a.id === attemptId && a.status === 'running')) throw new AttemptAborted();
       await this.repo.update(incidentId, {

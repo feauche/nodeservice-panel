@@ -9,6 +9,7 @@ import {
   type CreateNotificationRequest,
   createNotificationRequestSchema,
   type IncidentKind,
+  NOTIFICATION_BODY_MAX,
   type Notification,
   type NotificationLink,
   type NotificationSeverity,
@@ -410,7 +411,7 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
         severity: input.severity,
         title: input.title.slice(0, 200),
         // Длинный текст дела режем в середине: вывод стоит в конце и должен остаться целым.
-        body: input.body ? clipKeepingEnd(input.body, 1000) : null,
+        body: input.body ? clipKeepingEnd(input.body, NOTIFICATION_BODY_MAX) : null,
         linkTo: input.link?.to ?? null,
         linkLabel: input.link?.label ?? null,
         serverId: input.server?.id ?? null,

@@ -2,6 +2,7 @@ import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { TERMINAL_IDLE_MS, TERMINAL_MAX_SESSIONS } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
+import { maskSecrets } from '../assistant/terminal-hint.logic.js';
 import type { AuditActor } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
 import { ServersService } from '../servers/servers.service.js';
@@ -62,7 +63,6 @@ export class TerminalService {
     // Запись сессии: провал записи не должен ронять сам терминал.
     let recordId: string | null = null;
     try {
-      await this.history.prune();
       recordId = await this.history.start({
         serverId,
         actorId: actor.type === 'admin' ? (actor.id ?? null) : null,
@@ -83,7 +83,8 @@ export class TerminalService {
         flushTimer = null;
       }
       if (!recordId || pending.length === 0) return flushing;
-      const chunk = pending;
+      // Адреса и UUID остаются полезными в истории; ключи, пароли и токены в базу не попадают.
+      const chunk = maskSecrets(pending, { privateData: false }).text;
       const bytes = pendingBytes;
       pending = '';
       pendingBytes = 0;

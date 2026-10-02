@@ -1,6 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { HttpRemnawaveClient, RemnawaveApiError } from './remnawave-client.js';
+import { connectionErrorText, HttpRemnawaveClient, RemnawaveApiError } from './remnawave-client.js';
+
+describe('понятные причины сбоя Remnawave', () => {
+  it.each([
+    ['CERT_HAS_EXPIRED', 'TLS-сертификат панели истёк'],
+    ['ENOTFOUND', 'домен не разрешается через DNS'],
+    ['ECONNREFUSED', 'HTTPS-порт панели отклоняет соединение'],
+    ['ETIMEDOUT', 'панель не ответила за 8 секунд'],
+  ])('%s', (code, message) => {
+    expect(connectionErrorText(new Error('внутренний английский текст', { cause: { code } }))).toBe(message);
+  });
+});
 
 describe('HttpRemnawaveClient.fetch', () => {
   afterEach(() => vi.unstubAllGlobals());

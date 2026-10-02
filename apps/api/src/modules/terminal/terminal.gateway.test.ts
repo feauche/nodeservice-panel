@@ -35,6 +35,7 @@ describe('TerminalGateway: мусор в сокете не роняет пане
     const gateway = new TerminalGateway(
       { open: () => open() } as never,
       { get: async () => session } as never,
+      { register: () => () => {} } as never,
       { findById: async () => ({ login: 'admin' }) } as never,
       { names: { session: 'ns_session' } } as never,
       {
@@ -138,12 +139,14 @@ describe('TerminalGateway: ввод в открытый терминал — т�
   let session: { id: string; userId: string; lockedAt: string | null } | null = null;
   /** Хранилище сессий недоступно. */
   let storeDown = false;
+  let revokeSession = () => {};
   const shell = { write: vi.fn(), resize: vi.fn(), close: vi.fn() };
   const clients: WebSocket[] = [];
 
   beforeEach(async () => {
     session = { id: 'abc', userId: 'u1', lockedAt: null };
     storeDown = false;
+    revokeSession = () => {};
     shell.write.mockReset();
     shell.resize.mockReset();
     shell.close.mockReset();
@@ -154,6 +157,14 @@ describe('TerminalGateway: ввод в открытый терминал — т�
         get: async () => {
           if (storeDown) throw new Error('хранилище недоступно');
           return session;
+        },
+      } as never,
+      {
+        register: (_id: string, close: () => void) => {
+          revokeSession = close;
+          return () => {
+            revokeSession = () => {};
+          };
         },
       } as never,
       { findById: async () => ({ login: 'admin' }) } as never,
@@ -227,6 +238,13 @@ describe('TerminalGateway: ввод в открытый терминал — т�
     expect(shell.close).toHaveBeenCalledWith('сессия панели завершена');
   });
 
+  it('отзыв сессии сам закрывает бездействующий root-терминал, без нового кадра', async () => {
+    const { closeCode } = await openTerminal();
+    revokeSession();
+    expect(await closeCode).toBe(4401);
+    expect(shell.close).toHaveBeenCalledWith('сессия панели завершена');
+  });
+
   it('хранилище сессий не ответило: ввод не пропускаем, а следующие кадры разбираются как обычно', async () => {
     const { ws } = await openTerminal();
     storeDown = true;
@@ -257,6 +275,7 @@ describe('TerminalGateway: соединения без входа не закр�
     const gateway = new TerminalGateway(
       { open: async () => ({ write: () => {}, resize: () => {}, close: () => {} }) } as never,
       { get: lookup } as never,
+      { register: () => () => {} } as never,
       { findById: async () => ({ login: 'admin' }) } as never,
       { names: { session: 'ns_session' } } as never,
       {

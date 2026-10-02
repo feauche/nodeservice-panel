@@ -12,7 +12,10 @@ const PRIVATE_IPV4 = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
  * Маскирование до отправки модели: ключи, пароли, токены, длинные секретоподобные строки, uuid, адреса и почта.
  * Возвращает и число замен, чтобы показать администратору, что что-то было скрыто. Порядок правил важен.
  */
-export function maskSecrets(input: string): { text: string; count: number } {
+export function maskSecrets(
+  input: string,
+  options: { privateData?: boolean } = {},
+): { text: string; count: number } {
   let count = 0;
   const hit = (replacement: string) => () => {
     count += 1;
@@ -75,17 +78,20 @@ export function maskSecrets(input: string): { text: string; count: number } {
     },
   );
   // Идентификаторы пользователей VLESS и подобное.
-  t = t.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, hit('[uuid]'));
+  if (options.privateData !== false)
+    t = t.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, hit('[uuid]'));
   // Длинные строки из base64/hex: ключи Reality, хэши, токены.
   t = t.replace(/\b[A-Za-z0-9+/_-]{40,}={0,2}(?![A-Za-z0-9+/_-])/g, hit('[длинная строка скрыта]'));
-  // Адреса: публичный IPv4 до подсети, IPv6 целиком, почта.
-  t = t.replace(/\b(\d{1,3}\.\d{1,3}\.\d{1,3})\.(\d{1,3})\b/g, (m, net: string) => {
-    if (PRIVATE_IPV4.test(m)) return m;
-    count += 1;
-    return `${net}.x`;
-  });
-  t = t.replace(/\b(?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{0,4}\b/g, hit('[ipv6 скрыт]'));
-  t = t.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, hit('[email]'));
+  if (options.privateData !== false) {
+    // Адреса: публичный IPv4 до подсети, IPv6 целиком, почта.
+    t = t.replace(/\b(\d{1,3}\.\d{1,3}\.\d{1,3})\.(\d{1,3})\b/g, (m, net: string) => {
+      if (PRIVATE_IPV4.test(m)) return m;
+      count += 1;
+      return `${net}.x`;
+    });
+    t = t.replace(/\b(?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{0,4}\b/g, hit('[ipv6 скрыт]'));
+    t = t.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, hit('[email]'));
+  }
   return { text: t, count };
 }
 

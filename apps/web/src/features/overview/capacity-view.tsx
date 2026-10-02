@@ -180,45 +180,65 @@ export function CapacityView() {
         {c.servers.length === 0 ? (
           <p className="m-0 px-4 py-10 text-center text-[12.5px] text-text-3">Серверов пока нет.</p>
         ) : (
-          <div className="relative w-full max-w-full overflow-x-auto">
-            <table
-              className="w-full min-w-[952px] table-fixed border-collapse text-[12.5px]"
-              aria-label="Ёмкость нод"
+          <>
+            <ul
+              className="m-0 grid list-none gap-3 p-3 sm:grid-cols-2 xl:hidden"
+              aria-label="Ёмкость нод на узком экране"
             >
-              <colgroup>
-                {/* Имени ноды — остаток, не меньше 180px: общая ширина 952 = 180 + сумма колонок ниже (ноутбук 1280 без прокрутки). */}
-                <col />
-                <col className="w-[92px]" />
-                <col className="w-[100px]" />
-                <col className="w-[100px]" />
-                <col className="w-[136px]" />
-                <col className="w-[100px]" />
-                <col className="w-[88px]" />
-                <col className="w-[104px]" />
-                <col className="w-[44px]" />
-              </colgroup>
-              <thead>
-                <tr className="text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
-                  <th className="px-3 py-2.5 text-left">Нода</th>
-                  <th className="px-3 py-2.5 text-right whitespace-nowrap">В пик</th>
-                  <th className="px-3 py-2.5 text-left">Процессор</th>
-                  <th className="px-3 py-2.5 text-left">Память</th>
-                  <th className="px-3 py-2.5 text-left">Канал</th>
-                  <th className="px-3 py-2.5 text-left">Соединения</th>
-                  <th className="px-3 py-2.5 text-left">Упор</th>
-                  <th className="px-3 py-2.5 text-right">Ещё влезет</th>
-                  <th className="px-3 py-2.5">
-                    <span className="sr-only">Действия</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {c.servers.map((s) => (
-                  <Row key={s.serverId} s={s} onMeasure={() => setMeasure(s)} onManual={() => setManual(s)} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+              {c.servers.map((s) => (
+                <CapacityCard
+                  key={s.serverId}
+                  s={s}
+                  onMeasure={() => setMeasure(s)}
+                  onManual={() => setManual(s)}
+                />
+              ))}
+            </ul>
+            <div className="relative hidden w-full max-w-full overflow-x-auto xl:block">
+              <table
+                className="w-full min-w-[952px] table-fixed border-collapse text-[12.5px]"
+                aria-label="Ёмкость нод"
+              >
+                <colgroup>
+                  {/* Имени ноды — остаток, не меньше 180px: общая ширина 952 = 180 + сумма колонок ниже (ноутбук 1280 без прокрутки). */}
+                  <col />
+                  <col className="w-[92px]" />
+                  <col className="w-[100px]" />
+                  <col className="w-[100px]" />
+                  <col className="w-[136px]" />
+                  <col className="w-[100px]" />
+                  <col className="w-[88px]" />
+                  <col className="w-[104px]" />
+                  <col className="w-[44px]" />
+                </colgroup>
+                <thead>
+                  <tr className="text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
+                    <th className="px-3 py-2.5 text-left">Нода</th>
+                    <th className="px-3 py-2.5 text-right whitespace-nowrap">В пик</th>
+                    <th className="px-3 py-2.5 text-left">Процессор</th>
+                    <th className="px-3 py-2.5 text-left">Память</th>
+                    <th className="px-3 py-2.5 text-left">Канал</th>
+                    <th className="px-3 py-2.5 text-left">Соединения</th>
+                    <th className="px-3 py-2.5 text-left">Упор</th>
+                    <th className="px-3 py-2.5 text-right">Ещё влезет</th>
+                    <th className="px-3 py-2.5">
+                      <span className="sr-only">Действия</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {c.servers.map((s) => (
+                    <Row
+                      key={s.serverId}
+                      s={s}
+                      onMeasure={() => setMeasure(s)}
+                      onManual={() => setManual(s)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </section>
 
@@ -328,6 +348,144 @@ function Meter({ cell, lim, tone }: { cell: CapacityCell; lim: boolean; tone: Ca
   );
 }
 
+const CELL_KEYS = ['cpu', 'mem', 'net', 'conn'] as const;
+
+function CapacityActions({
+  s,
+  onMeasure,
+  onManual,
+  className,
+}: {
+  s: CapacityServer;
+  onMeasure: () => void;
+  onManual: () => void;
+  className?: string;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Действия: ${s.name}`}
+          className={cn(
+            'grid size-[30px] cursor-pointer place-items-center rounded-[9px] border border-border bg-surface-2 text-text-2 hover:text-foreground',
+            className,
+          )}
+        >
+          <MoreHorizontalIcon className="size-4" aria-hidden="true" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[220px]">
+        <DropdownMenuItem onSelect={onMeasure}>
+          <GaugeIcon className="size-4" aria-hidden="true" />
+          Замерить канал…
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onManual}>
+          <PencilIcon className="size-4" aria-hidden="true" />
+          Указать канал вручную…
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => openServer(s.serverId)}>
+          <ServerIcon className="size-4" aria-hidden="true" />
+          Открыть окно сервера
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function CapacityCard({
+  s,
+  onMeasure,
+  onManual,
+}: {
+  s: CapacityServer;
+  onMeasure: () => void;
+  onManual: () => void;
+}) {
+  const leftTone = s.left == null ? 'mute' : s.tone;
+  return (
+    <li className="min-w-0 rounded-[14px] border border-border bg-bg-2/45 p-3.5">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span
+          className={cn(
+            'size-2 flex-none rounded-full',
+            s.tone === 'crit'
+              ? 'bg-crit shadow-[0_0_10px_var(--color-crit)]'
+              : s.tone === 'warn'
+                ? 'bg-warn'
+                : s.tone === 'ok'
+                  ? 'bg-ok'
+                  : 'bg-text-3',
+          )}
+          aria-hidden="true"
+        />
+        <button
+          type="button"
+          onClick={() => openServer(s.serverId)}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left hover:underline"
+        >
+          <span className="min-w-0">
+            <b className="block truncate text-[13.5px]">{s.name}</b>
+            <span className="block text-[11.5px] text-text-3">
+              В пик {s.onlinePeak == null ? '—' : nf(s.onlinePeak)}
+            </span>
+          </span>
+          {s.country && <CountryFlag code={s.country} size="sm" decorative />}
+        </button>
+        <CapacityActions s={s} onMeasure={onMeasure} onManual={onManual} className="size-9 flex-none" />
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        {CELL_KEYS.map((key) => (
+          <div key={key} className="min-w-0 rounded-[10px] bg-surface-2 p-2.5">
+            <div className="mb-1.5 text-[10.5px] text-text-3">{capital(CAPACITY_RESOURCE_LABELS[key])}</div>
+            <Meter cell={s.cells[key]} lim={s.bottleneck === key} tone={s.tone} />
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 flex items-center gap-3 border-t border-border pt-3">
+        <span
+          className={cn(
+            'inline-flex rounded-[8px] px-2 py-1 text-[11px] font-semibold',
+            TONE_PILL[s.bottleneck ? (s.tone === 'ok' ? 'mute' : s.tone) : 'mute'],
+          )}
+        >
+          {s.bottleneck
+            ? `Упор: ${CAPACITY_RESOURCE_LABELS[s.bottleneck]}`
+            : STATUS_TEXT[s.status] || 'Без упора'}
+        </span>
+        <span className="ml-auto text-right">
+          <span className="block text-[10.5px] text-text-3">Ещё влезет</span>
+          <b className={cn('text-[17px] leading-none tabular-nums', TONE_PILL[leftTone].split(' ')[1])}>
+            {s.left == null ? '—' : `≈ ${nf(s.left)}`}
+          </b>
+        </span>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={onMeasure}
+          className="inline-flex h-11 cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-2 text-[12px] font-semibold text-text-2 hover:text-foreground"
+        >
+          <GaugeIcon className="size-4" aria-hidden="true" />
+          Замерить
+        </button>
+        <button
+          type="button"
+          onClick={onManual}
+          className="inline-flex h-11 cursor-pointer items-center justify-center gap-1.5 rounded-[10px] bg-brand px-2 text-[12px] font-semibold text-white hover:bg-brand-hover"
+        >
+          <PencilIcon className="size-4" aria-hidden="true" />
+          Указать канал
+        </button>
+      </div>
+    </li>
+  );
+}
+
 function Row({ s, onMeasure, onManual }: { s: CapacityServer; onMeasure: () => void; onManual: () => void }) {
   const role = s.role === 'exit' ? 'нода' : s.role === 'bridge' ? 'мост' : 'не нода';
   const linkNote =
@@ -352,7 +510,7 @@ function Row({ s, onMeasure, onManual }: { s: CapacityServer; onMeasure: () => v
       <td className="px-3 py-2.5 text-right tabular-nums">
         {s.onlinePeak == null ? <span className="text-text-3">—</span> : nf(s.onlinePeak)}
       </td>
-      {(['cpu', 'mem', 'net', 'conn'] as const).map((r) => (
+      {CELL_KEYS.map((r) => (
         <td key={r} className="px-3 py-2.5">
           <Meter cell={s.cells[r]} lim={s.bottleneck === r} tone={s.tone} />
         </td>
@@ -383,32 +541,7 @@ function Row({ s, onMeasure, onManual }: { s: CapacityServer; onMeasure: () => v
         </span>
       </td>
       <td className="px-2 py-2.5 text-right">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label={`Действия: ${s.name}`}
-              className="grid size-[30px] cursor-pointer place-items-center rounded-[9px] border border-border bg-surface-2 text-text-2 hover:text-foreground"
-            >
-              <MoreHorizontalIcon className="size-4" aria-hidden="true" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[220px]">
-            <DropdownMenuItem onSelect={onMeasure}>
-              <GaugeIcon className="size-4" aria-hidden="true" />
-              Замерить канал…
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={onManual}>
-              <PencilIcon className="size-4" aria-hidden="true" />
-              Указать канал вручную…
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => openServer(s.serverId)}>
-              <ServerIcon className="size-4" aria-hidden="true" />
-              Открыть окно сервера
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <CapacityActions s={s} onMeasure={onMeasure} onManual={onManual} />
       </td>
     </tr>
   );

@@ -5,6 +5,7 @@ import { AuthEventsService } from './auth-events.service.js';
 import { PendingStore } from './pending.store.js';
 import { SecurityPolicyStore } from './security-policy.store.js';
 import { SessionStore } from './session.store.js';
+import { SessionChannelsModule } from './session-channels.module.js';
 import { SetupService } from './setup.service.js';
 import { ThrottleService } from './throttle.service.js';
 import { TotpService } from './totp.service.js';
@@ -15,6 +16,7 @@ import { UsersRepository } from './users.repository.js';
  * Зависит от глобальных ConfigModule/DbModule/ValkeyModule/CryptoModule/LoggerModule.
  */
 @Module({
+  imports: [SessionChannelsModule],
   providers: [
     UsersRepository,
     SecurityPolicyStore,
@@ -30,6 +32,7 @@ import { UsersRepository } from './users.repository.js';
   exports: [
     UsersRepository,
     SecurityPolicyStore,
+    SessionChannelsModule,
     SessionStore,
     PendingStore,
     ThrottleService,

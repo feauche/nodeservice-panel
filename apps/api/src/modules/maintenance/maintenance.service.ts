@@ -80,13 +80,15 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
 
   async state(serverId: string): Promise<MaintenanceState> {
     await this.servers.get(serverId);
-    const [st, running, last] = await Promise.all([
+    const [st, running, last, sweepAt] = await Promise.all([
       this.repo.getState(serverId),
       this.repo.findRunning(serverId),
       this.repo.lastFinished(serverId),
+      this.repo.lastDailySweepAt(),
     ]);
-    const nextCheckAt = st?.checkedAt
-      ? new Date(st.checkedAt.getTime() + MAINTENANCE_CHECK_INTERVAL_HOURS * 3_600_000).toISOString()
+    const scheduleAnchor = sweepAt ?? (st?.check ? new Date(st.check.checkedAt) : null);
+    const nextCheckAt = scheduleAnchor
+      ? new Date(scheduleAnchor.getTime() + MAINTENANCE_CHECK_INTERVAL_HOURS * 3_600_000).toISOString()
       : null;
     return {
       serverId,

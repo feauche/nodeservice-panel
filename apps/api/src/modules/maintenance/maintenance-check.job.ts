@@ -11,10 +11,20 @@ import { ServersRepository } from '../servers/servers.repository.js';
 import { MaintenanceRepository } from './maintenance.repository.js';
 import { MaintenanceService } from './maintenance.service.js';
 
+/** Не открываем SSH ко всему парку одновременно, но и не растягиваем проход на часы. */
+const CHECK_CONCURRENCY = 3;
+/** После временной ошибки повторяем сервер в тот же день, не создавая тревогу каждые пять минут. */
+const FAILED_RETRY_MS = 60 * 60_000;
+
+type CheckOutcome = {
+  row: { id: string; name: string };
+  check: MaintenanceCheck | null | undefined;
+};
+
 /**
- * Суточная проверка обслуживания: раз в 5 минут смотрим, у кого прошло больше суток с последней
- * проверки (или её не было), и проверяем по одному. Серверы с заведомо мёртвым SSH пропускаем —
- * их и так подсвечивает автопроверка связи.
+ * Суточная проверка обслуживания: раз в пять минут проверяем, пора ли запускать общий проход.
+ * В суточном проходе участвует весь парк, поэтому времена не расползаются на сутки. Новые серверы
+ * и неудачные попытки догоняются отдельно между проходами.
  */
 @Injectable()
 export class MaintenanceCheckJob {
@@ -40,21 +50,65 @@ export class MaintenanceCheckJob {
     this.busy = true;
     try {
       const states = new Map((await this.repo.listStates()).map((s) => [s.serverId, s]));
-      const deadline = Date.now() - MAINTENANCE_CHECK_INTERVAL_HOURS * 3_600_000;
+      const now = Date.now();
+      const deadline = now - MAINTENANCE_CHECK_INTERVAL_HOURS * 3_600_000;
+      const retryDeadline = now - FAILED_RETRY_MS;
+      const lastSweepAt = await this.repo.lastDailySweepAt();
+      const fullSweep = !lastSweepAt || lastSweepAt.getTime() <= deadline;
+      const allServers = await this.servers.list();
+      const candidates = fullSweep
+        ? allServers
+        : allServers.filter((row) => {
+            const state = states.get(row.id);
+            if (!state) return true;
+            // Между общими проходами догоняем только серверы без результата и прошлые ошибки.
+            // updatedAt здесь является временем последней попытки и ограничивает частоту повторов.
+            if (!state.check || state.checkError) return state.updatedAt.getTime() <= retryDeadline;
+            return false;
+          });
+
+      if (candidates.length === 0) return;
+
+      let cursor = 0;
+      const outcomes: CheckOutcome[] = new Array(candidates.length);
+      const worker = async () => {
+        while (cursor < candidates.length) {
+          const index = cursor++;
+          const row = candidates[index];
+          if (!row) return;
+          let check: MaintenanceCheck | null | undefined;
+          try {
+            check = await this.maintenance.scheduledCheck(row.id);
+          } catch (err) {
+            const message = (err as Error).message;
+            this.log.warn(`Проверка обслуживания ${row.name}: ${message}`);
+            await this.repo.saveCheckError(row.id, message).catch(() => undefined);
+            check = null;
+          }
+          if (check === undefined)
+            await this.repo
+              .saveCheckError(row.id, 'Плановая проверка отложена: на сервере уже выполняется обслуживание.')
+              .catch(() => undefined);
+          outcomes[index] = { row, check };
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(CHECK_CONCURRENCY, candidates.length) }, () => worker()),
+      );
+
+      // Отметка ставится после попытки по каждому серверу. Если процесс оборвался посередине,
+      // отметки не будет и после перезапуска панель повторит общий проход целиком.
+      if (fullSweep) await this.repo.completeDailySweep();
+
       const outdated: Array<{ id: string; name: string; from: string; to: string }> = [];
       let checked = 0;
       let checkFailed = 0;
-      for (const row of await this.servers.list()) {
-        if (row.sshOk === false) continue;
-        const st = states.get(row.id);
-        if (st?.checkedAt && st.checkedAt.getTime() > deadline) continue;
-        const check: MaintenanceCheck | null | undefined = await this.maintenance
-          .scheduledCheck(row.id)
-          .catch((err) => {
-            this.log.warn(`Проверка обслуживания ${row.name}: ${(err as Error).message}`);
-            return null;
-          });
-        if (check === undefined) continue;
+      let deferred = 0;
+      for (const { row, check } of outcomes) {
+        if (check === undefined) {
+          deferred += 1;
+          continue;
+        }
         checked += 1;
         if (!check) {
           checkFailed += 1;
@@ -85,13 +139,19 @@ export class MaintenanceCheckJob {
         updated += 1;
       }
 
-      if (checked > 0)
+      if (checked > 0 || deferred > 0)
         await this.notifications.push({
           center: true,
-          severity: stopped || checkFailed > 0 ? 'warn' : 'ok',
-          title: stopped ? 'Суточное обслуживание требует внимания' : 'Суточное обслуживание завершено',
+          severity: stopped || checkFailed > 0 || deferred > 0 ? 'warn' : 'ok',
+          title: fullSweep
+            ? stopped || checkFailed > 0 || deferred > 0
+              ? 'Суточное обслуживание требует внимания'
+              : 'Суточное обслуживание завершено'
+            : checkFailed > 0 || deferred > 0
+              ? 'Повтор обслуживания требует внимания'
+              : 'Повтор обслуживания завершён',
           body: [
-            `Проверено серверов: ${checked}`,
+            `Запланировано: ${candidates.length} · проверено: ${checked}${deferred > 0 ? ` · отложено: ${deferred}` : ''}`,
             outdated.length > 0
               ? `Агент обновлён: ${updated} из ${outdated.length}`
               : 'Версии агентов актуальны',
@@ -101,7 +161,9 @@ export class MaintenanceCheckJob {
             .filter(Boolean)
             .join('\n'),
           link: { to: '/servers', label: 'Открыть серверы' },
-          ...(stopped || checkFailed > 0 ? { telegram: { event: 'maintenance' as const } } : {}),
+          ...(fullSweep && (stopped || checkFailed > 0 || deferred > 0)
+            ? { telegram: { event: 'maintenance' as const } }
+            : {}),
         });
     } finally {
       this.busy = false;

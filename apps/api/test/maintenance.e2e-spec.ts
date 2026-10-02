@@ -64,7 +64,9 @@ describe('maintenance e2e', () => {
     const db = app.get<Db>(DB);
     await runMigrations(db);
     await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers cascade`);
-    await db.execute(sql`delete from app_meta where key like 'settings.%' or key = 'panel.ssh-key'`);
+    await db.execute(
+      sql`delete from app_meta where key like 'settings.%' or key = 'panel.ssh-key' or key like 'maintenance.%'`,
+    );
     await app.get<Redis>(VALKEY).flushdb();
     await app.init();
 
@@ -204,11 +206,13 @@ describe('maintenance e2e', () => {
   });
 
   it('SSH недоступен: проверка падает с понятной ошибкой и checkError, прошлый чек-лист остаётся', async () => {
+    const previous = await state();
     await ssh.stop();
     await start('check');
     const st = await waitDone();
     expect(st.checkError).toMatch(/SSH/);
     expect(st.check?.updates).toEqual({ total: 0, security: 0 });
+    expect(st.check?.checkedAt).toBe(previous.check?.checkedAt);
     expect(st.lastRun?.status).toBe('failed');
     expect(st.lastRun?.steps[0]).toMatchObject({ key: 'connect', status: 'failed' });
     await ssh.start(ssh.port);

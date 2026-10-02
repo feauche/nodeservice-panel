@@ -222,14 +222,13 @@ function RemnawavePill({ server }: { server: Server }) {
   // Последнее чтение Remnawave не удалось: список нод — снимок прошлой удачной проверки. Выдавать его
   // за текущее состояние нельзя — нода могла отвалиться уже после него. Почему не удалось (не ответила,
   // отказала в доступе, вернула ошибку), панель здесь не пересказывает: причина — на странице Remnawave.
-  // Время в статусе при сбое — время самой неудачной попытки, поэтому так оно и названо.
   if (status.data?.error)
     return (
       <Pill
         tone="muted"
         title={`Панель не смогла получить данные Remnawave — подключена ли нода, сейчас неизвестно. Причина — на странице «Remnawave».${
-          status.data.checkedAt ? ` Последняя попытка: ${formatAgo(status.data.checkedAt)}.` : ''
-        }`}
+          status.data.lastAttemptAt ? ` Последняя попытка: ${formatAgo(status.data.lastAttemptAt)}.` : ''
+        }${status.data.checkedAt ? ` Последние успешные данные: ${formatAgo(status.data.checkedAt)}.` : ''}`}
       >
         Remnawave: нет данных
       </Pill>

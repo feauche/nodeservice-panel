@@ -18,6 +18,7 @@ import {
   type AssistantPermissions,
   type AssistantProvider,
   type AssistantRisk,
+  type AssistantSettingsUpdate,
   matchAssistantPreset,
 } from '@nodeservice/shared';
 import { useSearch } from '@tanstack/react-router';
@@ -28,6 +29,7 @@ import { JarvisIcon } from '@/components/jarvis-icon';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import { PasswordField } from '@/features/auth/components/password-field';
 import {
   Pill,
@@ -202,14 +204,16 @@ export function AssistantSettingsPage() {
   };
 
   const save = async () => {
+    if (!data) return;
+    const patch: AssistantSettingsUpdate = {
+      ...(provider !== data.provider ? { provider } : {}),
+      ...(model.trim() !== data.model ? { model: model.trim() } : {}),
+      ...(level !== data.level ? { level } : {}),
+      ...(dirtyPermissions ? { permissions } : {}),
+      ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+    };
     try {
-      await update.mutateAsync({
-        provider,
-        model: model.trim(),
-        level,
-        permissions,
-        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-      });
+      await update.mutateAsync(patch);
       setApiKey('');
       toast.success('Настройки Джарвиса сохранены.');
     } catch (err) {
@@ -238,9 +242,24 @@ export function AssistantSettingsPage() {
         <Skeleton className="h-[340px] rounded-2xl" />
       </div>
     );
+  if (settings.isError || !data)
+    return (
+      <div className="rounded-2xl border border-crit/30 bg-crit-soft px-5 py-4 text-[13px] text-text-2">
+        <p>Настройки Джарвиса не загрузились. Форма заблокирована, чтобы не затереть рабочие значения.</p>
+        <p className="mt-1 text-text-3">{settings.error ? apiErrorMessage(settings.error) : 'Нет данных.'}</p>
+        <button
+          type="button"
+          className="mt-3 cursor-pointer font-semibold text-brand underline underline-offset-2"
+          onClick={() => void settings.refetch()}
+        >
+          Повторить
+        </button>
+      </div>
+    );
 
   return (
     <div className="flex flex-col">
+      <UnsavedChangesGuard dirty={dirty} />
       <SectionHeader
         icon={JarvisIcon}
         title={`Джарвис · ${ASSISTANT_SECTIONS.find((x) => x.key === section)?.label ?? ''}`}

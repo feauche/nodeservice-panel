@@ -19,7 +19,7 @@ export type NotificationSeverity = (typeof NOTIFICATION_SEVERITIES)[number];
 
 export const NOTIFICATIONS_LIMIT = 200;
 export const NOTIFICATION_TITLE_MAX = 200;
-export const NOTIFICATION_BODY_MAX = 1000;
+export const NOTIFICATION_BODY_MAX = 5000;
 
 export const notificationLinkSchema = z.object({
   /** Путь внутри панели, например `/incidents?open=<id>`. */

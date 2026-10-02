@@ -391,8 +391,9 @@ export function RemnawavePage() {
             )}
             {s.error && (
               <p role="alert" className="mt-1.5 max-w-[560px] text-[12.5px] text-crit">
-                Сейчас недоступна: {s.error}. Показаны данные последней успешной проверки
-                {s.checkedAt ? ` (${formatDate(s.checkedAt)})` : ''}.
+                Сейчас недоступна: {s.error}. Последняя попытка
+                {s.lastAttemptAt ? ` — ${formatDate(s.lastAttemptAt)}` : ''}. Показаны данные последней
+                успешной проверки{s.checkedAt ? ` (${formatDate(s.checkedAt)})` : ''}.
               </p>
             )}
           </div>

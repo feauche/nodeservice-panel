@@ -1,6 +1,6 @@
 import { HttpException } from '@nestjs/common';
 import type { RemnawaveCert, RemnawaveNode, RemnawaveStats } from '@nodeservice/shared';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RemnawaveService } from './remnawave.service.js';
 import type { RemnawaveFetched } from './remnawave-client.js';
 import { RemnawaveApiError } from './remnawave-client.js';
@@ -33,6 +33,7 @@ const CERT: RemnawaveCert = { status: 'ok', expiresAt: '2026-12-01T00:00:00.000Z
 function make() {
   const rows = new Map<string, unknown>();
   const audit: Array<Record<string, unknown>> = [];
+  const notifications: Array<Record<string, unknown>> = [];
   const world = {
     fetchResult: { stats: STATS, nodes: [NODE()] } as RemnawaveFetched,
     fetchError: null as Error | null,
@@ -78,9 +79,13 @@ function make() {
     store as never,
     client as never,
     { record: async (e: Record<string, unknown>) => void audit.push(e) } as never,
+    { get: () => 'http://victoriametrics:8428' } as never,
+    { push: async (e: Record<string, unknown>) => void notifications.push(e) } as never,
   );
-  return { svc, world, audit };
+  return { svc, world, audit, notifications };
 }
+
+afterEach(() => vi.useRealTimers());
 
 describe('RemnawaveService: подключение', () => {
   let ctx: ReturnType<typeof make>;
@@ -94,6 +99,7 @@ describe('RemnawaveService: подключение', () => {
       connected: false,
       domain: null,
       checkedAt: null,
+      lastAttemptAt: null,
       error: null,
       stats: null,
       nodes: [],
@@ -178,12 +184,17 @@ describe('RemnawaveService: тихая перепроверка (джоба)', (
   });
 
   it('первая неудача: сохраняет причину, не портит прежние данные, пишет предупреждение в Журнал один раз', async () => {
+    const lastSuccess = (await ctx.svc.status()).checkedAt;
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-02T12:00:00.000Z'));
     ctx.world.fetchError = new HttpException({ detail: 'таймаут' }, 502) as unknown as Error;
     await ctx.svc.syncQuiet();
     let s = await ctx.svc.status();
     expect(s.error).toBe('таймаут');
     expect(s.error).not.toBe('Http Exception');
     expect(s.stats).toEqual(STATS); // прежние данные остались
+    expect(s.checkedAt).toBe(lastSuccess); // время последнего успеха не подменяется попыткой
+    expect(s.lastAttemptAt).toBe('2026-10-02T12:00:00.000Z');
     expect(ctx.audit.filter((a) => a.action === 'remnawave.unreachable')).toHaveLength(1);
     // повторная неудача не пишет второй раз
     await ctx.svc.syncQuiet();
@@ -194,5 +205,25 @@ describe('RemnawaveService: тихая перепроверка (джоба)', (
     s = await ctx.svc.status();
     expect(s.error).toBeNull();
     expect(ctx.audit.filter((a) => a.action === 'remnawave.reconnected')).toHaveLength(1);
+  });
+
+  it('после пяти минут сбоя сообщает один раз и отдельно говорит о восстановлении', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-02T12:00:00.000Z'));
+    ctx.world.fetchError = new HttpException({ detail: 'DNS не отвечает' }, 502) as unknown as Error;
+    await ctx.svc.syncQuiet();
+    expect(ctx.notifications).toEqual([]);
+
+    vi.setSystemTime(new Date('2026-10-02T12:05:00.000Z'));
+    await ctx.svc.syncQuiet();
+    await ctx.svc.syncQuiet();
+    expect(ctx.notifications).toHaveLength(1);
+    expect(ctx.notifications[0]).toMatchObject({ severity: 'warn', title: 'Remnawave не отвечает' });
+
+    ctx.world.fetchError = null;
+    vi.setSystemTime(new Date('2026-10-02T12:06:00.000Z'));
+    await ctx.svc.syncQuiet();
+    expect(ctx.notifications).toHaveLength(2);
+    expect(ctx.notifications[1]).toMatchObject({ severity: 'ok', title: 'Remnawave снова отвечает' });
   });
 });

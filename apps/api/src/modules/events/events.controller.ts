@@ -1,6 +1,10 @@
 import { Controller, Header, type MessageEvent, Sse } from '@nestjs/common';
 import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { interval, map, merge, Observable } from 'rxjs';
+import { interval, map, merge, Observable, takeUntil } from 'rxjs';
+
+import { CurrentSession } from '../auth/auth.decorators.js';
+import type { SessionRecord } from '../auth/session.store.js';
+import { SessionChannelsService } from '../auth/session-channels.service.js';
 
 import { EventsService, type PanelEvent } from './events.service.js';
 
@@ -11,14 +15,19 @@ const SSE_PING_MS = 20_000;
 @ApiCookieAuth()
 @Controller('events')
 export class EventsController {
-  constructor(private readonly events: EventsService) {}
+  constructor(
+    private readonly events: EventsService,
+    private readonly channels: SessionChannelsService,
+  ) {}
 
   @Sse('stream')
   @Header('X-Accel-Buffering', 'no')
   @ApiOperation({ summary: 'Живые события панели: уведомления, серверы, инциденты (SSE)' })
-  stream(): Observable<MessageEvent> {
+  stream(@CurrentSession() session: SessionRecord): Observable<MessageEvent> {
     const live$ = new Observable<PanelEvent>((subscriber) => this.events.on((e) => subscriber.next(e)));
     const ping$ = interval(SSE_PING_MS).pipe(map((): MessageEvent => ({ type: 'ping', data: '' })));
-    return merge(live$.pipe(map((e): MessageEvent => ({ type: e.type, data: e.data }))), ping$);
+    return merge(live$.pipe(map((e): MessageEvent => ({ type: e.type, data: e.data }))), ping$).pipe(
+      takeUntil(this.channels.revoked(session.id)),
+    );
   }
 }

@@ -1,6 +1,6 @@
 import { type TerminalSnippet, type TerminalSnippets, terminalSnippetsSchema } from '@nodeservice/shared';
 import { Loader2Icon, PlusIcon, Trash2Icon } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -25,12 +25,18 @@ export function SnippetsDialog({ open, onOpenChange }: Props) {
   const update = useUpdateSnippets();
   const [rows, setRows] = useState<Row[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const initialized = useRef(false);
 
   // При открытии — копия сохранённого списка; правки живут в диалоге до «Сохранить».
   useEffect(() => {
-    if (open) {
-      setRows(snippets.data?.items.map((i) => ({ ...i })) ?? []);
+    if (!open) {
+      initialized.current = false;
+      return;
+    }
+    if (snippets.data && !initialized.current) {
+      setRows(snippets.data.items.map((i) => ({ ...i })));
       setErrors({});
+      initialized.current = true;
     }
   }, [open, snippets.data]);
 
@@ -42,6 +48,7 @@ export function SnippetsDialog({ open, onOpenChange }: Props) {
   const remove = (id: string) => setRows((prev) => prev.filter((r) => r.id !== id));
 
   const save = async () => {
+    if (!snippets.data) return;
     const parsed = terminalSnippetsSchema.safeParse({ items: rows } satisfies TerminalSnippets);
     if (!parsed.success) {
       const next: Record<string, string> = {};
@@ -64,6 +71,7 @@ export function SnippetsDialog({ open, onOpenChange }: Props) {
   };
 
   const busy = update.isPending;
+  const unavailable = snippets.isPending || snippets.isError || !snippets.data;
   const inputClass = 'h-9 rounded-[9px] bg-surface-2 text-[13px]';
 
   return (
@@ -82,7 +90,22 @@ export function SnippetsDialog({ open, onOpenChange }: Props) {
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-4 pb-4">
-          {rows.length === 0 ? (
+          {snippets.isPending ? (
+            <p className="rounded-[10px] border border-dashed border-border-2 px-4 py-6 text-center text-[13px] text-text-3">
+              Загружаю сниппеты…
+            </p>
+          ) : snippets.isError || !snippets.data ? (
+            <div className="rounded-[10px] border border-crit/30 bg-crit-soft px-4 py-4 text-center text-[13px] text-text-2">
+              <p>Сниппеты не загрузились. Сохранение заблокировано, чтобы не стереть команды.</p>
+              <button
+                type="button"
+                className="mt-2 cursor-pointer text-brand underline"
+                onClick={() => void snippets.refetch()}
+              >
+                Повторить
+              </button>
+            </div>
+          ) : rows.length === 0 ? (
             <p className="rounded-[10px] border border-dashed border-border-2 px-4 py-6 text-center text-[13px] text-text-3">
               Пока пусто. Добавьте первую команду, например «Соединения» →{' '}
               <span className="font-mono">ss -s</span>.
@@ -140,7 +163,7 @@ export function SnippetsDialog({ open, onOpenChange }: Props) {
           )}
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || unavailable}
             onClick={add}
             className="mt-3 inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-50"
           >
@@ -167,7 +190,7 @@ export function SnippetsDialog({ open, onOpenChange }: Props) {
               Отмена
             </DialogSecondaryButton>
             <DialogPrimaryButton
-              disabled={busy}
+              disabled={busy || unavailable}
               onClick={() => void save()}
               className="h-10 flex-none rounded-[10px] px-4 sm:max-w-none"
             >

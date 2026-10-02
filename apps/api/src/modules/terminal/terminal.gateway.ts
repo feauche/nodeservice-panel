@@ -10,6 +10,7 @@ import type { AuditActor } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
 import { AnonAuditLimiter } from '../auth/anon-audit.limiter.js';
 import { SessionStore } from '../auth/session.store.js';
+import { SessionChannelsService } from '../auth/session-channels.service.js';
 import { UsersRepository } from '../auth/users.repository.js';
 import { TerminalService, type TerminalSession } from './terminal.service.js';
 
@@ -46,6 +47,7 @@ export class TerminalGateway {
   constructor(
     private readonly terminal: TerminalService,
     private readonly sessions: SessionStore,
+    private readonly channels: SessionChannelsService,
     private readonly users: UsersRepository,
     private readonly cookies: CookiesService,
     private readonly wsUpgrade: WsUpgradeService,
@@ -105,7 +107,11 @@ export class TerminalGateway {
       display: login ?? 'Администратор',
     };
 
-    let session: TerminalSession;
+    let session: TerminalSession | null = null;
+    const unwatch = this.channels.register(record.id, () => {
+      ws.close(4401, 'Сессия панели завершена');
+      session?.close('сессия панели завершена');
+    });
     try {
       session = await this.terminal.open(
         serverId,
@@ -120,6 +126,7 @@ export class TerminalGateway {
         },
       );
     } catch (err) {
+      unwatch();
       const detail =
         (err as { response?: { detail?: string } })?.response?.detail ??
         (err as Error)?.message ??
@@ -131,6 +138,7 @@ export class TerminalGateway {
     // Пока открывался терминал, браузер мог уйти: сессию на сервере закрываем, иначе она останется висеть.
     if (ws.readyState !== WebSocket.OPEN) {
       session.close();
+      unwatch();
       return;
     }
 
@@ -150,19 +158,22 @@ export class TerminalGateway {
           if (!current) {
             // Выход, истёк срок, «Завершить сессию» с другого устройства: терминал этой сессии закрываем.
             ws.close(4401, 'Требуется вход');
-            session.close('сессия панели завершена');
+            session?.close('сессия панели завершена');
             return;
           }
-          if (msg.t === 'r') session.resize(msg.c, msg.r);
+          if (msg.t === 'r') session?.resize(msg.c, msg.r);
           // Экран заблокирован: вывод идёт дальше, ввод — только после пароля (отброшенное не копится).
-          else if (!current.lockedAt) session.write(msg.d);
+          else if (!current.lockedAt) session?.write(msg.d);
         })
         .catch((err) => {
           // Не смогли проверить сессию — кадр не пропускаем, как и HTTP-запрос без проверки входа.
           this.log.warn(`Терминал: кадр отброшен, сессия панели не проверена: ${(err as Error).message}`);
         });
     });
-    ws.on('close', () => session.close());
+    ws.on('close', () => {
+      unwatch();
+      session?.close();
+    });
   }
 
   private reject(

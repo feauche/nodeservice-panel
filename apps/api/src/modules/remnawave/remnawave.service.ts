@@ -10,6 +10,7 @@ import {
 import { errorText, problem } from '../../common/filters/problem-details.filter.js';
 import type { Env } from '../../config/env.schema.js';
 import { AuditService } from '../audit/audit.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import {
   REMNAWAVE_CLIENT,
   RemnawaveApiError,
@@ -29,6 +30,7 @@ export class RemnawaveService {
     @Inject(REMNAWAVE_CLIENT) private readonly client: RemnawaveClient,
     private readonly audit: AuditService,
     private readonly config: ConfigService<Env, true>,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -78,6 +80,7 @@ export class RemnawaveService {
         connected: false,
         domain: null,
         checkedAt: null,
+        lastAttemptAt: null,
         error: null,
         stats: null,
         nodes: [],
@@ -88,6 +91,7 @@ export class RemnawaveService {
       connected: true,
       domain,
       checkedAt: snap?.checkedAt ?? null,
+      lastAttemptAt: snap?.lastAttemptAt ?? snap?.checkedAt ?? null,
       error: snap?.error ?? null,
       stats: snap?.stats ?? null,
       nodes: snap?.nodes ?? [],
@@ -101,7 +105,16 @@ export class RemnawaveService {
     const { stats, nodes } = await this.fetchOrThrow(domain, apiKey);
     const cert = await this.client.checkCertificate(domain);
     const checkedAt = new Date().toISOString();
-    await this.store.connect(domain, apiKey, { checkedAt, error: null, stats, nodes, cert });
+    await this.store.connect(domain, apiKey, {
+      checkedAt,
+      lastAttemptAt: checkedAt,
+      failureSince: null,
+      outageNotified: false,
+      error: null,
+      stats,
+      nodes,
+      cert,
+    });
     await this.audit.record({
       action: 'remnawave.connected',
       target: { type: 'settings', id: 'remnawave', display: domain },
@@ -140,15 +153,17 @@ export class RemnawaveService {
     const wasOk = before ? !before.error : true;
     try {
       await this.sync(creds.domain, creds.apiKey);
-      if (!wasOk)
-        await this.audit.record({
-          action: 'remnawave.reconnected',
-          target: { type: 'settings', id: 'remnawave', display: creds.domain },
-        });
     } catch (err) {
       const message = errorText(err);
+      const attemptedAt = new Date().toISOString();
+      const failureSince = before?.failureSince ?? attemptedAt;
+      const shouldNotify =
+        !before?.outageNotified && Date.parse(attemptedAt) - Date.parse(failureSince) >= 5 * 60_000;
       await this.store.updateSnapshot({
-        checkedAt: new Date().toISOString(),
+        checkedAt: before?.checkedAt ?? attemptedAt,
+        lastAttemptAt: attemptedAt,
+        failureSince,
+        outageNotified: before?.outageNotified || shouldNotify,
         error: message,
         stats: before?.stats ?? null,
         nodes: before?.nodes ?? [],
@@ -161,7 +176,40 @@ export class RemnawaveService {
           target: { type: 'settings', id: 'remnawave', display: creds.domain },
           metadata: { error: message },
         });
+      if (shouldNotify)
+        await this.notifications
+          .push({
+            severity: 'warn',
+            title: 'Remnawave не отвечает',
+            body: `Больше пяти минут панель не может прочитать ${creds.domain}. Онлайн нод и резкие падения сейчас не отслеживаются. Причина: ${message}`,
+            center: true,
+            link: { to: '/servers/remnawave', label: 'Открыть Remnawave' },
+            telegram: { event: 'panel_health' },
+          })
+          .catch((notifyErr) =>
+            this.log.warn(`Оповещение о Remnawave не отправлено: ${errorText(notifyErr)}`),
+          );
       this.log.warn(`Remnawave (${creds.domain}) недоступна: ${message}`);
+      return;
+    }
+    if (!wasOk) {
+      await this.audit.record({
+        action: 'remnawave.reconnected',
+        target: { type: 'settings', id: 'remnawave', display: creds.domain },
+      });
+      if (before?.outageNotified)
+        await this.notifications
+          .push({
+            severity: 'ok',
+            title: 'Remnawave снова отвечает',
+            body: `Связь с ${creds.domain} восстановлена. Онлайн нод и падения снова отслеживаются по свежим данным.`,
+            center: true,
+            link: { to: '/servers/remnawave', label: 'Открыть Remnawave' },
+            telegram: { event: 'panel_health' },
+          })
+          .catch((notifyErr) =>
+            this.log.warn(`Оповещение о восстановлении Remnawave не отправлено: ${errorText(notifyErr)}`),
+          );
     }
   }
 
@@ -172,7 +220,17 @@ export class RemnawaveService {
     const fresh = Date.now() - this.certCheckedAt < REMNAWAVE_CERT_CHECK_INTERVAL_MIN * 60_000;
     const cert = fresh && before?.cert ? before.cert : await this.client.checkCertificate(domain);
     if (!fresh || !before?.cert) this.certCheckedAt = Date.now();
-    await this.store.updateSnapshot({ checkedAt: new Date().toISOString(), error: null, stats, nodes, cert });
+    const checkedAt = new Date().toISOString();
+    await this.store.updateSnapshot({
+      checkedAt,
+      lastAttemptAt: checkedAt,
+      failureSince: null,
+      outageNotified: false,
+      error: null,
+      stats,
+      nodes,
+      cert,
+    });
     void this.recordOnline(nodes);
   }
 

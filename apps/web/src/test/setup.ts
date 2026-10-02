@@ -6,6 +6,26 @@ import { resetCsrfToken } from '@/lib/api';
 import { resetMockState } from './msw/handlers';
 import { server } from './msw/server';
 
+// Node 25+ объявляет собственные localStorage/sessionStorage без файла хранения. Они перекрывают
+// реализации jsdom и возвращают undefined, поэтому тестам явно нужны браузерные хранилища.
+const memoryStorage = (): Storage => {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, String(value)),
+  };
+};
+Object.defineProperties(globalThis, {
+  localStorage: { value: memoryStorage(), configurable: true },
+  sessionStorage: { value: memoryStorage(), configurable: true },
+});
+
 // jsdom не считает размеры. Без них ResponsiveContainer из Recharts
 // считает график нулевым и засоряет вывод тестов предупреждениями.
 const testRect = {

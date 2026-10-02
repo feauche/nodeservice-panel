@@ -86,11 +86,11 @@ export const INCIDENT_ACTIONS = [
     title: 'Очистить кэш apt',
     level: 'T1',
     kinds: ['disk_high'] as IncidentKind[],
-    summary: 'apt-get clean, apt-get autoremove --purge',
+    summary: 'apt-get clean',
     consequence: null,
     preconditions: ['агент в сети', 'диск не переполнен (< 100 %)', 'на ноде не идёт другое действие'],
     postcheck: 'диск ниже порога − 5 % (до 16 с)',
-    rollbackNote: 'не нужен: пакеты скачаются заново при установке',
+    rollbackNote: 'не нужен: удаляется только кэш загруженных пакетов',
     terminal: false,
   },
   {

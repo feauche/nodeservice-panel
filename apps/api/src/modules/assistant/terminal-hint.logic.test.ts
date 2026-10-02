@@ -57,6 +57,12 @@ describe('maskSecrets', () => {
     expect(r.text).not.toContain('hunter');
     expect(r.text).not.toContain('203.0.113.77');
   });
+  it('для истории терминала сохраняет адреса, но всё равно убирает секреты', () => {
+    const r = maskSecrets('ip 203.0.113.77 email admin@example.com token=secret-value', {
+      privateData: false,
+    });
+    expect(r.text).toBe('ip 203.0.113.77 email admin@example.com token=[скрыто]');
+  });
   it('обычный вывод не портится', () => {
     const t =
       'Total: 84213\nTCP:   81102 (estab 79880)\n[812345.6] nf_conntrack: table full, dropping packet';

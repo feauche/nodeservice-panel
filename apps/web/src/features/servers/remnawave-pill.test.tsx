@@ -103,9 +103,11 @@ describe('пилюля «Remnawave» на карточке сервера (C1)',
   });
 
   it('чтение Remnawave не удалось: прежний снимок не выдаём за текущее — «нет данных» и когда была попытка', async () => {
+    const successAt = new Date(Date.now() - 12 * 60_000).toISOString();
+    const attemptAt = new Date(Date.now() - 7 * 60_000).toISOString();
     const pill = await pillOf(
       { usersOnline: 42 },
-      { checkedAt: new Date(Date.now() - 7 * 60_000).toISOString(), error: 'таймаут подключения' },
+      { checkedAt: successAt, lastAttemptAt: attemptAt, error: 'таймаут подключения' },
     );
     expect(pill).toHaveTextContent('Remnawave: нет данных');
     expect(pill.className).toContain('text-text-3');
@@ -115,6 +117,7 @@ describe('пилюля «Remnawave» на карточке сервера (C1)',
       expect.stringContaining('Панель не смогла получить данные Remnawave'),
     );
     expect(pill).toHaveAttribute('title', expect.stringContaining('Последняя попытка: 7 мин назад'));
+    expect(pill).toHaveAttribute('title', expect.stringContaining('Последние успешные данные: 12 мин назад'));
     expect(pill.getAttribute('title')).not.toMatch(/не отвечает|таймаут/);
     expect(screen.queryByText(/42 онлайн/)).not.toBeInTheDocument();
   });

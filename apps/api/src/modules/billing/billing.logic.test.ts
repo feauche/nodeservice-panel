@@ -93,6 +93,25 @@ describe('billing.logic', () => {
     expect(extendTarget(p, { period: true }, 'once', 1)).toBeNull();
   });
 
+  it('месяц считается в поясе карточки, а 31-е возвращается после февраля', () => {
+    // 1 октября 00:00 по Москве → 1 ноября 00:00, без сдвига на 31 октября.
+    expect(
+      extendTarget(new Date('2026-09-30T21:00:00Z'), { period: true }, 'month', 1, 'Europe/Moscow', 1),
+    ).toEqual(new Date('2026-10-31T21:00:00Z'));
+    const february = extendTarget(
+      new Date('2027-01-31T09:00:00Z'),
+      { period: true },
+      'month',
+      1,
+      'Europe/Moscow',
+      31,
+    );
+    expect(february).toEqual(new Date('2027-02-28T09:00:00Z'));
+    expect(extendTarget(february as Date, { period: true }, 'month', 1, 'Europe/Moscow', 31)).toEqual(
+      new Date('2027-03-31T09:00:00Z'),
+    );
+  });
+
   it('срок словами', () => {
     expect(dueInWords(new Date('2026-10-01T10:00:00Z'), now)).toBe('через 2 дня');
     expect(dueInWords(new Date('2026-09-29T14:00:00Z'), now)).toBe('через 5 часов');

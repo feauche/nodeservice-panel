@@ -229,6 +229,29 @@ describe('OverviewPage (по демо)', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/servers/remnawave'));
   });
 
+  it('при ошибке Remnawave не выдаёт сохранённые цифры за текущее состояние', async () => {
+    Object.assign(mockRemnawave, {
+      connected: true,
+      domain: 'vpn-panel.example.com',
+      checkedAt: '2026-10-02T10:00:00.000Z',
+      lastAttemptAt: '2026-10-02T10:05:00.000Z',
+      error: 'домен не разрешается через DNS',
+      stats: {
+        users: { total: 870, active: 812, disabled: 14, limited: 3, expired: 41 },
+        online: { now: 236, lastDay: 512, lastWeek: 640, never: 28 },
+        nodesOnline: 4,
+        nodesTotal: 5,
+        trafficBytesLifetime: '20239053209600',
+        panelVersion: '3.4.4',
+        panelUptimeSec: 361_440,
+      },
+    });
+    renderPage(OverviewPage, '/', ['/servers/remnawave']);
+    expect(await screen.findByText('Remnawave: свежих данных нет')).toBeInTheDocument();
+    expect(screen.queryByText('Remnawave: 4 из 5 нод на связи')).not.toBeInTheDocument();
+    expect(screen.getByText(/Последние успешные данные/)).toBeInTheDocument();
+  });
+
   it('форматтеры трафика', () => {
     expect(formatMbps(1_000_000)).toBe('8.0');
     expect(formatTraffic(300_000_000)).toEqual({ value: '2.40', unit: 'Гбит/с' });
