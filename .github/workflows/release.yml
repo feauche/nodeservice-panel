@@ -35,6 +35,8 @@ jobs:
       CI: true
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
         with:
@@ -63,18 +65,8 @@ jobs:
           pnpm build
           bash infra/scripts/release-source.test.sh
 
-      - name: Описание из журнала изменений
-        shell: bash
-        run: |
-          node --input-type=module <<'JS' > release-notes.md
-          import { CHANGELOG } from './packages/shared/dist/changelog.js';
-          const version = process.env.GITHUB_REF_NAME.replace(/^v/, '');
-          const release = CHANGELOG.find((entry) => entry.version === version);
-          if (!release) throw new Error(`Нет CHANGELOG для ${version}`);
-          console.log('## Что изменилось\n');
-          for (const item of release.items) console.log(`- ${item}`);
-          console.log('\n## Обновление\n\n```bash\nnodeservice update\n```');
-          JS
+      - name: Собрать changelog после прошлого релиза
+        run: node scripts/release-notes.mjs --tag "${GITHUB_REF_NAME}" --update "nodeservice update" > release-notes.md
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
