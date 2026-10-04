@@ -98,6 +98,10 @@ export const blockProbeResultSchema = z.object({
 export type BlockProbeResult = z.infer<typeof blockProbeResultSchema>;
 
 export const blockCheckResultSchema = z.object({
+  /** Что именно проверяли: пользовательский порт ноды или SSH-порт обычного сервера. Старые записи — node. */
+  targetKind: z.enum(['node', 'server']).optional(),
+  /** Фактический проверенный порт. В старых сохранённых результатах поля нет. */
+  port: z.number().int().min(1).max(65535).optional(),
   nodeName: z.string(),
   address: z.string(),
   /** null — SNI ноды неизвестен: TCP-порт всё равно проверен, недоступна только глубокая проверка DPI. */

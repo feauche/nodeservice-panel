@@ -73,17 +73,36 @@ const UNCHECKED: Record<BlockUncheckedReason, string> = {
   gone: 'Проверяемый сервер или вход больше не найден.',
 };
 
+function uncheckedReason(
+  reason: BlockUncheckedReason | null,
+  target: 'node' | 'server',
+  side: 'ru' | 'foreign',
+): string | null {
+  if (!reason) return null;
+  const place = side === 'ru' ? 'российский' : 'зарубежный';
+  if (reason === 'no_probers')
+    return `В парке нет подходящих ${side === 'ru' ? 'российских' : 'зарубежных'} серверов, с которых можно выполнить проверку.`;
+  if (reason === 'ssh') return `Панель не смогла войти ни на один ${place} проверяющий сервер.`;
+  if (reason === 'no_answer')
+    return `${place.charAt(0).toUpperCase()}${place.slice(1)} проверяющие серверы не завершили команду проверки.`;
+  if (reason === 'bad_address' && target === 'server')
+    return 'Адрес или SSH-порт сервера имеют недопустимый формат.';
+  return UNCHECKED[reason];
+}
+
 function ProbeTable({
   title,
   probes,
   empty,
+  portOnly = false,
 }: {
   title: string;
   probes: BlockProbeResult[];
   empty: string | null;
+  portOnly?: boolean;
 }) {
   const probeLabel = (probe: BlockProbeResult): string => {
-    if (probe.verdict === 'ok') return 'Доступна';
+    if (probe.verdict === 'ok') return portOnly ? 'Порт открыт' : 'Доступна';
     if (probe.verdict === 'partial') return 'С перебоями';
     if (probe.verdict === 'tspu') return 'Признаки ТСПУ';
     if (probe.verdict === 'block_16_20') return 'Обрыв данных';
@@ -133,8 +152,25 @@ function ProbeTable({
 }
 
 function RussiaAccessResult({ result }: { result: BlockCheckResult }) {
-  const mainReason = result.unchecked ? UNCHECKED[result.unchecked] : null;
-  const foreignReason = result.foreignUnchecked ? UNCHECKED[result.foreignUnchecked] : null;
+  const serverTarget = result.targetKind === 'server';
+  const target = serverTarget ? 'server' : 'node';
+  const mainReason = uncheckedReason(result.unchecked, target, 'ru');
+  const foreignReason = uncheckedReason(result.foreignUnchecked, target, 'foreign');
+  const verdict = result.unchecked
+    ? 'Проверить не удалось'
+    : serverTarget
+      ? result.verdict === 'ok'
+        ? 'SSH-порт доступен'
+        : result.verdict === 'unreachable'
+          ? 'SSH-порт не отвечает'
+          : result.verdict === 'ip_block'
+            ? 'SSH-порт недоступен из России'
+            : result.verdict === 'partial'
+              ? 'SSH-порт отвечает с перебоями'
+              : 'SSH-порт требует внимания'
+      : result.verdict === 'unreachable'
+        ? 'Порт ноды не отвечает'
+        : BLOCK_VERDICT_LABELS[result.verdict];
   return (
     <div className="flex flex-col gap-3 rounded-[12px] border border-border bg-bg-2 p-3">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -144,22 +180,26 @@ function RussiaAccessResult({ result }: { result: BlockCheckResult }) {
             result.unchecked ? 'text-warn' : result.verdict === 'ok' ? 'text-ok' : 'text-crit',
           )}
         >
-          {result.unchecked
-            ? 'Проверить не удалось'
-            : result.verdict === 'unreachable'
-              ? 'Порт ноды не отвечает'
-              : BLOCK_VERDICT_LABELS[result.verdict]}
+          {verdict}
         </span>
         <span className="text-[12px] text-text-3">
           {result.nodeName} · {result.address}
+          {result.port ? `:${result.port}` : ''}
         </span>
       </div>
-      <ProbeTable title="Из России" probes={result.probes} empty={mainReason} />
-      <ProbeTable title="Контроль из других стран" probes={result.foreign} empty={foreignReason} />
+      <ProbeTable title="Из России" probes={result.probes} empty={mainReason} portOnly={serverTarget} />
+      <ProbeTable
+        title="Контроль из других стран"
+        probes={result.foreign}
+        empty={foreignReason}
+        portOnly={serverTarget}
+      />
       <p className="m-0 text-[11.5px] text-text-3">
-        {result.sniUsed
-          ? `Глубокая проверка выполнена с именем маскировки ${result.sniUsed}.`
-          : 'Имя маскировки не найдено: проверена доступность TCP-порта, глубокая TLS/DPI-проверка недоступна.'}
+        {serverTarget
+          ? `Связанной ноды нет: проверен TCP-порт SSH ${result.port ?? ''} самого сервера. TLS/DPI-проверка применяется только к пользовательскому порту VPN-ноды.`
+          : result.sniUsed
+            ? `Глубокая проверка выполнена с именем маскировки ${result.sniUsed}.`
+            : 'Имя маскировки не найдено: проверена доступность TCP-порта, глубокая TLS/DPI-проверка недоступна.'}
       </p>
     </div>
   );

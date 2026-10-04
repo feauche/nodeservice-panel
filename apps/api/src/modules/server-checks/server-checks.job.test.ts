@@ -11,7 +11,10 @@ describe('ServerChecksJob', () => {
       ]),
     };
     const checks = {
-      dueLightChecks: vi.fn().mockResolvedValue([{ serverId: 's1', check: 'cpu' }]),
+      dueLightChecks: vi.fn().mockResolvedValue([
+        { serverId: 's1', check: 'cpu' },
+        { serverId: 's2', check: 'cpu' },
+      ]),
       history: vi.fn().mockResolvedValue([{ status: 'failed' }]),
       scheduled: vi.fn().mockResolvedValue({ status: 'ok' }),
     };
@@ -35,7 +38,30 @@ describe('ServerChecksJob', () => {
     );
     const report = notifications.push.mock.calls[0]?.[0]?.body as string;
     expect(report).toContain('• A · процессор: успешно · исправилось');
-    expect(report).toContain('• B: пропущено — SSH недоступен');
+    expect(report).toContain('• B · процессор: пропущено — SSH недоступен');
+    expect(checks.dueLightChecks).toHaveBeenCalledWith(['s1', 's2']);
+  });
+
+  it('проверяет доступность с других точек, даже если SSH цели уже помечен недоступным', async () => {
+    const checks = {
+      dueLightChecks: vi.fn().mockResolvedValue([
+        { serverId: 's1', check: 'russia_access' },
+        { serverId: 's1', check: 'cpu' },
+      ]),
+      history: vi.fn().mockResolvedValue([]),
+      scheduled: vi.fn().mockResolvedValue({ status: 'ok', check: 'russia_access' }),
+    };
+    const job = new ServerChecksJob(
+      { list: vi.fn().mockResolvedValue([{ id: 's1', name: 'A', sshOk: false }]) } as never,
+      checks as never,
+      { get: vi.fn().mockResolvedValue({ serverChecksEnabled: true }) } as never,
+      { push: vi.fn().mockResolvedValue(undefined) } as never,
+    );
+
+    await job.run();
+
+    expect(checks.scheduled).toHaveBeenCalledOnce();
+    expect(checks.scheduled).toHaveBeenCalledWith('s1', 'russia_access');
   });
 
   it('выделяет точную точку, где доступность из России ухудшилась', async () => {

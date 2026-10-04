@@ -47,7 +47,7 @@ export interface ServerCheckMeta {
 export const SERVER_CHECK_META: Record<ServerCheckKey, ServerCheckMeta> = {
   russia_access: {
     label: 'Доступность из России',
-    what: 'Проверяет порт ноды с российских серверов парка: TCP, TLS с именем маскировки и передачу данных; сравнивает с зарубежными точками.',
+    what: 'Проверяет доступность из России: пользовательский порт связанной ноды, а без неё — SSH-порт сервера; сравнивает с зарубежными точками.',
     heavy: false,
     duration: 'обычно 1–3 минуты',
     source: 'NodeService · серверы вашего парка',

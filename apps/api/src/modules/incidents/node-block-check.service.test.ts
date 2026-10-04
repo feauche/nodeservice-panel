@@ -90,6 +90,24 @@ describe('проверка порта ноды: почему не состоял
   });
 });
 
+describe('проверка обычного сервера без ноды', () => {
+  it('проверяет SSH-порт как TCP и помечает область результата', async () => {
+    const all = [srv('target', 'DE'), srv('ru1', 'RU'), srv('nl', 'NL')];
+    const { svc } = setup({ ru1: PORT, nl: PORT });
+
+    const result = await svc.checkServer('Обычный сервер', '1.2.3.4', 5492, 'target', all);
+
+    expect(result).toMatchObject({
+      targetKind: 'server',
+      port: 5492,
+      nodeName: 'Обычный сервер',
+      verdict: 'ok',
+      unchecked: null,
+    });
+    expect(result.probes[0]?.detail).toBe('Порт отвечает.');
+  });
+});
+
 describe('проверка порта ноды: смешанная картина', () => {
   const all = [srv('exit', 'DE'), srv('ru1', 'RU'), srv('ru2', 'RU'), srv('ru3', 'RU'), srv('nl', 'NL')];
 

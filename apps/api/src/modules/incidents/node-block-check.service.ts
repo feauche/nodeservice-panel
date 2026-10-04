@@ -143,9 +143,14 @@ export class NodeBlockCheckService {
     allServers: Server[],
     /** Порта нет потому, что Remnawave не ответила на запрос, — а не потому, что у ноды его нет. */
     inboundFailed = false,
+    options: { targetKind?: 'node' | 'server'; portOnly?: boolean } = {},
   ): Promise<BlockCheckResult> {
+    const targetKind = options.targetKind ?? 'node';
+    const portOnly = options.portOnly ?? false;
     // Проверка не состоялась: проб нет, а причина названа — текст дела скажет, что именно помешало.
     const unchecked = (reason: BlockUncheckedReason, sniUsed: string | null): BlockCheckResult => ({
+      targetKind,
+      ...(port ? { port } : {}),
       nodeName,
       address,
       sniUsed,
@@ -167,7 +172,9 @@ export class NodeBlockCheckService {
     if (probers.length === 0) return unchecked('no_probers', sni || null);
     // Проверяющий, на который панель не зашла (или который не смог выполнить проверку), о ноде ничего
     // не знает — в вердикт не идёт.
-    const tried = await Promise.all(probers.map((p) => this.probeFrom(p, address, port, sni || null)));
+    const tried = await Promise.all(
+      probers.map((p) => this.probeFrom(p, address, port, sni || null, portOnly)),
+    );
     const probes = tried.filter(probeSaw);
     if (probes.length === 0) return unchecked(blindReason(tried), sni || null);
     const ruVerdict = combineVerdicts(probes);
@@ -184,6 +191,8 @@ export class NodeBlockCheckService {
     if (foreign.length === 0)
       foreignUnchecked = abroad.length === 0 ? 'no_probers' : blindReason(triedAbroad);
     return {
+      targetKind,
+      port,
       nodeName,
       address,
       sniUsed: sni || null,
@@ -194,6 +203,23 @@ export class NodeBlockCheckService {
       foreignUnchecked,
       entry: null,
     };
+  }
+
+  /**
+   * Сервер без Remnawave-ноды всё равно проверяем из России: целевой SSH-порт известен NodeService.
+   * Это намеренная TCP-проверка, поэтому отсутствие SNI не выдаётся за недостающую маскировку ноды.
+   */
+  async checkServer(
+    serverName: string,
+    address: string,
+    sshPort: number,
+    exclude: ProbeExclude,
+    allServers: Server[],
+  ): Promise<BlockCheckResult> {
+    return this.check(serverName, address, sshPort, null, exclude, allServers, false, {
+      targetKind: 'server',
+      portOnly: true,
+    });
   }
 
   /**

@@ -66,6 +66,54 @@ describe('ChecksTab', () => {
     expect(within(access).getByText('Германия - 1')).toBeInTheDocument();
   });
 
+  it('у сервера без ноды показывает проверку SSH-порта, а не ошибку Remnawave', async () => {
+    const id = server().id;
+    mockServerChecks.runs.push({
+      id: '0192c000-cccc-7000-8000-00000000abce',
+      serverId: id,
+      check: 'russia_access',
+      status: 'ok',
+      trigger: 'manual',
+      actorDisplay: 'admin',
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      finishedAt: new Date().toISOString(),
+      output: '',
+      error: null,
+      explanation: null,
+      blockResult: {
+        targetKind: 'server',
+        port: 5492,
+        nodeName: 'Обычный сервер',
+        address: '1.2.3.4',
+        sniUsed: null,
+        probes: [
+          {
+            from: 'Россия - 1',
+            verdict: 'ok',
+            detail: 'Порт отвечает.',
+            stalledAtKb: null,
+            error: null,
+          },
+        ],
+        foreign: [],
+        verdict: 'ok',
+        unchecked: null,
+        foreignUnchecked: 'no_probers',
+        entry: null,
+      },
+    });
+    renderPage(() => <ChecksTab server={server()} />, '/');
+    const access = await screen.findByTestId('check-russia_access');
+    const user = userEvent.setup();
+    await user.click(within(access).getByRole('button', { name: /Подробнее/ }));
+
+    expect(within(access).getByText('SSH-порт доступен')).toBeInTheDocument();
+    expect(within(access).getByText('Обычный сервер · 1.2.3.4:5492')).toBeInTheDocument();
+    expect(within(access).getByText(/Связанной ноды нет: проверен TCP-порт SSH 5492/)).toBeInTheDocument();
+    expect(within(access).getByText(/нет подходящих зарубежных серверов/)).toBeInTheDocument();
+    expect(within(access).queryByText(/Имя маскировки не найдено/)).not.toBeInTheDocument();
+  });
+
   it('свои проверки раз в сутки; сторонние скрипты отдельно и только по кнопке', async () => {
     seedServerChecks(server().id);
     renderPage(() => <ChecksTab server={server()} />, '/');

@@ -6,7 +6,7 @@ import { NodeLinkService } from '../remnawave/node-link.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersService } from '../servers/servers.service.js';
 
-/** Ручная проверка пользовательского порта связанной ноды из России и контрольных зарубежных точек. */
+/** Проверка пользовательского порта ноды или SSH-порта обычного сервера из России и других стран. */
 @Injectable()
 export class RussiaAccessCheckService {
   constructor(
@@ -21,14 +21,17 @@ export class RussiaAccessCheckService {
     const server = allServers.find((item) => item.id === serverId);
     if (!server) throw new Error('Сервер больше не найден в NodeService.');
 
-    // Ручная проверка должна брать текущий адрес ноды, а не последний удачный снимок минутной синхронизации.
+    // Явное «ноды нет» не должно даже зависеть от доступности Remnawave: проверяем сам сервер.
+    if (server.nodeLink === 'none')
+      return this.blockCheck.checkServer(server.name, server.host, server.port, serverId, allServers);
+
+    // Для ноды берём текущий адрес, а не последний удачный снимок минутной синхронизации.
     const status = await this.remnawave.refresh();
     const links = await this.links.resolve(allServers, status.nodes);
     const node = links.nodeOf(serverId);
+    // Auto может честно не найти ноду: это всё равно обычный сервер, и его доступность проверить можно.
     if (!node)
-      throw new Error(
-        'У сервера не найдена связанная нода Remnawave. Выберите ноду во вкладке «Профиль» или проверьте её адрес.',
-      );
+      return this.blockCheck.checkServer(server.name, server.host, server.port, serverId, allServers);
 
     const inbound = await this.remnawave.nodeInbound(node.uuid);
     return this.blockCheck.check(

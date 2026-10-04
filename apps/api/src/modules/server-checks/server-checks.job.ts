@@ -70,8 +70,9 @@ function compare(previous: ServerCheckRun | undefined, current: ServerCheckRun) 
 /**
  * Свои проверки реестра раз в сутки (Настройки → Автопроверки, «Проверки серверов раз в сутки»): раз в
  * 10 минут смотрим, что пора повторить, и идём по одной проверке за раз по всему парку — не нагружаем
- * серверы и сеть параллельными замерами. Серверы с заведомо мёртвым SSH пропускаем. Сторонние скрипты
- * и тяжёлые проверки сами не запускаются никогда — только по кнопке.
+ * серверы и сеть параллельными замерами. Процессор сервера с мёртвым SSH пропускаем, но доступность
+ * проверяем с других серверов парка: вход на саму цель для неё не нужен. Сторонние скрипты и тяжёлые
+ * проверки сами не запускаются никогда — только по кнопке.
  */
 @Injectable()
 export class ServerChecksJob {
@@ -97,15 +98,24 @@ export class ServerChecksJob {
     try {
       if (!(await this.autochecks.get()).serverChecksEnabled) return;
       const allServers = await this.servers.list();
-      const alive = allServers.filter((s) => s.sshOk !== false);
-      const names = new Map(alive.map((s) => [s.id, s.name]));
-      const dueChecks = await this.checks.dueLightChecks(alive.map((s) => s.id));
+      const byId = new Map(allServers.map((s) => [s.id, s]));
+      const names = new Map(allServers.map((s) => [s.id, s.name]));
+      const due = await this.checks.dueLightChecks(allServers.map((s) => s.id));
+      const dueChecks = due.filter(
+        (item) => item.check === 'russia_access' || byId.get(item.serverId)?.sshOk !== false,
+      );
+      const sshSkipped = due.filter(
+        (item) => item.check !== 'russia_access' && byId.get(item.serverId)?.sshOk === false,
+      );
       let ok = 0;
       let failed = 0;
-      let skipped = 0;
+      let skipped = sshSkipped.length;
       let improved = 0;
       let worse = 0;
-      const details: string[] = [];
+      const details: string[] = sshSkipped.map(
+        (item) =>
+          `• ${names.get(item.serverId) ?? item.serverId} · ${item.check === 'cpu' ? 'процессор' : item.check}: пропущено — SSH недоступен`,
+      );
       for (const due of dueChecks) {
         const previous = (await this.checks.history(due.serverId, due.check, 1).catch(() => []))[0];
         let launchFailed = false;
@@ -136,16 +146,13 @@ export class ServerChecksJob {
         );
         for (const line of compared.lines) details.push(`  ↳ ${line}`);
       }
-      if (dueChecks.length > 0)
-        for (const server of allServers.filter((s) => s.sshOk === false))
-          details.push(`• ${server.name}: пропущено — SSH недоступен`);
       if (ok + failed > 0)
         await this.notifications.push({
           center: true,
           severity: failed > 0 || worse > 0 ? 'warn' : 'ok',
           title: failed > 0 ? 'Автопроверки завершены с ошибками' : 'Автопроверки серверов завершены',
           body: [
-            `Запланировано: ${dueChecks.length} · успешно: ${ok} · ошибок: ${failed}${skipped > 0 ? ` · занято: ${skipped}` : ''}`,
+            `Запланировано: ${due.length} · успешно: ${ok} · ошибок: ${failed}${skipped > 0 ? ` · пропущено: ${skipped}` : ''}`,
             improved > 0 || worse > 0
               ? `По сравнению с прошлым запуском: лучше — ${improved}, хуже — ${worse}`
               : 'Состояние относительно прошлого запуска не ухудшилось',
