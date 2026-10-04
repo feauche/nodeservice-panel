@@ -15,7 +15,7 @@ describe('CapacityView', () => {
     renderPage(CapacityView, '/');
     const table = await screen.findByRole('table', { name: 'Ёмкость нод' });
     expect(screen.getByText('1 нода почти без запаса')).toBeInTheDocument();
-    expect(screen.getByText(/суммарно можно добавить ≈ 690 пользователей/)).toBeInTheDocument();
+    expect(screen.getByText(/суммарно сможет подключиться ещё ≈ 690 пользователей/)).toBeInTheDocument();
     expect(screen.getByText('2 из 3 нод упираются в канал')).toBeInTheDocument();
     const rows = within(table).getAllByRole('row').slice(1);
     const first = rows[0] as HTMLElement;

@@ -12,6 +12,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.58.4',
+    date: '2026-10-04',
+    items: [
+      'В «Ёмкости» запас теперь сформулирован через ожидаемое число подключений: «Сможет подключиться ещё», без двусмысленного «Можно добавить».',
+    ],
+  },
+  {
     version: '0.58.3',
     date: '2026-10-04',
     items: [

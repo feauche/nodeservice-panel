@@ -137,7 +137,7 @@ export function CapacityView() {
           sub={
             c.left == null
               ? 'недостаточно данных для общего итога'
-              : `суммарно можно добавить ≈ ${nf(c.left)} пользователей${c.counted < exits.length ? ` · по ${c.counted} из ${exits.length} нод` : ''}`
+              : `суммарно сможет подключиться ещё ≈ ${nf(c.left)} пользователей${c.counted < exits.length ? ` · по ${c.counted} из ${exits.length} нод` : ''}`
           }
         />
         <SummaryMetric
@@ -480,7 +480,7 @@ function Verdict({ server: s }: { server: CapacityServer }) {
         ? s.left <= 0
           ? 'Безопасный запас исчерпан'
           : `Осталось ≈ ${nf(s.left)}`
-        : `Можно добавить ≈ ${nf(s.left)}`;
+        : `Сможет подключиться ещё ≈ ${nf(s.left)}`;
   const detail =
     resource && used != null
       ? `Первым ограничит: ${resource} ${Math.round(used)} %`
