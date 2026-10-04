@@ -1,4 +1,9 @@
-import type { RemnawaveCert, RemnawaveNode, RemnawaveStats } from '@nodeservice/shared';
+import type {
+  RemnawaveCert,
+  RemnawaveNode,
+  RemnawaveStats,
+  RemnawaveVpnProbeStatus,
+} from '@nodeservice/shared';
 import {
   CheckIcon,
   KeyRoundIcon,
@@ -317,7 +322,15 @@ function ConnectForm() {
   );
 }
 
-function VpnProbeSettings({ configured, routes }: { configured: boolean; routes: number | null }) {
+function VpnProbeSettings({
+  configured,
+  routes,
+  routeDetails,
+}: {
+  configured: boolean;
+  routes: number | null;
+  routeDetails: RemnawaveVpnProbeStatus['routeDetails'];
+}) {
   const [subscriptionUrl, setSubscriptionUrl] = useState('');
   const configure = useConfigureVpnProbe();
   const clear = useClearVpnProbe();
@@ -400,6 +413,35 @@ function VpnProbeSettings({ configured, routes }: { configured: boolean; routes:
         Ссылка хранится зашифрованно и после сохранения не показывается. Нужен отдельный пользователь без
         личного трафика, у которого есть маршруты проверяемых нод.
       </p>
+      {configured && routeDetails.length > 0 && (
+        <details className="mt-4 overflow-hidden rounded-xl border border-border bg-surface-2">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3 text-[12.5px] font-semibold text-text-2">
+            <span>Распознанные маршруты</span>
+            <span className="font-mono text-[11.5px] font-normal text-text-3">{routeDetails.length}</span>
+          </summary>
+          <ul className="max-h-72 overflow-y-auto border-t border-border">
+            {routeDetails.map((route) => (
+              <li
+                key={`${route.protocol}:${route.address}:${route.port}:${route.name}`}
+                className="flex min-w-0 items-center justify-between gap-4 border-b border-border px-3.5 py-2.5 last:border-b-0"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-[12.5px] font-semibold text-text-1">{route.name}</div>
+                  <div className="mt-0.5 truncate font-mono text-[11px] text-text-3">
+                    {route.address}:{route.port}
+                  </div>
+                </div>
+                <Pill tone="muted">{route.protocol === 'hysteria2' ? 'Hysteria2' : 'VLESS · REALITY'}</Pill>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {configured && (routes ?? 0) > 0 && routeDetails.length === 0 && (
+        <p className="mt-3 rounded-xl border border-border bg-surface-2 px-3.5 py-3 text-[11.5px] text-text-3">
+          Список маршрутов появится, когда NodeService снова успешно прочитает сохранённую подписку.
+        </p>
+      )}
     </section>
   );
 }
@@ -524,7 +566,11 @@ export function RemnawavePage() {
         )}
       </section>
 
-      <VpnProbeSettings configured={s.vpnProbeConfigured} routes={s.vpnProbeRoutes} />
+      <VpnProbeSettings
+        configured={s.vpnProbeConfigured}
+        routes={s.vpnProbeRoutes}
+        routeDetails={s.vpnProbeRouteDetails}
+      />
 
       {s.nodes.length > 0 && (
         <section className="overflow-hidden rounded-2xl border border-border bg-surface">

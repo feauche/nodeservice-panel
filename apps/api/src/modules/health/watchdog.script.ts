@@ -10,6 +10,8 @@ export const WATCHDOG_FILES = {
 } as const;
 
 export const WATCHDOG_INSTALL_LABEL = 'установка сторожа панели';
+/** Меняем, когда уже установленный скрипт нужно заменить после обновления панели. */
+export const WATCHDOG_SCRIPT_REVISION = 2;
 export const WATCHDOG_BUDGET_S = { run: 35, test: 35 } as const;
 export const WATCHDOG_WAIT_MS = { install: 35_000, remove: 25_000, test: 50_000 } as const;
 
@@ -71,9 +73,13 @@ export const WATCHDOG_SCRIPT = `${[
   '  [ -n "$5" ] && cfg="$cfg',
   'proxy = $5"',
   '  rich_message=$(rich_from_html "$4")',
-  '  args=(-sS -m "$wait" --connect-timeout "$wait" -o "$STATE/tg.out" -w "%{http_code}" -K - --data-urlencode "chat_id=$2" --data-urlencode "rich_message=$rich_message")',
-  '  [ -n "$3" ] && args+=(--data-urlencode "message_thread_id=$3")',
-  '  code=$(printf "%s\\n" "$cfg" | curl "$' + '{args[@]}" 2>/dev/null) || return 2',
+  '  payload=$(mktemp "$STATE/tg.rich.XXXXXX") || return 2',
+  '  printf \'{"chat_id":"%s","rich_message":%s\' "$(json "$2")" "$rich_message" > "$payload" || return 2',
+  '  [ -n "$3" ] && printf \',"message_thread_id":%s\' "$3" >> "$payload"',
+  '  printf \'}\' >> "$payload"; chmod 600 "$payload"',
+  '  args=(-sS -m "$wait" --connect-timeout "$wait" -o "$STATE/tg.out" -w "%{http_code}" -K - -H "content-type: application/json" --data-binary "@$payload")',
+  '  code=$(printf "%s\\n" "$cfg" | curl "$' +
+    '{args[@]}" 2>/dev/null); rc=$?; rm -f "$payload"; [ "$rc" -eq 0 ] || return 2',
   '  [ "$code" = 200 ] && grep -q \'"ok":true\' "$STATE/tg.out" && return 0',
   '  # Bot API ещё не знает rich messages или отверг схему: тревога всё равно должна дойти.',
   '  case "$code" in 400|404) ;; *) return 1 ;; esac',

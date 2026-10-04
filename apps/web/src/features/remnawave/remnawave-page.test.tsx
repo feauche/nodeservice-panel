@@ -151,6 +151,10 @@ describe('RemnawavePage', () => {
     await user.type(field, 'https://subscription.example/probe');
     await user.click(screen.getByRole('button', { name: 'Проверить и сохранить' }));
     expect(await screen.findByText('5 маршрутов')).toBeInTheDocument();
+    await user.click(screen.getByText('Распознанные маршруты'));
+    expect(screen.getByText('США - 1')).toBeInTheDocument();
+    expect(screen.getByText('us.example.com:443')).toBeInTheDocument();
+    expect(screen.getAllByText('Hysteria2')).toHaveLength(2);
     expect(field).toHaveValue('');
     expect(screen.queryByText('https://subscription.example/probe')).not.toBeInTheDocument();
   });

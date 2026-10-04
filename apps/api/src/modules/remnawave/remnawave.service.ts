@@ -89,6 +89,7 @@ export class RemnawaveService {
         cert: null,
         vpnProbeConfigured: false,
         vpnProbeRoutes: null,
+        vpnProbeRouteDetails: [],
       };
     const snap = await this.store.snapshot();
     const vpnProbe = await this.vpnProbe.status();
@@ -103,6 +104,7 @@ export class RemnawaveService {
       cert: snap?.cert ?? null,
       vpnProbeConfigured: vpnProbe.configured,
       vpnProbeRoutes: vpnProbe.routes,
+      vpnProbeRouteDetails: vpnProbe.routeDetails,
     };
   }
 

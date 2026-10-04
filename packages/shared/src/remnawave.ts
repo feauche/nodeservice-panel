@@ -99,6 +99,16 @@ export const remnawaveStatusSchema = z.object({
   /** Сервисная подписка для настоящих VPN-проб сохранена; сама секретная ссылка никогда не возвращается. */
   vpnProbeConfigured: z.boolean().default(false),
   vpnProbeRoutes: z.number().int().min(0).nullable().default(null),
+  vpnProbeRouteDetails: z
+    .array(
+      z.object({
+        name: z.string(),
+        address: z.string(),
+        port: z.number().int().min(1).max(65_535),
+        protocol: z.enum(['vless-reality', 'hysteria2']),
+      }),
+    )
+    .default([]),
 });
 export type RemnawaveStatus = z.infer<typeof remnawaveStatusSchema>;
 
@@ -124,5 +134,13 @@ export type RemnawaveVpnProbeRequest = z.infer<typeof remnawaveVpnProbeRequestSc
 export const remnawaveVpnProbeStatusSchema = z.object({
   configured: z.boolean(),
   routes: z.number().int().min(0).nullable(),
+  routeDetails: z.array(
+    z.object({
+      name: z.string(),
+      address: z.string(),
+      port: z.number().int().min(1).max(65_535),
+      protocol: z.enum(['vless-reality', 'hysteria2']),
+    }),
+  ),
 });
 export type RemnawaveVpnProbeStatus = z.infer<typeof remnawaveVpnProbeStatusSchema>;

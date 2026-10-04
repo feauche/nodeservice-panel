@@ -72,6 +72,7 @@ export function useDisconnectRemnawave() {
         cert: null,
         vpnProbeConfigured: false,
         vpnProbeRoutes: null,
+        vpnProbeRouteDetails: [],
       } satisfies RemnawaveStatus),
   });
 }
@@ -82,7 +83,14 @@ export function useConfigureVpnProbe() {
     mutationFn: remnawaveApi.configureVpnProbe,
     onSuccess: (probe) =>
       qc.setQueryData<RemnawaveStatus>(remnawaveKeys.status, (status) =>
-        status ? { ...status, vpnProbeConfigured: probe.configured, vpnProbeRoutes: probe.routes } : status,
+        status
+          ? {
+              ...status,
+              vpnProbeConfigured: probe.configured,
+              vpnProbeRoutes: probe.routes,
+              vpnProbeRouteDetails: probe.routeDetails,
+            }
+          : status,
       ),
   });
 }
@@ -93,7 +101,9 @@ export function useClearVpnProbe() {
     mutationFn: remnawaveApi.clearVpnProbe,
     onSuccess: () =>
       qc.setQueryData<RemnawaveStatus>(remnawaveKeys.status, (status) =>
-        status ? { ...status, vpnProbeConfigured: false, vpnProbeRoutes: null } : status,
+        status
+          ? { ...status, vpnProbeConfigured: false, vpnProbeRoutes: null, vpnProbeRouteDetails: [] }
+          : status,
       ),
   });
 }

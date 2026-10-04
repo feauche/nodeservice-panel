@@ -18,6 +18,7 @@ import {
   WATCHDOG_INSTALL_COMMAND,
   WATCHDOG_INSTALL_LABEL,
   WATCHDOG_REMOVE_COMMAND,
+  WATCHDOG_SCRIPT_REVISION,
   WATCHDOG_TEST_COMMAND,
   WATCHDOG_WAIT_MS,
   type WatchdogParams,
@@ -54,7 +55,15 @@ function isLocalUrl(url: string): boolean {
 
 const fingerprint = (p: WatchdogParams): string =>
   createHash('sha256')
-    .update(JSON.stringify({ url: p.url, tz: p.timeZone, chats: p.chats, proxy: p.proxy }))
+    .update(
+      JSON.stringify({
+        revision: WATCHDOG_SCRIPT_REVISION,
+        url: p.url,
+        tz: p.timeZone,
+        chats: p.chats,
+        proxy: p.proxy,
+      }),
+    )
     .digest('hex')
     .slice(0, 32);
 
@@ -262,6 +271,21 @@ export class WatchdogService {
         });
       const { target, name } = await this.servers.sshTargetFor(row.id);
       this.audit.extend({ target: { type: 'server', id: row.id, display: name } });
+      const params = await this.params(name);
+      const currentFingerprint = fingerprint(params);
+      // Старый сторож не знает новый Rich Message API или старые настройки чатов. Кнопка
+      // проверки сначала безопасно заменяет его, чтобы тест проверял текущую версию.
+      if (stored.fingerprint !== currentFingerprint) {
+        const installed = await this.run(target, WATCHDOG_INSTALL_COMMAND, {
+          input: watchdogEnvFile(params),
+          timeoutMs: WATCHDOG_WAIT_MS.install,
+          label: WATCHDOG_INSTALL_LABEL,
+        });
+        const installResult = parseWatchdogOutput(installed.stdout);
+        if (installResult.installed !== '1')
+          throw this.failed('Сторож не обновился', installResult.error, installed);
+        await this.save({ ...stored, serverName: name, fingerprint: currentFingerprint });
+      }
       const out = await this.run(target, WATCHDOG_TEST_COMMAND, {
         timeoutMs: WATCHDOG_WAIT_MS.test,
         label: 'проверка сторожа панели',

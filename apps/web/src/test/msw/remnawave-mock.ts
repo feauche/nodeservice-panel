@@ -63,6 +63,7 @@ export const mockRemnawave: {
   cert: RemnawaveCert | null;
   vpnProbeConfigured: boolean;
   vpnProbeRoutes: number | null;
+  vpnProbeRouteDetails: RemnawaveStatus['vpnProbeRouteDetails'];
 } = {
   connected: false,
   domain: null,
@@ -74,6 +75,7 @@ export const mockRemnawave: {
   cert: null,
   vpnProbeConfigured: false,
   vpnProbeRoutes: null,
+  vpnProbeRouteDetails: [],
 };
 
 // Режим VITE_MOCK=1: управление из скриншот-сценариев.
@@ -92,6 +94,7 @@ export function seedRemnawave(): void {
     cert: null,
     vpnProbeConfigured: false,
     vpnProbeRoutes: null,
+    vpnProbeRouteDetails: [],
   });
 }
 
@@ -128,6 +131,7 @@ function status(): RemnawaveStatus {
     cert: mockRemnawave.cert,
     vpnProbeConfigured: mockRemnawave.vpnProbeConfigured,
     vpnProbeRoutes: mockRemnawave.vpnProbeRoutes,
+    vpnProbeRouteDetails: mockRemnawave.vpnProbeRouteDetails,
   };
 }
 
@@ -193,11 +197,23 @@ export const remnawaveHandlers = [
       return problem(400, 'urn:nodeservice:problem:vpn-probe-subscription', 'Нужна HTTPS-ссылка.');
     mockRemnawave.vpnProbeConfigured = true;
     mockRemnawave.vpnProbeRoutes = 5;
-    return HttpResponse.json({ configured: true, routes: 5 });
+    mockRemnawave.vpnProbeRouteDetails = [
+      { name: 'Германия - 1', address: '203.0.113.7', port: 443, protocol: 'vless-reality' },
+      { name: 'Нидерланды - 1', address: '198.51.100.99', port: 443, protocol: 'vless-reality' },
+      { name: 'США - 1', address: 'us.example.com', port: 443, protocol: 'vless-reality' },
+      { name: 'Финляндия - 2', address: 'fi.example.com', port: 30443, protocol: 'hysteria2' },
+      { name: 'Польша - 2', address: 'pl.example.com', port: 30443, protocol: 'hysteria2' },
+    ];
+    return HttpResponse.json({
+      configured: true,
+      routes: 5,
+      routeDetails: mockRemnawave.vpnProbeRouteDetails,
+    });
   }),
   http.delete('/api/remnawave/vpn-probe', () => {
     mockRemnawave.vpnProbeConfigured = false;
     mockRemnawave.vpnProbeRoutes = null;
+    mockRemnawave.vpnProbeRouteDetails = [];
     return new HttpResponse(null, { status: 204 });
   }),
   http.delete('/api/remnawave', () => {

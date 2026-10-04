@@ -40,7 +40,7 @@ function setup(answers: Record<string, string | 'ssh' | 'hang'>) {
       };
     },
   };
-  const disabledVpn = { status: async () => ({ configured: false, routes: null }) };
+  const disabledVpn = { status: async () => ({ configured: false, routes: null, routeDetails: [] }) };
   return {
     svc: new NodeBlockCheckService(
       servers as never,
@@ -170,7 +170,7 @@ describe('настоящая VPN-проба через агенты', () => {
         agent as never,
         { issue: () => 'token' } as never,
         {
-          status: async () => ({ configured: true, routes: 5 }),
+          status: async () => ({ configured: true, routes: 5, routeDetails: [] }),
           routeFor: async () => link,
         } as never,
       ),
@@ -272,7 +272,7 @@ describe('настоящая VPN-проба через агенты', () => {
       } as never,
       { issue: () => 'token' } as never,
       {
-        status: async () => ({ configured: true, routes: 5 }),
+        status: async () => ({ configured: true, routes: 5, routeDetails: [] }),
         routeFor: async () => 'vless://service-route',
       } as never,
     );
@@ -345,7 +345,7 @@ describe('проверка порта ноды: смешанная картин�
       {} as never,
       {} as never,
       {} as never,
-      { status: async () => ({ configured: false, routes: null }) } as never,
+      { status: async () => ({ configured: false, routes: null, routeDetails: [] }) } as never,
     );
     const r = await svc.check('n', '1.2.3.4', 443, 'site.ru', 'exit', [
       srv('exit', 'DE'),

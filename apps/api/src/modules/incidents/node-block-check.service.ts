@@ -189,6 +189,7 @@ export class NodeBlockCheckService {
   private async realVpn(
     nodeName: string,
     address: string,
+    port: number | null,
     exclude: ProbeExclude,
     allServers: Server[],
     expectedProtocol: VpnProtocol | null,
@@ -210,7 +211,7 @@ export class NodeBlockCheckService {
       };
     let link: string | null;
     try {
-      link = await this.vpnRoutes.routeFor(nodeName, address, expectedProtocol ?? undefined);
+      link = await this.vpnRoutes.routeFor(nodeName, address, expectedProtocol ?? undefined, port);
     } catch (error) {
       return {
         vpnProbes: [],
@@ -226,7 +227,7 @@ export class NodeBlockCheckService {
         vpnForeign: [],
         vpnVerdict: 'unavailable',
         vpnProtocol: expectedProtocol,
-        vpnUnchecked: 'В сервисной подписке не найден маршрут этой ноды.',
+        vpnUnchecked: `В сервисной подписке есть ${configured.routes ?? 0} маршртов, но не найден маршрут ноды «${nodeName}» (${address}${port ? `:${port}` : ''}). Список распознанных маршрутов показан в настройке Remnawave.`,
       };
     const vpnProtocol = routeProtocol(link);
     const minimumAgentVersion = vpnProtocol === 'hysteria2' ? '0.9.1' : '0.9.0';
@@ -377,7 +378,7 @@ export class NodeBlockCheckService {
     const expectedProtocol = inboundProtocol(options.protocol, options.network);
     const withVpn = async (base: BlockCheckResult): Promise<BlockCheckResult> => {
       if (targetKind !== 'node') return base;
-      const vpn = await this.realVpn(nodeName, address, exclude, allServers, expectedProtocol);
+      const vpn = await this.realVpn(nodeName, address, port, exclude, allServers, expectedProtocol);
       let verdict = base.verdict;
       if (vpn.vpnVerdict === 'regional_block') verdict = 'tspu';
       else if (vpn.vpnVerdict === 'failed_everywhere') verdict = 'vpn_failed';

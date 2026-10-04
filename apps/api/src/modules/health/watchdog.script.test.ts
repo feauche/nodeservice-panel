@@ -78,6 +78,13 @@ const FAKE_CURL = [
   '    --data-urlencode)',
   `      case "$2" in text=*) text="\${2#text=}" ;; rich_message=*) rich="\${2#rich_message=}" ;; chat_id=*) chat="\${2#chat_id=}" ;; message_thread_id=*) topic="\${2#message_thread_id=}" ;; esac`,
   '      shift 2 ;;',
+  '    --data-binary)',
+  `      payload="\${2#@}"`,
+  '      chat=$(node -e \'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.chat_id))\' "$payload")',
+  '      topic=$(node -e \'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(p.message_thread_id == null ? "" : String(p.message_thread_id))\' "$payload")',
+  '      rich=$(node -e \'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(JSON.stringify(p.rich_message))\' "$payload")',
+  '      shift 2 ;;',
+  '    -H) shift 2 ;;',
   '    -*) shift ;;',
   '    *) url="$1"; shift ;;',
   '  esac',
@@ -442,6 +449,17 @@ describe('сторож панели: скрипт на сервере парка
     const bad = run(min(1), ['test'], { STUB_TG_DOWN: '1' });
     expect(parseWatchdogOutput(bad.stdout)).toEqual({ panel: 'нет ответа за 10 с', sent: '0' });
     expect(existsSync(join(state, 'fails'))).toBe(false);
+  });
+
+  it('«Проверить сторожа» передаёт Rich Message как JSON-объект, а не строку формы', () => {
+    const ok = run(min(0), ['test'], { STUB_RICH_OK: '1' });
+    expect(ok.status).toBe(0);
+    const payload = JSON.parse(sent()[0] ?? '{}') as { blocks?: Array<{ type?: string; text?: string }> };
+    expect(payload.blocks?.[0]).toMatchObject({
+      type: 'heading',
+      text: '✅ Сторож панели NodeService работает',
+    });
+    expect(meta(0)).toContain('/sendRichMessage');
   });
 
   describe('установка и снятие (корень файловой системы — временная папка, systemctl подменён)', () => {
