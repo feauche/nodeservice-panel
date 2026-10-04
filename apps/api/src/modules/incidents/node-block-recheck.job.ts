@@ -192,6 +192,7 @@ export class NodeBlockRecheckJob {
             [...new Set([...(server ? [server.id] : []), ...links.machineIds(node)])],
             allServers,
             Boolean(inbound?.failed),
+            { protocol: inbound?.protocol ?? null, network: inbound?.network ?? null },
           )
           .catch((err) => {
             this.log.warn(
@@ -199,7 +200,13 @@ export class NodeBlockRecheckJob {
             );
             return null;
           });
-        if (result && result.probes.length > 0 && BLOCKING.has(result.verdict)) {
+        const hasProbe = Boolean(
+          result &&
+            (result.probes.length > 0 ||
+              (result.vpnProbes?.length ?? 0) > 0 ||
+              (result.vpnForeign?.length ?? 0) > 0),
+        );
+        if (result && hasProbe && BLOCKING.has(result.verdict)) {
           if (w.said !== 'blocked') {
             w.said = 'blocked';
             await this.note(
@@ -210,10 +217,12 @@ export class NodeBlockRecheckJob {
           continue;
         }
         const probe =
-          !result || result.probes.length === 0
-            ? 'Порт с серверов парка проверить не удалось, ориентируюсь на онлайн.'
+          !result || !hasProbe
+            ? 'VPN-маршрут с серверов парка проверить не удалось, ориентируюсь на онлайн.'
             : result.verdict === 'ok'
-              ? 'Порт открыт.'
+              ? result.vpnProtocol === 'hysteria2'
+                ? 'Маршрут Hysteria2 работает.'
+                : 'Порт открыт.'
               : result.verdict === 'partial'
                 ? 'Порт отвечает с перебоями, но пользователи подключаются — ориентируюсь на онлайн.'
                 : 'Порт с серверов парка не ответил, но пользователи подключаются — ориентируюсь на онлайн.';

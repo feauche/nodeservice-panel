@@ -114,6 +114,50 @@ describe('ChecksTab', () => {
     expect(within(access).queryByText(/Имя маскировки не найдено/)).not.toBeInTheDocument();
   });
 
+  it('Hysteria2 показывает настоящую UDP/QUIC-пробу без ложных таблиц TCP-порта', async () => {
+    const id = server().id;
+    mockServerChecks.runs.push({
+      id: '0192c000-cccc-7000-8000-00000000abcf',
+      serverId: id,
+      check: 'russia_access',
+      status: 'ok',
+      trigger: 'manual',
+      actorDisplay: 'admin',
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      finishedAt: new Date().toISOString(),
+      output: '',
+      error: null,
+      explanation: null,
+      blockResult: {
+        targetKind: 'node',
+        port: 30443,
+        nodeName: 'Германия - 2 (hy2)',
+        address: '178.17.49.215',
+        sniUsed: null,
+        probes: [],
+        foreign: [],
+        vpnProbes: [],
+        vpnForeign: [],
+        vpnVerdict: 'unavailable',
+        vpnProtocol: 'hysteria2',
+        vpnUnchecked: 'Нет российского сервера с агентом v0.9.1+ на входящем HTTPS-канале.',
+        verdict: 'indeterminate',
+        unchecked: null,
+        foreignUnchecked: null,
+        entry: null,
+      },
+    });
+    renderPage(() => <ChecksTab server={server()} />, '/');
+    const access = await screen.findByTestId('check-russia_access');
+    expect(within(access).getAllByText('Не проверено').length).toBeGreaterThan(0);
+
+    await userEvent.setup().click(within(access).getByRole('button', { name: /Подробнее/ }));
+    expect(within(access).getByText(/Hysteria2 работает через UDP\/QUIC/)).toBeInTheDocument();
+    expect(within(access).queryByText('Из России')).not.toBeInTheDocument();
+    expect(within(access).queryByText('Контроль из других стран')).not.toBeInTheDocument();
+    expect(within(access).getByText(/Нет российского сервера с агентом v0.9.1/)).toBeInTheDocument();
+  });
+
   it('свои проверки раз в сутки; сторонние скрипты отдельно и только по кнопке', async () => {
     seedServerChecks(server().id);
     renderPage(() => <ChecksTab server={server()} />, '/');

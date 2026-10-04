@@ -483,6 +483,7 @@ export class IncidentAnalysisService implements OnModuleInit {
             machine,
             all,
             Boolean(inbound?.failed),
+            { protocol: inbound?.protocol ?? null, network: inbound?.network ?? null },
           )
           .catch(() => null);
         if (result) {
@@ -494,7 +495,13 @@ export class IncidentAnalysisService implements OnModuleInit {
             result.entry = await this.blockCheck.checkEntry(up.target, machine, all).catch(() => null);
           } else if (up.kind === 'unknown') result.entry = unknownEntry(up);
         }
-        blockChecked = Boolean(result && result.probes.length > 0);
+        const hasProbe = Boolean(
+          result &&
+            (result.probes.length > 0 ||
+              (result.vpnProbes?.length ?? 0) > 0 ||
+              (result.vpnForeign?.length ?? 0) > 0),
+        );
+        blockChecked = hasProbe;
         // Сервер работает (агент на связи или порт SSH с панели открывается): молчащий порт ноды тогда не
         // «сервер лежит» — так же, как в тексте дела.
         const alive: 'agent' | 'ssh' | false =
@@ -515,9 +522,7 @@ export class IncidentAnalysisService implements OnModuleInit {
           : null;
         // Проверка состоялась, а строк о входе в ней нет — говорим почему: входа нет в профиле или его нечем проверить.
         const fresh =
-          check && result && result.probes.length > 0 && !result.entry
-            ? `${check}\n${entryAbsentText(me)}`
-            : check;
+          check && result && hasProbe && !result.entry ? `${check}\n${entryAbsentText(me)}` : check;
         if (fresh) nowText = nowText ? `${nowText}\n${fresh}` : fresh;
       }
     }

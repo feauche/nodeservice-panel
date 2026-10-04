@@ -56,12 +56,29 @@ function selfIds(
 /** Панель зашла на проверяющий сервер, но команда проверки не завершилась (таймаут, обрыв посреди команды). */
 class ProbeRunError extends Error {}
 
-function supportsVpnProbe(version: string | null): boolean {
+type VpnProtocol = 'vless-reality' | 'hysteria2';
+
+function supportsVpnProbe(version: string | null, minimum = '0.9.0'): boolean {
   return (
     version !== null &&
     /^v?\d+\.\d+(?:\.\d+)?(?:$|-)/i.test(version) &&
-    compareVersions(version, '0.9.0') >= 0
+    compareVersions(version, minimum) >= 0
   );
+}
+
+function routeProtocol(link: string): VpnProtocol {
+  return /^(?:hysteria2|hy2):\/\//i.test(link) ? 'hysteria2' : 'vless-reality';
+}
+
+function inboundProtocol(
+  protocol: string | null | undefined,
+  network: string | null | undefined,
+): VpnProtocol | null {
+  return /hysteria/i.test(protocol ?? '') || /^(?:udp|hysteria)$/i.test(network ?? '')
+    ? 'hysteria2'
+    : /vless/i.test(protocol ?? '')
+      ? 'vless-reality'
+      : null;
 }
 
 /** Проверка «из каждой страны»: что увидели и — если не увидел никто — почему. */
@@ -174,10 +191,12 @@ export class NodeBlockCheckService {
     address: string,
     exclude: ProbeExclude,
     allServers: Server[],
+    expectedProtocol: VpnProtocol | null,
   ): Promise<{
     vpnProbes: VpnProbeResult[];
     vpnForeign: VpnProbeResult[];
     vpnVerdict: VpnProbeVerdict;
+    vpnProtocol: VpnProtocol | null;
     vpnUnchecked: string | null;
   }> {
     const configured = await this.vpnRoutes.status();
@@ -186,16 +205,18 @@ export class NodeBlockCheckService {
         vpnProbes: [],
         vpnForeign: [],
         vpnVerdict: 'unavailable',
+        vpnProtocol: expectedProtocol,
         vpnUnchecked: 'Сервисная подписка для настоящей VPN-пробы ещё не настроена.',
       };
     let link: string | null;
     try {
-      link = await this.vpnRoutes.routeFor(nodeName, address);
+      link = await this.vpnRoutes.routeFor(nodeName, address, expectedProtocol ?? undefined);
     } catch (error) {
       return {
         vpnProbes: [],
         vpnForeign: [],
         vpnVerdict: 'unavailable',
+        vpnProtocol: expectedProtocol,
         vpnUnchecked: `Сервисная подписка не прочиталась: ${error instanceof Error ? error.message : String(error)}.`,
       };
     }
@@ -204,15 +225,18 @@ export class NodeBlockCheckService {
         vpnProbes: [],
         vpnForeign: [],
         vpnVerdict: 'unavailable',
+        vpnProtocol: expectedProtocol,
         vpnUnchecked: 'В сервисной подписке не найден маршрут этой ноды.',
       };
+    const vpnProtocol = routeProtocol(link);
+    const minimumAgentVersion = vpnProtocol === 'hysteria2' ? '0.9.1' : '0.9.0';
     const skip = new Set(selfIds(exclude, address, allServers));
     const eligible = allServers.filter(
       (server) =>
         !skip.has(server.id) &&
         server.agentStatus === 'online' &&
         server.agentTransport === 'https' &&
-        supportsVpnProbe(server.agentVersion) &&
+        supportsVpnProbe(server.agentVersion, minimumAgentVersion) &&
         server.country.code !== null,
     );
     const ru = eligible
@@ -232,7 +256,8 @@ export class NodeBlockCheckService {
         vpnProbes: [],
         vpnForeign: [],
         vpnVerdict: 'unavailable',
-        vpnUnchecked: 'Нет российского сервера с агентом v0.9.0+ на входящем HTTPS-канале.',
+        vpnProtocol,
+        vpnUnchecked: `Нет российского сервера с агентом v${minimumAgentVersion}+ на входящем HTTPS-канале.`,
       };
     const [vpnProbes, vpnForeign] = await Promise.all([
       Promise.all(ru.map((server) => this.vpnFrom(server, link as string))),
@@ -254,15 +279,16 @@ export class NodeBlockCheckService {
       vpnProbes,
       vpnForeign,
       vpnVerdict,
+      vpnProtocol,
       vpnUnchecked:
         probeErrors.length > 0
           ? `Часть настоящих VPN-проб не состоялась на проверяющих серверах: ${probeErrors
               .map((probe) => probe.from)
               .join(', ')}.`
           : vpnProbes.length < 2
-            ? 'Для уверенного вывода нужны два российских сервера с агентом v0.9.0+.'
+            ? `Для уверенного вывода нужны два российских сервера с агентом v${minimumAgentVersion}+.`
             : vpnForeign.length < 2
-              ? 'Для уверенного вывода нужны две зарубежные страны с агентом v0.9.0+.'
+              ? `Для уверенного вывода нужны две зарубежные страны с агентом v${minimumAgentVersion}+.`
               : null,
     };
   }
@@ -339,26 +365,43 @@ export class NodeBlockCheckService {
     allServers: Server[],
     /** Порта нет потому, что Remnawave не ответила на запрос, — а не потому, что у ноды его нет. */
     inboundFailed = false,
-    options: { targetKind?: 'node' | 'server'; portOnly?: boolean } = {},
+    options: {
+      targetKind?: 'node' | 'server';
+      portOnly?: boolean;
+      protocol?: string | null;
+      network?: string | null;
+    } = {},
   ): Promise<BlockCheckResult> {
     const targetKind = options.targetKind ?? 'node';
     const portOnly = options.portOnly ?? false;
+    const expectedProtocol = inboundProtocol(options.protocol, options.network);
     const withVpn = async (base: BlockCheckResult): Promise<BlockCheckResult> => {
       if (targetKind !== 'node') return base;
-      const vpn = await this.realVpn(nodeName, address, exclude, allServers);
+      const vpn = await this.realVpn(nodeName, address, exclude, allServers, expectedProtocol);
       let verdict = base.verdict;
       if (vpn.vpnVerdict === 'regional_block') verdict = 'tspu';
       else if (vpn.vpnVerdict === 'failed_everywhere') verdict = 'vpn_failed';
       else if (vpn.vpnVerdict === 'mixed' && [...vpn.vpnProbes, ...vpn.vpnForeign].some((probe) => probe.ok))
         verdict = 'indeterminate';
       else if (vpn.vpnVerdict === 'ok') verdict = 'ok';
+      const checkedBase =
+        vpn.vpnProtocol === 'hysteria2'
+          ? {
+              ...base,
+              sniUsed: null,
+              probes: [],
+              foreign: [],
+              unchecked: null,
+              foreignUnchecked: null,
+            }
+          : base;
       return {
-        ...base,
+        ...checkedBase,
         ...vpn,
         verdict,
         // Настоящая проба сама отвечает на вопрос о доступности маршрута. Отсутствие порта
         // Remnawave или SSH-проверяющих не должно превращать её результат в «не проверено».
-        unchecked: vpn.vpnVerdict === 'unavailable' ? base.unchecked : null,
+        unchecked: vpn.vpnVerdict === 'unavailable' ? checkedBase.unchecked : null,
       };
     };
     // Проверка не состоялась: проб нет, а причина названа — текст дела скажет, что именно помешало.
@@ -379,6 +422,23 @@ export class NodeBlockCheckService {
     // Не только «нет данных», но и «данные не похожи на настоящий адрес/порт/имя»: Remnawave — внешний
     // источник, панель эти значения не проверяет на своей стороне.
     if (!isSafeBlockCheckTarget(address, port, sni || null)) return unchecked('bad_address', null);
+    // Hysteria2 работает поверх UDP/QUIC. Проверять тот же номер как TCP-порт и красить его в красный
+    // технически неверно: результат даёт только настоящий Hysteria2-сеанс через агенты.
+    if (expectedProtocol === 'hysteria2')
+      return withVpn({
+        targetKind,
+        port,
+        nodeName,
+        address,
+        sniUsed: null,
+        probes: [],
+        foreign: [],
+        vpnProtocol: 'hysteria2',
+        verdict: 'indeterminate',
+        unchecked: null,
+        foreignUnchecked: null,
+        entry: null,
+      });
     // Проверяемая машина в проверку не идёт — ни под какой своей записью: подключение к самой себе
     // не видят ни файрвол хостера, ни блокировщик.
     const self = selfIds(exclude, address, allServers);

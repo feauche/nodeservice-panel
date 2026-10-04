@@ -13,36 +13,43 @@ interface Route {
   link: string;
   address: string;
   name: string;
+  protocol: 'vless-reality' | 'hysteria2';
 }
+
+const SUPPORTED_LINK = /(?:vless|hysteria2|hy2):\/\//i;
 
 function decodeBase64(raw: string): string | null {
   const compact = raw.replace(/\s/g, '');
   if (!/^[A-Za-z0-9+/_=-]+$/.test(compact) || compact.length < 16) return null;
   try {
     const decoded = Buffer.from(compact.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
-    return decoded.includes('vless://') ? decoded : null;
+    return SUPPORTED_LINK.test(decoded) ? decoded : null;
   } catch {
     return null;
   }
 }
 
 export function parseRealityRoutes(raw: string): Route[] {
-  const text = raw.includes('vless://') ? raw : (decodeBase64(raw) ?? raw);
-  const links = text.match(/vless:\/\/[^\s"'<>]+/gi) ?? [];
+  const text = SUPPORTED_LINK.test(raw) ? raw : (decodeBase64(raw) ?? raw);
+  const links = text.match(/(?:vless|hysteria2|hy2):\/\/[^\s"'<>]+/gi) ?? [];
   const routes: Route[] = [];
   for (const link of links.slice(0, 500)) {
     try {
       const url = new URL(link);
-      if (url.protocol !== 'vless:' || url.searchParams.get('security') !== 'reality') continue;
+      const vless = url.protocol === 'vless:';
+      const hysteria2 = url.protocol === 'hysteria2:' || url.protocol === 'hy2:';
+      if (!vless && !hysteria2) continue;
+      if (vless && url.searchParams.get('security') !== 'reality') continue;
       const address = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-      if (!address || !url.port || !url.username || !url.searchParams.get('pbk')) continue;
+      if (!address || !url.port || !url.username) continue;
+      if (vless && !url.searchParams.get('pbk')) continue;
       let name = '';
       try {
         name = decodeURIComponent(url.hash.slice(1)).trim();
       } catch {
         name = url.hash.slice(1).trim();
       }
-      routes.push({ link, address, name });
+      routes.push({ link, address, name, protocol: hysteria2 ? 'hysteria2' : 'vless-reality' });
     } catch {
       // One broken link must not hide the valid routes in the same subscription.
     }
@@ -97,7 +104,8 @@ export class RemnawaveVpnProbeService {
     });
     if (!response.ok) throw new Error(`сервер подписки ответил HTTP ${response.status}`);
     const routes = parseRealityRoutes(await bodyLimited(response));
-    if (routes.length === 0) throw new Error('в подписке не найдено ни одного VLESS/REALITY-маршрута');
+    if (routes.length === 0)
+      throw new Error('в подписке не найдено ни одного маршрута VLESS/REALITY или Hysteria2');
     return routes;
   }
 
@@ -138,14 +146,22 @@ export class RemnawaveVpnProbeService {
     return routes;
   }
 
-  async routeFor(nodeName: string, address: string): Promise<string | null> {
+  async routeFor(
+    nodeName: string,
+    address: string,
+    preferredProtocol?: Route['protocol'],
+  ): Promise<string | null> {
     const routes = await this.routes();
     if (!routes) return null;
     const host = address.toLowerCase().replace(/^\[|\]$/g, '');
-    const byAddress = routes.filter((route) => route.address === host);
+    const candidates = preferredProtocol
+      ? routes.filter((route) => route.protocol === preferredProtocol)
+      : routes;
+    const pool = candidates.length > 0 ? candidates : routes;
+    const byAddress = pool.filter((route) => route.address === host);
     if (byAddress.length === 1) return byAddress[0]?.link ?? null;
     const name = nodeName.trim().toLocaleLowerCase('ru');
-    const exact = routes.find((route) => route.name.toLocaleLowerCase('ru') === name);
+    const exact = pool.find((route) => route.name.toLocaleLowerCase('ru') === name);
     if (exact) return exact.link;
     const namedAddress = byAddress.find((route) => route.name.toLocaleLowerCase('ru').includes(name));
     return namedAddress?.link ?? null;

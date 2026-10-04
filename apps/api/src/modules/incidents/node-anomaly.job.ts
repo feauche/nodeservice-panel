@@ -494,6 +494,7 @@ export class NodeAnomalyJob {
       machine,
       allServers,
       Boolean(inbound?.failed),
+      { protocol: inbound?.protocol ?? null, network: inbound?.network ?? null },
     );
     // У выхода с указанным в профиле входом стучимся и во вход — видно, чья сторона сломалась. Вход указан,
     // а стучаться некуда (у моста нет ноды, мост удалён) — записываем его непроверенным: молчать об этом и

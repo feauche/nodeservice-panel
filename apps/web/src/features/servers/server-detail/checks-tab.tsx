@@ -36,7 +36,7 @@ function StatusBadge({ check, run }: { check: ServerCheckKey; run: ServerCheckRu
     : run.status === 'running'
       ? ['bg-brand-soft text-brand', 'Идёт']
       : run.status === 'ok'
-        ? result?.unchecked
+        ? result?.unchecked || result?.verdict === 'indeterminate'
           ? ['bg-warn-soft text-warn', 'Не проверено']
           : result?.verdict === 'ok'
             ? ['bg-ok-soft text-ok', 'Доступна']
@@ -201,6 +201,8 @@ function RussiaAccessResult({ result }: { result: BlockCheckResult }) {
   const foreignReason = uncheckedReason(result.foreignUnchecked, target, 'foreign');
   const vpnProbes = result.vpnProbes ?? [];
   const vpnForeign = result.vpnForeign ?? [];
+  const hysteria2 = result.vpnProtocol === 'hysteria2';
+  const vpnName = hysteria2 ? 'Hysteria2' : 'VPN';
   const verdict = result.unchecked
     ? 'Проверить не удалось'
     : serverTarget
@@ -236,39 +238,60 @@ function RussiaAccessResult({ result }: { result: BlockCheckResult }) {
           {result.port ? `:${result.port}` : ''}
         </span>
       </div>
-      {!serverTarget && (
+      {!serverTarget &&
+        (vpnProbes.length === 0 && vpnForeign.length === 0 ? (
+          <div>
+            <h4 className="m-0 mb-1.5 text-[11px] font-semibold tracking-[0.06em] text-text-3 uppercase">
+              Настоящий {vpnName}
+            </h4>
+            <p className="m-0 rounded-[10px] border border-border bg-surface-2 px-3 py-2.5 text-[12px] text-text-3">
+              {result.vpnUnchecked ?? 'Проба не запускалась.'}
+            </p>
+          </div>
+        ) : (
+          <>
+            <VpnProbeTable
+              title={`Настоящий ${vpnName} из России`}
+              probes={vpnProbes}
+              empty={result.vpnUnchecked ?? null}
+            />
+            <VpnProbeTable
+              title={`Настоящий ${vpnName} из других стран`}
+              probes={vpnForeign}
+              empty={
+                vpnProbes.length > 0 && vpnForeign.length === 0
+                  ? (result.vpnUnchecked ?? 'Нет зарубежной контрольной точки.')
+                  : (result.vpnUnchecked ?? null)
+              }
+            />
+          </>
+        ))}
+      {hysteria2 ? (
+        <p className="m-0 rounded-[10px] border border-border bg-surface-2 px-3 py-2.5 text-[12px] text-text-2">
+          Hysteria2 работает через UDP/QUIC. TCP-проверка порта {result.port ?? ''} к этому протоколу не
+          применяется.
+        </p>
+      ) : (
         <>
-          <VpnProbeTable
-            title="Настоящий VPN из России"
-            probes={vpnProbes}
-            empty={result.vpnUnchecked ?? null}
-          />
-          <VpnProbeTable
-            title="Настоящий VPN из других стран"
-            probes={vpnForeign}
-            empty={
-              vpnProbes.length > 0 && vpnForeign.length === 0
-                ? (result.vpnUnchecked ?? 'Нет зарубежной контрольной точки.')
-                : (result.vpnUnchecked ?? null)
-            }
+          <ProbeTable title="Из России" probes={result.probes} empty={mainReason} portOnly={serverTarget} />
+          <ProbeTable
+            title="Контроль из других стран"
+            probes={result.foreign}
+            empty={foreignReason}
+            portOnly={serverTarget}
           />
         </>
       )}
-      <ProbeTable title="Из России" probes={result.probes} empty={mainReason} portOnly={serverTarget} />
-      <ProbeTable
-        title="Контроль из других стран"
-        probes={result.foreign}
-        empty={foreignReason}
-        portOnly={serverTarget}
-      />
       <p className="m-0 text-[11.5px] text-text-3">
         {serverTarget
           ? `Связанной ноды нет: проверен TCP-порт SSH ${result.port ?? ''} самого сервера. TLS/DPI-проверка применяется только к пользовательскому порту VPN-ноды.`
           : vpnProbes.length > 0
-            ? 'Уверенный вывод строится по настоящему VLESS/REALITY-сеансу и передаче 64 КБ. TCP и обычный TLS ниже остаются диагностикой пути.'
-            : result.sniUsed
-              ? `Обычный TLS проверен с именем маскировки ${result.sniUsed}, но он не является REALITY-клиентом и сам по себе не доказывает ТСПУ.`
-              : 'Проверена доступность TCP-порта. Настоящий REALITY-трафик не проверен.'}
+            ? `Уверенный вывод строится по настоящему ${hysteria2 ? 'Hysteria2' : 'VLESS/REALITY'}-сеансу и передаче 64 КБ.${hysteria2 ? '' : ' TCP и обычный TLS ниже остаются диагностикой пути.'}`
+            : hysteria2
+              ? 'Настоящий Hysteria2-трафик пока не проверен. Причина указана выше.'
+              : result.sniUsed
+                ? `Обычный TLS проверен с именем маскировки ${result.sniUsed}, но он не является REALITY-клиентом и сам по себе не доказывает ТСПУ.`
+                : 'Проверена доступность TCP-порта. Настоящий REALITY-трафик не проверен.'}
       </p>
     </div>
   );

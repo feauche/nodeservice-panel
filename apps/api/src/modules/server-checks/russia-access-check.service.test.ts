@@ -46,6 +46,7 @@ describe('ручная проверка доступности из России
       ['s-target', 's-twin'],
       all,
       false,
+      { protocol: null, network: null },
     );
   });
 

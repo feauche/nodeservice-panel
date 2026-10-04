@@ -33,6 +33,9 @@ export interface RemnawaveFetched {
 export interface RemnawaveNodeInbound {
   sni: string | null;
   port: number | null;
+  /** Нужны, чтобы UDP-инбаунд Hysteria2 не проверялся как обычный TCP-порт. */
+  protocol: string | null;
+  network: string | null;
   /** Remnawave не ответила на запрос: порт неизвестен, но это не значит, что его у ноды нет. */
   failed?: boolean;
 }
@@ -221,7 +224,12 @@ export class HttpRemnawaveClient implements RemnawaveClient {
       if (profileUuid) sni = await this.profileSni(domain, apiKey, profileUuid, str(realityInbound.tag));
     }
     const port = typeof inbound.port === 'number' ? inbound.port : num(raw.port) || null;
-    return { sni, port };
+    return {
+      sni,
+      port,
+      protocol: str(inbound.type) || null,
+      network: str(inbound.network) || null,
+    };
   }
 
   /** Имя маскировки из профиля конфигурации по тегу инбаунда; любой сбой — null (проверка деградирует до порта). */

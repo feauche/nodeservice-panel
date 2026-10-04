@@ -69,7 +69,7 @@ export const BLOCK_VERDICT_LABELS: Record<BlockVerdict, string> = {
   tspu: 'Похоже на блокировку ТСПУ',
   block_16_20: 'Похоже на блок «16–20 КБ»',
   vpn_failed: 'VPN-трафик не проходит',
-  indeterminate: 'REALITY-трафик не проверен',
+  indeterminate: 'VPN-трафик не проверен',
   partial: 'Порт отвечает с перебоями',
   ok: 'Проблем не обнаружено',
 };
@@ -144,10 +144,11 @@ export const blockCheckResultSchema = z.object({
    * выглядит блокировка IP на стороне России. Пусто — зарубежных проверяющих нет или они не ответили.
    */
   foreign: z.array(blockProbeResultSchema).default([]),
-  /** Настоящий VLESS/REALITY-трафик через агенты; поля отсутствуют у старых сохранённых результатов. */
+  /** Настоящий VPN-трафик через агенты; поля отсутствуют у старых сохранённых результатов. */
   vpnProbes: z.array(vpnProbeResultSchema).optional(),
   vpnForeign: z.array(vpnProbeResultSchema).optional(),
   vpnVerdict: z.enum(VPN_PROBE_VERDICTS).optional(),
+  vpnProtocol: z.enum(['vless-reality', 'hysteria2']).nullable().optional(),
   vpnUnchecked: z.string().nullable().optional(),
   /** Итоговый вердикт по всем пробам вместе (см. combineVerdicts). */
   verdict: z.enum(BLOCK_VERDICTS),

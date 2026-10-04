@@ -133,11 +133,18 @@ describe('настоящая VPN-проба через агенты', () => {
     srv('nl', 'NL', live),
   ];
 
-  function service(result: (id: string, attempt: number) => boolean | 'agent') {
+  function service(
+    result: (id: string, attempt: number) => boolean | 'agent',
+    link = 'vless://service-route',
+  ) {
     const attempts = new Map<string, number>();
+    const sshCalls: string[] = [];
     const servers = { sshTargetFor: async (id: string) => ({ target: { id } }) };
     const ssh = {
-      connect: async () => ({ exec: async () => ({ stdout: OK, code: 0 }), end: () => undefined }),
+      connect: async (target: { id: string }) => {
+        sshCalls.push(target.id);
+        return { exec: async () => ({ stdout: OK, code: 0 }), end: () => undefined };
+      },
     };
     const rows = { findById: async (id: string) => ({ id }) };
     const agent = {
@@ -164,10 +171,11 @@ describe('настоящая VPN-проба через агенты', () => {
         { issue: () => 'token' } as never,
         {
           status: async () => ({ configured: true, routes: 5 }),
-          routeFor: async () => 'vless://service-route',
+          routeFor: async () => link,
         } as never,
       ),
       attempts,
+      sshCalls,
     };
   }
 
@@ -186,6 +194,49 @@ describe('настоящая VPN-проба через агенты', () => {
     const result = await svc.check('Казахстан - 1', '10.0.0.6', 443, 'mask.example', 'target', all);
     expect(result).toMatchObject({ verdict: 'ok', vpnVerdict: 'ok' });
     expect(result.vpnProbes?.every((probe) => probe.ok)).toBe(true);
+  });
+
+  it('Hysteria2 проверяет настоящим UDP/QUIC-сеансом и не пробует тот же порт как TCP', async () => {
+    const hyServers = all.map((server) => ({ ...server, agentVersion: 'v0.9.1' }));
+    const { svc, sshCalls } = service(() => true, 'hy2://secret@example.com:30443');
+    const result = await svc.check(
+      'Германия - 2 (hy2)',
+      '10.0.0.6',
+      30443,
+      null,
+      'target',
+      hyServers,
+      false,
+      { protocol: 'hysteria2', network: 'udp' },
+    );
+
+    expect(result).toMatchObject({
+      vpnProtocol: 'hysteria2',
+      vpnVerdict: 'ok',
+      verdict: 'ok',
+      probes: [],
+      foreign: [],
+    });
+    expect(sshCalls).toEqual([]);
+  });
+
+  it('Hysteria2 не превращает отсутствие агента v0.9.1 в ложное «порт не отвечает»', async () => {
+    const { svc, sshCalls } = service(() => true, 'hy2://secret@example.com:30443');
+    const result = await svc.check('Германия - 2 (hy2)', '10.0.0.6', 30443, null, 'target', all, false, {
+      protocol: 'hysteria2',
+      network: 'udp',
+    });
+
+    expect(result).toMatchObject({
+      vpnProtocol: 'hysteria2',
+      vpnVerdict: 'unavailable',
+      verdict: 'indeterminate',
+      probes: [],
+      foreign: [],
+      unchecked: null,
+    });
+    expect(result.vpnUnchecked).toContain('v0.9.1+');
+    expect(sshCalls).toEqual([]);
   });
 
   it('не объявляет региональную блокировку по ошибке агента или одной зарубежной точке', async () => {

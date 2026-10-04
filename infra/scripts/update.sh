@@ -252,3 +252,24 @@ if [[ "$st" != "healthy" ]]; then
 fi
 cleanup_old_images || true
 echo -e "${G}Обновлено: $before → $after.${N} Откат при необходимости: nodeservice rollback"
+
+# В интерактивном терминале сразу показываем, как новая версия работает вживую. Все обязательные
+# действия обновления к этому моменту уже завершены; Ctrl+C закрывает только просмотр логов.
+if [[ -t 1 ]]; then
+    echo ""
+    echo -e "${C}==> Живые логи панели${N} (Ctrl+C — закрыть просмотр)"
+    stop_log_follow() {
+        echo ""
+        echo -e "${G}Просмотр логов завершён. Панель продолжает работать.${N}"
+        exit 0
+    }
+    trap stop_log_follow INT
+    set +e
+    "${COMPOSE[@]}" logs -f --tail=100
+    log_status=$?
+    set -e
+    trap - INT
+    if (( log_status != 0 && log_status != 130 )); then
+        echo -e "${Y}Не удалось открыть живые логи. Посмотреть вручную: nodeservice logs${N}"
+    fi
+fi

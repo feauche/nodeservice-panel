@@ -299,7 +299,12 @@ describe('HttpRemnawaveClient.findNodeInbound (J10)', () => {
       }),
     );
     const r = await new HttpRemnawaveClient().findNodeInbound('vpn-panel.example.com', 'k', 'n1');
-    expect(r).toEqual({ sni: 'www.example.com', port: 8443 });
+    expect(r).toEqual({
+      sni: 'www.example.com',
+      port: 8443,
+      protocol: 'vless',
+      network: 'tcp',
+    });
   });
 
   it('нет serverNames — берёт dest и режет порт; нет ни того ни другого — sni: null', async () => {
@@ -333,7 +338,12 @@ describe('HttpRemnawaveClient.findNodeInbound (J10)', () => {
     );
     const r = await new HttpRemnawaveClient().findNodeInbound('vpn-panel.example.com', 'k', 'n1');
     // port у инбаунда null — используем порт самой ноды.
-    expect(r).toEqual({ sni: 'cdn.example.net', port: 443 });
+    expect(r).toEqual({
+      sni: 'cdn.example.net',
+      port: 443,
+      protocol: 'vless',
+      network: 'tcp',
+    });
   });
 
   it('нет активного инбаунда Reality (например, только Shadowsocks) — имени маскировки нет, но порт есть (для проверки «порт отвечает»)', async () => {
@@ -366,7 +376,44 @@ describe('HttpRemnawaveClient.findNodeInbound (J10)', () => {
       }),
     );
     const r = await new HttpRemnawaveClient().findNodeInbound('vpn-panel.example.com', 'k', 'n1');
-    expect(r).toEqual({ sni: null, port: 8388 });
+    expect(r).toEqual({
+      sni: null,
+      port: 8388,
+      protocol: 'shadowsocks',
+      network: 'tcp',
+    });
+  });
+
+  it('возвращает протокол и UDP-сеть инбаунда Hysteria2 без выдуманного SNI Reality', async () => {
+    vi.stubGlobal(
+      'fetch',
+      respond({
+        '/api/nodes': {
+          response: [
+            {
+              uuid: 'n1',
+              port: 30443,
+              configProfile: {
+                activeInbounds: [
+                  {
+                    uuid: 'i1',
+                    tag: 'hysteria2-in',
+                    type: 'hysteria2',
+                    network: 'udp',
+                    security: 'tls',
+                    port: 30443,
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    await expect(
+      new HttpRemnawaveClient().findNodeInbound('vpn-panel.example.com', 'k', 'n1'),
+    ).resolves.toEqual({ sni: null, port: 30443, protocol: 'hysteria2', network: 'udp' });
   });
 
   it('в списке нод нет сырого конфига инбаунда — имя маскировки берётся из профиля конфигурации по тегу (selfsteal)', async () => {
@@ -413,7 +460,12 @@ describe('HttpRemnawaveClient.findNodeInbound (J10)', () => {
       }),
     );
     const r = await new HttpRemnawaveClient().findNodeInbound('vpn-panel.example.com', 'k', 'n1');
-    expect(r).toEqual({ sni: 'node1.my-selfsteal.ru', port: 443 });
+    expect(r).toEqual({
+      sni: 'node1.my-selfsteal.ru',
+      port: 443,
+      protocol: 'vless',
+      network: null,
+    });
   });
 
   it('нода не найдена по uuid — null', async () => {

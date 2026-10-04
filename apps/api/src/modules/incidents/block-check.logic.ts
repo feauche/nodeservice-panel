@@ -716,7 +716,12 @@ export function describeAnomaly(input: {
     };
   }
   const entry = result.entry;
-  if (vpnRu.length > 0) lines.push('', 'Настоящий VLESS/REALITY из России:', ...vpnRu.map(vpnProbeLine));
+  if (vpnRu.length > 0)
+    lines.push(
+      '',
+      `Настоящий ${result.vpnProtocol === 'hysteria2' ? 'Hysteria2' : 'VLESS/REALITY'} из России:`,
+      ...vpnRu.map(vpnProbeLine),
+    );
   if (vpnForeign.length > 0)
     lines.push('Контроль настоящего VPN из-за рубежа:', ...vpnForeign.map(vpnProbeLine));
   if (vpnRu.length === 0 && result.vpnUnchecked)

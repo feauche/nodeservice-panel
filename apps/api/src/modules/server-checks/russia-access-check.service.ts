@@ -42,6 +42,7 @@ export class RussiaAccessCheckService {
       [...new Set([serverId, ...links.machineIds(node)])],
       allServers,
       Boolean(inbound?.failed),
+      { protocol: inbound?.protocol ?? null, network: inbound?.network ?? null },
     );
   }
 }
