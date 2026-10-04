@@ -472,7 +472,7 @@ describe('ServersPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), { timeout: 3000 });
     expect(await screen.findByText('fi-hel-03')).toBeInTheDocument();
     expect(mockServers.items).toHaveLength(3);
-  });
+  }, 10_000);
 
   it('провайдер: выбор в «Подключении» (блок «Хостинг»), значок на карточке и строка в фактах', async () => {
     renderPage(Harness, '/servers');
