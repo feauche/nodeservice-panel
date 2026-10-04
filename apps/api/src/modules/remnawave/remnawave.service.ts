@@ -18,6 +18,7 @@ import {
   type RemnawaveNodeInbound,
 } from './remnawave-client.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
+import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
 
 @Injectable()
 export class RemnawaveService {
@@ -31,6 +32,7 @@ export class RemnawaveService {
     private readonly audit: AuditService,
     private readonly config: ConfigService<Env, true>,
     private readonly notifications: NotificationsService,
+    private readonly vpnProbe: RemnawaveVpnProbeService,
   ) {}
 
   /**
@@ -85,8 +87,11 @@ export class RemnawaveService {
         stats: null,
         nodes: [],
         cert: null,
+        vpnProbeConfigured: false,
+        vpnProbeRoutes: null,
       };
     const snap = await this.store.snapshot();
+    const vpnProbe = await this.vpnProbe.status();
     return {
       connected: true,
       domain,
@@ -96,6 +101,8 @@ export class RemnawaveService {
       stats: snap?.stats ?? null,
       nodes: snap?.nodes ?? [],
       cert: snap?.cert ?? null,
+      vpnProbeConfigured: vpnProbe.configured,
+      vpnProbeRoutes: vpnProbe.routes,
     };
   }
 

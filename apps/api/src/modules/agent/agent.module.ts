@@ -10,6 +10,7 @@ import { AgentPullClient } from './agent-pull.client.js';
 import { AgentPullJob } from './agent-pull.job.js';
 import { AgentPulseLimiter } from './agent-pulse.limiter.js';
 import { VmWriterService } from './vm.service.js';
+import { VpnProbeTargetService } from './vpn-probe-target.service.js';
 
 /** Этап 5: энроллмент, WebSocket-шлюз, метрики → VictoriaMetrics, offline-детект. */
 @Module({
@@ -23,7 +24,8 @@ import { VmWriterService } from './vm.service.js';
     AgentOfflineJob,
     AgentPullClient,
     AgentPullJob,
+    VpnProbeTargetService,
   ],
-  exports: [AgentGateway, AgentPullClient],
+  exports: [AgentGateway, AgentPullClient, VpnProbeTargetService],
 })
 export class AgentModule {}

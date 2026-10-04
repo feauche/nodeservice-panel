@@ -12,6 +12,16 @@ const responseSchema = z.object({
   metrics: agentMetricsSchema.optional(),
 });
 
+const vpnProbeResponseSchema = z.object({
+  ok: z.boolean(),
+  stage: z.string().max(30),
+  detail: z.string().max(4000),
+  latencyMs: z.number().int().min(0),
+  bytes: z.number().int().min(0),
+});
+
+export type AgentVpnProbeResult = z.infer<typeof vpnProbeResponseSchema>;
+
 export interface AgentPullSnapshot {
   serverId: string;
   version: string;
@@ -73,6 +83,57 @@ export class AgentPullClient {
       req.once('timeout', () => req.destroy(new Error('таймаут подключения к агенту')));
       req.once('error', reject);
       req.end();
+    });
+  }
+
+  async vpnProbe(server: ServerRow, link: string, token: string): Promise<AgentVpnProbeResult> {
+    if (!server.agentListenPort || !server.agentAccessKeyEnc || !server.agentTlsCert)
+      throw new Error('входящий канал агента настроен не полностью');
+    const accessKey = this.crypto.decrypt(server.agentAccessKeyEnc);
+    const body = JSON.stringify({ link, token });
+    return new Promise((resolve, reject) => {
+      const req = request(
+        {
+          hostname: server.host,
+          port: server.agentListenPort,
+          path: '/v1/vpn-probe',
+          method: 'POST',
+          ca: certificatePem(server.agentTlsCert as string),
+          servername: 'nodeservice-agent',
+          minVersion: 'TLSv1.3',
+          timeout: 28_000,
+          headers: {
+            Authorization: `Bearer ${accessKey}`,
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+          },
+        },
+        (res) => {
+          let response = '';
+          res.setEncoding('utf8');
+          res.on('data', (chunk: string) => {
+            if (response.length < 16 * 1024) response += chunk;
+            else req.destroy(new Error('ответ VPN-пробы слишком большой'));
+          });
+          res.on('end', () => {
+            if (res.statusCode !== 200) {
+              reject(new Error(`агент ответил ${res.statusCode ?? 'без статуса'}`));
+              return;
+            }
+            try {
+              resolve(vpnProbeResponseSchema.parse(JSON.parse(response)));
+            } catch (err) {
+              reject(
+                new Error(`ответ VPN-пробы повреждён: ${err instanceof Error ? err.message : String(err)}`),
+              );
+            }
+          });
+        },
+      );
+      req.once('timeout', () => req.destroy(new Error('таймаут VPN-пробы агента')));
+      req.once('error', reject);
+      req.end(body);
     });
   }
 }

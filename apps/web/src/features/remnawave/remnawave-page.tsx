@@ -27,6 +27,8 @@ import { toast } from '@/lib/notify';
 import { plural } from '@/lib/plural';
 import { cn } from '@/lib/utils';
 import {
+  useClearVpnProbe,
+  useConfigureVpnProbe,
   useConnectRemnawave,
   useDisconnectRemnawave,
   useRefreshRemnawave,
@@ -315,6 +317,93 @@ function ConnectForm() {
   );
 }
 
+function VpnProbeSettings({ configured, routes }: { configured: boolean; routes: number | null }) {
+  const [subscriptionUrl, setSubscriptionUrl] = useState('');
+  const configure = useConfigureVpnProbe();
+  const clear = useClearVpnProbe();
+
+  const save = async () => {
+    try {
+      const result = await configure.mutateAsync({ subscriptionUrl: subscriptionUrl.trim() });
+      setSubscriptionUrl('');
+      toast.success(`Сервисная подписка проверена: ${result.routes ?? 0} маршрутов.`);
+    } catch (error) {
+      toast.error(apiErrorMessage(error));
+    }
+  };
+
+  const remove = async () => {
+    try {
+      await clear.mutateAsync();
+      toast.success('Сервисная подписка удалена.');
+    } catch (error) {
+      toast.error(apiErrorMessage(error));
+    }
+  };
+
+  return (
+    <section className="rounded-2xl border border-border bg-surface p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="grid size-7 flex-none place-items-center rounded-full bg-accent-soft text-accent">
+              <ShieldCheckIcon className="size-4" aria-hidden="true" />
+            </span>
+            <h2 className="font-heading text-[15px] font-bold">Настоящая проверка VPN</h2>
+            <Pill tone={configured ? 'ok' : 'muted'}>
+              {configured ? `${routes ?? 0} маршрутов` : 'Не настроена'}
+            </Pill>
+          </div>
+          <p className="mt-2 max-w-[760px] text-[12.5px] leading-5 text-text-3">
+            NodeService подключается через VLESS/REALITY так же, как пользователь, и скачивает контрольные 64
+            КБ из панели. Проверка идёт с двух российских и двух зарубежных серверов; на ноды ничего
+            дополнительно не устанавливается.
+          </p>
+        </div>
+        {configured && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={clear.isPending}
+            onClick={() => void remove()}
+            className="h-9 rounded-[9px] border-transparent bg-transparent px-3 text-[12.5px] text-crit hover:bg-crit-soft hover:text-crit"
+          >
+            Удалить ссылку
+          </Button>
+        )}
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+        <div className="grid gap-1.5">
+          <label htmlFor="rw-vpn-probe-url" className="text-[12.5px] font-semibold text-text-2">
+            Ссылка сервисного пользователя Remnawave
+          </label>
+          <PasswordField
+            id="rw-vpn-probe-url"
+            autoComplete="off"
+            value={subscriptionUrl}
+            onChange={(event) => setSubscriptionUrl(event.target.value)}
+            placeholder={configured ? 'Вставьте новую ссылку, чтобы заменить сохранённую' : 'https://…'}
+            className="font-mono"
+          />
+        </div>
+        <Button
+          type="button"
+          disabled={configure.isPending || !subscriptionUrl.trim()}
+          onClick={() => void save()}
+          className="h-10 rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover) disabled:opacity-50"
+        >
+          {configure.isPending && <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />}
+          {configure.isPending ? 'Проверяю…' : 'Проверить и сохранить'}
+        </Button>
+      </div>
+      <p className="mt-2 text-[11.5px] text-text-3">
+        Ссылка хранится зашифрованно и после сохранения не показывается. Нужен отдельный пользователь без
+        личного трафика, у которого есть маршруты проверяемых нод.
+      </p>
+    </section>
+  );
+}
+
 export function RemnawavePage() {
   const status = useRemnawaveStatus();
   const servers = useServers();
@@ -434,6 +523,8 @@ export function RemnawavePage() {
           </div>
         )}
       </section>
+
+      <VpnProbeSettings configured={s.vpnProbeConfigured} routes={s.vpnProbeRoutes} />
 
       {s.nodes.length > 0 && (
         <section className="overflow-hidden rounded-2xl border border-border bg-surface">

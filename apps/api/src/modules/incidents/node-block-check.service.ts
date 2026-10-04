@@ -4,10 +4,17 @@ import {
   type BlockCheckResult,
   type BlockProbeResult,
   type BlockUncheckedReason,
+  compareVersions,
   type Server,
+  type VpnProbeResult,
+  type VpnProbeVerdict,
 } from '@nodeservice/shared';
 
+import { AgentPullClient } from '../agent/agent-pull.client.js';
+import { VpnProbeTargetService } from '../agent/vpn-probe-target.service.js';
+import { RemnawaveVpnProbeService } from '../remnawave/remnawave-vpn-probe.service.js';
 import { normalizeAddress } from '../servers/addresses.js';
+import { ServersRepository } from '../servers/servers.repository.js';
 import { ServersService } from '../servers/servers.service.js';
 import { SshService } from '../servers/ssh.service.js';
 import {
@@ -49,6 +56,14 @@ function selfIds(
 /** Панель зашла на проверяющий сервер, но команда проверки не завершилась (таймаут, обрыв посреди команды). */
 class ProbeRunError extends Error {}
 
+function supportsVpnProbe(version: string | null): boolean {
+  return (
+    version !== null &&
+    /^v?\d+\.\d+(?:\.\d+)?(?:$|-)/i.test(version) &&
+    compareVersions(version, '0.9.0') >= 0
+  );
+}
+
 /** Проверка «из каждой страны»: что увидели и — если не увидел никто — почему. */
 export interface CountryReachResult {
   results: CountryReach[];
@@ -57,19 +72,200 @@ export interface CountryReachResult {
 }
 
 /**
- * J10: запускает проверку блокировки ноды (ТСПУ / «блок 16–20 КБ») с других серверов парка в
- * России по SSH — тем же способом, что и check_reachability, никакого нового агента не нужно.
- * Один обрыв соединения ненадёжен (бывают случайные RST) — каждый пробующий сервер повторяет
- * проверку несколько раз, вердикт этого сервера берётся по большинству его же попыток.
+ * Проверяет ноду с других серверов парка. TCP и обычный TLS остаются диагностикой по SSH, а агенты
+ * 0.9.0+ проводят настоящий VLESS/REALITY-сеанс. Один обрыв ненадёжен, поэтому каждая неудачная
+ * настоящая VPN-проба повторяется, а региональный вывод требует две точки России и две другие страны.
  */
 @Injectable()
 export class NodeBlockCheckService {
   private readonly log = new Logger(NodeBlockCheckService.name);
+  private readonly vpnActive = new Map<string, number>();
+  private readonly vpnWaiters = new Map<string, Array<() => void>>();
 
   constructor(
     private readonly servers: ServersService,
     private readonly ssh: SshService,
+    private readonly rows: ServersRepository,
+    private readonly agent: AgentPullClient,
+    private readonly probeTarget: VpnProbeTargetService,
+    private readonly vpnRoutes: RemnawaveVpnProbeService,
   ) {}
+
+  /** Не отправлять одному агенту больше четырёх Xray-проб одновременно при массовой аварии. */
+  private async withVpnSlot<T>(serverId: string, task: () => Promise<T>): Promise<T> {
+    if ((this.vpnActive.get(serverId) ?? 0) >= 4)
+      await new Promise<void>((resolve) => {
+        const waiters = this.vpnWaiters.get(serverId) ?? [];
+        waiters.push(resolve);
+        this.vpnWaiters.set(serverId, waiters);
+      });
+    else this.vpnActive.set(serverId, (this.vpnActive.get(serverId) ?? 0) + 1);
+    try {
+      return await task();
+    } finally {
+      const next = this.vpnWaiters.get(serverId)?.shift();
+      if (next) next();
+      else {
+        const active = (this.vpnActive.get(serverId) ?? 1) - 1;
+        if (active > 0) this.vpnActive.set(serverId, active);
+        else this.vpnActive.delete(serverId);
+        this.vpnWaiters.delete(serverId);
+      }
+    }
+  }
+
+  private async vpnFrom(
+    prober: Pick<Server, 'id' | 'name' | 'country'>,
+    link: string,
+  ): Promise<VpnProbeResult> {
+    const row = await this.rows.findById(prober.id);
+    if (!row)
+      return {
+        from: prober.name,
+        country: prober.country.code,
+        ok: false,
+        stage: 'agent',
+        detail: 'Проверяющий сервер удалён из панели.',
+        latencyMs: null,
+        bytes: 0,
+      };
+    let last: VpnProbeResult | null = null;
+    // Сбой считается достоверным, только если настоящий маршрут дважды не прошёл из этой точки.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const result = await this.withVpnSlot(prober.id, () =>
+          this.agent.vpnProbe(row, link, this.probeTarget.issue()),
+        );
+        const current: VpnProbeResult = {
+          from: prober.name,
+          country: prober.country.code,
+          ok: result.ok,
+          stage: result.stage,
+          detail: result.detail,
+          latencyMs: result.latencyMs,
+          bytes: result.bytes,
+        };
+        if (current.ok) {
+          if (last && !last.ok)
+            current.detail = 'Повторная настоящая VPN-проба прошла; единичный первый сбой не подтверждён.';
+          return current;
+        }
+        last = current;
+      } catch (error) {
+        last = {
+          from: prober.name,
+          country: prober.country.code,
+          ok: false,
+          stage: 'agent',
+          detail: `Агент не выполнил VPN-пробу: ${error instanceof Error ? error.message : String(error)}.`,
+          latencyMs: null,
+          bytes: 0,
+        };
+      }
+    }
+    return {
+      ...(last as VpnProbeResult),
+      detail: `${(last as VpnProbeResult).detail.replace(/\.*$/, '')}. Повторная проба дала тот же результат.`,
+    };
+  }
+
+  private async realVpn(
+    nodeName: string,
+    address: string,
+    exclude: ProbeExclude,
+    allServers: Server[],
+  ): Promise<{
+    vpnProbes: VpnProbeResult[];
+    vpnForeign: VpnProbeResult[];
+    vpnVerdict: VpnProbeVerdict;
+    vpnUnchecked: string | null;
+  }> {
+    const configured = await this.vpnRoutes.status();
+    if (!configured.configured)
+      return {
+        vpnProbes: [],
+        vpnForeign: [],
+        vpnVerdict: 'unavailable',
+        vpnUnchecked: 'Сервисная подписка для настоящей VPN-пробы ещё не настроена.',
+      };
+    let link: string | null;
+    try {
+      link = await this.vpnRoutes.routeFor(nodeName, address);
+    } catch (error) {
+      return {
+        vpnProbes: [],
+        vpnForeign: [],
+        vpnVerdict: 'unavailable',
+        vpnUnchecked: `Сервисная подписка не прочиталась: ${error instanceof Error ? error.message : String(error)}.`,
+      };
+    }
+    if (!link)
+      return {
+        vpnProbes: [],
+        vpnForeign: [],
+        vpnVerdict: 'unavailable',
+        vpnUnchecked: 'В сервисной подписке не найден маршрут этой ноды.',
+      };
+    const skip = new Set(selfIds(exclude, address, allServers));
+    const eligible = allServers.filter(
+      (server) =>
+        !skip.has(server.id) &&
+        server.agentStatus === 'online' &&
+        server.agentTransport === 'https' &&
+        supportsVpnProbe(server.agentVersion) &&
+        server.country.code !== null,
+    );
+    const ru = eligible
+      .filter((server) => server.country.code === 'RU')
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+      .slice(0, 2);
+    const foreign = eligible
+      .filter((server) => server.country.code !== 'RU')
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+      .filter(
+        (server, index, list) =>
+          list.findIndex((item) => item.country.code === server.country.code) === index,
+      )
+      .slice(0, 2);
+    if (ru.length === 0)
+      return {
+        vpnProbes: [],
+        vpnForeign: [],
+        vpnVerdict: 'unavailable',
+        vpnUnchecked: 'Нет российского сервера с агентом v0.9.0+ на входящем HTTPS-канале.',
+      };
+    const [vpnProbes, vpnForeign] = await Promise.all([
+      Promise.all(ru.map((server) => this.vpnFrom(server, link as string))),
+      Promise.all(foreign.map((server) => this.vpnFrom(server, link as string))),
+    ]);
+    const ruOk = vpnProbes.some((probe) => probe.ok);
+    const enoughGeography = vpnProbes.length >= 2 && vpnForeign.length >= 2;
+    const networkFailure = (probe: VpnProbeResult) =>
+      !probe.ok && (probe.stage === 'connect' || probe.stage === 'download');
+    const probeErrors = [...vpnProbes, ...vpnForeign].filter((probe) => !probe.ok && !networkFailure(probe));
+    let vpnVerdict: VpnProbeVerdict;
+    if (ruOk) vpnVerdict = vpnProbes.every((probe) => probe.ok) ? 'ok' : 'mixed';
+    else if (enoughGeography && vpnProbes.every(networkFailure) && vpnForeign.every((probe) => probe.ok))
+      vpnVerdict = 'regional_block';
+    else if (enoughGeography && [...vpnProbes, ...vpnForeign].every(networkFailure))
+      vpnVerdict = 'failed_everywhere';
+    else vpnVerdict = 'mixed';
+    return {
+      vpnProbes,
+      vpnForeign,
+      vpnVerdict,
+      vpnUnchecked:
+        probeErrors.length > 0
+          ? `Часть настоящих VPN-проб не состоялась на проверяющих серверах: ${probeErrors
+              .map((probe) => probe.from)
+              .join(', ')}.`
+          : vpnProbes.length < 2
+            ? 'Для уверенного вывода нужны два российских сервера с агентом v0.9.0+.'
+            : vpnForeign.length < 2
+              ? 'Для уверенного вывода нужны две зарубежные страны с агентом v0.9.0+.'
+              : null,
+    };
+  }
 
   private async runOnce(serverId: string, command: string): Promise<{ stdout: string; code: number }> {
     const { target } = await this.servers.sshTargetFor(serverId);
@@ -147,6 +343,24 @@ export class NodeBlockCheckService {
   ): Promise<BlockCheckResult> {
     const targetKind = options.targetKind ?? 'node';
     const portOnly = options.portOnly ?? false;
+    const withVpn = async (base: BlockCheckResult): Promise<BlockCheckResult> => {
+      if (targetKind !== 'node') return base;
+      const vpn = await this.realVpn(nodeName, address, exclude, allServers);
+      let verdict = base.verdict;
+      if (vpn.vpnVerdict === 'regional_block') verdict = 'tspu';
+      else if (vpn.vpnVerdict === 'failed_everywhere') verdict = 'vpn_failed';
+      else if (vpn.vpnVerdict === 'mixed' && [...vpn.vpnProbes, ...vpn.vpnForeign].some((probe) => probe.ok))
+        verdict = 'indeterminate';
+      else if (vpn.vpnVerdict === 'ok') verdict = 'ok';
+      return {
+        ...base,
+        ...vpn,
+        verdict,
+        // Настоящая проба сама отвечает на вопрос о доступности маршрута. Отсутствие порта
+        // Remnawave или SSH-проверяющих не должно превращать её результат в «не проверено».
+        unchecked: vpn.vpnVerdict === 'unavailable' ? base.unchecked : null,
+      };
+    };
     // Проверка не состоялась: проб нет, а причина названа — текст дела скажет, что именно помешало.
     const unchecked = (reason: BlockUncheckedReason, sniUsed: string | null): BlockCheckResult => ({
       targetKind,
@@ -161,7 +375,7 @@ export class NodeBlockCheckService {
       foreignUnchecked: null,
       entry: null,
     });
-    if (!port) return unchecked(inboundFailed ? 'remnawave' : 'no_port', null);
+    if (!port) return withVpn(unchecked(inboundFailed ? 'remnawave' : 'no_port', null));
     // Не только «нет данных», но и «данные не похожи на настоящий адрес/порт/имя»: Remnawave — внешний
     // источник, панель эти значения не проверяет на своей стороне.
     if (!isSafeBlockCheckTarget(address, port, sni || null)) return unchecked('bad_address', null);
@@ -169,14 +383,14 @@ export class NodeBlockCheckService {
     // не видят ни файрвол хостера, ни блокировщик.
     const self = selfIds(exclude, address, allServers);
     const probers = pickRuProbes(self, allServers);
-    if (probers.length === 0) return unchecked('no_probers', sni || null);
+    if (probers.length === 0) return withVpn(unchecked('no_probers', sni || null));
     // Проверяющий, на который панель не зашла (или который не смог выполнить проверку), о ноде ничего
     // не знает — в вердикт не идёт.
     const tried = await Promise.all(
       probers.map((p) => this.probeFrom(p, address, port, sni || null, portOnly)),
     );
     const probes = tried.filter(probeSaw);
-    if (probes.length === 0) return unchecked(blindReason(tried), sni || null);
+    if (probes.length === 0) return withVpn(unchecked(blindReason(tried), sni || null));
     const ruVerdict = combineVerdicts(probes);
     // Тот же порт проверяем и из-за рубежа всегда, а не только когда он целиком молчит из России. Поэтому
     // первое сообщение об аномалии и последующий разбор Джарвиса опираются на одну географию: видно и
@@ -190,7 +404,7 @@ export class NodeBlockCheckService {
     foreign = triedAbroad.filter(probeSaw);
     if (foreign.length === 0)
       foreignUnchecked = abroad.length === 0 ? 'no_probers' : blindReason(triedAbroad);
-    return {
+    return withVpn({
       targetKind,
       port,
       nodeName,
@@ -202,7 +416,7 @@ export class NodeBlockCheckService {
       unchecked: null,
       foreignUnchecked,
       entry: null,
-    };
+    });
   }
 
   /**

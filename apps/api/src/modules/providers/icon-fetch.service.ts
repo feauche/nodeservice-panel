@@ -73,7 +73,7 @@ export function isPrivateHost(host: string): boolean {
  * Остаточный риск — DNS rebinding между проверкой и запросом; для панели с одним админом,
  * который сам вводит адрес хостера, это приемлемо (запрос идёт только на GET иконки).
  */
-async function resolvesToPublic(host: string): Promise<boolean> {
+export async function resolvesToPublic(host: string): Promise<boolean> {
   if (isPrivateHost(host)) return false;
   if (isIP(host)) return true;
   try {

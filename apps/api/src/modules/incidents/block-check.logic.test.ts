@@ -133,19 +133,19 @@ describe('parseBlockCheckOutput', () => {
     expect(r.detail).toContain('Порт отвечает');
   });
 
-  it('tls тихо обрывается — tspu', () => {
+  it('обычный TLS тихо обрывается — этого недостаточно для вывода о REALITY или ТСПУ', () => {
     const r = parseBlockCheckOutput('ru-a', '{"stage":"tls","ok":false,"stalledAtKb":null}');
-    expect(r.verdict).toBe('tspu');
+    expect(r.verdict).toBe('indeterminate');
   });
 
-  it('data обрывается в диапазоне 12–40 КБ — block_16_20', () => {
+  it('обычная передача обрывается в диапазоне 12–40 КБ — это ещё не пользовательский VPN-трафик', () => {
     const r = parseBlockCheckOutput('ru-a', '{"stage":"data","ok":false,"stalledAtKb":16}');
-    expect(r).toMatchObject({ verdict: 'block_16_20', stalledAtKb: 16 });
+    expect(r).toMatchObject({ verdict: 'indeterminate', stalledAtKb: 16 });
   });
 
-  it('data обрывается ДО 12 КБ — не считаем этой сигнатурой (ok, а не block_16_20)', () => {
+  it('обычная передача обрывается до 12 КБ — результат тоже остаётся неопределённым', () => {
     const r = parseBlockCheckOutput('ru-a', '{"stage":"data","ok":false,"stalledAtKb":4}');
-    expect(r.verdict).toBe('ok');
+    expect(r.verdict).toBe('indeterminate');
   });
 
   it('data прошла целиком — ok', () => {
@@ -565,6 +565,43 @@ describe('вход сервера-выхода', () => {
     }
   });
 
+  it('настоящая VPN-проба остаётся доказательством, даже если обычную SSH-проверку порта выполнить не удалось', () => {
+    const failed = (from: string, country: string) => ({
+      from,
+      country,
+      ok: false,
+      stage: 'connect',
+      detail: 'Повторная проба не прошла.',
+      latencyMs: 10,
+      bytes: 0,
+    });
+    const passed = (from: string, country: string) => ({
+      from,
+      country,
+      ok: true,
+      stage: 'done',
+      detail: 'Маршрут работает.',
+      latencyMs: 20,
+      bytes: 65536,
+    });
+    const result = drop({
+      ...base,
+      probes: [],
+      foreign: [],
+      verdict: 'tspu',
+      unchecked: null,
+      entry: null,
+      vpnVerdict: 'regional_block',
+      vpnUnchecked: null,
+      vpnProbes: [failed('Россия - 1', 'RU'), failed('Россия - 2', 'RU')],
+      vpnForeign: [passed('Германия - 1', 'DE'), passed('Нидерланды - 1', 'NL')],
+    });
+    expect(result.confirmed).toBe(true);
+    expect(result.title).toContain('Похоже на блокировку ТСПУ');
+    expect(result.detail).toContain('настоящий VLESS/REALITY повторно не проходит');
+    expect(result.detail).not.toContain('проверить не удалось');
+  });
+
   it('сервер недоступен целиком, срок оплаты близко — «проверьте оплату», без догадки по названию', () => {
     const r = drop(down, { payment: soon });
     expect(r.kind).toBe('server_down');
@@ -616,7 +653,7 @@ describe('вход сервера-выхода', () => {
   it('первичное дело и Telegram называют пользовательский порт и не выдают его за SSH или пинг', () => {
     const r = drop(down, { nodePort: 443, serverAlive: true });
     expect(r.detail).toContain(
-      'Проверяется пользовательский порт ноды 443 (VPN-трафик), а не SSH и не ICMP-пинг.',
+      'Проверяется пользовательский порт ноды 443; настоящий VPN-трафик отмечен отдельно от TCP и обычного TLS.',
     );
     expect(r.detail).toContain('Из России:');
     expect(r.detail).toContain('Из-за рубежа:');
@@ -985,16 +1022,22 @@ describe('итог попыток с одного сервера — без ло
         verdict: 'partial',
         detail: 'Порт отвечает не каждый раз: подключение прошло в 1 из 3 попыток.',
       });
-    // Блокировку по протоколу большинство попыток по-прежнему называет само.
-    expect(settleAttempts([tls, tls, dead], false)?.verdict).toBe('tspu');
+    // Даже повторный обрыв обычного TLS не выдаём за доказательство блокировки REALITY.
+    expect(settleAttempts([tls, tls, dead], false)?.verdict).toBe('indeterminate');
   });
   it('обрыв на небольшом объёме не прячется за чистой первой попыткой — и не раздувается из одной', () => {
     const clean = parseBlockCheckOutput('Мост', '{"stage":"data","ok":true,"stalledAtKb":null}');
     const stall8 = parseBlockCheckOutput('Мост', '{"stage":"data","ok":false,"stalledAtKb":8}');
-    expect(stall8.verdict).toBe('ok');
+    expect(stall8.verdict).toBe('indeterminate');
     // Раньше итогом бралась первая попытка «в норме» — порядок попыток менял вывод.
-    expect(settleAttempts([clean, stall8, stall8], false)).toMatchObject({ verdict: 'ok', stalledAtKb: 8 });
-    expect(settleAttempts([stall8, stall8, clean], false)).toMatchObject({ verdict: 'ok', stalledAtKb: 8 });
+    expect(settleAttempts([clean, stall8, stall8], false)).toMatchObject({
+      verdict: 'indeterminate',
+      stalledAtKb: 8,
+    });
+    expect(settleAttempts([stall8, stall8, clean], false)).toMatchObject({
+      verdict: 'indeterminate',
+      stalledAtKb: 8,
+    });
     expect(settleAttempts([stall8, clean, clean], false)).toMatchObject({ verdict: 'ok', stalledAtKb: null });
     expect(settleAttempts([clean, clean, stall8], false)).toMatchObject({ verdict: 'ok', stalledAtKb: null });
     // Поровну — находку не прячем.

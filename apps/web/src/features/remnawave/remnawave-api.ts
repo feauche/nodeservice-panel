@@ -2,7 +2,10 @@ import {
   REMNAWAVE_SYNC_INTERVAL_MIN,
   type RemnawaveConnectRequest,
   type RemnawaveStatus,
+  type RemnawaveVpnProbeRequest,
+  type RemnawaveVpnProbeStatus,
   remnawaveStatusSchema,
+  remnawaveVpnProbeStatusSchema,
 } from '@nodeservice/shared';
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, request } from '@/lib/api';
@@ -15,6 +18,9 @@ export const remnawaveApi = {
     api.post('/remnawave/connect', body, remnawaveStatusSchema),
   refresh: (): Promise<RemnawaveStatus> => api.post('/remnawave/refresh', {}, remnawaveStatusSchema),
   disconnect: (): Promise<void> => request('/remnawave', { method: 'DELETE' }),
+  configureVpnProbe: (body: RemnawaveVpnProbeRequest): Promise<RemnawaveVpnProbeStatus> =>
+    api.put('/remnawave/vpn-probe', body, remnawaveVpnProbeStatusSchema),
+  clearVpnProbe: (): Promise<void> => request('/remnawave/vpn-probe', { method: 'DELETE' }),
 };
 
 export const remnawaveKeys = {
@@ -64,6 +70,30 @@ export function useDisconnectRemnawave() {
         stats: null,
         nodes: [],
         cert: null,
+        vpnProbeConfigured: false,
+        vpnProbeRoutes: null,
       } satisfies RemnawaveStatus),
+  });
+}
+
+export function useConfigureVpnProbe() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: remnawaveApi.configureVpnProbe,
+    onSuccess: (probe) =>
+      qc.setQueryData<RemnawaveStatus>(remnawaveKeys.status, (status) =>
+        status ? { ...status, vpnProbeConfigured: probe.configured, vpnProbeRoutes: probe.routes } : status,
+      ),
+  });
+}
+
+export function useClearVpnProbe() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: remnawaveApi.clearVpnProbe,
+    onSuccess: () =>
+      qc.setQueryData<RemnawaveStatus>(remnawaveKeys.status, (status) =>
+        status ? { ...status, vpnProbeConfigured: false, vpnProbeRoutes: null } : status,
+      ),
   });
 }

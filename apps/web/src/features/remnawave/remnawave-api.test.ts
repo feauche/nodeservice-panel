@@ -12,6 +12,8 @@ const STATUS: RemnawaveStatus = {
   stats: null,
   nodes: [],
   cert: null,
+  vpnProbeConfigured: false,
+  vpnProbeRoutes: null,
 };
 
 describe('статус Remnawave', () => {

@@ -52,13 +52,24 @@ export const BLOCK_CHECK_READ_TIMEOUT_SEC = 12;
  * тот же проверяющий подключается не каждый раз. Сервер работает: «недоступен» и «блокировка IP из России»
  * про него сказать нельзя (молчащий проверяющий или сорвавшаяся попытка не перевешивают удачных).
  */
-export const BLOCK_VERDICTS = ['unreachable', 'ip_block', 'tspu', 'block_16_20', 'partial', 'ok'] as const;
+export const BLOCK_VERDICTS = [
+  'unreachable',
+  'ip_block',
+  'tspu',
+  'block_16_20',
+  'vpn_failed',
+  'indeterminate',
+  'partial',
+  'ok',
+] as const;
 export type BlockVerdict = (typeof BLOCK_VERDICTS)[number];
 export const BLOCK_VERDICT_LABELS: Record<BlockVerdict, string> = {
   unreachable: 'Сервер недоступен',
   ip_block: 'Похоже на блокировку IP из России',
   tspu: 'Похоже на блокировку ТСПУ',
   block_16_20: 'Похоже на блок «16–20 КБ»',
+  vpn_failed: 'VPN-трафик не проходит',
+  indeterminate: 'REALITY-трафик не проверен',
   partial: 'Порт отвечает с перебоями',
   ok: 'Проблем не обнаружено',
 };
@@ -97,6 +108,26 @@ export const blockProbeResultSchema = z.object({
 });
 export type BlockProbeResult = z.infer<typeof blockProbeResultSchema>;
 
+export const VPN_PROBE_VERDICTS = [
+  'unavailable',
+  'ok',
+  'regional_block',
+  'failed_everywhere',
+  'mixed',
+] as const;
+export type VpnProbeVerdict = (typeof VPN_PROBE_VERDICTS)[number];
+
+export const vpnProbeResultSchema = z.object({
+  from: z.string(),
+  country: z.string().nullable(),
+  ok: z.boolean(),
+  stage: z.string(),
+  detail: z.string(),
+  latencyMs: z.number().int().min(0).nullable(),
+  bytes: z.number().int().min(0),
+});
+export type VpnProbeResult = z.infer<typeof vpnProbeResultSchema>;
+
 export const blockCheckResultSchema = z.object({
   /** Что именно проверяли: пользовательский порт ноды или SSH-порт обычного сервера. Старые записи — node. */
   targetKind: z.enum(['node', 'server']).optional(),
@@ -113,6 +144,11 @@ export const blockCheckResultSchema = z.object({
    * выглядит блокировка IP на стороне России. Пусто — зарубежных проверяющих нет или они не ответили.
    */
   foreign: z.array(blockProbeResultSchema).default([]),
+  /** Настоящий VLESS/REALITY-трафик через агенты; поля отсутствуют у старых сохранённых результатов. */
+  vpnProbes: z.array(vpnProbeResultSchema).optional(),
+  vpnForeign: z.array(vpnProbeResultSchema).optional(),
+  vpnVerdict: z.enum(VPN_PROBE_VERDICTS).optional(),
+  vpnUnchecked: z.string().nullable().optional(),
   /** Итоговый вердикт по всем пробам вместе (см. combineVerdicts). */
   verdict: z.enum(BLOCK_VERDICTS),
   /** Почему проб нет; null — пробы есть (или причина не записана: старый результат). */

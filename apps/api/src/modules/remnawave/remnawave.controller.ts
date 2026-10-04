@@ -1,14 +1,22 @@
-import { Body, Controller, Delete, Get, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Post, Put } from '@nestjs/common';
 import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { remnawaveConnectRequestSchema, remnawaveStatusSchema } from '@nodeservice/shared';
+import {
+  remnawaveConnectRequestSchema,
+  remnawaveStatusSchema,
+  remnawaveVpnProbeRequestSchema,
+  remnawaveVpnProbeStatusSchema,
+} from '@nodeservice/shared';
 import { createZodDto } from 'nestjs-zod';
 
 import { ServersService } from '../servers/servers.service.js';
 import { NodeLinkService } from './node-link.service.js';
 import { RemnawaveService } from './remnawave.service.js';
+import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
 
 export class RemnawaveStatusDto extends createZodDto(remnawaveStatusSchema) {}
 export class RemnawaveConnectRequestDto extends createZodDto(remnawaveConnectRequestSchema) {}
+export class RemnawaveVpnProbeRequestDto extends createZodDto(remnawaveVpnProbeRequestSchema) {}
+export class RemnawaveVpnProbeStatusDto extends createZodDto(remnawaveVpnProbeStatusSchema) {}
 
 @ApiTags('remnawave')
 @ApiCookieAuth()
@@ -18,6 +26,7 @@ export class RemnawaveController {
     private readonly remnawave: RemnawaveService,
     private readonly servers: ServersService,
     private readonly links: NodeLinkService,
+    private readonly vpnProbe: RemnawaveVpnProbeService,
   ) {}
 
   /** К каждой ноде — серверы панели, на которых она работает: веб сам адреса не сверяет. */
@@ -54,5 +63,19 @@ export class RemnawaveController {
   @ApiOperation({ summary: 'Отключить Remnawave (стереть домен и токен)' })
   disconnect(): Promise<void> {
     return this.remnawave.disconnect();
+  }
+
+  @Put('vpn-probe')
+  @ApiOperation({ summary: 'Проверить и сохранить сервисную подписку для настоящих VPN-проб' })
+  @ApiOkResponse({ type: RemnawaveVpnProbeStatusDto })
+  configureVpnProbe(@Body() body: RemnawaveVpnProbeRequestDto): Promise<RemnawaveVpnProbeStatusDto> {
+    return this.vpnProbe.configure(body.subscriptionUrl);
+  }
+
+  @Delete('vpn-probe')
+  @HttpCode(204)
+  @ApiOperation({ summary: 'Удалить сервисную подписку VPN-проб' })
+  clearVpnProbe(): Promise<void> {
+    return this.vpnProbe.clear();
   }
 }

@@ -61,6 +61,8 @@ export const mockRemnawave: {
   stats: RemnawaveStats | null;
   nodes: RemnawaveNode[];
   cert: RemnawaveCert | null;
+  vpnProbeConfigured: boolean;
+  vpnProbeRoutes: number | null;
 } = {
   connected: false,
   domain: null,
@@ -70,6 +72,8 @@ export const mockRemnawave: {
   stats: null,
   nodes: [],
   cert: null,
+  vpnProbeConfigured: false,
+  vpnProbeRoutes: null,
 };
 
 // Режим VITE_MOCK=1: управление из скриншот-сценариев.
@@ -86,6 +90,8 @@ export function seedRemnawave(): void {
     stats: null,
     nodes: [],
     cert: null,
+    vpnProbeConfigured: false,
+    vpnProbeRoutes: null,
   });
 }
 
@@ -120,6 +126,8 @@ function status(): RemnawaveStatus {
     stats: mockRemnawave.stats,
     nodes: withServers(mockRemnawave.nodes),
     cert: mockRemnawave.cert,
+    vpnProbeConfigured: mockRemnawave.vpnProbeConfigured,
+    vpnProbeRoutes: mockRemnawave.vpnProbeRoutes,
   };
 }
 
@@ -178,6 +186,19 @@ export const remnawaveHandlers = [
       return problem(409, 'urn:nodeservice:problem:remnawave-not-connected', 'Remnawave не подключена.');
     connectNow();
     return HttpResponse.json(status());
+  }),
+  http.put('/api/remnawave/vpn-probe', async ({ request }) => {
+    const body = (await request.json()) as { subscriptionUrl?: string };
+    if (!body.subscriptionUrl?.startsWith('https://'))
+      return problem(400, 'urn:nodeservice:problem:vpn-probe-subscription', 'Нужна HTTPS-ссылка.');
+    mockRemnawave.vpnProbeConfigured = true;
+    mockRemnawave.vpnProbeRoutes = 5;
+    return HttpResponse.json({ configured: true, routes: 5 });
+  }),
+  http.delete('/api/remnawave/vpn-probe', () => {
+    mockRemnawave.vpnProbeConfigured = false;
+    mockRemnawave.vpnProbeRoutes = null;
+    return new HttpResponse(null, { status: 204 });
   }),
   http.delete('/api/remnawave', () => {
     seedRemnawave();

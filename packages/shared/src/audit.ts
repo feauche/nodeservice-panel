@@ -132,6 +132,8 @@ export const AUDIT_ACTIONS = {
   'server.updated': { category: 'server', label: 'Сервер изменён' },
   'remnawave.connected': { category: 'settings', label: 'Remnawave подключена' },
   'remnawave.disconnected': { category: 'settings', label: 'Remnawave отключена' },
+  'remnawave.vpn_probe.updated': { category: 'settings', label: 'Сервисная VPN-проверка настроена' },
+  'remnawave.vpn_probe.removed': { category: 'settings', label: 'Сервисная VPN-проверка отключена' },
   'remnawave.unreachable': { category: 'settings', label: 'Remnawave недоступна' },
   'remnawave.reconnected': { category: 'settings', label: 'Remnawave снова на связи' },
   'server.country.detected': { category: 'server', label: 'Страна сервера определена по IP' },

@@ -1,6 +1,4 @@
 import {
-  BLOCK_1620_MAX_KB,
-  BLOCK_1620_MIN_KB,
   BLOCK_1620_STEP_KB,
   BLOCK_1620_STEPS,
   BLOCK_CHECK_CONNECT_TIMEOUT_SEC,
@@ -332,20 +330,17 @@ export function parseBlockCheckOutput(
   if (parsed.stage === 'tls' && !parsed.ok)
     return {
       from,
-      verdict: 'tspu',
+      verdict: 'indeterminate',
       detail:
-        'Порт открыт, но TLS-подключение с именем маскировки ноды тихо обрывается без ответа сертификата.',
+        'Порт открыт, но обычный TLS с именем маскировки не получил сертификат. Это не проверка REALITY и не доказательство ТСПУ.',
       stalledAtKb: null,
       error: null,
     };
   if (parsed.stage === 'data' && !parsed.ok && parsed.stalledAtKb !== null)
     return {
       from,
-      verdict:
-        parsed.stalledAtKb >= BLOCK_1620_MIN_KB && parsed.stalledAtKb <= BLOCK_1620_MAX_KB
-          ? 'block_16_20'
-          : 'ok',
-      detail: `Соединение тихо обрывается на объёме около ${parsed.stalledAtKb} КБ без явного отказа.`,
+      verdict: 'indeterminate',
+      detail: `Обычный TLS-тест оборвался на объёме около ${parsed.stalledAtKb} КБ. Настоящий VPN-трафик этим не проверен.`,
       stalledAtKb: parsed.stalledAtKb,
       error: null,
     };
@@ -381,6 +376,7 @@ const BLOCK_FIRST: readonly BlockVerdict[] = ['block_16_20', 'tspu', 'ip_block']
 export function combineVerdicts(probes: BlockProbeResult[]): BlockVerdict {
   if (probes.length === 0) return 'unreachable';
   for (const v of BLOCK_FIRST) if (probes.some((p) => p.verdict === v)) return v;
+  if (probes.some((p) => p.verdict === 'indeterminate')) return 'indeterminate';
   const answered = probes.some((p) => p.verdict === 'ok' || p.verdict === 'partial');
   const silent = probes.some((p) => p.verdict !== 'ok');
   if (answered && silent) return 'partial';
@@ -389,7 +385,7 @@ export function combineVerdicts(probes: BlockProbeResult[]): BlockVerdict {
 
 /** Ничья между попытками ОДНОГО сервера: худший вердикт по порядку (блокировка → не отвечает → в норме). */
 function worstOf(attempts: BlockProbeResult[]): BlockVerdict {
-  for (const v of [...BLOCK_FIRST, 'unreachable'] as const)
+  for (const v of [...BLOCK_FIRST, 'indeterminate', 'unreachable'] as const)
     if (attempts.some((a) => a.verdict === v)) return v;
   return 'ok';
 }
@@ -465,6 +461,9 @@ const probeLine = (p: BlockProbeResult): string => {
   // Строчная первая буква — только у обычного слова: «TLS-подключение» так и остаётся.
   return `• ${p.from} — ${lowerFirst(d)}`;
 };
+
+const vpnProbeLine = (p: NonNullable<BlockCheckResult['vpnProbes']>[number]): string =>
+  `• ${p.from} — ${p.ok ? `настоящий VPN работает${p.latencyMs !== null ? ` · ${p.latencyMs} мс` : ''}` : lowerFirst(p.detail)}`;
 
 const BLOCKED: ReadonlySet<BlockVerdict> = new Set(['ip_block', 'tspu', 'block_16_20']);
 
@@ -679,9 +678,14 @@ export function describeAnomaly(input: {
   if (input.nodePort)
     lines.push(
       '',
-      `Проверяется пользовательский порт ноды ${input.nodePort} (VPN-трафик), а не SSH и не ICMP-пинг.`,
+      `Проверяется пользовательский порт ноды ${input.nodePort}; настоящий VPN-трафик отмечен отдельно от TCP и обычного TLS.`,
     );
-  const confirmed = result.probes.length > 0 && result.verdict !== 'ok';
+  const vpnRu = result.vpnProbes ?? [];
+  const vpnForeign = result.vpnForeign ?? [];
+  const vpnConfirmed = result.vpnVerdict === 'regional_block' || result.vpnVerdict === 'failed_everywhere';
+  const confirmed =
+    vpnConfirmed ||
+    (result.probes.length > 0 && result.verdict !== 'ok' && result.verdict !== 'indeterminate');
   const rental = /аренд|rent/i.test(nodeName);
   const agentOn = Boolean(input.serverAlive);
   const othersWhat: FleetWhat | null =
@@ -692,7 +696,7 @@ export function describeAnomaly(input: {
     const text = picture ? paymentConclusion(facts, picture, othersWhat ?? undefined) : null;
     return picture && text ? ['', ...paymentLines(facts, picture), text] : [];
   };
-  if (result.probes.length === 0) {
+  if (result.probes.length === 0 && vpnRu.length === 0 && vpnForeign.length === 0) {
     lines.push('', uncheckedLine(result, input.portKnown));
     // Проверки нет — причину не называем, но оплату в окне просим посмотреть. Агент на связи — сервер
     // работает, хостер его не отключал: остаётся аренда.
@@ -712,7 +716,13 @@ export function describeAnomaly(input: {
     };
   }
   const entry = result.entry;
-  lines.push('', entry ? 'Выход — этот сервер, из России:' : 'Из России:', ...result.probes.map(probeLine));
+  if (vpnRu.length > 0) lines.push('', 'Настоящий VLESS/REALITY из России:', ...vpnRu.map(vpnProbeLine));
+  if (vpnForeign.length > 0)
+    lines.push('Контроль настоящего VPN из-за рубежа:', ...vpnForeign.map(vpnProbeLine));
+  if (vpnRu.length === 0 && result.vpnUnchecked)
+    lines.push('', `Настоящий VPN-трафик не проверен: ${lowerFirst(result.vpnUnchecked)}`);
+  if (result.probes.length > 0)
+    lines.push('', entry ? 'Выход — этот сервер, из России:' : 'Из России:', ...result.probes.map(probeLine));
   if (result.foreign.length > 0) lines.push('Из-за рубежа:', ...result.foreign.map(probeLine));
   if (entry && entry.probes.length > 0)
     lines.push('', `${entry.label} (${entry.address}), из России:`, ...entry.probes.map(probeLine));
@@ -767,10 +777,19 @@ export function describeAnomaly(input: {
       verdict = `Похоже: порт ноды ${partialHow(result.probes)}. Сервер работает, но из части сетей до него не достучаться: блокировка у части провайдеров или сбой маршрута.`;
       break;
     case 'tspu':
-      verdict = 'Похоже: блокировка ТСПУ — подключение с именем маскировки обрывается без ответа.';
+      verdict =
+        'Похоже: региональная блокировка — настоящий VLESS/REALITY повторно не проходит из двух российских сетей, но работает из двух зарубежных стран.';
       break;
     case 'block_16_20':
       verdict = 'Похоже: блок «16–20 КБ» — соединение рвётся после первых килобайт.';
+      break;
+    case 'vpn_failed':
+      verdict =
+        'Настоящий VPN-трафик не проходит ни из России, ни из контрольных стран. Это поломка маршрута или ноды, а не подтверждённая региональная блокировка.';
+      break;
+    case 'indeterminate':
+      verdict =
+        'Вывод: порт отвечает, но настоящий REALITY-трафик не дал однозначного результата. По обычному TLS диагноз ТСПУ не ставится.';
       break;
     default:
       verdict = portOnly

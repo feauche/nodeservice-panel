@@ -96,6 +96,9 @@ export const remnawaveStatusSchema = z.object({
   stats: remnawaveStatsSchema.nullable(),
   nodes: z.array(remnawaveNodeSchema),
   cert: remnawaveCertSchema.nullable(),
+  /** Сервисная подписка для настоящих VPN-проб сохранена; сама секретная ссылка никогда не возвращается. */
+  vpnProbeConfigured: z.boolean().default(false),
+  vpnProbeRoutes: z.number().int().min(0).nullable().default(null),
 });
 export type RemnawaveStatus = z.infer<typeof remnawaveStatusSchema>;
 
@@ -109,3 +112,17 @@ export const remnawaveConnectRequestSchema = z.object({
   apiKey: z.string().trim().min(8).max(2000),
 });
 export type RemnawaveConnectRequest = z.infer<typeof remnawaveConnectRequestSchema>;
+
+export const remnawaveVpnProbeRequestSchema = z.object({
+  subscriptionUrl: z
+    .url()
+    .max(4000)
+    .refine((value) => value.startsWith('https://'), 'нужна HTTPS-ссылка'),
+});
+export type RemnawaveVpnProbeRequest = z.infer<typeof remnawaveVpnProbeRequestSchema>;
+
+export const remnawaveVpnProbeStatusSchema = z.object({
+  configured: z.boolean(),
+  routes: z.number().int().min(0).nullable(),
+});
+export type RemnawaveVpnProbeStatus = z.infer<typeof remnawaveVpnProbeStatusSchema>;

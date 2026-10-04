@@ -9,6 +9,7 @@ import {
   type Server,
   type ServerCheckKey,
   type ServerCheckRun,
+  type VpnProbeResult,
 } from '@nodeservice/shared';
 import { ChevronRightIcon, Loader2Icon, PlayIcon, SparklesIcon } from 'lucide-react';
 import { useState } from 'react';
@@ -104,6 +105,8 @@ function ProbeTable({
   const probeLabel = (probe: BlockProbeResult): string => {
     if (probe.verdict === 'ok') return portOnly ? 'Порт открыт' : 'Доступна';
     if (probe.verdict === 'partial') return 'С перебоями';
+    if (probe.verdict === 'indeterminate') return 'REALITY не проверен';
+    if (probe.verdict === 'vpn_failed') return 'VPN не проходит';
     if (probe.verdict === 'tspu') return 'Признаки ТСПУ';
     if (probe.verdict === 'block_16_20') return 'Обрыв данных';
     return 'Не отвечает';
@@ -131,7 +134,7 @@ function ProbeTable({
                   'font-medium',
                   probe.verdict === 'ok'
                     ? 'text-ok'
-                    : probe.verdict === 'partial'
+                    : probe.verdict === 'partial' || probe.verdict === 'indeterminate'
                       ? 'text-warn'
                       : 'text-crit',
                 )}
@@ -151,11 +154,53 @@ function ProbeTable({
   );
 }
 
+function VpnProbeTable({
+  title,
+  probes,
+  empty,
+}: {
+  title: string;
+  probes: VpnProbeResult[];
+  empty: string | null;
+}) {
+  return (
+    <div>
+      <h4 className="m-0 mb-1.5 text-[11px] font-semibold tracking-[0.06em] text-text-3 uppercase">
+        {title}
+      </h4>
+      {probes.length > 0 ? (
+        <div className="overflow-hidden rounded-[10px] border border-border">
+          {probes.map((probe) => (
+            <div
+              key={probe.from}
+              className="grid grid-cols-[minmax(120px,0.7fr)_minmax(105px,0.45fr)_minmax(220px,1.5fr)] border-t border-border px-3 py-2.5 text-[12px] first:border-t-0 max-sm:grid-cols-[1fr_auto]"
+            >
+              <span className="font-medium">{probe.from}</span>
+              <span className={cn('font-medium', probe.ok ? 'text-ok' : 'text-crit')}>
+                {probe.ok
+                  ? `Работает${probe.latencyMs !== null ? ` · ${probe.latencyMs} мс` : ''}`
+                  : 'Не прошёл'}
+              </span>
+              <span className="text-text-2 max-sm:col-span-2 max-sm:mt-1">{probe.detail}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="m-0 rounded-[10px] border border-border bg-surface-2 px-3 py-2.5 text-[12px] text-text-3">
+          {empty ?? 'Проба не запускалась.'}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function RussiaAccessResult({ result }: { result: BlockCheckResult }) {
   const serverTarget = result.targetKind === 'server';
   const target = serverTarget ? 'server' : 'node';
   const mainReason = uncheckedReason(result.unchecked, target, 'ru');
   const foreignReason = uncheckedReason(result.foreignUnchecked, target, 'foreign');
+  const vpnProbes = result.vpnProbes ?? [];
+  const vpnForeign = result.vpnForeign ?? [];
   const verdict = result.unchecked
     ? 'Проверить не удалось'
     : serverTarget
@@ -177,7 +222,11 @@ function RussiaAccessResult({ result }: { result: BlockCheckResult }) {
         <span
           className={cn(
             'text-[13.5px] font-semibold',
-            result.unchecked ? 'text-warn' : result.verdict === 'ok' ? 'text-ok' : 'text-crit',
+            result.unchecked || result.verdict === 'indeterminate'
+              ? 'text-warn'
+              : result.verdict === 'ok'
+                ? 'text-ok'
+                : 'text-crit',
           )}
         >
           {verdict}
@@ -187,6 +236,24 @@ function RussiaAccessResult({ result }: { result: BlockCheckResult }) {
           {result.port ? `:${result.port}` : ''}
         </span>
       </div>
+      {!serverTarget && (
+        <>
+          <VpnProbeTable
+            title="Настоящий VPN из России"
+            probes={vpnProbes}
+            empty={result.vpnUnchecked ?? null}
+          />
+          <VpnProbeTable
+            title="Настоящий VPN из других стран"
+            probes={vpnForeign}
+            empty={
+              vpnProbes.length > 0 && vpnForeign.length === 0
+                ? (result.vpnUnchecked ?? 'Нет зарубежной контрольной точки.')
+                : (result.vpnUnchecked ?? null)
+            }
+          />
+        </>
+      )}
       <ProbeTable title="Из России" probes={result.probes} empty={mainReason} portOnly={serverTarget} />
       <ProbeTable
         title="Контроль из других стран"
@@ -197,9 +264,11 @@ function RussiaAccessResult({ result }: { result: BlockCheckResult }) {
       <p className="m-0 text-[11.5px] text-text-3">
         {serverTarget
           ? `Связанной ноды нет: проверен TCP-порт SSH ${result.port ?? ''} самого сервера. TLS/DPI-проверка применяется только к пользовательскому порту VPN-ноды.`
-          : result.sniUsed
-            ? `Глубокая проверка выполнена с именем маскировки ${result.sniUsed}.`
-            : 'Имя маскировки не найдено: проверена доступность TCP-порта, глубокая TLS/DPI-проверка недоступна.'}
+          : vpnProbes.length > 0
+            ? 'Уверенный вывод строится по настоящему VLESS/REALITY-сеансу и передаче 64 КБ. TCP и обычный TLS ниже остаются диагностикой пути.'
+            : result.sniUsed
+              ? `Обычный TLS проверен с именем маскировки ${result.sniUsed}, но он не является REALITY-клиентом и сам по себе не доказывает ТСПУ.`
+              : 'Проверена доступность TCP-порта. Настоящий REALITY-трафик не проверен.'}
       </p>
     </div>
   );

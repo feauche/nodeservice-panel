@@ -140,6 +140,21 @@ describe('RemnawavePage', () => {
     expect(screen.getByText('870')).toBeInTheDocument();
   });
 
+  it('проверяет и сохраняет сервисную подписку без показа секрета', async () => {
+    mockRemnawave.connected = true;
+    mockRemnawave.domain = 'vpn-panel.example.com';
+    mockRemnawave.checkedAt = '2026-09-27T10:00:00.000Z';
+    renderPage(Page, '/servers/remnawave');
+    await screen.findByRole('heading', { name: 'Настоящая проверка VPN' });
+    const user = userEvent.setup();
+    const field = screen.getByLabelText('Ссылка сервисного пользователя Remnawave');
+    await user.type(field, 'https://subscription.example/probe');
+    await user.click(screen.getByRole('button', { name: 'Проверить и сохранить' }));
+    expect(await screen.findByText('5 маршрутов')).toBeInTheDocument();
+    expect(field).toHaveValue('');
+    expect(screen.queryByText('https://subscription.example/probe')).not.toBeInTheDocument();
+  });
+
   it('лимит трафика 0 у Remnawave — это «без лимита», «из 0 Б» не показываем', async () => {
     mockRemnawave.connected = true;
     mockRemnawave.domain = 'vpn-panel.example.com';

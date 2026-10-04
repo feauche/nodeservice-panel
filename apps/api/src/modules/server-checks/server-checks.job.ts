@@ -9,6 +9,8 @@ import { ServerChecksService } from './server-checks.service.js';
 const VERDICT_WEIGHT: Record<string, number> = {
   ok: 0,
   partial: 1,
+  indeterminate: 1,
+  vpn_failed: 2,
   tspu: 2,
   block_16_20: 2,
   ip_block: 2,
@@ -17,6 +19,8 @@ const VERDICT_WEIGHT: Record<string, number> = {
 const VERDICT_WORD: Record<string, string> = {
   ok: 'доступна',
   partial: 'с перебоями',
+  indeterminate: 'REALITY не проверен',
+  vpn_failed: 'VPN не проходит',
   tspu: 'признаки ТСПУ',
   block_16_20: 'обрыв данных',
   ip_block: 'блокировка IP',
@@ -28,17 +32,21 @@ function blockChanges(
   current: BlockCheckResult | null | undefined,
 ) {
   if (!previous || !current) return { direction: 0, lines: [] as string[] };
-  const before = new Map([...previous.probes, ...previous.foreign].map((p) => [p.from, p.verdict]));
+  const points = (result: BlockCheckResult) => [
+    ...[...result.probes, ...result.foreign].map((probe) => [probe.from, probe.verdict] as const),
+    ...[...(result.vpnProbes ?? []), ...(result.vpnForeign ?? [])].map(
+      (probe) => [`VPN · ${probe.from}`, probe.ok ? 'ok' : 'vpn_failed'] as const,
+    ),
+  ];
+  const before = new Map(points(previous));
   let direction = 0;
   const lines: string[] = [];
-  for (const probe of [...current.probes, ...current.foreign]) {
-    const old = before.get(probe.from);
-    if (!old || old === probe.verdict) continue;
-    const delta = (VERDICT_WEIGHT[probe.verdict] ?? 2) - (VERDICT_WEIGHT[old] ?? 2);
+  for (const [from, verdict] of points(current)) {
+    const old = before.get(from);
+    if (!old || old === verdict) continue;
+    const delta = (VERDICT_WEIGHT[verdict] ?? 2) - (VERDICT_WEIGHT[old] ?? 2);
     direction += Math.sign(delta);
-    lines.push(
-      `${probe.from}: ${VERDICT_WORD[old] ?? old} → ${VERDICT_WORD[probe.verdict] ?? probe.verdict}`,
-    );
+    lines.push(`${from}: ${VERDICT_WORD[old] ?? old} → ${VERDICT_WORD[verdict] ?? verdict}`);
   }
   return { direction, lines };
 }

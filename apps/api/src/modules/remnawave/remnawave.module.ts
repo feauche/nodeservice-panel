@@ -9,6 +9,7 @@ import { RemnawaveService } from './remnawave.service.js';
 import { HttpRemnawaveClient, REMNAWAVE_CLIENT } from './remnawave-client.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
 import { RemnawaveSyncJob } from './remnawave-sync.job.js';
+import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
 
 /** J4: подключение к панели Remnawave, только чтение (домен + токен API с правами на чтение). */
 @Module({
@@ -18,10 +19,11 @@ import { RemnawaveSyncJob } from './remnawave-sync.job.js';
     RemnawaveSettingsStore,
     RemnawaveService,
     RemnawaveSyncJob,
+    RemnawaveVpnProbeService,
     NodeLinkService,
     { provide: REMNAWAVE_CLIENT, useClass: HttpRemnawaveClient },
     { provide: HOST_RESOLVER, useClass: DnsHostResolver },
   ],
-  exports: [RemnawaveService, NodeLinkService],
+  exports: [RemnawaveService, NodeLinkService, RemnawaveVpnProbeService],
 })
 export class RemnawaveModule {}

@@ -40,7 +40,18 @@ function setup(answers: Record<string, string | 'ssh' | 'hang'>) {
       };
     },
   };
-  return { svc: new NodeBlockCheckService(servers as never, ssh as never), calls };
+  const disabledVpn = { status: async () => ({ configured: false, routes: null }) };
+  return {
+    svc: new NodeBlockCheckService(
+      servers as never,
+      ssh as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      disabledVpn as never,
+    ),
+    calls,
+  };
 }
 
 describe('проверка порта ноды: почему не состоялась', () => {
@@ -108,6 +119,123 @@ describe('проверка обычного сервера без ноды', () 
   });
 });
 
+describe('настоящая VPN-проба через агенты', () => {
+  const live = {
+    agentStatus: 'online' as const,
+    agentTransport: 'https' as const,
+    agentVersion: 'v0.9.0',
+  };
+  const all = [
+    srv('target', 'KZ', live),
+    srv('ru1', 'RU', live),
+    srv('ru2', 'RU', live),
+    srv('de', 'DE', live),
+    srv('nl', 'NL', live),
+  ];
+
+  function service(result: (id: string, attempt: number) => boolean | 'agent') {
+    const attempts = new Map<string, number>();
+    const servers = { sshTargetFor: async (id: string) => ({ target: { id } }) };
+    const ssh = {
+      connect: async () => ({ exec: async () => ({ stdout: OK, code: 0 }), end: () => undefined }),
+    };
+    const rows = { findById: async (id: string) => ({ id }) };
+    const agent = {
+      vpnProbe: async (row: { id: string }) => {
+        const attempt = (attempts.get(row.id) ?? 0) + 1;
+        attempts.set(row.id, attempt);
+        const outcome = result(row.id, attempt);
+        const ok = outcome === true;
+        return {
+          ok,
+          stage: ok ? 'done' : outcome === 'agent' ? 'start' : 'connect',
+          detail: ok ? 'Маршрут работает.' : outcome === 'agent' ? 'Xray не запустился.' : 'Нет связи.',
+          latencyMs: 4,
+          bytes: ok ? 65536 : 0,
+        };
+      },
+    };
+    return {
+      svc: new NodeBlockCheckService(
+        servers as never,
+        ssh as never,
+        rows as never,
+        agent as never,
+        { issue: () => 'token' } as never,
+        {
+          status: async () => ({ configured: true, routes: 5 }),
+          routeFor: async () => 'vless://service-route',
+        } as never,
+      ),
+      attempts,
+    };
+  }
+
+  it('ставит ТСПУ только когда две точки России повторно не проходят, а зарубежные проходят', async () => {
+    const { svc, attempts } = service((id) => !id.startsWith('ru'));
+    const result = await svc.check('Казахстан - 1', '10.0.0.6', 443, 'mask.example', 'target', all);
+    expect(result).toMatchObject({ verdict: 'tspu', vpnVerdict: 'regional_block' });
+    expect(result.vpnProbes).toHaveLength(2);
+    expect(result.vpnForeign).toHaveLength(2);
+    expect(attempts.get('ru1')).toBe(2);
+    expect(attempts.get('ru2')).toBe(2);
+  });
+
+  it('не подтверждает блокировку, если повтор настоящего VPN-сеанса прошёл', async () => {
+    const { svc } = service((id, attempt) => !id.startsWith('ru') || attempt === 2);
+    const result = await svc.check('Казахстан - 1', '10.0.0.6', 443, 'mask.example', 'target', all);
+    expect(result).toMatchObject({ verdict: 'ok', vpnVerdict: 'ok' });
+    expect(result.vpnProbes?.every((probe) => probe.ok)).toBe(true);
+  });
+
+  it('не объявляет региональную блокировку по ошибке агента или одной зарубежной точке', async () => {
+    const brokenAgent = service((id) => (id === 'ru2' ? 'agent' : !id.startsWith('ru')));
+    expect(
+      await brokenAgent.svc.check('Казахстан - 1', '10.0.0.6', 443, 'mask.example', 'target', all),
+    ).toMatchObject({ vpnVerdict: 'mixed', verdict: 'indeterminate' });
+
+    const oneForeign = service((id) => id === 'de');
+    expect(
+      await oneForeign.svc.check('Казахстан - 1', '10.0.0.6', 443, 'mask.example', 'target', all),
+    ).toMatchObject({ vpnVerdict: 'mixed', verdict: 'indeterminate' });
+  });
+
+  it('при массовой проверке не запускает на одном агенте больше четырёх Xray-проб', async () => {
+    const active = new Map<string, number>();
+    const maximum = new Map<string, number>();
+    const svc = new NodeBlockCheckService(
+      { sshTargetFor: async (id: string) => ({ target: { id } }) } as never,
+      {
+        connect: async () => ({ exec: async () => ({ stdout: OK, code: 0 }), end: () => undefined }),
+      } as never,
+      { findById: async (id: string) => ({ id }) } as never,
+      {
+        vpnProbe: async (row: { id: string }) => {
+          const current = (active.get(row.id) ?? 0) + 1;
+          active.set(row.id, current);
+          maximum.set(row.id, Math.max(maximum.get(row.id) ?? 0, current));
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          active.set(row.id, (active.get(row.id) ?? 1) - 1);
+          return { ok: true, stage: 'done', detail: 'Маршрут работает.', latencyMs: 4, bytes: 65536 };
+        },
+      } as never,
+      { issue: () => 'token' } as never,
+      {
+        status: async () => ({ configured: true, routes: 5 }),
+        routeFor: async () => 'vless://service-route',
+      } as never,
+    );
+
+    await Promise.all(
+      Array.from({ length: 8 }, () =>
+        svc.check('Казахстан - 1', '10.0.0.6', 443, 'mask.example', 'target', all),
+      ),
+    );
+
+    expect([...maximum.values()]).toEqual([4, 4, 4, 4]);
+  });
+});
+
 describe('проверка порта ноды: смешанная картина', () => {
   const all = [srv('exit', 'DE'), srv('ru1', 'RU'), srv('ru2', 'RU'), srv('ru3', 'RU'), srv('nl', 'NL')];
 
@@ -160,7 +288,14 @@ describe('проверка порта ноды: смешанная картин�
         end: () => undefined,
       }),
     };
-    const svc = new NodeBlockCheckService(servers as never, ssh as never);
+    const svc = new NodeBlockCheckService(
+      servers as never,
+      ssh as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { status: async () => ({ configured: false, routes: null }) } as never,
+    );
     const r = await svc.check('n', '1.2.3.4', 443, 'site.ru', 'exit', [
       srv('exit', 'DE'),
       srv('ru1', 'RU'),
