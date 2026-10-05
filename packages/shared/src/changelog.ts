@@ -12,6 +12,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.63.1',
+    date: '2026-10-05',
+    items: [
+      'В диалоге Джарвиса появился локальный поиск по сообщениям: он не зависит от регистра, показывает число совпадений, листает их вперёд и назад и открывается привычным Ctrl/Cmd+F.',
+    ],
+  },
+  {
     version: '0.63.0',
     date: '2026-10-05',
     items: [

@@ -9,10 +9,13 @@ import { Link } from '@tanstack/react-router';
 import {
   AlertTriangleIcon,
   BookOpenIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   FileClockIcon,
   HistoryIcon,
   Loader2Icon,
   MessageSquarePlusIcon,
+  SearchIcon,
   SendIcon,
   ServerIcon,
   XIcon,
@@ -126,10 +129,24 @@ function AssistantChat() {
   }, [serversQuery.data]);
   const send = useSendMessage();
   const [input, setInput] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchIndex, setSearchIndex] = useState(0);
   const chatRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const messages = history.data?.items ?? [];
+  const normalizedSearch = searchOpen ? searchQuery.trim().toLocaleLowerCase('ru-RU') : '';
+  const searchMatches = useMemo(
+    () =>
+      normalizedSearch
+        ? messages.filter((message) => message.content.toLocaleLowerCase('ru-RU').includes(normalizedSearch))
+        : [],
+    [messages, normalizedSearch],
+  );
+  const matchingIds = useMemo(() => new Set(searchMatches.map((message) => message.id)), [searchMatches]);
+  const activeSearchId = searchMatches[searchIndex]?.id ?? null;
   // «Думает» берём из кэша запросов, а не из состояния страницы: ушли в другой раздел и вернулись —
   // запрос всё ещё идёт, и индикатор должен остаться, а когда ответ готов, исчезнуть.
   const pendingHere = usePendingChats().filter((v) => (v.conversationId ?? null) === conversationId);
@@ -192,6 +209,46 @@ function AssistantChat() {
       // приватный режим браузера — просто не помним
     }
   }, [conversationId]);
+  // Поиск относится только к открытой беседе: при переходе не оставляем запрос и номер старого совпадения.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: эффект намеренно запускается при смене внешнего id беседы
+  useEffect(() => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearchIndex(0);
+  }, [conversationId]);
+  // Если история обновилась и совпадений стало меньше, остаёмся на последнем существующем результате.
+  useEffect(() => {
+    if (searchIndex >= searchMatches.length) setSearchIndex(Math.max(0, searchMatches.length - 1));
+  }, [searchIndex, searchMatches.length]);
+  // Ctrl/Cmd+F открывает поиск именно по беседе. Escape закрывает его и возвращает место сообщениям.
+  useEffect(() => {
+    const onSearchShortcut = (event: KeyboardEvent) => {
+      if (
+        messages.length > 0 &&
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLocaleLowerCase('ru-RU') === 'f'
+      ) {
+        event.preventDefault();
+        setSearchOpen(true);
+      } else if (event.key === 'Escape' && searchOpen) {
+        event.preventDefault();
+        setSearchOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onSearchShortcut);
+    return () => window.removeEventListener('keydown', onSearchShortcut);
+  }, [searchOpen, messages.length]);
+  useEffect(() => {
+    if (searchOpen) searchRef.current?.focus();
+  }, [searchOpen]);
+  useEffect(() => {
+    if (!activeSearchId) return;
+    const element = [
+      ...(chatRef.current?.querySelectorAll<HTMLElement>('[data-assistant-message-id]') ?? []),
+    ].find((candidate) => candidate.dataset.assistantMessageId === activeSearchId);
+    if (typeof element?.scrollIntoView === 'function')
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [activeSearchId]);
   // Восстановленной беседы могло уже не быть (удалили) — тогда откатываемся на новый чат.
   useEffect(() => {
     if (conversationId && history.isError && (history.error as { status?: number } | null)?.status === 404)
@@ -261,21 +318,57 @@ function AssistantChat() {
 
       {/* Диалог */}
       <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-surface">
-        {!wide && (
-          <div className="flex flex-none items-center gap-2 border-b border-border px-3 py-2.5">
+        <div className="flex flex-none items-center gap-2 border-b border-border px-3 py-2.5">
+          {!wide && (
             <HistorySheet
               items={conversations.data?.items}
               current={conversationId}
               onSelect={setConversationId}
             />
-            <span
-              data-testid={currentTitle ? 'assistant-conversation-title' : undefined}
-              className="min-w-0 flex-1 truncate text-[12.5px] text-text-2"
-            >
-              {currentTitle}
-            </span>
-            <NewChatButton onClick={() => setConversationId(null)} />
-          </div>
+          )}
+          <span
+            data-testid={currentTitle ? 'assistant-conversation-title' : undefined}
+            className="min-w-0 flex-1 truncate text-[12.5px] text-text-2"
+          >
+            {currentTitle ?? (wide ? 'Новый диалог' : '')}
+          </span>
+          <button
+            type="button"
+            aria-label="Поиск по диалогу"
+            aria-pressed={searchOpen}
+            disabled={messages.length === 0}
+            onClick={() => setSearchOpen((open) => !open)}
+            className={cn(
+              'grid size-8 flex-none place-items-center rounded-[9px] border border-border text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-default disabled:opacity-35',
+              searchOpen && 'border-brand/40 bg-brand-soft text-brand',
+            )}
+          >
+            <SearchIcon className="size-4" aria-hidden="true" />
+          </button>
+          {!wide && <NewChatButton onClick={() => setConversationId(null)} />}
+        </div>
+        {searchOpen && (
+          <ConversationSearch
+            inputRef={searchRef}
+            query={searchQuery}
+            onQueryChange={(value) => {
+              setSearchQuery(value);
+              setSearchIndex(0);
+            }}
+            index={searchIndex}
+            count={searchMatches.length}
+            onPrevious={() =>
+              setSearchIndex((current) =>
+                searchMatches.length === 0 ? 0 : (current - 1 + searchMatches.length) % searchMatches.length,
+              )
+            }
+            onNext={() =>
+              setSearchIndex((current) =>
+                searchMatches.length === 0 ? 0 : (current + 1) % searchMatches.length,
+              )
+            }
+            onClose={() => setSearchOpen(false)}
+          />
         )}
         <div
           ref={chatRef}
@@ -291,6 +384,8 @@ function AssistantChat() {
                   message={m}
                   grouped={m.role === 'assistant' && messages[i - 1]?.role === 'assistant'}
                   interim={m.role === 'assistant' && messages[i + 1]?.role === 'assistant'}
+                  searchMatch={matchingIds.has(m.id)}
+                  searchActive={m.id === activeSearchId}
                 />
               ))}
               {shownPending && (
@@ -401,6 +496,82 @@ function NewChatButton({ onClick }: { onClick: () => void }) {
       <MessageSquarePlusIcon className="size-4" aria-hidden="true" />
       Новый чат
     </button>
+  );
+}
+
+function ConversationSearch({
+  inputRef,
+  query,
+  onQueryChange,
+  index,
+  count,
+  onPrevious,
+  onNext,
+  onClose,
+}: {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  query: string;
+  onQueryChange: (value: string) => void;
+  index: number;
+  count: number;
+  onPrevious: () => void;
+  onNext: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="flex flex-none items-center gap-1.5 border-b border-border bg-surface-2/45 px-3 py-2">
+      <SearchIcon className="size-3.5 flex-none text-text-3" aria-hidden="true" />
+      <input
+        ref={inputRef}
+        type="search"
+        value={query}
+        onChange={(event) => onQueryChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          if (event.shiftKey) onPrevious();
+          else onNext();
+        }}
+        aria-label="Найти в текущем диалоге"
+        placeholder="Найти в диалоге…"
+        className="h-8 min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-text-3 [&::-webkit-search-cancel-button]:hidden"
+      />
+      <span
+        role="status"
+        className={cn(
+          'min-w-[52px] text-center text-[11px] tabular-nums whitespace-nowrap',
+          query.trim() && count === 0 ? 'text-warn' : 'text-text-3',
+        )}
+      >
+        {query.trim() ? (count > 0 ? `${index + 1} из ${count}` : 'Нет') : '—'}
+      </span>
+      <button
+        type="button"
+        aria-label="Предыдущее совпадение"
+        disabled={count === 0}
+        onClick={onPrevious}
+        className="grid size-8 flex-none place-items-center rounded-[8px] text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-30"
+      >
+        <ChevronUpIcon className="size-4" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        aria-label="Следующее совпадение"
+        disabled={count === 0}
+        onClick={onNext}
+        className="grid size-8 flex-none place-items-center rounded-[8px] text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-30"
+      >
+        <ChevronDownIcon className="size-4" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        aria-label="Закрыть поиск"
+        onClick={onClose}
+        className="grid size-8 flex-none place-items-center rounded-[8px] text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground"
+      >
+        <XIcon className="size-4" aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 
@@ -547,20 +718,33 @@ function MessageRow({
   message,
   grouped = false,
   interim = false,
+  searchMatch = false,
+  searchActive = false,
 }: {
   message: AssistantMessage;
   /** Сообщение идёт следом за другим ответом Джарвиса: значка нет, вместо него пустое место. */
   grouped?: boolean;
   /** За ним идёт ещё ответ: это «сейчас посмотрю», приглушаем и не выделяем. */
   interim?: boolean;
+  /** Сообщение содержит поисковый запрос; активное дополнительно выделяется и прокручивается в центр. */
+  searchMatch?: boolean;
+  searchActive?: boolean;
 }) {
   const servers = useServers();
   if (message.role === 'user')
     return (
-      <div className="flex max-w-[80%] flex-row-reverse gap-2.5 self-end animate-in fade-in-0 slide-in-from-bottom-1 duration-200">
+      <div
+        data-assistant-message-id={message.id}
+        data-search-current={searchActive ? 'true' : undefined}
+        className="flex max-w-[80%] flex-row-reverse gap-2.5 self-end animate-in fade-in-0 slide-in-from-bottom-1 duration-200"
+      >
         <div
           data-testid="assistant-user-message"
-          className="rounded-[14px] border border-brand/30 bg-brand-soft px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap break-words text-foreground"
+          className={cn(
+            'rounded-[14px] border border-brand/30 bg-brand-soft px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap break-words text-foreground transition-shadow',
+            searchMatch && 'ring-1 ring-warn/45',
+            searchActive && 'ring-2 ring-brand ring-offset-2 ring-offset-surface',
+          )}
         >
           {message.content}
         </div>
@@ -569,9 +753,13 @@ function MessageRow({
 
   return (
     <div
+      data-assistant-message-id={message.id}
+      data-search-current={searchActive ? 'true' : undefined}
       className={cn(
-        'flex max-w-[92%] gap-3 animate-in fade-in-0 slide-in-from-bottom-1 duration-200',
+        'flex max-w-[92%] gap-3 rounded-xl px-1 py-1 animate-in fade-in-0 slide-in-from-bottom-1 duration-200',
         grouped && '-mt-2',
+        searchMatch && 'bg-warn-soft/45 ring-1 ring-warn/35',
+        searchActive && 'bg-brand-soft ring-2 ring-brand/55',
       )}
     >
       {grouped ? <span className="size-8 flex-none" aria-hidden="true" /> : <Avatar />}

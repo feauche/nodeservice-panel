@@ -456,6 +456,45 @@ describe('AssistantPage', () => {
     });
   });
 
+  it('поиск по текущему диалогу находит сообщения без учёта регистра и листает совпадения', async () => {
+    const conversationId = '0192f000-0000-7000-8000-000000000d01';
+    const iso = new Date().toISOString();
+    const message = (id: string, role: 'user' | 'assistant', content: string): AssistantMessage => ({
+      id,
+      role,
+      content,
+      citations: [],
+      proposals: [],
+      reachability: [],
+      activity: [],
+      createdAt: iso,
+    });
+    mockAssistant.enabled = true;
+    mockAssistant.conversations = [{ id: conversationId, title: 'Проверка серверов', createdAt: iso }];
+    mockAssistant.messages = {
+      [conversationId]: [
+        message('0192f000-0000-7000-8000-000000000d02', 'user', 'Проверь первый сервер'),
+        message('0192f000-0000-7000-8000-000000000d03', 'assistant', 'Первый СЕРВЕР работает.'),
+        message('0192f000-0000-7000-8000-000000000d04', 'assistant', 'Сеть исправна.'),
+      ],
+    };
+    localStorage.setItem(LAST_CONV_KEY, conversationId);
+    renderPage(AssistantPage, '/assistant');
+    const user = userEvent.setup();
+    await screen.findByText('Первый СЕРВЕР работает.');
+    await user.click(screen.getByRole('button', { name: 'Поиск по диалогу' }));
+    const search = screen.getByRole('searchbox', { name: 'Найти в текущем диалоге' });
+    await user.type(search, 'сервер');
+
+    expect(screen.getByText('1 из 2')).toBeInTheDocument();
+    expect(document.querySelector('[data-search-current="true"]')).toHaveTextContent('Проверь первый сервер');
+    await user.click(screen.getByRole('button', { name: 'Следующее совпадение' }));
+    expect(screen.getByText('2 из 2')).toBeInTheDocument();
+    expect(document.querySelector('[data-search-current="true"]')).toHaveTextContent(
+      'Первый СЕРВЕР работает.',
+    );
+  });
+
   it('слишком длинный текст: кнопка заблокирована, счётчик и пояснение на виду', async () => {
     mockAssistant.enabled = true;
     renderPage(AssistantPage, '/assistant');
