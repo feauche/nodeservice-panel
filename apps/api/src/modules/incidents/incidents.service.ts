@@ -29,6 +29,7 @@ import type { IncidentRow, ServerRow } from '../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
 import { BillingService } from '../billing/billing.service.js';
+import { serverBillingAliases } from '../billing/server-billing-identity.js';
 import { PanelAlertsService } from '../health/panel-alerts.service.js';
 import { MaintenanceService } from '../maintenance/maintenance.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -177,9 +178,9 @@ export class IncidentsService {
    * Оплаты сервера в окне оплаты (срок прошёл или наступит в ближайшие сутки) — факты для текста дела.
    * null — «Биллинг» не ответил: дело заводится без них, и про оплату панель ничего не утверждает.
    */
-  async paymentWindowFor(serverId: string): Promise<PaymentFacts | null> {
+  async paymentWindowFor(serverId: string, aliases: readonly string[] = []): Promise<PaymentFacts | null> {
     return this.billing
-      .paymentWindowForServer(serverId)
+      .paymentWindowForServer(serverId, new Date(), aliases)
       .then((w) => ({
         overdue: w.overdue.map((f) => ({ kind: f.kind, text: f.text })),
         dueSoon: w.dueSoon.map((f) => ({ kind: f.kind, text: f.text })),
@@ -703,7 +704,9 @@ export class IncidentsService {
       const why = hostDown
         ? `Сервер не отвечает: агент молчит, порт SSH ${server.host}:${server.port} не открывается. Обычно это значит, что сервер выключен, завис или отрезан у хостера — проверьте в панели хостера и оплату. Агент и SSH — следствие, переустанавливать агента бессмысленно.`
         : `Сервер не отвечает панели: агент молчит и по SSH панель зайти не может, хотя порт SSH ${server.host}:${server.port} с панели открывается. Сервер включён — скорее всего, он завис или не пускает панель по SSH (сменился ключ или пароль, доступ закрыт файрволом). Проверьте сервер в панели хостера; переустанавливать агента бессмысленно, пока панель не может зайти по SSH.`;
-      const pay = (open ? null : await this.paymentWindowFor(server.id)) ?? NO_PAYMENT_FACTS;
+      const pay =
+        (open ? null : await this.paymentWindowFor(server.id, serverBillingAliases(server))) ??
+        NO_PAYMENT_FACTS;
       // Об оплате — только когда порт не открывается и с панели. Сбой сразу у нескольких серверов — общая
       // причина вероятнее. Из других стран порт не проверен — сервер не отвечает только самой панели:
       // причину не называем, оплату просим проверить.

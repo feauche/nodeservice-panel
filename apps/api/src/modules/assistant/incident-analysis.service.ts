@@ -18,6 +18,7 @@ import { AuditRepository } from '../audit/audit.repository.js';
 import { AuditService } from '../audit/audit.service.js';
 import { BillingService } from '../billing/billing.service.js';
 import type { PaymentWindow } from '../billing/payment-window.js';
+import { serverBillingAliases } from '../billing/server-billing-identity.js';
 import { NODE_ONLINE_METRIC } from '../fleet-stats/fleet-stats.service.js';
 import { egressText } from '../incidents/egress-check.logic.js';
 import { EgressCheckService } from '../incidents/egress-check.service.js';
@@ -454,12 +455,14 @@ export class IncidentAnalysisService implements OnModuleInit {
     timeZone: string,
   ): Promise<{ nowText: string | null; payment: PaymentWindow | null; evidence: string[] }> {
     let nowText: string | null = null;
+    let billingAliases: string[] = [];
     let nodeRef: { uuid: string; name: string } | null = null;
     let blockChecked = false;
     if (CONNECTIVITY_KINDS.has(inc.kind)) {
       await step('Смотрю онлайн ноды сейчас');
       const all = await deps.servers.list();
       const me = inc.serverId ? (all.find((x) => x.id === inc.serverId) ?? null) : null;
+      if (me) billingAliases = serverBillingAliases(me);
       const st = await this.remnawave.status().catch(() => null);
       // Нода дела — по общей связи «сервер ↔ нода» (адрес, IP, выбор в профиле), а не по совпадению строк.
       const links = st?.connected ? await this.links.resolve(all, st.nodes) : null;
@@ -530,7 +533,9 @@ export class IncidentAnalysisService implements OnModuleInit {
     let payment: PaymentWindow | null = null;
     if (inc.serverId && BILLING_DOWN_KINDS.has(inc.kind)) {
       await step('Сверяюсь с биллингом');
-      payment = await this.billing.paymentWindowForServer(inc.serverId).catch(() => null);
+      payment = await this.billing
+        .paymentWindowForServer(inc.serverId, new Date(), billingAliases)
+        .catch(() => null);
     }
     const evidence = CONNECTIVITY_KINDS.has(inc.kind)
       ? await this.gatherEvidence(inc, deps, step, nodeRef, payment !== null, blockChecked, timeZone)

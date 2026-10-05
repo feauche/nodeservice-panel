@@ -19,7 +19,7 @@ import {
   formatMoney,
   formatRub,
 } from '@nodeservice/shared';
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
@@ -59,6 +59,7 @@ import {
   type PaymentWindow,
   SERVER_PAYMENT_KINDS,
 } from './payment-window.js';
+import { billingItemBelongsToServer } from './server-billing-identity.js';
 
 const DEFAULT_TZ = 'Europe/Moscow';
 const DAY_MS = 86_400_000;
@@ -895,20 +896,37 @@ export class BillingService {
    * в разбор Джарвиса; сроки — в поясе панели. total = 0 — оплат этого сервера в «Биллинге» нет.
    * Берутся оплаты всех видов: какой вид что объясняет, решает тот, кто пишет вывод (payment-hint.ts).
    */
-  async paymentWindowForServer(serverId: string, now = new Date()): Promise<PaymentWindow> {
-    const rows = await this.db
+  async paymentWindowForServer(
+    serverId: string,
+    now = new Date(),
+    aliases: readonly string[] = [],
+  ): Promise<PaymentWindow> {
+    const active = await this.db
       .select()
       .from(billingItems)
       .where(
         and(
           isNull(billingItems.archivedAt),
-          sql`${billingItems.serverIds} @> ${JSON.stringify([serverId])}::jsonb`,
+          or(
+            sql`${billingItems.serverIds} @> ${JSON.stringify([serverId])}::jsonb`,
+            and(eq(billingItems.kind, 'rent'), sql`jsonb_array_length(${billingItems.serverIds}) = 0`),
+          ),
         ),
       );
     const timeZone = validTz(await this.notifications.timeZone().catch(() => DEFAULT_TZ));
-    if (rows.length === 0) return buildPaymentWindow([], [], now, timeZone);
     const prov = await this.db.select({ id: providers.id, name: providers.name }).from(providers);
     const pName = new Map(prov.map((p) => [p.id, p.name]));
+    const rows = active.filter((it) =>
+      billingItemBelongsToServer({
+        kind: it.kind,
+        title: it.title,
+        provider: it.providerId ? (pName.get(it.providerId) ?? null) : null,
+        serverIds: it.serverIds,
+        serverId,
+        aliases,
+      }),
+    );
+    if (rows.length === 0) return buildPaymentWindow([], [], now, timeZone);
     const entries = new Map<string, PaymentEntry>(
       rows.map((it) => [
         it.id,
@@ -956,27 +974,44 @@ export class BillingService {
     serverId: string,
     since: Date,
     now = new Date(),
+    aliases: readonly string[] = [],
   ): Promise<RecentServerRenewal | null> {
-    const [row] = await this.db
+    const rows = await this.db
       .select({
         kind: billingItems.kind,
         title: billingItems.title,
+        provider: providers.name,
+        serverIds: billingItems.serverIds,
         paidAt: billingPayments.paidAt,
         extendedTo: billingPayments.extendedTo,
         actorDisplay: billingPayments.actorDisplay,
       })
       .from(billingPayments)
       .innerJoin(billingItems, eq(billingItems.id, billingPayments.itemId))
+      .leftJoin(providers, eq(providers.id, billingItems.providerId))
       .where(
         and(
-          sql`${billingItems.serverIds} @> ${JSON.stringify([serverId])}::jsonb`,
           inArray(billingItems.kind, [...SERVER_PAYMENT_KINDS]),
+          or(
+            sql`${billingItems.serverIds} @> ${JSON.stringify([serverId])}::jsonb`,
+            and(eq(billingItems.kind, 'rent'), sql`jsonb_array_length(${billingItems.serverIds}) = 0`),
+          ),
           gte(billingPayments.paidAt, since),
           lte(billingPayments.paidAt, now),
         ),
       )
       .orderBy(desc(billingPayments.paidAt), desc(billingPayments.id))
-      .limit(1);
+      .limit(50);
+    const row = rows.find((candidate) =>
+      billingItemBelongsToServer({
+        kind: candidate.kind,
+        title: candidate.title,
+        provider: candidate.provider,
+        serverIds: candidate.serverIds,
+        serverId,
+        aliases,
+      }),
+    );
     if (!row || (row.kind !== 'server' && row.kind !== 'rent')) return null;
     return {
       kind: row.kind,

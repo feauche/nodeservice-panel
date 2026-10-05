@@ -10,6 +10,7 @@ import {
   type RemnawaveNode,
 } from '@nodeservice/shared';
 import type { IncidentRow } from '../../infra/db/schema/index.js';
+import { serverBillingAliases } from '../billing/server-billing-identity.js';
 import { NODE_ONLINE_METRIC } from '../fleet-stats/fleet-stats.service.js';
 import { VmReaderService } from '../metrics/vm-reader.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -507,7 +508,9 @@ export class NodeAnomalyJob {
     else if (up.kind === 'unknown') result.entry = unknownEntry(up);
     // Оплата в окне (срок прошёл или наступит в ближайшие сутки) — вероятная причина, если блокировки нет.
     // Ноды нет среди серверов панели — «Биллинг» спросить не о чем: null, про оплату панель не утверждает.
-    const payment = matched ? await this.incidentsService.paymentWindowFor(matched.id) : null;
+    const payment = matched
+      ? await this.incidentsService.paymentWindowFor(matched.id, serverBillingAliases(matched))
+      : null;
     // Работает ли сам сервер: агент на связи либо порт SSH с панели открывается (агент может молчать или
     // не стоять вовсе). Без второй проверки закрытый порт ноды у работающего сервера объявлялся «Сервер
     // недоступен — вероятнее всего, отключили за неоплату».

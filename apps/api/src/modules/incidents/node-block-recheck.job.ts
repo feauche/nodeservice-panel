@@ -10,6 +10,7 @@ import {
 
 import { lowerFirst } from '../../common/text.js';
 import { BillingService, type RecentServerRenewal } from '../billing/billing.service.js';
+import { serverBillingAliases } from '../billing/server-billing-identity.js';
 import { NodeLinkService } from '../remnawave/node-link.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersService } from '../servers/servers.service.js';
@@ -240,7 +241,14 @@ export class NodeBlockRecheckJob {
         // Продление, записанное между открытием и восстановлением, — новая улика. Раньше закрытие было
         // шаблонным и не читало Биллинг, поэтому после оплаты всё равно называло «короткую просадку».
         const renewal = row.serverId
-          ? await this.billing.recentServerRenewal(row.serverId, row.openedAt).catch(() => null)
+          ? await this.billing
+              .recentServerRenewal(
+                row.serverId,
+                row.openedAt,
+                new Date(),
+                server ? serverBillingAliases(server) : [row.serverName],
+              )
+              .catch(() => null)
           : null;
         const why = renewal
           ? renewalRecoveryText(renewal)
