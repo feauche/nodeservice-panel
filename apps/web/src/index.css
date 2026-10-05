@@ -177,8 +177,14 @@
 }
 
 .ns-topology-flow {
-  stroke-dasharray: 3 13;
-  animation: ns-topology-flow 1.1s linear infinite;
+  stroke-dasharray: 6 10;
+  animation: ns-topology-flow 1.15s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ns-topology-flow {
+    animation: none;
+  }
 }
 
 /* ---------- Графит (по умолчанию) ---------- */

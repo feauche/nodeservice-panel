@@ -12,6 +12,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.63.4',
+    date: '2026-10-05',
+    items: [
+      'Анимация трафика на карте Remnawave стала одной движущейся линией: статичный пунктир под ней убран, поэтому маршрут больше не выглядит задвоенным.',
+    ],
+  },
+  {
     version: '0.63.3',
     date: '2026-10-05',
     items: [

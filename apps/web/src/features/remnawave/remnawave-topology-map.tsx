@@ -81,22 +81,14 @@ function Edge({
   return (
     <g className="transition-opacity duration-200" opacity={dimmed ? 0.1 : 1}>
       <path
+        className={animated ? 'ns-topology-flow' : undefined}
         d={path}
         fill="none"
         stroke={active ? color : 'var(--border)'}
-        strokeWidth={active ? 2.25 : 1.5}
-        strokeDasharray="6 7"
+        strokeWidth={active ? 2.5 : 1.5}
+        strokeDasharray={animated ? undefined : '6 7'}
+        strokeLinecap="round"
       />
-      {animated && (
-        <path
-          className="ns-topology-flow motion-reduce:hidden"
-          d={path}
-          fill="none"
-          stroke={color}
-          strokeWidth={active ? 2.5 : 2}
-          strokeLinecap="round"
-        />
-      )}
       {status === 'error' && !dimmed && (
         <foreignObject x={middle - 10} y={(from.y + to.y) / 2 - 10} width="20" height="20">
           <XIcon className="size-5 text-crit drop-shadow-[0_0_8px_color-mix(in_srgb,var(--crit)_45%,transparent)]" />
