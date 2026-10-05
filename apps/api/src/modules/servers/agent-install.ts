@@ -1,3 +1,5 @@
+import type { AgentDiagnostics } from '@nodeservice/shared';
+
 import { stripAnsi } from './servers.problems.js';
 import { shellQuote } from './ssh.service.js';
 
@@ -12,11 +14,91 @@ export const AGENT_INSTALL_LABEL = 'установка агента';
  */
 export const AGENT_INSTALL_TIMEOUT_MS = 5 * 60_000;
 export const AGENT_UNINSTALL_LABEL = 'удаление агента';
+export const AGENT_DIAGNOSTICS_LABEL = 'проверка установки агента';
+
+/**
+ * Только безопасные сведения: состояние штатной службы, версия бинаря, PID/путь процессов и имена
+ * дополнительных systemd-служб. Аргументы процессов и environment не читаем — там могли быть ключи.
+ */
+export const AGENT_DIAGNOSTICS_SCRIPT = [
+  '# ns-agent:diagnostics',
+  'service="$(systemctl is-active nodeservice-agent 2>/dev/null || true)"',
+  '[ -n "$service" ] || service=missing',
+  'version="$(/usr/local/bin/nodeservice-agent version 2>/dev/null | head -n 1 || true)"',
+  'main="$(systemctl show nodeservice-agent -p MainPID --value 2>/dev/null || true)"',
+  'case "$main" in *[!0-9]*|\'\') main=0 ;; esac',
+  'printf "@@service=%s\\n@@version=%s\\n@@main=%s\\n" "$service" "$version" "$main"',
+  'for p in /proc/[0-9]*; do',
+  '  [ -r "$p/exe" ] || continue',
+  '  exe="$(readlink "$p/exe" 2>/dev/null || true)"',
+  '  clean="$' + '{exe% (deleted)}"',
+  '  base="$' + '{clean##*/}"',
+  '  case "$base" in nodeservice-agent|nodeservice-agent_linux_*) printf "@@process=%s|%s\\n" "$' +
+    '{p##*/}" "$exe" ;; esac',
+  'done',
+  'for f in /etc/systemd/system/*.service /usr/lib/systemd/system/*.service /lib/systemd/system/*.service; do',
+  '  [ -f "$f" ] || continue',
+  '  unit="$' + '{f##*/}"',
+  '  [ "$unit" = nodeservice-agent.service ] && continue',
+  '  grep -Eq \'^[[:space:]]*ExecStart=.*nodeservice-agent([[:space:]]|$)\' "$f" 2>/dev/null || continue',
+  '  printf "@@unit=%s\\n" "$unit"',
+  'done',
+].join('\n');
+
+export type ParsedAgentDiagnostics = Pick<
+  AgentDiagnostics,
+  'service' | 'installedVersion' | 'mainPid' | 'processes' | 'extraUnits'
+>;
+
+export function parseAgentDiagnostics(output: string): ParsedAgentDiagnostics {
+  let service = 'missing';
+  let installedVersion: string | null = null;
+  let mainPid: number | null = null;
+  const processes: ParsedAgentDiagnostics['processes'] = [];
+  const extraUnits = new Set<string>();
+  for (const raw of stripAnsi(output).split(/\r?\n/)) {
+    if (raw.startsWith('@@service=')) service = raw.slice(10).trim() || 'missing';
+    else if (raw.startsWith('@@version=')) installedVersion = raw.slice(10).trim() || null;
+    else if (raw.startsWith('@@main=')) {
+      const value = Number(raw.slice(7));
+      mainPid = Number.isInteger(value) && value > 0 ? value : null;
+    } else if (raw.startsWith('@@process=') && processes.length < 20) {
+      const [pidText, ...pathParts] = raw.slice(10).split('|');
+      const pid = Number(pidText);
+      const executable = pathParts.join('|').trim().slice(0, 500);
+      if (Number.isInteger(pid) && pid > 0 && executable)
+        processes.push({ pid, executable, official: mainPid !== null && pid === mainPid });
+    } else if (raw.startsWith('@@unit=') && extraUnits.size < 20) {
+      const unit = raw.slice(7).trim().slice(0, 255);
+      if (unit) extraUnits.add(unit);
+    }
+  }
+  return { service, installedVersion, mainPid, processes, extraUnits: [...extraUnits].sort() };
+}
 
 /** Полностью убрать агент и только его правила UFW. Команда повторяемая: отсутствие файлов — успех. */
 export const AGENT_UNINSTALL_SCRIPT = [
   '# ns-agent:uninstall',
   'systemctl disable --now nodeservice-agent >/dev/null 2>&1 || true',
+  'for f in /etc/systemd/system/*.service /usr/lib/systemd/system/*.service /lib/systemd/system/*.service; do',
+  '  [ -f "$f" ] || continue',
+  '  unit="$' + '{f##*/}"',
+  '  [ "$unit" = nodeservice-agent.service ] && continue',
+  '  grep -Eq \'^[[:space:]]*ExecStart=.*nodeservice-agent([[:space:]]|$)\' "$f" 2>/dev/null || continue',
+  '  systemctl disable --now "$unit" >/dev/null 2>&1 || true',
+  'done',
+  'agent_pids=""',
+  'for p in /proc/[0-9]*; do',
+  '  [ -r "$p/exe" ] || continue',
+  '  exe="$(readlink "$p/exe" 2>/dev/null || true)"',
+  '  clean="$' + '{exe% (deleted)}"',
+  '  base="$' + '{clean##*/}"',
+  '  case "$base" in nodeservice-agent|nodeservice-agent_linux_*) kill "$' +
+    '{p##*/}" 2>/dev/null || true; agent_pids="$agent_pids $' +
+    '{p##*/}" ;; esac',
+  'done',
+  '[ -z "$agent_pids" ] || sleep 1',
+  'for pid in $agent_pids; do kill -9 "$pid" 2>/dev/null || true; done',
   'rm -f /etc/systemd/system/nodeservice-agent.service /etc/nodeservice-agent.env /usr/local/bin/nodeservice-agent',
   'rm -rf /var/lib/nodeservice-agent',
   'systemctl daemon-reload >/dev/null 2>&1 || true',

@@ -1,4 +1,5 @@
 import {
+  agentDiagnosticsSchema,
   createServerRequestSchema,
   enrollmentTokenResponseSchema,
   panelKeyResponseSchema,
@@ -16,6 +17,7 @@ import {
 import { createZodDto } from 'nestjs-zod';
 
 export class ServerDto extends createZodDto(serverSchema) {}
+export class AgentDiagnosticsDto extends createZodDto(agentDiagnosticsSchema) {}
 export class ServersResponseDto extends createZodDto(serversResponseSchema) {}
 export class TestConnectionRequestDto extends createZodDto(testConnectionRequestSchema) {}
 export class TestConnectionResponseDto extends createZodDto(testConnectionResponseSchema) {}

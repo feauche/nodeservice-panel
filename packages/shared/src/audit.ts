@@ -154,6 +154,10 @@ export const AUDIT_ACTIONS = {
   'server.egress.checked': { category: 'server', label: 'Проверка «куда сервер может выйти»' },
   'server.agent.enrolled': { category: 'server', label: 'Агент подключён к серверу' },
   'server.agent.online': { category: 'server', label: 'Агент вышел на связь' },
+  'server.agent.legacy_channel_revoked': {
+    category: 'server',
+    label: 'Старый канал агента отключён',
+  },
   'server.agent.offline': { category: 'server', label: 'Агент пропал со связи' },
   'server.agent.auth_failed': { category: 'server', label: 'Подключение агента отклонено' },
   'server.autocheck.ssh': { category: 'server', label: 'Автопроверка SSH изменила статус' },

@@ -1,5 +1,13 @@
 import type { Server } from '@nodeservice/shared';
-import { CopyIcon, Loader2Icon, RefreshCwIcon, Trash2Icon } from 'lucide-react';
+import {
+  CheckCircle2Icon,
+  CopyIcon,
+  Loader2Icon,
+  RefreshCwIcon,
+  StethoscopeIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { DialogActions, DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
@@ -9,7 +17,13 @@ import { StepUpCancelledError } from '@/features/security/step-up';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useStartMaintenance } from './maintenance-api';
-import { useEnrollmentToken, useInstallAgent, useUninstallAgent, useUnlinkAgent } from './servers-api';
+import {
+  useAgentDiagnostics,
+  useEnrollmentToken,
+  useInstallAgent,
+  useUninstallAgent,
+  useUnlinkAgent,
+} from './servers-api';
 
 interface Props {
   server: Server;
@@ -27,6 +41,7 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
   const maintenance = useStartMaintenance(server.id);
   const uninstall = useUninstallAgent();
   const unlink = useUnlinkAgent();
+  const diagnostics = useAgentDiagnostics();
   const [command, setCommand] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [installMode, setInstallMode] = useState(server.agentStatus === 'not_installed');
@@ -53,8 +68,9 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
     else {
       setCommand(null);
       setError(null);
+      diagnostics.reset();
     }
-  }, [open, server.agentStatus]);
+  }, [open, server.agentStatus, diagnostics.reset]);
 
   const doInstall = async () => {
     try {
@@ -103,13 +119,18 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
 
   const installed = server.agentStatus !== 'not_installed';
   const installing = server.agentStatus === 'installing';
-  const pending = install.isPending || maintenance.isPending || uninstall.isPending || unlink.isPending;
+  const pending =
+    install.isPending ||
+    maintenance.isPending ||
+    uninstall.isPending ||
+    unlink.isPending ||
+    diagnostics.isPending;
   const closeLocked = uninstall.isPending || unlink.isPending;
 
   return (
     <>
       <Dialog open={open} onOpenChange={(o) => !closeLocked && onOpenChange(o)}>
-        <DialogContent className="sm:max-w-[600px] rounded-2xl border-border bg-surface p-6">
+        <DialogContent className="rounded-2xl border-border bg-surface p-6 sm:max-w-[680px]">
           <DialogHeader>
             <DialogTitle className="font-heading text-[17px]">
               {installed && !installMode
@@ -135,18 +156,18 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
               </div>
             </div>
           ) : installed && !installMode ? (
-            <div className="mt-1 grid gap-2 sm:grid-cols-2">
+            <div className="mt-1 grid min-w-0 gap-2 sm:grid-cols-2">
               <Button
                 type="button"
                 variant="outline"
                 disabled={pending}
-                className="h-auto justify-start rounded-[11px] border-border bg-surface-2 px-3.5 py-3 text-left"
+                className="h-auto min-w-0 justify-start rounded-[11px] border-border bg-surface-2 px-3.5 py-3 text-left whitespace-normal"
                 onClick={() => void doUpdate()}
               >
-                <RefreshCwIcon className="size-4" aria-hidden="true" />
-                <span>
+                <RefreshCwIcon className="size-4 flex-none" aria-hidden="true" />
+                <span className="min-w-0">
                   <b className="block text-[13px]">Обновить агент</b>
-                  <span className="block text-[11.5px] font-normal text-text-3">
+                  <span className="block break-words text-[11.5px] leading-[1.35] font-normal text-text-3">
                     Последний релиз, настройки и ключ сохранятся
                   </span>
                 </span>
@@ -155,21 +176,90 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
                 type="button"
                 variant="outline"
                 disabled={pending}
-                className="h-auto justify-start rounded-[11px] border-border bg-surface-2 px-3.5 py-3 text-left"
+                className="h-auto min-w-0 justify-start rounded-[11px] border-border bg-surface-2 px-3.5 py-3 text-left whitespace-normal"
                 onClick={() => {
                   setCommand(null);
                   setError(null);
                   setInstallMode(true);
                 }}
               >
-                <CopyIcon className="size-4" aria-hidden="true" />
-                <span>
+                <CopyIcon className="size-4 flex-none" aria-hidden="true" />
+                <span className="min-w-0">
                   <b className="block text-[13px]">Переустановить</b>
-                  <span className="block text-[11.5px] font-normal text-text-3">
+                  <span className="block break-words text-[11.5px] leading-[1.35] font-normal text-text-3">
                     Полная установка поверх текущей
                   </span>
                 </span>
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending}
+                className="h-auto min-w-0 justify-start rounded-[11px] border-border bg-surface-2 px-3.5 py-3 text-left whitespace-normal sm:col-span-2"
+                onClick={() => diagnostics.mutate(server.id)}
+              >
+                {diagnostics.isPending ? (
+                  <Loader2Icon className="size-4 flex-none animate-spin" aria-hidden="true" />
+                ) : (
+                  <StethoscopeIcon className="size-4 flex-none" aria-hidden="true" />
+                )}
+                <span className="min-w-0">
+                  <b className="block text-[13px]">Проверить установку</b>
+                  <span className="block break-words text-[11.5px] leading-[1.35] font-normal text-text-3">
+                    Служба, версия и лишние процессы на сервере
+                  </span>
+                </span>
+              </Button>
+              {diagnostics.isError && (
+                <div className="rounded-[10px] border border-crit/30 bg-crit-soft px-3 py-2 text-[12px] text-crit sm:col-span-2">
+                  Проверка не удалась: {apiErrorMessage(diagnostics.error)}
+                </div>
+              )}
+              {diagnostics.data && (
+                <div
+                  className={`rounded-[10px] border px-3.5 py-3 sm:col-span-2 ${
+                    diagnostics.data.healthy ? 'border-ok/25 bg-ok-soft' : 'border-warn/30 bg-warn-soft'
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5">
+                    {diagnostics.data.healthy ? (
+                      <CheckCircle2Icon className="mt-0.5 size-4 flex-none text-ok" aria-hidden="true" />
+                    ) : (
+                      <TriangleAlertIcon className="mt-0.5 size-4 flex-none text-warn" aria-hidden="true" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <b className="block text-[12.5px]">
+                        {diagnostics.data.healthy ? 'Установка в порядке' : 'Найдена проблема с установкой'}
+                      </b>
+                      <p className="mt-0.5 text-[11.5px] leading-relaxed text-text-2">
+                        Служба: {diagnostics.data.service} · бинарь:{' '}
+                        {diagnostics.data.installedVersion ?? 'не найден'} · процессов:{' '}
+                        {diagnostics.data.processes.length}
+                      </p>
+                      {diagnostics.data.problems.length > 0 && (
+                        <ul className="mt-1.5 space-y-1 text-[11.5px] leading-relaxed text-text-2">
+                          {diagnostics.data.problems.map((problem) => (
+                            <li key={problem}>• {problem}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {!diagnostics.data.healthy && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="mt-2 h-7 rounded-[8px] border-border bg-surface-2 px-2.5 text-[11.5px]"
+                          onClick={() => {
+                            diagnostics.reset();
+                            setInstallMode(true);
+                          }}
+                        >
+                          Переустановить и исправить
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <>

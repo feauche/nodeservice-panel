@@ -220,6 +220,28 @@ export const serverSchema = z.object({
 });
 export type Server = z.infer<typeof serverSchema>;
 
+/** Один найденный на сервере процесс агента. Командную строку не отдаём: в ней могли остаться секреты. */
+export const agentProcessSchema = z.object({
+  pid: z.number().int().positive(),
+  executable: z.string().max(500),
+  official: z.boolean(),
+});
+
+/** Результат безопасной проверки установки агента по SSH. */
+export const agentDiagnosticsSchema = z.object({
+  checkedAt: z.iso.datetime(),
+  service: z.string().min(1).max(50),
+  installedVersion: z.string().max(100).nullable(),
+  reportedVersion: z.string().max(100).nullable(),
+  mainPid: z.number().int().nonnegative().nullable(),
+  processes: z.array(agentProcessSchema).max(20),
+  extraUnits: z.array(z.string().max(255)).max(20),
+  connectionMode: z.enum(['incoming', 'outgoing', 'mixed', 'none']),
+  healthy: z.boolean(),
+  problems: z.array(z.string().max(300)).max(20),
+});
+export type AgentDiagnostics = z.infer<typeof agentDiagnosticsSchema>;
+
 export const serversResponseSchema = z.object({ items: z.array(serverSchema) });
 export type ServersResponse = z.infer<typeof serversResponseSchema>;
 

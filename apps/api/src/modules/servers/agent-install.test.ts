@@ -14,12 +14,14 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  AGENT_DIAGNOSTICS_SCRIPT,
   AGENT_STATE_PATH,
   AGENT_UNINSTALL_SCRIPT,
   agentInstallCommand,
   agentInstallScript,
   agentPullInstallScript,
   installFailure,
+  parseAgentDiagnostics,
   pullCertificateFromOutput,
 } from './agent-install.js';
 import { shellQuote } from './ssh.service.js';
@@ -33,6 +35,32 @@ const PARAMS = {
 const OLD_STATE = '{"serverId":"old","privKey":"old-key"}';
 
 describe('входящий агент', () => {
+  it('диагностика не читает аргументы и распознаёт лишний процесс и службу', () => {
+    expect(spawnSync('/bin/sh', ['-n'], { input: AGENT_DIAGNOSTICS_SCRIPT }).status).toBe(0);
+    expect(AGENT_DIAGNOSTICS_SCRIPT).not.toContain('/cmdline');
+    expect(
+      parseAgentDiagnostics(
+        [
+          '@@service=active',
+          '@@version=v0.9.1',
+          '@@main=123',
+          '@@process=123|/usr/local/bin/nodeservice-agent',
+          '@@process=456|/usr/local/bin/nodeservice-agent (deleted)',
+          '@@unit=old-nodeservice-agent.service',
+        ].join('\n'),
+      ),
+    ).toEqual({
+      service: 'active',
+      installedVersion: 'v0.9.1',
+      mainPid: 123,
+      processes: [
+        { pid: 123, executable: '/usr/local/bin/nodeservice-agent', official: true },
+        { pid: 456, executable: '/usr/local/bin/nodeservice-agent (deleted)', official: false },
+      ],
+      extraUnits: ['old-nodeservice-agent.service'],
+    });
+  });
+
   it('ключ отсутствует в команде и передаётся установщику только через stdin', () => {
     const script = agentPullInstallScript({
       repo: 'feauche/nodeservice-agent',

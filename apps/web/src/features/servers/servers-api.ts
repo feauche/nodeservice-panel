@@ -1,4 +1,6 @@
 import {
+  type AgentDiagnostics,
+  agentDiagnosticsSchema,
   type CreateServerRequest,
   type EnrollmentTokenResponse,
   enrollmentTokenResponseSchema,
@@ -42,6 +44,8 @@ export const serversApi = {
     api.post(`/servers/${id}/trust-host-key`, { fingerprint }, serverSchema),
   refreshInventory: (id: string): Promise<Server> => api.post(`/servers/${id}/inventory`, {}, serverSchema),
   installAgent: (id: string): Promise<Server> => api.post(`/servers/${id}/agent/install`, {}, serverSchema),
+  agentDiagnostics: (id: string): Promise<AgentDiagnostics> =>
+    api.get(`/servers/${id}/agent/diagnostics`, agentDiagnosticsSchema),
   uninstallAgent: (id: string): Promise<Server> =>
     withStepUp(() => api.post(`/servers/${id}/agent/uninstall`, {}, serverSchema)),
   unlinkAgent: (id: string): Promise<Server> =>
@@ -129,6 +133,10 @@ export function useRefreshInventory() {
 export function useUninstallAgent() {
   const apply = useApplyServer();
   return useMutation({ mutationFn: serversApi.uninstallAgent, onSuccess: apply });
+}
+
+export function useAgentDiagnostics() {
+  return useMutation({ mutationFn: serversApi.agentDiagnostics });
 }
 
 export function useUnlinkAgent() {

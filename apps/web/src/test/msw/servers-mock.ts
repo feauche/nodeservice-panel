@@ -463,6 +463,22 @@ export const serversHandlers = [
     mockServers.items[idx] = next;
     return HttpResponse.json(next);
   }),
+  http.get('/api/servers/:id/agent/diagnostics', ({ params }) => {
+    const s = mockServers.items.find((x) => x.id === params.id);
+    if (!s) return problem(404, 'about:blank', 'Сервер не найден');
+    return HttpResponse.json({
+      checkedAt: new Date().toISOString(),
+      service: 'active',
+      installedVersion: s.agentVersion,
+      reportedVersion: s.agentVersion,
+      mainPid: 123,
+      processes: [{ pid: 123, executable: '/usr/local/bin/nodeservice-agent', official: true }],
+      extraUnits: [],
+      connectionMode: 'incoming',
+      healthy: true,
+      problems: [],
+    });
+  }),
   http.post('/api/servers/:id/enrollment-token', ({ params }) => {
     const stepUp = requireStepUp();
     if (stepUp) return stepUp;

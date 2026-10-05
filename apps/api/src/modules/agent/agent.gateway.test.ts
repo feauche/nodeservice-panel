@@ -18,9 +18,13 @@ type Denied = { action: string; target: { id: string }; metadata: { code: string
 function make() {
   const journal: Denied[] = [];
   const deleteListeners: Array<(id: string) => void> = [];
+  const pullListeners: Array<(id: string) => void> = [];
   const offline: string[] = [];
   const gateway = new AgentGateway(
-    { markOffline: async (s: { id: string }) => void offline.push(s.id) } as never,
+    {
+      markOffline: async (s: { id: string }) => void offline.push(s.id),
+      onPullActive: (l: (id: string) => void) => void pullListeners.push(l),
+    } as never,
     {} as never,
     { record: async (e: Denied) => void journal.push(e) } as never,
     { onDeleted: (l: (id: string) => void) => void deleteListeners.push(l) } as never,
@@ -29,7 +33,7 @@ function make() {
     authFailed: (code: string, serverId: string, name: string | null) => Promise<void>;
     active: Map<string, unknown>;
   };
-  return { gateway, inner, journal, deleteListeners, offline };
+  return { gateway, inner, journal, deleteListeners, pullListeners, offline };
 }
 
 describe('AgentGateway: отказы агентам в Журнале', () => {
@@ -93,6 +97,27 @@ describe('AgentGateway: удаление сервера', () => {
     // Повторное удаление (соединения уже нет) — тихо.
     for (const l of ctx.deleteListeners) l('srv-1');
     expect(closed).toHaveLength(1);
+  });
+
+  it('рабочий входящий агент сразу закрывает старый WebSocket той же карточки', () => {
+    const ctx = make();
+    ctx.gateway.onModuleInit();
+    const sent: string[] = [];
+    const closed: Array<[number, string]> = [];
+    const ws = {
+      readyState: WebSocket.OPEN,
+      send: (raw: string) => void sent.push(raw),
+      close: (code: number, reason: string) => void closed.push([code, reason]),
+    };
+    ctx.inner.active.set('srv-1', ws);
+
+    for (const listener of ctx.pullListeners) listener('srv-1');
+
+    expect(closed).toEqual([[CLOSE_SERVER_DELETED, 'legacy agent revoked']]);
+    expect(JSON.parse(sent[0] ?? '{}')).toMatchObject({
+      payload: { message: 'Панель перешла на новый входящий канал агента' },
+    });
+    expect(ctx.inner.active.has('srv-1')).toBe(false);
   });
 });
 

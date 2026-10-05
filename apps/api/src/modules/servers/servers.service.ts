@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  type AgentDiagnostics,
   type CountryChoice,
   type CreateServerRequest,
   computeDrift,
@@ -33,6 +34,8 @@ import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { diffChanges } from '../audit/audit.diff.js';
 import { AuditService } from '../audit/audit.service.js';
 import {
+  AGENT_DIAGNOSTICS_LABEL,
+  AGENT_DIAGNOSTICS_SCRIPT,
   AGENT_INSTALL_LABEL,
   AGENT_INSTALL_TIMEOUT_MS,
   AGENT_UNINSTALL_LABEL,
@@ -40,6 +43,7 @@ import {
   agentInstallCommand,
   agentPullInstallScript,
   installFailure,
+  parseAgentDiagnostics,
   pullCertificateFromOutput,
 } from './agent-install.js';
 import { PanelKeyService } from './panel-key.service.js';
@@ -750,6 +754,63 @@ export class ServersService {
       return await this.runAgentInstall(id);
     } finally {
       this.installsRunning.delete(id);
+    }
+  }
+
+  /** Проверить по SSH, что агент запущен ровно один раз и панель использует только один его канал. */
+  async agentDiagnostics(id: string): Promise<AgentDiagnostics> {
+    const row = await this.repo.findById(id);
+    if (!row) throw serverProblems.notFound();
+    const session = await this.ssh.connect(await this.storedTarget(row));
+    try {
+      const result = await session.exec(AGENT_DIAGNOSTICS_SCRIPT, {
+        timeoutMs: 30_000,
+        label: AGENT_DIAGNOSTICS_LABEL,
+      });
+      if (result.code !== 0)
+        throw serverProblems.sshCommand(
+          AGENT_DIAGNOSTICS_LABEL,
+          installFailure(result.stdout + result.stderr, result.code),
+        );
+      const found = parseAgentDiagnostics(result.stdout);
+      const connectionMode = row.agentAccessKeyEnc
+        ? row.agentPubkey
+          ? 'mixed'
+          : 'incoming'
+        : row.agentPubkey
+          ? 'outgoing'
+          : 'none';
+      const problems: string[] = [];
+      if (found.service !== 'active') problems.push(`Штатная служба не работает: ${found.service}.`);
+      if (!found.installedVersion) problems.push('Штатный бинарь агента не найден или не сообщает версию.');
+      if (found.processes.length === 0) problems.push('Работающий процесс агента не найден.');
+      if (found.processes.length > 1)
+        problems.push(`Одновременно работают процессы агента: ${found.processes.length}.`);
+      if (found.mainPid && !found.processes.some((process) => process.pid === found.mainPid))
+        problems.push('PID штатной службы не совпал ни с одним найденным процессом агента.');
+      if (found.extraUnits.length > 0)
+        problems.push(`Найдены дополнительные службы агента: ${found.extraUnits.join(', ')}.`);
+      if (connectionMode === 'mixed')
+        problems.push('В панели одновременно разрешены старый исходящий и новый входящий каналы агента.');
+      const normalizeVersion = (value: string | null) => value?.trim().replace(/^v/i, '') ?? null;
+      if (
+        found.installedVersion &&
+        row.agentVersion &&
+        normalizeVersion(found.installedVersion) !== normalizeVersion(row.agentVersion)
+      )
+        problems.push(
+          `На сервере установлена ${found.installedVersion}, а последним в панель ответил агент ${row.agentVersion}.`,
+        );
+      return {
+        checkedAt: new Date().toISOString(),
+        ...found,
+        reportedVersion: row.agentVersion,
+        connectionMode,
+        healthy: problems.length === 0,
+        problems,
+      };
+    } finally {
+      session.end();
     }
   }
 

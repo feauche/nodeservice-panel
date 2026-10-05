@@ -51,6 +51,8 @@ export class AgentService {
   private readonly reviving = new Set<string>();
   /** Недавние id HTTPS pulse: подпись нельзя повторить в пределах допустимого окна времени. */
   private readonly pulseIds = new Map<string, number>();
+  /** Шлюз закрывает старый WebSocket сразу, когда рабочий входящий агент подтвердил себя. */
+  private readonly pullActiveListeners: Array<(serverId: string) => void> = [];
 
   constructor(
     private readonly servers: ServersRepository,
@@ -82,6 +84,11 @@ export class AgentService {
       agentTransport: null,
       agentRoute: null,
       agentRouteFallback: null,
+      // Ручная команда ставит исходящий агент. Старые реквизиты входящего режима нельзя оставлять рядом:
+      // иначе два экземпляра по очереди меняют версию и метрики одной карточки.
+      agentListenPort: null,
+      agentAccessKeyEnc: null,
+      agentTlsCert: null,
     });
     await this.audit.record({
       action: 'server.agent.enrolled',
@@ -110,6 +117,10 @@ export class AgentService {
 
   async findServer(id: string): Promise<ServerRow | undefined> {
     return this.servers.findById(id);
+  }
+
+  onPullActive(listener: (serverId: string) => void): void {
+    this.pullActiveListeners.push(listener);
   }
 
   async welcomeFor(server: ServerRow): Promise<AgentWelcome> {
@@ -263,7 +274,26 @@ export class AgentService {
     metrics: AgentMetrics | undefined,
     route: string,
   ): Promise<void> {
-    const current = await this.syncConnection(server, {
+    let current = server;
+    // У старых установок после перехода на входящий HTTPS оставался действующим прежний ed25519-ключ.
+    // Если старый процесс ещё жив, его heartbeat чередовался с HTTPS-опросом и версия прыгала. Успешный
+    // ответ нового агента — достаточное доказательство для отзыва старого канала.
+    if (server.agentPubkey) {
+      current =
+        (await this.servers.update(server.id, {
+          agentPubkey: null,
+          agentEnrolledAt: null,
+        })) ?? server;
+      for (const listener of this.pullActiveListeners) listener(server.id);
+      await this.audit.record({
+        action: 'server.agent.legacy_channel_revoked',
+        actor: agentActor(server.name, server.id),
+        source: 'auto',
+        target: { type: 'server', id: server.id, display: server.name },
+        metadata: { reason: 'входящий HTTPS-агент ответил успешно' },
+      });
+    }
+    current = await this.syncConnection(current, {
       transport: 'https',
       route,
       fallback: false,

@@ -102,6 +102,7 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     this.servers.onDeleted((id) => this.dropServer(id));
+    this.agents.onPullActive?.((id) => this.dropLegacyAgent(id));
   }
 
   register(): void {
@@ -308,6 +309,15 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
   dropServer(serverId: string): void {
     const ws = this.active.get(serverId);
     if (ws) this.closeDeleted(ws, serverId);
+  }
+
+  /** Входящий HTTPS-агент уже работает: старому WebSocket больше нельзя менять ту же карточку. */
+  private dropLegacyAgent(serverId: string): void {
+    const ws = this.active.get(serverId);
+    if (!ws) return;
+    if (this.active.get(serverId) === ws) this.active.delete(serverId);
+    this.sendError(ws, 'unknown-server', 'Панель перешла на новый входящий канал агента');
+    ws.close(CLOSE_SERVER_DELETED, 'legacy agent revoked');
   }
 
   /** Агенту говорим причину (её видно в его журнале) и закрываем соединение особым кодом. */

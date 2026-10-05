@@ -14,6 +14,8 @@ interface Row {
   agentTransport: 'websocket' | 'https' | null;
   agentRoute: string | null;
   agentRouteFallback: boolean | null;
+  agentPubkey: string | null;
+  agentEnrolledAt: Date | null;
 }
 
 /** Служба агентов на памяти: запись сервера — объект, Журнал — список. */
@@ -69,6 +71,8 @@ const server = (patch: Partial<Row> = {}): Row => ({
   agentTransport: null,
   agentRoute: null,
   agentRouteFallback: null,
+  agentPubkey: null,
+  agentEnrolledAt: null,
   ...patch,
 });
 
@@ -123,6 +127,21 @@ describe('AgentService: сигнал по открытому соединени�
       agentRouteFallback: false,
     });
     expect(ctx.written).toEqual(['s1']);
+  });
+
+  it('рабочий входящий агент отзывает старый исходящий канал, чтобы версии не чередовались', async () => {
+    const row = server({ agentPubkey: 'old-pinned-key', agentEnrolledAt: new Date() });
+    const ctx = make(row);
+    const revoked: string[] = [];
+    ctx.agents.onPullActive((id) => void revoked.push(id));
+
+    await ctx.agents.acceptPull(row as never, 'v0.9.1', undefined, 'https://203.0.113.5:23456');
+
+    expect(row.agentPubkey).toBeNull();
+    expect(row.agentEnrolledAt).toBeNull();
+    expect(row.agentVersion).toBe('v0.9.1');
+    expect(revoked).toEqual(['s1']);
+    expect(ctx.journal.some((event) => event.action === 'server.agent.legacy_channel_revoked')).toBe(true);
   });
 
   it('сигнал и метрика пришли разом — запись «вышел на связь» одна', async () => {

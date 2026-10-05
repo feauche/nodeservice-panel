@@ -15,6 +15,7 @@ import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 import { StepUpGuard } from '../security/step-up.guard.js';
 import { PanelKeyService } from './panel-key.service.js';
 import {
+  AgentDiagnosticsDto,
   CreateServerRequestDto,
   EnrollmentTokenResponseDto,
   PanelKeyResponseDto,
@@ -148,6 +149,13 @@ export class ServersController {
   @ApiOkResponse({ type: ServerDto })
   installAgent(@Param('id', ParseUUIDPipe) id: string): Promise<ServerDto> {
     return this.servers.installAgent(id);
+  }
+
+  @Get(':id/agent/diagnostics')
+  @ApiOperation({ summary: 'Проверить службу и лишние процессы агента по SSH' })
+  @ApiOkResponse({ type: AgentDiagnosticsDto })
+  agentDiagnostics(@Param('id', ParseUUIDPipe) id: string): Promise<AgentDiagnosticsDto> {
+    return this.servers.agentDiagnostics(id);
   }
 
   @Post(':id/agent/uninstall')

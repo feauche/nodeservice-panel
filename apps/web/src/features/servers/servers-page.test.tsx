@@ -549,6 +549,8 @@ describe('ServersPage', () => {
     // Установленный агент сначала открывает безопасное управление, а не сразу выпускает новый токен.
     await user.click(await screen.findByRole('menuitem', { name: 'Управление агентом' }));
     let dialog = await screen.findByRole('dialog', { name: 'Управление агентом' });
+    await user.click(within(dialog).getByRole('button', { name: /Проверить установку/ }));
+    expect(await within(dialog).findByText('Установка в порядке')).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: /Переустановить/ }));
     dialog = await screen.findByRole('dialog', { name: 'Переустановка агента' });
     // Открытие окна само не выпускает и не отзывает одноразовые токены.
