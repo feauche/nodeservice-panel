@@ -1,6 +1,6 @@
 {
   "name": "api",
-  "version": "0.63.6",
+  "version": "0.63.7",
   "private": true,
   "description": "NodeService panel backend (NestJS)",
   "license": "UNLICENSED",
