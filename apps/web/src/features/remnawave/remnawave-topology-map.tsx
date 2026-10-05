@@ -37,6 +37,8 @@ interface SelectionContext {
   nodeIds: Set<string>;
   exitIds: Set<string>;
   routeIds: Set<string>;
+  hostNodeEdgeIds: Set<string>;
+  routeEdgeIds: Set<string>;
   reachesInternet: boolean;
 }
 
@@ -205,6 +207,32 @@ function sourceNodeIds(route: RemnawaveTopologyRoute, hosts: readonly RemnawaveT
   return [...new Set(route.hostIds.flatMap((hostId) => hostById.get(hostId)?.nodeUuids ?? []))];
 }
 
+const edgeId = (...parts: string[]) => JSON.stringify(parts);
+
+function routeSourceLinks(
+  route: RemnawaveTopologyRoute,
+  hosts: readonly RemnawaveTopologyHost[],
+): Array<{ hostId: string; nodeId: string }> {
+  const hostById = new Map(hosts.map((host) => [host.id, host]));
+  return route.hostIds.flatMap((hostId) =>
+    (hostById.get(hostId)?.nodeUuids ?? []).map((nodeId) => ({ hostId, nodeId })),
+  );
+}
+
+function selectedSourceNodeIds(
+  route: RemnawaveTopologyRoute,
+  selection: NonNullable<Selection>,
+  hosts: readonly RemnawaveTopologyHost[],
+): string[] {
+  if (selection.kind === 'host') {
+    if (!route.hostIds.includes(selection.id)) return [];
+    return hosts.find((host) => host.id === selection.id)?.nodeUuids ?? [];
+  }
+  const sources = sourceNodeIds(route, hosts);
+  if (selection.kind === 'node') return sources.includes(selection.id) ? [selection.id] : [];
+  return sources;
+}
+
 function groupExits(
   routes: readonly RemnawaveTopologyRoute[],
   nodes: readonly RemnawaveTopologyNode[],
@@ -281,18 +309,31 @@ function contextForSelection(
     routes = topology.routes.filter((route) => sourceNodeIds(route, topology.hosts).includes(selection.id));
   else routes = exits.find((exit) => exit.id === selection.id)?.routes ?? [];
 
-  const hostIds = new Set(routes.flatMap((route) => route.hostIds));
+  const sourceLinks = routes.flatMap((route) =>
+    routeSourceLinks(route, topology.hosts)
+      .filter((link) => selection.kind !== 'host' || link.hostId === selection.id)
+      .filter((link) => selection.kind !== 'node' || link.nodeId === selection.id)
+      .map((link) => ({ ...link, route })),
+  );
+  const hostIds = new Set(sourceLinks.map((link) => link.hostId));
+  const nodeIds = new Set(sourceLinks.map((link) => link.nodeId));
   if (selection.kind === 'host') hostIds.add(selection.id);
-  const nodeIds = new Set(routes.flatMap((route) => sourceNodeIds(route, topology.hosts)));
-  for (const route of routes) for (const nodeId of route.targetNodeUuids) nodeIds.add(nodeId);
   if (selection.kind === 'node') nodeIds.add(selection.id);
+  const hostNodeEdgeIds = new Set(sourceLinks.map((link) => edgeId(link.hostId, link.nodeId)));
   const exitIds = new Set(routes.flatMap((route) => routeExitIds(route, exits)));
   if (selection.kind === 'exit') exitIds.add(selection.id);
+  const routeEdgeIds = new Set<string>();
+  for (const { route, nodeId } of sourceLinks) {
+    if (route.targetKind === 'internet') routeEdgeIds.add(edgeId(route.id, nodeId, 'internet'));
+    else for (const exitId of routeExitIds(route, exits)) routeEdgeIds.add(edgeId(route.id, nodeId, exitId));
+  }
   return {
     hostIds,
     nodeIds,
     exitIds,
     routeIds: new Set(routes.map((route) => route.id)),
+    hostNodeEdgeIds,
+    routeEdgeIds,
     reachesInternet: routes.some(reachesInternet),
   };
 }
@@ -373,8 +414,15 @@ function FocusedFlow({
   const primaryRoute = routes[0] ?? null;
   const selectedHost =
     selected.kind === 'host' ? topology.hosts.find((host) => host.id === selected.id) : null;
-  const host = selectedHost ?? topology.hosts.find((item) => primaryRoute?.hostIds.includes(item.id)) ?? null;
-  const primarySources = primaryRoute ? sourceNodeIds(primaryRoute, topology.hosts) : [];
+  const host =
+    selectedHost ??
+    topology.hosts.find(
+      (item) =>
+        primaryRoute?.hostIds.includes(item.id) &&
+        (selected.kind !== 'node' || item.nodeUuids.includes(selected.id)),
+    ) ??
+    null;
+  const primarySources = primaryRoute ? selectedSourceNodeIds(primaryRoute, selected, topology.hosts) : [];
   const entryNode =
     topology.nodes.find(
       (node) => selected.kind === 'node' && node.id === selected.id && primarySources.includes(node.id),
@@ -555,7 +603,7 @@ function FocusedFlow({
         <div className="mt-3 grid gap-2 lg:grid-cols-2">
           {routes.slice(0, 8).map((route) => {
             const source = topology.nodes.find((node) =>
-              sourceNodeIds(route, topology.hosts).includes(node.id),
+              selectedSourceNodeIds(route, selected, topology.hosts).includes(node.id),
             );
             const destination = topology.nodes.find((node) => route.targetNodeUuids.includes(node.id));
             return (
@@ -734,8 +782,7 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                 const from = hostPoints.get(host.id);
                 const to = nodePoints.get(nodeId);
                 if (!from || !to) return null;
-                const active =
-                  (hoverContext?.hostIds.has(host.id) && hoverContext.nodeIds.has(nodeId)) ?? false;
+                const active = hoverContext?.hostNodeEdgeIds.has(edgeId(host.id, nodeId)) ?? false;
                 return (
                   <Edge
                     key={`${host.id}:${nodeId}`}
@@ -755,7 +802,8 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                 return sources.map((nodeId) => {
                   const from = nodePoints.get(nodeId);
                   if (!from) return null;
-                  const active = hoverContext?.routeIds.has(route.id) ?? false;
+                  const active =
+                    hoverContext?.routeEdgeIds.has(edgeId(route.id, nodeId, 'internet')) ?? false;
                   return (
                     <Edge
                       key={`${route.id}:${nodeId}:internet`}
@@ -774,7 +822,7 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                 return sources.map((nodeId) => {
                   const from = nodePoints.get(nodeId);
                   if (!from) return null;
-                  const active = hoverContext?.routeIds.has(route.id) ?? false;
+                  const active = hoverContext?.routeEdgeIds.has(edgeId(route.id, nodeId, exitId)) ?? false;
                   return (
                     <Edge
                       key={`${route.id}:${nodeId}:${exitId}`}
