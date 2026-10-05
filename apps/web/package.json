@@ -1,7 +1,7 @@
 {
   "name": "web",
   "private": true,
-  "version": "0.63.8",
+  "version": "0.64.0",
   "type": "module",
   "scripts": {
     "dev": "NODE_ENV=production tsr generate && vite",

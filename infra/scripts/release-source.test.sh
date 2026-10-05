@@ -51,4 +51,7 @@ fi
 [[ ! -e /tmp/nodeservice-backup-injected ]]
 
 bash -n "$ROOT/infra/scripts/install.sh" "$ROOT/infra/scripts/update.sh" "$ROOT/infra/scripts/nodeservice"
+grep -Fq 'docker pull "$release_image"' "$ROOT/infra/scripts/update.sh"
+grep -Fq 'org.opencontainers.image.revision' "$ROOT/infra/scripts/update.sh"
+grep -Fq 'nodeservice-api:${{ github.ref_name }}' "$ROOT/.github/workflows/release.yml"
 echo "release-source-ok"

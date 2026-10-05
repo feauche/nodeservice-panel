@@ -227,4 +227,24 @@ describe('buildRemnawaveTopology', () => {
     });
     expect(route?.explanation).toContain('Назвать его Psiphon можно только');
   });
+
+  it('строит канонический путь от клиента до интернета с отдельным outbound и выходной нодой', () => {
+    const result = buildRemnawaveTopology(source());
+    const path = result.paths.find((item) => item.exitNodeUuid === 'node-nl');
+
+    expect(path).toMatchObject({
+      hostId: 'host-1',
+      entryNodeUuid: 'node-ru',
+      exitNodeUuid: 'node-nl',
+      destination: 'internet',
+    });
+    expect(path?.segments.map((segment) => segment.kind)).toEqual([
+      'client_host',
+      'host_inbound',
+      'inbound_entry',
+      'entry_outbound',
+      'outbound_exit',
+      'exit_internet',
+    ]);
+  });
 });

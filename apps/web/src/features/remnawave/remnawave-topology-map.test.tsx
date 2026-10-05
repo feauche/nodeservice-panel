@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { RemnawaveTopologyMap } from './remnawave-topology-map';
 
 const topology: RemnawaveTopology = {
+  paths: [],
+  readiness: [],
   generatedAt: '2026-10-05T12:00:00.000Z',
   hosts: [
     {

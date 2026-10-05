@@ -58,6 +58,58 @@ function make(reach: CountryReachResult) {
 }
 
 describe('достоверность диагноза связи сервера', () => {
+  it('объединяет одновременный сбой серверов одного провайдера до отдельных уведомлений', async () => {
+    const opened: Array<Record<string, unknown>> = [];
+    const pushed: Array<Record<string, unknown>> = [];
+    const repo = {
+      list: async () => [],
+      open: async (value: Record<string, unknown>) => {
+        opened.push(value);
+        return { ...value, id: 'incident-1' };
+      },
+    };
+    const stub = {} as never;
+    const service = new IncidentsService(
+      repo as never,
+      stub,
+      stub,
+      { getAssistant: async () => ({ enabled: false }) } as never,
+      stub,
+      stub,
+      stub,
+      { push: async (value: Record<string, unknown>) => pushed.push(value) } as never,
+      stub,
+      stub,
+      stub,
+      stub,
+      stub,
+      stub,
+    );
+    const servers = ['Первый', 'Второй'].map(
+      (name, index) =>
+        ({
+          id: `00000000-0000-4000-8000-00000000000${index}`,
+          name,
+          host: `192.0.2.${index + 1}`,
+          port: 22,
+          providerId: '00000000-0000-4000-8000-000000000099',
+          country: 'NL',
+          upstream: null,
+        }) as unknown as ServerRow,
+    );
+
+    const grouped = await (
+      service as unknown as {
+        openConnectivityGroups(offline: ServerRow[], fleet: ServerRow[]): Promise<Set<string>>;
+      }
+    ).openConnectivityGroups(servers, servers);
+
+    expect(grouped.size).toBe(2);
+    expect(opened).toHaveLength(1);
+    expect(opened[0]?.title).toContain('Общая сетевая авария');
+    expect(pushed).toHaveLength(1);
+  });
+
   it('панель не вошла ни на один проверяющий сервер — не открывает инциденты по отдельным серверам', async () => {
     for (const blind of ['ssh', 'no_answer'] as const) {
       const { evaluate, openIncident, evalBinary } = make({ results: [], blind });
@@ -106,7 +158,7 @@ describe('достоверность диагноза связи сервера'
     const rows = ['s1', 's2'].map((id) => ({ id, agentStatus: 'offline', agentLastSeenAt: null }));
     const stub = {} as never;
     const service = new IncidentsService(
-      stub,
+      { list: async () => [] } as never,
       { list: async () => rows } as never,
       { get: async () => ({ cpuPct: 90, memPct: 90, diskPct: 90, forDurationMinutes: 5 }) } as never,
       stub,

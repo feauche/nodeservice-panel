@@ -28,6 +28,14 @@ RUN pnpm --filter @nodeservice/shared build && pnpm --filter web build && pnpm -
  && mkdir -p /out/api/public && cp -r apps/web/dist/. /out/api/public/
 
 FROM node:24-slim AS runtime
+ARG APP_COMMIT=dev
+ARG APP_BUILT_AT=
+ARG APP_VERSION=dev
+LABEL org.opencontainers.image.title="NodeService API" \
+      org.opencontainers.image.source="https://github.com/feauche/nodeservice-panel" \
+      org.opencontainers.image.revision=$APP_COMMIT \
+      org.opencontainers.image.created=$APP_BUILT_AT \
+      org.opencontainers.image.version=$APP_VERSION
 ENV NODE_ENV=production PORT=3000
 # Резервные копии из панели: pg_dump/pg_restore той же версии, что Postgres в стеке (18, из репозитория PGDG).
 # ns-tar / ns-du — копии tar и du с единственным правом «читать любой файл» (cap_dac_read_search): ими

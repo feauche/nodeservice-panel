@@ -329,7 +329,9 @@ export const incidentSnapshotSchema = z.object({
   /** Одно общее дело для одновременно затронутых нод или серверов. */
   fleet: z
     .object({
-      cause: z.enum(['online', 'connectivity']),
+      cause: z.enum(['online', 'connectivity', 'provider', 'country', 'bridge']),
+      groupKey: z.string().optional(),
+      groupLabel: z.string().optional(),
       members: z.array(
         z.object({
           serverId: z.uuid().nullable(),

@@ -496,12 +496,15 @@ export class IncidentsService {
         await this.panelAlerts.connectivityDown(offline.length).catch(() => undefined);
         return;
       }
+      await this.reconcileConnectivityGroups(rows);
+      const grouped = await this.openConnectivityGroups(offline, rows);
       let cursor = 0;
       let panelBlind = 0;
       const worker = async () => {
         while (cursor < rows.length) {
           const server = rows[cursor++];
           if (!server) return;
+          if (grouped.has(server.id)) continue;
           const offlineLongEnough =
             server.agentStatus === 'offline' &&
             (!server.agentLastSeenAt ||
@@ -513,6 +516,149 @@ export class IncidentsService {
       const report =
         panelBlind > 0 ? this.panelAlerts.connectivityDown(panelBlind) : this.panelAlerts.connectivityUp();
       await report.catch(() => undefined);
+    }
+  }
+
+  /**
+   * Одновременные сбои общего моста, провайдера или страны становятся одним делом до отдельных
+   * уведомлений. Приоритет у моста, затем у провайдера: это более точная общая причина, чем страна.
+   */
+  private async openConnectivityGroups(offline: ServerRow[], fleet: ServerRow[]): Promise<Set<string>> {
+    const grouped = new Set<string>();
+    const candidates: Array<{
+      cause: 'bridge' | 'provider' | 'country';
+      key: string;
+      label: string;
+      rows: ServerRow[];
+    }> = [];
+    const collect = (
+      cause: 'bridge' | 'provider' | 'country',
+      keyOf: (server: ServerRow) => string | null,
+      labelOf: (key: string) => string,
+    ) => {
+      const groups = new Map<string, ServerRow[]>();
+      for (const server of offline) {
+        if (grouped.has(server.id)) continue;
+        const key = keyOf(server);
+        if (!key) continue;
+        groups.set(key, [...(groups.get(key) ?? []), server]);
+      }
+      for (const [key, rows] of groups) {
+        if (rows.length < 2) continue;
+        candidates.push({ cause, key: `${cause}:${key}`, label: labelOf(key), rows });
+        for (const row of rows) grouped.add(row.id);
+      }
+    };
+    collect(
+      'bridge',
+      (server) => (server.upstream?.kind === 'bridge' ? server.upstream.serverId : null),
+      (id) => `общий мост «${fleet.find((server) => server.id === id)?.name ?? id}»`,
+    );
+    collect(
+      'provider',
+      (server) => server.providerId,
+      () => 'один провайдер',
+    );
+    collect(
+      'country',
+      (server) => server.country,
+      (country) => `страна ${country}`,
+    );
+
+    const open = await this.repo.list('open');
+    for (const group of candidates) {
+      const existing = open.find((row) => row.snapshot?.fleet?.groupKey === group.key);
+      const members = group.rows.map((server) => ({
+        serverId: server.id,
+        nodeUuid: null,
+        name: server.name,
+        baseline: null,
+      }));
+      const detail = [
+        `Одновременно пропала связь с ${group.rows.length} серверами: ${group.rows.map((server) => server.name).join(', ')}.`,
+        `Общий признак: ${group.label}. Панель ведёт одно дело и проверяет участников вместе.`,
+        '',
+        ...group.rows.map((server) => `• ${server.name} · ${server.host}:${server.port}`),
+      ].join('\n');
+      if (existing) {
+        await this.repo.update(existing.id, {
+          detail,
+          snapshot: {
+            cpu: existing.snapshot?.cpu ?? null,
+            mem: existing.snapshot?.mem ?? null,
+            disk: existing.snapshot?.disk ?? null,
+            node: existing.snapshot?.node ?? null,
+            agentStatus: existing.snapshot?.agentStatus ?? null,
+            agentVersion: existing.snapshot?.agentVersion ?? null,
+            fleet: { cause: group.cause, groupKey: group.key, groupLabel: group.label, members },
+          },
+        });
+        continue;
+      }
+      const title = `Общая сетевая авария · ${group.label}`;
+      const row = await this.repo.open({
+        serverId: null,
+        serverName: group.label,
+        kind: 'server_down',
+        severity: 'crit',
+        title,
+        detail,
+        timeline: [ev('auto', 'Одновременно пропала связь с несколькими серверами', 'detect')],
+        snapshot: {
+          cpu: null,
+          mem: null,
+          disk: null,
+          node: null,
+          agentStatus: null,
+          agentVersion: null,
+          fleet: { cause: group.cause, groupKey: group.key, groupLabel: group.label, members },
+        },
+      });
+      if (!row) continue;
+      const memberIds = new Set(group.rows.map((server) => server.id));
+      for (const individual of open) {
+        if (!individual.serverId || !memberIds.has(individual.serverId)) continue;
+        if (!['server_down', 'agent_offline', 'ssh_down', 'node_blocked'].includes(individual.kind)) continue;
+        await this.notifications.cancelIncidentDeliveries(individual.id);
+        await this.repo.update(individual.id, {
+          status: 'resolved',
+          resolvedAt: new Date(),
+          resolvedBy: 'auto',
+          proposal: null,
+          timeline: [
+            ...individual.timeline,
+            ev('auto', `${MERGED_MARK} «${title}»: совпали время и общий сетевой признак`, 'resolved'),
+          ],
+        });
+      }
+      await this.notifications.push({
+        severity: 'crit',
+        title,
+        body: detail,
+        link: { to: `/incidents/${row.id}`, label: 'Открыть общее дело' },
+        telegram: {
+          event: 'incident_crit',
+          incidentId: row.id,
+          kind: 'server_down',
+          awaitAnalysis: await this.analysisWillFollow(),
+          serverKey: `fleet:${group.key}`,
+        },
+      });
+    }
+    return grouped;
+  }
+
+  private async reconcileConnectivityGroups(fleet: ServerRow[]): Promise<void> {
+    const byId = new Map(fleet.map((server) => [server.id, server]));
+    for (const row of await this.repo.list('open')) {
+      const group = row.snapshot?.fleet;
+      if (!group || group.cause === 'online') continue;
+      const failed = group.members.filter((member) => {
+        const server = member.serverId ? byId.get(member.serverId) : undefined;
+        return server && server.agentStatus !== 'online' && server.agentStatus !== 'not_installed';
+      });
+      if (failed.length === 0 && !row.attempts.some((attempt) => attempt.status === 'running'))
+        await this.autoResolve(row, 'Все серверы общей группы снова на связи');
     }
   }
 

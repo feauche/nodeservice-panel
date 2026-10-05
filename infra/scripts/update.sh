@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Обновление панели: бэкап → git fetch → сборка нового образа api → замена с сохранением
+# Обновление панели: бэкап → git fetch → загрузка проверенного release-образа → замена с сохранением
 # предыдущего образа для отката (nodeservice rollback). Миграции применяет сам api при старте.
 # После удачного обновления прежние образы панели, кроме текущего и отката, удаляются с диска.
 
@@ -165,6 +165,7 @@ else
     die "Не нашёл '$REF' (ветка на origin, тег или commit)."
 fi
 after=$(git rev-parse --short HEAD)
+after_full=$(git rev-parse HEAD)
 
 # Бэкап перед обновлением — на случай неудачной миграции. Выключается в панели
 # («Резервные копии → Копия перед обновлением»): тогда панель кладёт метку .skip-before-update.
@@ -206,13 +207,32 @@ printf '%s\n' "$before" > "$APP_DIR/backups/.last-pre-update-code"
 printf '%s\n' "$OLD_VERSION" > "$APP_DIR/backups/.last-pre-update-version"
 chmod 600 "$APP_DIR/backups/.last-pre-update-code" "$APP_DIR/backups/.last-pre-update-version"
 
-echo -e "${C}==> Сборка образа api ($after)${N}"
-sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$after/" "$ENV_FILE"
-export APP_COMMIT="$after" APP_BUILT_AT="$(date -u +%Y-%m-%d)"
-if ! "${COMPOSE[@]}" build api; then
-    sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
-    git checkout --quiet --detach "$before"
-    die "Сборка не удалась. Старая версия $before продолжает работать, код возвращён на неё."
+if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    release_image="ghcr.io/feauche/nodeservice-api:$REF"
+    echo -e "${C}==> Загрузка готового образа $release_image${N}"
+    if ! docker pull "$release_image"; then
+        sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
+        git checkout --quiet --detach "$before"
+        die "Готовый образ релиза не скачался. Старая версия продолжает работать. Если пакет закрытый: docker login ghcr.io"
+    fi
+    image_revision=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$release_image" 2>/dev/null || true)
+    image_version=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$release_image" 2>/dev/null || true)
+    if [[ "$image_revision" != "$after_full" || "$image_version" != "$REF" ]]; then
+        sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
+        git checkout --quiet --detach "$before"
+        die "Образ не соответствует тегу: ожидались версия $REF и commit $after_full. Переключение отменено."
+    fi
+    sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$REF/" "$ENV_FILE"
+    echo -e "${G}Образ проверен:${N} версия $image_version · commit ${image_revision:0:7}"
+else
+    echo -e "${Y}Тестовый ref без release-образа — локальная сборка api ($after).${N}"
+    sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$after/" "$ENV_FILE"
+    export APP_COMMIT="$after_full" APP_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" APP_VERSION="$after"
+    if ! "${COMPOSE[@]}" build api; then
+        sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
+        git checkout --quiet --detach "$before"
+        die "Сборка не удалась. Старая версия $before продолжает работать, код возвращён на неё."
+    fi
 fi
 echo -e "${C}==> Перезапуск${N}"
 "${COMPOSE[@]}" up -d --remove-orphans || true

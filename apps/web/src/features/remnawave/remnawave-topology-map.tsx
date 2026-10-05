@@ -484,6 +484,14 @@ function FocusedFlow({
   const graphStatus = [host?.status, entryNode?.status, primaryRoute?.status]
     .filter((status): status is Status => Boolean(status))
     .reduce<Status>(worseStatus, 'ok');
+  const path = topology.paths.find(
+    (candidate) =>
+      candidate.hostId === host?.id &&
+      candidate.entryNodeUuid === entryNode?.id &&
+      candidate.routeId === primaryRoute?.id &&
+      (candidate.exitNodeUuid === exitNode?.id || (!candidate.exitNodeUuid && !exitNode)),
+  );
+  const visibleSegments = path?.segments.filter((segment) => segment.runtime) ?? [];
 
   return (
     <div>
@@ -527,6 +535,33 @@ function FocusedFlow({
               />
             ))}
           </svg>
+          {path?.segments.slice(1, 5).map((segment, index) => {
+            const runtime = segment.runtime;
+            if (!runtime) return null;
+            return (
+              <div
+                key={segment.id}
+                className={cn(
+                  'absolute top-[calc(50%+54px)] w-[190px] -translate-x-1/2 rounded-lg border bg-surface/95 px-2.5 py-2 text-center shadow-sm',
+                  STATUS[runtime.status].border,
+                )}
+                style={{
+                  left:
+                    ((centers[Math.min(index + 1, 4)] ?? centers[4] ?? 0) +
+                      (centers[Math.min(index + 2, 4)] ?? centers[4] ?? 0)) /
+                    2,
+                }}
+                title={`${runtime.detail} · ${new Date(runtime.checkedAt).toLocaleString('ru-RU')}`}
+              >
+                <div className={cn('text-[10.5px] font-semibold', STATUS[runtime.status].text)}>
+                  {runtime.label}
+                </div>
+                <div className="mt-0.5 line-clamp-2 text-[9.5px] leading-3.5 text-text-3">
+                  {runtime.detail}
+                </div>
+              </div>
+            );
+          })}
           <GraphCard
             x={lefts[0]}
             y={graphY}
@@ -599,6 +634,21 @@ function FocusedFlow({
           )}
         </div>
       </div>
+      {visibleSegments.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-text-2">
+          {visibleSegments.map((segment) => (
+            <span
+              key={segment.id}
+              className={cn(
+                'rounded-full border px-2.5 py-1',
+                STATUS[segment.runtime?.status ?? 'unknown'].border,
+              )}
+            >
+              {segment.runtime?.label}: {segment.runtime?.detail}
+            </span>
+          ))}
+        </div>
+      )}
       {routes.length > 0 && (
         <div className="mt-3 grid gap-2 lg:grid-cols-2">
           {routes.slice(0, 8).map((route) => {

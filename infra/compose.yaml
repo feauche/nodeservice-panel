@@ -40,6 +40,7 @@ services:
       args:
         APP_COMMIT: ${APP_COMMIT:-dev}
         APP_BUILT_AT: ${APP_BUILT_AT:-}
+        APP_VERSION: ${NODESERVICE_VERSION:-dev}
     restart: unless-stopped
     env_file: .env
     environment:

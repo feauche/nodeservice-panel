@@ -219,6 +219,8 @@ function topology(): RemnawaveTopology {
         ]
       : [];
   return {
+    paths: [],
+    readiness: [],
     generatedAt: new Date().toISOString(),
     hosts,
     nodes,

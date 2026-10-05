@@ -204,6 +204,67 @@ export const remnawaveTopologyRouteSchema = z.object({
 });
 export type RemnawaveTopologyRoute = z.infer<typeof remnawaveTopologyRouteSchema>;
 
+export const REMNAWAVE_PATH_SEGMENTS = [
+  'client_host',
+  'host_inbound',
+  'inbound_entry',
+  'entry_outbound',
+  'outbound_exit',
+  'exit_internet',
+] as const;
+
+/** Фактическое состояние участка. null означает, что карта знает конфигурацию, но участок ещё не измерялся. */
+export const remnawavePathRuntimeSchema = z.object({
+  status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
+  checkedAt: z.iso.datetime(),
+  source: z.enum(['vpn_probe', 'remnawave', 'inventory', 'billing']),
+  label: z.string(),
+  detail: z.string(),
+});
+
+export const remnawavePathSegmentSchema = z.object({
+  id: z.string(),
+  kind: z.enum(REMNAWAVE_PATH_SEGMENTS),
+  fromId: z.string(),
+  toId: z.string(),
+  status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
+  runtime: remnawavePathRuntimeSchema.nullable().default(null),
+});
+
+/**
+ * Единая модель пути, которой пользуются карта, готовность сервера, инциденты и Джарвис.
+ * Техническое правило/outbound остаётся отдельным звеном и не маскируется под сервер.
+ */
+export const remnawaveTopologyPathSchema = z.object({
+  id: z.string(),
+  hostId: z.string(),
+  inboundTag: z.string().nullable(),
+  entryNodeUuid: z.string().nullable(),
+  routeId: z.string().nullable(),
+  outboundTag: z.string().nullable(),
+  exitNodeUuid: z.string().nullable(),
+  destination: z.enum(['internet', 'service', 'blocked', 'unknown']),
+  status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
+  confidence: z.enum(REMNAWAVE_TOPOLOGY_CONFIDENCE),
+  segments: z.array(remnawavePathSegmentSchema),
+});
+export type RemnawaveTopologyPath = z.infer<typeof remnawaveTopologyPathSchema>;
+
+export const remnawaveReadinessItemSchema = z.object({
+  key: z.enum(['agent', 'remnanode', 'psiphon', 'selfsteal', 'ports', 'profile', 'entry', 'exit', 'billing']),
+  label: z.string(),
+  status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
+  detail: z.string(),
+  checkedAt: z.iso.datetime().nullable(),
+});
+export const remnawaveServerReadinessSchema = z.object({
+  serverId: z.string(),
+  serverName: z.string(),
+  status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
+  items: z.array(remnawaveReadinessItemSchema),
+});
+export type RemnawaveServerReadiness = z.infer<typeof remnawaveServerReadinessSchema>;
+
 export const remnawaveTopologyProfileSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -252,6 +313,8 @@ export const remnawaveTopologySchema = z.object({
   hosts: z.array(remnawaveTopologyHostSchema),
   nodes: z.array(remnawaveTopologyNodeSchema),
   routes: z.array(remnawaveTopologyRouteSchema),
+  paths: z.array(remnawaveTopologyPathSchema).default([]),
+  readiness: z.array(remnawaveServerReadinessSchema).default([]),
   profiles: z.array(remnawaveTopologyProfileSchema).default([]),
   issues: z.array(remnawaveTopologyIssueSchema),
   summary: z.object({

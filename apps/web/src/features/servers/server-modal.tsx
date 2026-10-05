@@ -52,6 +52,7 @@ import { MetricsTab } from './server-detail/metrics-tab';
 import { ProfileTab } from './server-detail/profile-tab';
 import { TerminalHistoryTab } from './server-detail/terminal-history-tab';
 import { AUTH_TABS, type ServerEdit, useServerEdit } from './server-detail/use-server-edit';
+import { VpnReadinessTab } from './server-detail/vpn-readiness-tab';
 import { serverState } from './server-health';
 import { useCheckServer, useDeleteServer, useDuplicateServer, useServers } from './servers-api';
 import { splitTagList, TagInput, useTagCounts } from './tag-input';
@@ -62,6 +63,7 @@ export type ServerModalTab =
   | 'terminal'
   | 'maintenance'
   | 'checks'
+  | 'readiness'
   | 'profile'
   | 'connection'
   | 'install';
@@ -72,6 +74,7 @@ const TABS: Array<{ key: ServerModalTab; label: string }> = [
   { key: 'terminal', label: 'Терминал' },
   { key: 'maintenance', label: 'Обслуживание' },
   { key: 'checks', label: 'Проверки' },
+  { key: 'readiness', label: 'Готовность VPN' },
   { key: 'install', label: 'Установка' },
   { key: 'profile', label: 'Профиль' },
   { key: 'connection', label: 'Подключение' },
@@ -290,6 +293,7 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
       {tab === 'terminal' && <TerminalHistoryTab serverId={s.id} />}
       {tab === 'maintenance' && <MaintenanceTab server={s} />}
       {tab === 'checks' && <ChecksTab server={s} />}
+      {tab === 'readiness' && <VpnReadinessTab server={s} />}
       {tab === 'install' && <InstallTab server={s} />}
       {tab === 'profile' && <ProfileTab server={s} edit={edit.profile} />}
       {tab === 'connection' && <ConnectionTab server={s} edit={edit} />}

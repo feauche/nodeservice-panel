@@ -52,6 +52,7 @@ export function useRemnawaveTopology(enabled = true) {
     queryFn: ({ signal }) => remnawaveApi.topology(signal),
     enabled,
     staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 }
 

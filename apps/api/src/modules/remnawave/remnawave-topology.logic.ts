@@ -4,6 +4,7 @@ import type {
   RemnawaveTopologyHost,
   RemnawaveTopologyIssue,
   RemnawaveTopologyNode,
+  RemnawaveTopologyPath,
   RemnawaveTopologyRoute,
 } from '@nodeservice/shared';
 
@@ -632,11 +633,99 @@ export function buildRemnawaveTopology(
     });
   }
 
+  const paths: RemnawaveTopologyPath[] = [];
+  const rank = { ok: 0, unknown: 1, warning: 2, error: 3 } as const;
+  const pathStatus = (...values: Array<RemnawaveTopologyPath['status'] | undefined>) =>
+    values
+      .filter(Boolean)
+      .reduce<RemnawaveTopologyPath['status']>(
+        (worst, value) => (value && rank[value] > rank[worst] ? value : worst),
+        'ok',
+      );
+  for (const host of hosts) {
+    const hostRoutes = routes.filter((route) => route.hostIds.includes(host.id));
+    const entries = host.nodeUuids.length ? host.nodeUuids : [null];
+    const applicable = hostRoutes.length ? hostRoutes : [null];
+    for (const entryNodeUuid of entries) {
+      const entry = entryNodeUuid ? nodeById.get(entryNodeUuid) : undefined;
+      for (const route of applicable) {
+        const exits = route?.targetNodeUuids.length ? route.targetNodeUuids : [null];
+        for (const exitNodeUuid of exits) {
+          const exit = exitNodeUuid ? nodeById.get(exitNodeUuid) : undefined;
+          const destination = route?.targetKind === 'node' ? 'internet' : (route?.targetKind ?? 'unknown');
+          const status = pathStatus(host.status, entry?.status, route?.status, exit?.status);
+          const pathId = [
+            host.id,
+            entryNodeUuid ?? 'entry?',
+            route?.id ?? 'route?',
+            exitNodeUuid ?? destination,
+          ].join(':');
+          const segment = (
+            kind: RemnawaveTopologyPath['segments'][number]['kind'],
+            fromId: string,
+            toId: string,
+            segmentStatus: RemnawaveTopologyPath['status'],
+          ) => ({ id: `${pathId}:${kind}`, kind, fromId, toId, status: segmentStatus, runtime: null });
+          paths.push({
+            id: pathId,
+            hostId: host.id,
+            inboundTag: host.inboundTag,
+            entryNodeUuid,
+            routeId: route?.id ?? null,
+            outboundTag: route?.outboundTag ?? null,
+            exitNodeUuid,
+            destination,
+            status,
+            confidence:
+              host.nodeUuids.length && route && (route.targetKind !== 'node' || exitNodeUuid)
+                ? route.confidence
+                : 'unknown',
+            segments: [
+              segment('client_host', 'client', host.id, host.status),
+              segment(
+                'host_inbound',
+                host.id,
+                host.inboundTag ?? 'inbound?',
+                host.inboundTag ? host.status : 'unknown',
+              ),
+              segment(
+                'inbound_entry',
+                host.inboundTag ?? 'inbound?',
+                entryNodeUuid ?? 'entry?',
+                entry?.status ?? 'unknown',
+              ),
+              segment(
+                'entry_outbound',
+                entryNodeUuid ?? 'entry?',
+                route?.outboundTag ?? 'outbound?',
+                route?.status ?? 'unknown',
+              ),
+              segment(
+                'outbound_exit',
+                route?.outboundTag ?? 'outbound?',
+                exitNodeUuid ?? destination,
+                exit?.status ?? route?.status ?? 'unknown',
+              ),
+              segment(
+                'exit_internet',
+                exitNodeUuid ?? destination,
+                'internet',
+                destination === 'blocked' ? 'warning' : status,
+              ),
+            ],
+          });
+        }
+      }
+    }
+  }
+
   return {
     generatedAt,
     hosts,
     nodes,
     routes,
+    paths,
+    readiness: [],
     profiles,
     issues,
     summary: {

@@ -8,12 +8,13 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
     name: Проверка и публикация
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:17-alpine
@@ -68,8 +69,46 @@ jobs:
       - name: Собрать changelog после прошлого релиза
         run: node scripts/release-notes.mjs --tag "${GITHUB_REF_NAME}" --update "nodeservice update" > release-notes.md
 
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Войти в GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Подготовить метаданные образа
+        id: image_meta
+        run: echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Собрать и опубликовать проверенный образ
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ghcr.io/feauche/nodeservice-api:${{ github.ref_name }}
+            ghcr.io/feauche/nodeservice-api:latest
+          build-args: |
+            APP_COMMIT=${{ github.sha }}
+            APP_BUILT_AT=${{ steps.image_meta.outputs.built_at }}
+            APP_VERSION=${{ github.ref_name }}
+
+      - name: Записать проверяемый digest образа
+        run: |
+          printf '%s  %s\n' '${{ steps.image.outputs.digest }}' 'ghcr.io/feauche/nodeservice-api:${{ github.ref_name }}' > image-digest.txt
+
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: NodeService Panel ${{ github.ref_name }}
           body_path: release-notes.md
+          files: image-digest.txt
