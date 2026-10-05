@@ -730,6 +730,25 @@ describe('вход сервера-выхода', () => {
     expect(drop({ ...mixed, entry: null }).detail).not.toContain('оплат');
   });
 
+  it('вход арендодателя не отвечает и аренда просрочена — это важнее перебоев самого выхода', () => {
+    const r = drop(
+      {
+        ...alive,
+        probes: [probe('ok'), probe('unreachable', 'Россия - 1')],
+        verdict: 'partial',
+        entry: entry('unreachable'),
+      },
+      { payment: late },
+    );
+    expect(r.title).toBe('Резко упал онлайн — проверьте оплату · guardora (Аренда)');
+    expect(r.detail).toContain('вход арендодателя проверен и не отвечает, а аренда находится в окне оплаты');
+    expect(r.detail).toContain(`💳 Просрочена оплата: ${LATE}.`);
+    expect(r.detail).toContain('Вероятнее всего: вход отключили за неоплату');
+    expect(r.detail).toContain('Перебои выхода могут быть отдельной проблемой');
+    expect(r.detail).not.toContain('Заодно проверьте оплату');
+    expect(r.detail).not.toContain('начните с выхода');
+  });
+
   it('недоступны сразу несколько нод — общая причина: «вероятнее всего… сервер отключили» не пишем и оплату в заголовок не ставим', () => {
     const r = drop(down, { payment: soon, othersDown: 2 });
     expect(r.kind).toBe('server_down');

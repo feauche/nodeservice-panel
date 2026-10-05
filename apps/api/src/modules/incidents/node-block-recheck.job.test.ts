@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { NodeLinkService } from '../remnawave/node-link.service.js';
-import { baselineFromDetail, NodeBlockRecheckJob, recoverThreshold } from './node-block-recheck.job.js';
+import {
+  baselineFromDetail,
+  NodeBlockRecheckJob,
+  recoverThreshold,
+  renewalRecoveryText,
+} from './node-block-recheck.job.js';
 
 describe('перепроверка падения онлайна', () => {
   it('онлайн до падения берётся из дела', () => {
@@ -16,7 +21,16 @@ describe('перепроверка падения онлайна', () => {
   });
 
   /** Перепроверка на заглушках: открыто одно дело падения онлайна, `snap` кладёт снимок и прогоняет проход. */
-  function setup(verdict: 'ok' | 'partial' = 'ok') {
+  function setup(
+    verdict: 'ok' | 'partial' = 'ok',
+    renewal: {
+      kind: 'server' | 'rent';
+      title: string;
+      paidAt: Date;
+      extendedTo: Date;
+      automatic: boolean;
+    } | null = null,
+  ) {
     let seq = 0;
     let status = { connected: true, checkedAt: '', error: null as string | null, nodes: [] as unknown[] };
     const notes: string[] = [];
@@ -24,9 +38,10 @@ describe('перепроверка падения онлайна', () => {
     const row = {
       id: 'i-1',
       kind: 'node_blocked',
-      serverId: null,
+      serverId: renewal ? 's-1' : null,
       serverName: 'guardora (Аренда)',
       detail: 'Онлайн: 200 → 0 (−100 %) за 5 минут',
+      openedAt: new Date('2026-09-30T09:00:00.000Z'),
     };
     const job = new NodeBlockRecheckJob(
       {
@@ -50,6 +65,7 @@ describe('перепроверка падения онлайна', () => {
         }),
       } as never,
       new NodeLinkService({ resolve: async () => [] }),
+      { recentServerRenewal: async () => renewal } as never,
     );
     const snap = async (online: number | null, error: string | null = null, isDisabled = false) => {
       seq += 1;
@@ -104,5 +120,34 @@ describe('перепроверка падения онлайна', () => {
     expect(closed[0]).toContain(
       'Порт отвечает с перебоями, но пользователи подключаются — ориентируюсь на онлайн.',
     );
+  });
+
+  it('продление во время инцидента связывает оплату с последующим восстановлением', async () => {
+    const renewal = {
+      kind: 'rent' as const,
+      title: 'Hub Rent',
+      paidAt: new Date('2026-09-30T09:02:00.000Z'),
+      extendedTo: new Date('2026-10-30T09:00:00.000Z'),
+      automatic: false,
+    };
+    const { snap, closed } = setup('partial', renewal);
+    for (let i = 0; i < 3; i += 1) await snap(190);
+    expect(closed[0]).toContain(
+      'Во время инцидента в «Биллинге» отметили продление аренды «Hub Rent», после чего онлайн восстановился.',
+    );
+    expect(closed[0]).toContain('Вероятная причина — закончилась оплата');
+    expect(closed[0]).not.toContain('короткая просадка');
+  });
+
+  it('автоплатёж называется автоплатежом, а не действием владельца', () => {
+    expect(
+      renewalRecoveryText({
+        kind: 'server',
+        title: 'VPS',
+        paidAt: new Date(),
+        extendedTo: new Date(),
+        automatic: true,
+      }),
+    ).toContain('автоплатёж в «Биллинге» продлил оплату хостинга «VPS»');
   });
 });

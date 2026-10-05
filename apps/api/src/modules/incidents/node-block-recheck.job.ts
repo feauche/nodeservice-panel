@@ -9,6 +9,7 @@ import {
 } from '@nodeservice/shared';
 
 import { lowerFirst } from '../../common/text.js';
+import { BillingService, type RecentServerRenewal } from '../billing/billing.service.js';
 import { NodeLinkService } from '../remnawave/node-link.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ServersService } from '../servers/servers.service.js';
@@ -41,6 +42,15 @@ export function recoverThreshold(baseline: number | null): number {
   return Math.max(NODE_ONLINE_DROP_MIN_BASELINE, Math.ceil((baseline * NODE_ONLINE_RECOVER_PCT) / 100));
 }
 
+/** Точная, но не чрезмерно уверенная связь оплаты и восстановления для закрывающего сообщения. */
+export function renewalRecoveryText(renewal: RecentServerRenewal): string {
+  const what = renewal.kind === 'rent' ? 'аренды' : 'хостинга';
+  const action = renewal.automatic
+    ? `Во время инцидента автоплатёж в «Биллинге» продлил оплату ${what} «${renewal.title}»`
+    : `Во время инцидента в «Биллинге» отметили продление ${what} «${renewal.title}»`;
+  return `${action}, после чего онлайн восстановился. Вероятная причина — закончилась оплата; панель видит связь по времени, но не видит фактический баланс у провайдера или арендодателя.`;
+}
+
 /**
  * Пока открыт инцидент падения онлайна (node_blocked), панель следит за онлайном ноды на каждом снимке
  * Remnawave (раз в минуту) — нода может и не быть сервером NodeService, онлайн берётся из Remnawave.
@@ -63,6 +73,7 @@ export class NodeBlockRecheckJob {
     private readonly servers: ServersService,
     private readonly blockCheck: NodeBlockCheckService,
     private readonly links: NodeLinkService,
+    private readonly billing: BillingService,
   ) {}
 
   @Interval(TICK_MS)
@@ -226,10 +237,16 @@ export class NodeBlockRecheckJob {
               : result.verdict === 'partial'
                 ? 'Порт отвечает с перебоями, но пользователи подключаются — ориентируюсь на онлайн.'
                 : 'Порт с серверов парка не ответил, но пользователи подключаются — ориентируюсь на онлайн.';
-        // Дело открыто с подсказкой об оплате — «перезапуск или сбой у хостера» спорил бы с ней.
-        const why = row.detail.includes('💳')
-          ? 'Если вы продлили оплату — отметьте продление в «Биллинге».'
-          : 'Похоже, была короткая просадка — например, перезапуск сервера или сбой у хостера.';
+        // Продление, записанное между открытием и восстановлением, — новая улика. Раньше закрытие было
+        // шаблонным и не читало Биллинг, поэтому после оплаты всё равно называло «короткую просадку».
+        const renewal = row.serverId
+          ? await this.billing.recentServerRenewal(row.serverId, row.openedAt).catch(() => null)
+          : null;
+        const why = renewal
+          ? renewalRecoveryText(renewal)
+          : row.detail.includes('💳')
+            ? 'Если вы продлили оплату — отметьте продление в «Биллинге».'
+            : 'Похоже, была короткая просадка — например, перезапуск сервера или сбой у хостера.';
         await this.incidents.autoResolveById(
           row.id,
           `Онлайн ${NODE_ONLINE_RECOVER_CHECKS} проверки подряд в норме: ${online}${was}. ${probe} ${why}`,

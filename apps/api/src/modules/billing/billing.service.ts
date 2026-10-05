@@ -95,6 +95,15 @@ export interface BillingBrief {
   note: string | null;
 }
 
+/** Продление оплаты самого сервера, записанное после начала инцидента. */
+export interface RecentServerRenewal {
+  kind: 'server' | 'rent';
+  title: string;
+  paidAt: Date;
+  extendedTo: Date;
+  automatic: boolean;
+}
+
 @Injectable()
 export class BillingService {
   private readonly log = new Logger(BillingService.name);
@@ -936,6 +945,46 @@ export class BillingService {
       renewals.push({ entry, at: r.at });
     }
     return buildPaymentWindow([...entries.values()], renewals, now, timeZone);
+  }
+
+  /**
+   * Последнее продление хостинга или аренды, записанное во время инцидента. Оно не доказывает причину
+   * само по себе, но сочетание «отметили оплату → сразу восстановился онлайн» намного полезнее общего
+   * текста про краткий сетевой сбой. Домены, сертификаты и прочие расходы работу сервера не объясняют.
+   */
+  async recentServerRenewal(
+    serverId: string,
+    since: Date,
+    now = new Date(),
+  ): Promise<RecentServerRenewal | null> {
+    const [row] = await this.db
+      .select({
+        kind: billingItems.kind,
+        title: billingItems.title,
+        paidAt: billingPayments.paidAt,
+        extendedTo: billingPayments.extendedTo,
+        actorDisplay: billingPayments.actorDisplay,
+      })
+      .from(billingPayments)
+      .innerJoin(billingItems, eq(billingItems.id, billingPayments.itemId))
+      .where(
+        and(
+          sql`${billingItems.serverIds} @> ${JSON.stringify([serverId])}::jsonb`,
+          inArray(billingItems.kind, [...SERVER_PAYMENT_KINDS]),
+          gte(billingPayments.paidAt, since),
+          lte(billingPayments.paidAt, now),
+        ),
+      )
+      .orderBy(desc(billingPayments.paidAt), desc(billingPayments.id))
+      .limit(1);
+    if (!row || (row.kind !== 'server' && row.kind !== 'rent')) return null;
+    return {
+      kind: row.kind,
+      title: row.title,
+      paidAt: row.paidAt,
+      extendedTo: row.extendedTo,
+      automatic: row.actorDisplay === AUTO_CHARGE_ACTOR,
+    };
   }
 
   /* ─────────── Фоновая задача: автоплатёж, напоминания, досчёт рублей ─────────── */

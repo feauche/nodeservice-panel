@@ -227,7 +227,7 @@ export class NodeBlockCheckService {
         vpnForeign: [],
         vpnVerdict: 'unavailable',
         vpnProtocol: expectedProtocol,
-        vpnUnchecked: `В сервисной подписке есть ${configured.routes ?? 0} маршртов, но не найден маршрут ноды «${nodeName}» (${address}${port ? `:${port}` : ''}). Список распознанных маршрутов показан в настройке Remnawave.`,
+        vpnUnchecked: `В сервисной подписке есть ${configured.routes ?? 0} маршрутов, но не найден маршрут ноды «${nodeName}» (${address}${port ? `:${port}` : ''}). Список распознанных маршрутов показан в настройке Remnawave.`,
       };
     const vpnProtocol = routeProtocol(link);
     const minimumAgentVersion = vpnProtocol === 'hysteria2' ? '0.9.1' : '0.9.0';

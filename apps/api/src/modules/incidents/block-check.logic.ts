@@ -580,7 +580,9 @@ export function entrySide(
   if (result.verdict === 'partial')
     return entryOk
       ? null
-      : `Вход не отвечает, а выход отвечает с перебоями. Вход может молчать потому, что до выхода не достаёт и он, — начните с выхода; если выход заработает без перебоев, а вход нет — ${toEntry}.`;
+      : opts.bare
+        ? 'Вход не отвечает, а выход отвечает с перебоями.'
+        : `Вход не отвечает, а выход отвечает с перебоями. Вход может молчать потому, что до выхода не достаёт и он, — начните с выхода; если выход заработает без перебоев, а вход нет — ${toEntry}.`;
   const alive = Boolean(opts.serverAlive);
   const why = aliveWhy(opts.serverAlive);
   // Из-за рубежа не проверяли: блокировку IP из России от сбоя на самом сервере панель отличить не может.
@@ -739,7 +741,10 @@ export function describeAnomaly(input: {
   const alive = unreachable && agentOn;
   const abroad = result.foreign.length > 0;
   const entryChecked = Boolean(entry && entry.probes.length > 0);
-  // Сервер отвечает, а вход — нет: причина уже видна, и это не «сбой у провайдеров пользователей».
+  // Проверенный вход арендодателя молчит: это отдельная конкретная улика даже тогда, когда сам выход
+  // отвечает с перебоями. При аренде в окне оплаты её нельзя прятать за общей догадкой о маршруте.
+  const rentedEntryDown = Boolean(entryChecked && entry?.rented && entry.verdict !== 'ok');
+  // Для обычного итогового текста «выход работает, вход нет» выход должен пройти чисто.
   const entryDown = result.verdict === 'ok' && entryChecked && entry?.verdict !== 'ok';
   // Вход указан, а проверить его не удалось: возможная причина не проверена — «другой причины не нашлось»
   // сказать нельзя. Свой мост — начинать с него (арендодатель его не выключит); вход арендодателя — оплата.
@@ -751,7 +756,7 @@ export function describeAnomaly(input: {
   // а не в оплате этого сервера; молчит арендованный вход — так и выглядит неоплаченная аренда.
   let picture: PaymentPicture | null = null;
   if (unreachable) picture = alive ? null : others ? 'fleet-dark' : abroad ? 'down' : 'ru-only';
-  else if (partial) picture = others ? 'fleet' : 'partial';
+  else if (partial) picture = rentedEntryDown ? 'entry' : others ? 'fleet' : 'partial';
   else if (result.verdict === 'ok') {
     // Проверенный и молчащий вход — прямое свидетельство: оно важнее общей картины («онлайн упал у
     // нескольких» — у тех нод может быть тот же вход) и важнее того, что блокировку выхода проверить нечем.
@@ -779,7 +784,10 @@ export function describeAnomaly(input: {
           : `Похоже: из России порт не отвечает; ${foreignWhy(result)}.`;
       break;
     case 'partial':
-      verdict = `Похоже: порт ноды ${partialHow(result.probes)}. Сервер работает, но из части сетей до него не достучаться: блокировка у части провайдеров или сбой маршрута.`;
+      verdict =
+        rentedEntryDown && titled
+          ? `Похоже: вход арендодателя проверен и не отвечает, а аренда находится в окне оплаты. Порт самой ноды ${partialHow(result.probes)}. Перебои выхода могут быть отдельной проблемой.`
+          : `Похоже: порт ноды ${partialHow(result.probes)}. Сервер работает, но из части сетей до него не достучаться: блокировка у части провайдеров или сбой маршрута.`;
       break;
     case 'tspu':
       verdict =
@@ -833,7 +841,8 @@ export function describeAnomaly(input: {
   // может быть и блокировка IP из России.
   else if (unreachable)
     title = titled ? ONLINE_DROP_PAYMENT_TITLE : 'Резко упал онлайн, порт из России не отвечает';
-  else if (partial) title = 'Резко упал онлайн, порт отвечает с перебоями';
+  else if (partial)
+    title = titled ? ONLINE_DROP_PAYMENT_TITLE : 'Резко упал онлайн, порт отвечает с перебоями';
   else if (confirmed) title = BLOCK_VERDICT_LABELS[result.verdict];
   else if (titled) title = ONLINE_DROP_PAYMENT_TITLE;
   // Обрыв на небольшом объёме — находка: «блокировка не подтвердилась» в заголовке её прятала.
