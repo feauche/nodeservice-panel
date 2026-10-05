@@ -191,14 +191,49 @@ export const remnawaveTopologyRouteSchema = z.object({
   inboundTags: z.array(z.string()),
   hostIds: z.array(z.string()),
   outboundTag: z.string(),
+  outboundProtocol: z.string().nullable(),
+  outboundAddress: z.string().nullable(),
+  dialerProxy: z.string().nullable(),
   targetKind: z.enum(['internet', 'node', 'service', 'blocked', 'unknown']),
   targetLabel: z.string(),
   targetNodeUuids: z.array(z.string()),
   status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
   confidence: z.enum(REMNAWAVE_TOPOLOGY_CONFIDENCE),
   note: z.string().nullable(),
+  explanation: z.string(),
 });
 export type RemnawaveTopologyRoute = z.infer<typeof remnawaveTopologyRouteSchema>;
+
+export const remnawaveTopologyProfileSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
+  hostIds: z.array(z.string()),
+  nodeUuids: z.array(z.string()),
+  inbounds: z.array(
+    z.object({
+      tag: z.string(),
+      protocol: z.string().nullable(),
+      port: z.number().int().min(1).max(65_535).nullable(),
+      network: z.string().nullable(),
+      security: z.string().nullable(),
+    }),
+  ),
+  outbounds: z.array(
+    z.object({
+      tag: z.string().nullable(),
+      protocol: z.string().nullable(),
+      address: z.string().nullable(),
+      dialerProxy: z.string().nullable(),
+      usedByRules: z.number().int().min(0),
+      purpose: z.string(),
+      note: z.string(),
+    }),
+  ),
+  routingRules: z.number().int().min(0),
+  summary: z.string(),
+});
+export type RemnawaveTopologyProfile = z.infer<typeof remnawaveTopologyProfileSchema>;
 
 export const remnawaveTopologyIssueSchema = z.object({
   id: z.string(),
@@ -217,6 +252,7 @@ export const remnawaveTopologySchema = z.object({
   hosts: z.array(remnawaveTopologyHostSchema),
   nodes: z.array(remnawaveTopologyNodeSchema),
   routes: z.array(remnawaveTopologyRouteSchema),
+  profiles: z.array(remnawaveTopologyProfileSchema).default([]),
   issues: z.array(remnawaveTopologyIssueSchema),
   summary: z.object({
     hosts: z.number().int().min(0),

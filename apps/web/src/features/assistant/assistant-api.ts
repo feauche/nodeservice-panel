@@ -45,6 +45,8 @@ export const changesApi = {
 
 /** Выбранная беседа помнится между заходами на страницу. */
 export const LAST_CONV_KEY = 'ns.assistant.conversation';
+/** Черновик, с которым другой раздел открывает Джарвиса (например, разбор конфигов Remnawave). */
+export const ASSISTANT_DRAFT_KEY = 'ns.assistant.draft';
 /** Ключ запроса чата: по нему любая страница видит, что Джарвис ещё думает, даже если запрос отправили с другой. */
 export const CHAT_MUTATION_KEY = ['assistant', 'chat'] as const;
 export interface ChatVars {

@@ -269,6 +269,25 @@ describe('RemnawavePage', () => {
     await user.click(screen.getByRole('button', { name: 'Карта трафика' }));
     expect(screen.getByRole('heading', { name: 'Как идёт трафик' })).toBeInTheDocument();
   });
+
+  it('объясняет профили, правила и выход по умолчанию и готовит вопрос Джарвису', async () => {
+    mockRemnawave.connected = true;
+    mockRemnawave.domain = 'vpn-panel.example.com';
+    mockRemnawave.checkedAt = '2026-09-27T10:00:00.000Z';
+    mockRemnawave.nodes = NODES_FOR_MAP;
+    renderPage(Page, '/servers/remnawave');
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Конфигурации' }));
+    expect(await screen.findByRole('heading', { name: 'Как читать конфигурацию Xray' })).toBeInTheDocument();
+    await user.click(screen.getByText('Основной'));
+    expect(screen.getByText('Инбаунды — как трафик входит')).toBeInTheDocument();
+    expect(screen.getByText('Выходы — куда Xray отправляет трафик')).toBeInTheDocument();
+    expect(screen.getAllByText('выход по умолчанию').length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole('link', { name: 'Проверить с Джарвисом' }));
+    expect(localStorage.getItem('ns.assistant.draft')).toContain('Проверь все конфигурации Xray');
+  });
 });
 
 const NODES_FOR_MAP: RemnawaveNode[] = [

@@ -188,12 +188,16 @@ function topology(): RemnawaveTopology {
           inboundTags: [],
           hostIds: ['host-main'],
           outboundTag: 'DIRECT',
+          outboundProtocol: 'freedom',
+          outboundAddress: null,
+          dialerProxy: null,
           targetKind: 'internet' as const,
           targetLabel: 'Интернет напрямую',
           targetNodeUuids: [],
           status: 'ok' as const,
           confidence: 'confirmed' as const,
           note: null,
+          explanation: 'Это маршрут по умолчанию. Xray выпускает трафик напрямую в интернет.',
         },
       ]
     : [];
@@ -217,6 +221,29 @@ function topology(): RemnawaveTopology {
     hosts,
     nodes,
     routes,
+    profiles: [
+      {
+        id: 'profile-main',
+        name: 'Основной',
+        status: 'ok',
+        hostIds: hosts.map((host) => host.id),
+        nodeUuids: nodes.map((node) => node.id),
+        inbounds: [{ tag: 'VLESS_IN', protocol: 'vless', port: 443, network: 'tcp', security: 'reality' }],
+        outbounds: [
+          {
+            tag: 'DIRECT',
+            protocol: 'freedom',
+            address: null,
+            dialerProxy: null,
+            usedByRules: 0,
+            purpose: 'Интернет напрямую',
+            note: 'Xray выпускает подходящий трафик в интернет напрямую с этой ноды.',
+          },
+        ],
+        routingRules: 0,
+        summary: '1 инбаундов · 1 выходов · 0 правил routing',
+      },
+    ],
     issues,
     summary: {
       hosts: hosts.length,

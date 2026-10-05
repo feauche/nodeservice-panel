@@ -19,6 +19,7 @@ import {
   ShieldCheckIcon,
   ShieldQuestionIcon,
   SlidersHorizontalIcon,
+  SlidersIcon,
   UsersIcon,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -46,6 +47,7 @@ import {
   useRemnawaveStatus,
   useRemnawaveTopology,
 } from './remnawave-api';
+import { RemnawaveConfigReview } from './remnawave-config-review';
 import { RemnawaveTopologyMap } from './remnawave-topology-map';
 
 /** Общее число байт (строка — может быть огромной) в человекочитаемый вид: «18.4 ТБ». */
@@ -462,7 +464,9 @@ export function RemnawavePage() {
   const disconnect = useDisconnectRemnawave();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [addNode, setAddNode] = useState<RemnawaveNode | null>(null);
-  const [tab, setTab] = useState<'overview' | 'map' | 'nodes' | 'problems' | 'settings'>('overview');
+  const [tab, setTab] = useState<'overview' | 'map' | 'configs' | 'nodes' | 'problems' | 'settings'>(
+    'overview',
+  );
   const [mapResetKey, setMapResetKey] = useState(0);
 
   /** Серверы панели: у связанной ноды показываем её сервер, у остальных — «Добавить в NodeService». */
@@ -522,6 +526,7 @@ export function RemnawavePage() {
             [
               ['overview', 'Обзор', LayoutDashboardIcon],
               ['map', 'Карта трафика', MapIcon],
+              ['configs', 'Конфигурации', SlidersIcon],
               ['nodes', 'Ноды', ListTreeIcon],
               [
                 'problems',
@@ -637,6 +642,21 @@ export function RemnawavePage() {
           )}
           {topology.data && <RemnawaveTopologyMap key={mapResetKey} topology={topology.data} />}
         </section>
+      )}
+
+      {tab === 'configs' && (
+        <>
+          {topology.isPending && <Skeleton className="h-[520px] rounded-2xl" />}
+          {topology.isError && (
+            <p
+              role="alert"
+              className="rounded-xl border border-crit/30 bg-crit-soft px-4 py-3 text-[13px] text-crit"
+            >
+              {apiErrorMessage(topology.error)}
+            </p>
+          )}
+          {topology.data && <RemnawaveConfigReview topology={topology.data} />}
+        </>
       )}
 
       {tab === 'nodes' && s.nodes.length > 0 && (

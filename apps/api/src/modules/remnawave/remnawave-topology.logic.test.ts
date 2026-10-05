@@ -155,4 +155,49 @@ describe('buildRemnawaveTopology', () => {
     expect(route).toMatchObject({ targetKind: 'node', targetNodeUuids: ['node-nl'], status: 'error' });
     expect(route?.targetLabel).toContain('CHAIN → Нидерланды - 1');
   });
+
+  it('разбирает первый outbound без tag как маршрут по умолчанию, а не неизвестный сервис', () => {
+    const input = source();
+    const profile = input.profiles[0] as Record<string, unknown>;
+    profile.config = {
+      routing: { rules: [] },
+      outbounds: [{ protocol: 'freedom' }],
+    };
+
+    const result = buildRemnawaveTopology(input);
+    const route = result.routes[0];
+    expect(route).toMatchObject({
+      isDefault: true,
+      outboundTag: '(без тега) · freedom',
+      outboundProtocol: 'freedom',
+      targetKind: 'internet',
+      targetLabel: 'Интернет напрямую',
+      confidence: 'confirmed',
+    });
+    expect(route?.explanation).toContain('первый outbound');
+    expect(result.profiles[0]?.outbounds[0]).toMatchObject({
+      tag: null,
+      protocol: 'freedom',
+      purpose: 'Интернет напрямую',
+    });
+  });
+
+  it('не называет любой локальный SOCKS-выход Psiphon без явного тега', () => {
+    const input = source();
+    const profile = input.profiles[0] as Record<string, unknown>;
+    profile.config = {
+      routing: { rules: [{ outboundTag: 'LOCAL_PROXY' }] },
+      outbounds: [
+        { tag: 'LOCAL_PROXY', protocol: 'socks', settings: { servers: [{ address: '127.0.0.1' }] } },
+      ],
+    };
+
+    const route = buildRemnawaveTopology(input).routes[0];
+    expect(route).toMatchObject({
+      targetKind: 'service',
+      targetLabel: 'LOCAL_PROXY',
+      confidence: 'confirmed',
+    });
+    expect(route?.explanation).toContain('Назвать его Psiphon можно только');
+  });
 });

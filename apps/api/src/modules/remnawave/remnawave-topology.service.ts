@@ -48,6 +48,7 @@ export class RemnawaveTopologyService {
         hosts: topology.hosts.slice(0, 100),
         nodes: topology.nodes.slice(0, 100),
         routes: topology.routes.slice(0, 150),
+        profiles: topology.profiles.slice(0, 50),
         issues: topology.issues.slice(0, 100),
         safety:
           'Только чтение. Пользователи, UUID клиентов, ключи, токены и полные Xray-конфигурации в карту не включаются.',

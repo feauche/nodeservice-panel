@@ -42,6 +42,7 @@ import { useMediaQuery } from '@/lib/use-media';
 import { cn } from '@/lib/utils';
 import { ActivityRow, useActivityStore, useLiveActivity } from './activity';
 import {
+  ASSISTANT_DRAFT_KEY,
   LAST_CONV_KEY,
   useAssistantStatus,
   useConversationHistory,
@@ -128,7 +129,15 @@ function AssistantChat() {
     return map;
   }, [serversQuery.data]);
   const send = useSendMessage();
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(() => {
+    try {
+      const draft = localStorage.getItem(ASSISTANT_DRAFT_KEY) ?? '';
+      localStorage.removeItem(ASSISTANT_DRAFT_KEY);
+      return draft;
+    } catch {
+      return '';
+    }
+  });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchIndex, setSearchIndex] = useState(0);

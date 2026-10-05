@@ -466,17 +466,38 @@ function FocusedFlow({
         </div>
       </div>
       {routes.length > 0 && (
-        <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <div className="mt-3 grid gap-2 lg:grid-cols-2">
           {routes.slice(0, 6).map((route) => (
-            <div key={route.id} className="rounded-xl border border-border bg-surface-2 px-3.5 py-3">
-              <div className="flex items-start justify-between gap-2 text-[12px] font-semibold">
-                <span className="min-w-0 break-words leading-4">{route.targetLabel}</span>
-                <span className="flex-none text-[10.5px] text-text-3">
-                  {route.confidence === 'confirmed' ? 'подтверждено' : 'по конфигурации'}
+            <div key={route.id} className="rounded-xl border border-border bg-surface-2 px-3.5 py-3.5">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="text-[10.5px] font-semibold tracking-[0.05em] text-text-3 uppercase">
+                    {route.isDefault ? 'Маршрут по умолчанию' : `Правило ${route.order + 1}`}
+                  </div>
+                  <div className="mt-1 break-words text-[12.5px] font-semibold">{route.targetLabel}</div>
+                </div>
+                <span className="rounded-full border border-border px-2 py-1 text-[10px] text-text-3">
+                  {route.confidence === 'confirmed' ? 'точно из конфига' : 'назначение распознано частично'}
                 </span>
               </div>
-              <p className="mt-1 text-[11.5px] leading-4 text-text-3">{route.match.join(' · ')}</p>
-              {route.note && <p className="mt-1 text-[11px] leading-4 text-warn">{route.note}</p>}
+              <dl className="mt-3 grid grid-cols-[92px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[11.5px] leading-4">
+                <dt className="text-text-3">Когда</dt>
+                <dd className="break-words">{route.match.join(' · ')}</dd>
+                <dt className="text-text-3">Outbound</dt>
+                <dd className="break-words font-mono text-[11px]">{route.outboundTag}</dd>
+                <dt className="text-text-3">Протокол</dt>
+                <dd>{route.outboundProtocol ?? 'не указан'}</dd>
+                {route.outboundAddress && (
+                  <>
+                    <dt className="text-text-3">Адрес</dt>
+                    <dd className="break-all font-mono text-[11px]">{route.outboundAddress}</dd>
+                  </>
+                )}
+              </dl>
+              <p className="mt-3 border-t border-border pt-2.5 text-[11.5px] leading-5 text-text-2">
+                {route.explanation}
+              </p>
+              {route.note && <p className="mt-1.5 text-[11px] leading-4 text-warn">{route.note}</p>}
             </div>
           ))}
         </div>

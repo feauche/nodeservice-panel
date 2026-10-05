@@ -113,6 +113,32 @@ function outboundAddress(outbound: Row): string | null {
   return text(settings.address) || text(firstServer?.address) || text(firstVnext?.address) || null;
 }
 
+type TargetAnalysis = Pick<
+  RemnawaveTopologyRoute,
+  | 'targetKind'
+  | 'targetLabel'
+  | 'targetNodeUuids'
+  | 'status'
+  | 'confidence'
+  | 'note'
+  | 'outboundProtocol'
+  | 'outboundAddress'
+  | 'dialerProxy'
+  | 'explanation'
+>;
+
+function servicePurpose(protocol: string, address: string | null): string {
+  if (protocol === 'socks')
+    return address && /^(127\.|localhost|::1)/i.test(address)
+      ? 'Локальный SOCKS-прокси на этом сервере.'
+      : 'Внешний SOCKS-прокси.';
+  if (protocol === 'http') return 'HTTP-прокси для исходящего трафика.';
+  if (protocol === 'vless' || protocol === 'vmess' || protocol === 'trojan')
+    return 'Туннель на другой VPN-сервер.';
+  if (protocol === 'wireguard') return 'Выход через туннель WireGuard.';
+  return protocol ? `Служебный выход Xray с протоколом ${protocol}.` : 'Назначение выхода не указано.';
+}
+
 function norm(value: string): string {
   return value
     .toLowerCase()
@@ -126,11 +152,9 @@ function targetOf(
   outbounds: Row[],
   nodes: RemnawaveTopologyNode[],
   visited = new Set<string>(),
-): Pick<
-  RemnawaveTopologyRoute,
-  'targetKind' | 'targetLabel' | 'targetNodeUuids' | 'status' | 'confidence' | 'note'
-> {
-  const outbound = outbounds.find((item) => text(item.tag) === outboundTag);
+  selectedOutbound?: Row,
+): TargetAnalysis {
+  const outbound = selectedOutbound ?? outbounds.find((item) => text(item.tag) === outboundTag);
   if (!outbound)
     return {
       targetKind: 'unknown',
@@ -139,8 +163,20 @@ function targetOf(
       status: 'unknown',
       confidence: 'unknown',
       note: 'В профиле не найден выход с таким тегом.',
+      outboundProtocol: null,
+      outboundAddress: null,
+      dialerProxy: null,
+      explanation: 'Правило ссылается на выход, которого нет в списке outbounds этого профиля.',
     };
   const tag = text(outbound.tag) || outboundTag;
+  const protocol = text(outbound.protocol).toLowerCase();
+  const address = outboundAddress(outbound);
+  const dialerProxy = text(row(row(outbound.streamSettings).sockopt).dialerProxy) || null;
+  const metadata = {
+    outboundProtocol: protocol || null,
+    outboundAddress: address,
+    dialerProxy,
+  };
   if (visited.has(tag))
     return {
       targetKind: 'unknown',
@@ -149,20 +185,22 @@ function targetOf(
       status: 'error',
       confidence: 'confirmed',
       note: 'В цепочке outbound обнаружена циклическая ссылка dialerProxy.',
+      ...metadata,
+      explanation: 'Выход отправляет трафик сам в себя по цепочке dialerProxy. Такая цепочка не завершится.',
     };
   const nextVisited = new Set(visited).add(tag);
-  const dialerProxy = text(row(row(outbound.streamSettings).sockopt).dialerProxy);
   if (dialerProxy) {
     const nested = targetOf(dialerProxy, outbounds, nodes, nextVisited);
     return {
       ...nested,
       targetLabel: `${tag} → ${nested.targetLabel}`,
+      ...metadata,
       note: nested.note
         ? `Цепочка dialerProxy: ${tag} → ${dialerProxy}. ${nested.note}`
         : `Цепочка dialerProxy: ${tag} → ${dialerProxy}.`,
+      explanation: `Сначала Xray выбирает выход «${tag}», затем через dialerProxy передаёт соединение в «${dialerProxy}». ${nested.explanation}`,
     };
   }
-  const protocol = text(outbound.protocol).toLowerCase();
   if (protocol === 'freedom' || protocol === 'direct')
     return {
       targetKind: 'internet',
@@ -171,6 +209,8 @@ function targetOf(
       status: 'ok',
       confidence: 'confirmed',
       note: null,
+      ...metadata,
+      explanation: 'Xray выпускает подходящий трафик в интернет напрямую с этой ноды.',
     };
   if (protocol === 'blackhole' || /block|reject|запрет/i.test(tag))
     return {
@@ -180,8 +220,9 @@ function targetOf(
       status: 'ok',
       confidence: 'confirmed',
       note: null,
+      ...metadata,
+      explanation: 'Xray намеренно отклоняет подходящий трафик правилом blackhole.',
     };
-  const address = outboundAddress(outbound);
   const exact = address ? nodes.filter((node) => node.address.toLowerCase() === address.toLowerCase()) : [];
   const byName = exact.length
     ? []
@@ -196,9 +237,13 @@ function targetOf(
       status: broken ? 'error' : 'ok',
       confidence: exact.length ? 'confirmed' : 'inferred',
       note: exact.length ? null : 'Выход сопоставлен с нодой по имени тега.',
+      ...metadata,
+      explanation: exact.length
+        ? `Xray передаёт трафик на адрес ${address}; он совпал с этой нодой Remnawave.`
+        : 'Xray передаёт трафик в другой VPN-выход; нода сопоставлена по названию тега.',
     };
   }
-  if (/psiphon/i.test(tag) || (protocol === 'socks' && address && /^(127\.|localhost|::1)/i.test(address)))
+  if (/psiphon/i.test(tag))
     return {
       targetKind: 'service',
       targetLabel: 'Psiphon',
@@ -206,6 +251,21 @@ function targetOf(
       status: 'unknown',
       confidence: 'inferred',
       note: 'Маршрут распознан по локальному SOCKS-выходу; состояние службы проверяется на сервере.',
+      ...metadata,
+      explanation:
+        'Xray передаёт подходящий трафик в локальный SOCKS-порт Psiphon. Это описание настройки; работу процесса нужно подтверждать проверкой сервера.',
+    };
+  if (protocol === 'socks' && address && /^(127\.|localhost|::1)/i.test(address))
+    return {
+      targetKind: 'service',
+      targetLabel: text(outbound.tag) || 'Локальный SOCKS-прокси',
+      targetNodeUuids: [],
+      status: 'unknown',
+      confidence: 'confirmed',
+      note: 'Конфигурация подтверждает локальный SOCKS-выход, но не называет процесс, который слушает порт.',
+      ...metadata,
+      explanation:
+        'Xray передаёт подходящий трафик в SOCKS-прокси на этом же сервере. Назвать его Psiphon можно только тогда, когда это явно указано в теге.',
     };
   return {
     targetKind: 'service',
@@ -213,9 +273,11 @@ function targetOf(
     targetNodeUuids: [],
     status: 'unknown',
     confidence: 'unknown',
+    ...metadata,
     note: address
       ? `Выход ведёт на ${address}, но связать его с нодой NodeService однозначно не удалось.`
       : 'Профиль задаёт сервисный выход, но его назначение нельзя подтвердить без предположений.',
+    explanation: `${servicePurpose(protocol, address)} NodeService показывает тег и адрес из Xray, но не называет конкретную ноду без точного совпадения.`,
   };
 }
 
@@ -225,10 +287,7 @@ function targetForRule(
   outbounds: Row[],
   balancers: Row[],
   nodes: RemnawaveTopologyNode[],
-): Pick<
-  RemnawaveTopologyRoute,
-  'targetKind' | 'targetLabel' | 'targetNodeUuids' | 'status' | 'confidence' | 'note'
-> {
+): TargetAnalysis {
   if (!balancerTag) return targetOf(outboundTag, outbounds, nodes);
   const balancer = balancers.find((item) => text(item.tag) === balancerTag);
   if (!balancer)
@@ -239,6 +298,10 @@ function targetForRule(
       status: 'unknown',
       confidence: 'unknown',
       note: 'Правило ссылается на балансировщик, которого нет в профиле.',
+      outboundProtocol: 'balancer',
+      outboundAddress: null,
+      dialerProxy: null,
+      explanation: 'Правило указывает балансировщик, которого нет в routing.balancers этого профиля.',
     };
   const selectors = texts(balancer.selector);
   const selected = outbounds.filter((item) => {
@@ -258,9 +321,15 @@ function targetForRule(
         ? 'error'
         : 'unknown',
     confidence: selected.length ? 'confirmed' : 'unknown',
+    outboundProtocol: 'balancer',
+    outboundAddress: null,
+    dialerProxy: null,
     note: selected.length
       ? `Балансировщик «${balancerTag}» выбирает из ${selected.length} выходов.`
       : `У балансировщика «${balancerTag}» не найдено выходов по selector.`,
+    explanation: selected.length
+      ? `Xray выбирает один из ${selected.length} выходов балансировщика «${balancerTag}» по его стратегии.`
+      : `Балансировщик «${balancerTag}» не нашёл ни одного outbound по selector.`,
   };
 }
 
@@ -378,22 +447,26 @@ export function buildRemnawaveTopology(
         )
         .map((host) => host.id);
       const target = targetForRule(directOutboundTag, balancerTag, outbounds, balancers, nodes);
+      const match = matchBrief(rule);
       routes.push({
         id: `${profileUuid}:rule:${index}`,
         profileUuid,
         profileName,
         order: index,
         isDefault: false,
-        match: matchBrief(rule),
+        match,
         inboundTags,
         hostIds,
         outboundTag: outboundTag || 'не указан',
         ...target,
+        explanation: `Правило ${index + 1} обрабатывает: ${match.join('; ')}. ${target.explanation}`,
       });
     }
     const defaultOutbound = outbounds[0];
     if (defaultOutbound) {
-      const outboundTag = text(defaultOutbound.tag) || text(defaultOutbound.protocol) || 'первый выход';
+      const protocol = text(defaultOutbound.protocol).toLowerCase();
+      const outboundTag = text(defaultOutbound.tag) || `(без тега) · ${protocol || 'протокол не указан'}`;
+      const target = targetOf(outboundTag, outbounds, nodes, new Set(), defaultOutbound);
       routes.push({
         id: `${profileUuid}:default`,
         profileUuid,
@@ -404,10 +477,69 @@ export function buildRemnawaveTopology(
         inboundTags: [],
         hostIds: profileHosts.map((host) => host.id),
         outboundTag,
-        ...targetOf(outboundTag, outbounds, nodes),
+        ...target,
+        explanation: `Это маршрут по умолчанию: если ни одно правило routing выше не подошло, Xray использует первый outbound в списке. ${target.explanation}`,
       });
     }
   }
+
+  const profiles = source.profiles.map((profile, profileIndex) => {
+    const id = text(profile.uuid) || `profile-${profileIndex}`;
+    const name = clean(text(profile.name), `Профиль ${profileIndex + 1}`);
+    const config = configOf(profile);
+    const rawInbounds = rows(config.inbounds).length ? rows(config.inbounds) : rows(profile.inbounds);
+    const rawOutbounds = rows(config.outbounds);
+    const rules = rows(row(config.routing).rules);
+    const profileRoutes = routes.filter((route) => route.profileUuid === id);
+    const profileHosts = hosts.filter((host) => host.profileUuid === id);
+    const profileNodes = nodes.filter((node) => node.profileUuid === id);
+    const outbounds = rawOutbounds.map((outbound, index) => {
+      const tag = text(outbound.tag) || null;
+      const protocol = text(outbound.protocol).toLowerCase() || null;
+      const address = outboundAddress(outbound);
+      const dialerProxy = text(row(row(outbound.streamSettings).sockopt).dialerProxy) || null;
+      const displayTag = tag || `(без тега) · ${protocol || `выход ${index + 1}`}`;
+      const target = targetOf(displayTag, rawOutbounds, nodes, new Set(), outbound);
+      const usedByRules = tag ? rules.filter((rule) => text(rule.outboundTag) === tag).length : 0;
+      return {
+        tag,
+        protocol,
+        address,
+        dialerProxy,
+        usedByRules,
+        purpose: target.targetLabel,
+        note: target.explanation,
+      };
+    });
+    const status: RemnawaveTopologyHost['status'] =
+      rawOutbounds.length === 0 ||
+      profileRoutes.some((route) => route.targetKind === 'unknown' && route.status === 'error')
+        ? 'error'
+        : profileRoutes.some((route) => route.targetKind === 'unknown')
+          ? 'warning'
+          : 'ok';
+    return {
+      id,
+      name,
+      status,
+      hostIds: profileHosts.map((host) => host.id),
+      nodeUuids: profileNodes.map((node) => node.id),
+      inbounds: rawInbounds.map((inbound, index) => {
+        const protocol = protocolOf(inbound);
+        const rawPort = number(inbound.port);
+        return {
+          tag: text(inbound.tag) || `Инбаунд ${index + 1}`,
+          protocol: protocol.protocol,
+          port: rawPort !== null && rawPort >= 1 && rawPort <= 65_535 ? Math.round(rawPort) : null,
+          network: protocol.network,
+          security: protocol.security,
+        };
+      }),
+      outbounds,
+      routingRules: rules.length,
+      summary: `${rawInbounds.length} инбаундов · ${rawOutbounds.length} выходов · ${rules.length} правил routing`,
+    };
+  });
 
   const issues: RemnawaveTopologyIssue[] = [];
   for (const node of nodes) {
@@ -465,12 +597,26 @@ export function buildRemnawaveTopology(
         routeIds: routes.filter((route) => route.hostIds.includes(host.id)).map((route) => route.id),
       });
   }
+  for (const route of routes) {
+    if (route.targetKind !== 'unknown') continue;
+    issues.push({
+      id: `route-invalid:${route.id}`,
+      severity: route.status === 'error' ? 'error' : 'warning',
+      kind: 'route_invalid',
+      title: `Не удалось подтвердить выход «${route.outboundTag}»`,
+      detail: route.note ?? route.explanation,
+      hostIds: route.hostIds,
+      nodeUuids: route.targetNodeUuids,
+      routeIds: [route.id],
+    });
+  }
 
   return {
     generatedAt,
     hosts,
     nodes,
     routes,
+    profiles,
     issues,
     summary: {
       hosts: hosts.length,
