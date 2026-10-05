@@ -66,7 +66,7 @@ export function ProvidersPage() {
       await remove.mutateAsync(active.id);
       setDeleting(false);
       setSelected(null);
-      toast.success(`Провайдер «${active.name}» удалён.`);
+      toast.success(`Провайдер «${active.name}» перенесён в архив.`);
     } catch (err) {
       setDeleting(false);
       toast.error(apiErrorMessage(err));
@@ -225,14 +225,14 @@ export function ProvidersPage() {
         <ConfirmDialog
           open={deleting}
           onOpenChange={setDeleting}
-          kind="crit"
-          title={`Удалить провайдера «${active.name}»?`}
+          kind="warn"
+          title={`Архивировать провайдера «${active.name}»?`}
           description={
             active.serversCount > 0
-              ? `У ${active.serversCount} ${plural(active.serversCount, 'сервера', 'серверов', 'серверов')} провайдер сбросится, сами серверы останутся.`
-              : 'Серверов у него нет, удаление ничего не затронет.'
+              ? `У ${active.serversCount} ${plural(active.serversCount, 'сервера', 'серверов', 'серверов')} провайдер сбросится. Сам провайдер скроется из справочника, а его название сохранится во всей истории оплат.`
+              : 'Провайдер скроется из справочника, а его название сохранится во всей истории оплат.'
           }
-          yesLabel="Да, удалить"
+          yesLabel="В архив"
           loading={remove.isPending}
           onConfirm={doDelete}
         />

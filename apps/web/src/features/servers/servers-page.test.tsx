@@ -551,7 +551,9 @@ describe('ServersPage', () => {
     let dialog = await screen.findByRole('dialog', { name: 'Управление агентом' });
     await user.click(within(dialog).getByRole('button', { name: /Переустановить/ }));
     dialog = await screen.findByRole('dialog', { name: 'Переустановка агента' });
-    expect(within(dialog).getByText(/github\.com\/feauche\/nodeservice-agent/)).toBeInTheDocument();
+    // Открытие окна само не выпускает и не отзывает одноразовые токены.
+    expect(within(dialog).queryByText(/github\.com\/feauche\/nodeservice-agent/)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Показать ручную команду' })).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: 'Переустановить по SSH' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(mockServers.items[0]?.agentStatus).toBe('pending');

@@ -65,7 +65,7 @@ export class ServersRepository {
 
   async providerExists(id: string): Promise<boolean> {
     const row = await this.db.query.providers.findFirst({
-      where: eq(providers.id, id),
+      where: and(eq(providers.id, id), isNull(providers.archivedAt)),
       columns: { id: true },
     });
     return Boolean(row);

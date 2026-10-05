@@ -372,6 +372,13 @@
       "when": 1790915000000,
       "tag": "0055_billing_calendar",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1791172800000,
+      "tag": "0056_provider_archive",
+      "breakpoints": true
     }
   ]
 }

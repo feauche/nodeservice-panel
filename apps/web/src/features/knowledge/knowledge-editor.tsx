@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -80,11 +81,23 @@ export function Editor({ docId, onDone }: { docId?: string; onDone: (id: string 
   const existing = useKbDoc(docId ?? null);
 
   if (docId && existing.isPending) return <EditorSkeleton />;
-  if (docId && (existing.isError || !existing.data))
+  if (docId && !existing.data)
     return (
-      <p className="rounded-2xl border border-crit/30 bg-crit-soft px-4 py-6 text-center text-[13px]">
-        {apiErrorMessage(existing.error)}
-      </p>
+      <div className="grid h-full place-items-center rounded-2xl border border-crit/30 bg-crit-soft p-6 text-center">
+        <div>
+          <p role="alert" className="text-[13px] text-crit">
+            {apiErrorMessage(existing.error)}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-3 h-9"
+            onClick={() => void existing.refetch()}
+          >
+            Повторить загрузку
+          </Button>
+        </div>
+      </div>
     );
 
   return (
@@ -93,6 +106,8 @@ export function Editor({ docId, onDone }: { docId?: string; onDone: (id: string 
       docId={docId}
       initial={existing.data ? toValues(existing.data) : EMPTY}
       pinned={existing.data?.pinned ?? false}
+      loadError={existing.isError ? existing.error : null}
+      onRetry={() => void existing.refetch()}
       onDone={onDone}
     />
   );
@@ -115,11 +130,15 @@ function EditorForm({
   docId,
   initial,
   pinned,
+  loadError,
+  onRetry,
   onDone,
 }: {
   docId?: string | undefined;
   initial: KbFormValues;
   pinned: boolean;
+  loadError: unknown;
+  onRetry: () => void;
   onDone: (id: string | null) => void;
 }) {
   const create = useCreateKbDoc();
@@ -244,6 +263,15 @@ function EditorForm({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
+      <UnsavedChangesGuard dirty={dirty} />
+      {Boolean(loadError) && (
+        <div className="flex flex-none items-center justify-between gap-3 rounded-[11px] border border-warn/30 bg-warn-soft px-4 py-2.5 text-[12.5px]">
+          <span>Не удалось обновить исходную статью. Черновик сохранён и остаётся на экране.</span>
+          <Button type="button" variant="outline" className="h-8 px-3" onClick={onRetry}>
+            Повторить
+          </Button>
+        </div>
+      )}
       <div className="grid flex-none grid-cols-2 gap-2.5 sm:grid-cols-[minmax(0,1fr)_230px_180px]">
         <Input
           id="kb-title"

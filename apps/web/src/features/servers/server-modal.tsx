@@ -532,7 +532,11 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
                 <DropdownMenuContent align="end" side="top" className="z-[60] min-w-[220px]">
                   <DropdownMenuItem onSelect={() => setInstallOpen(true)}>
                     <KeyRoundIcon className="size-4" aria-hidden="true" />
-                    {s.agentStatus === 'not_installed' ? 'Установить агента' : 'Управление агентом'}
+                    {s.agentStatus === 'installing'
+                      ? 'Установка агента…'
+                      : s.agentStatus === 'not_installed'
+                        ? 'Установить агента'
+                        : 'Управление агентом'}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
@@ -595,7 +599,11 @@ function ServerModalView({ server: s, initialTab, onClose }: Props & { server: S
                   className={SIDE_BTN}
                 >
                   <KeyRoundIcon className="size-4" aria-hidden="true" />
-                  {s.agentStatus === 'not_installed' ? 'Установить агента' : 'Управление агентом'}
+                  {s.agentStatus === 'installing'
+                    ? 'Установка агента…'
+                    : s.agentStatus === 'not_installed'
+                      ? 'Установить агента'
+                      : 'Управление агентом'}
                 </Button>
                 <Button
                   type="button"

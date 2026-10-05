@@ -56,11 +56,6 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
     }
   }, [open, server.agentStatus]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: новый одноразовый токен на вход в режим установки
-  useEffect(() => {
-    if (open && installMode && !command && !enrollment.isPending && !error) void issue();
-  }, [open, installMode]);
-
   const doInstall = async () => {
     try {
       await install.mutateAsync(server.id);
@@ -107,11 +102,13 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
   };
 
   const installed = server.agentStatus !== 'not_installed';
+  const installing = server.agentStatus === 'installing';
   const pending = install.isPending || maintenance.isPending || uninstall.isPending || unlink.isPending;
+  const closeLocked = uninstall.isPending || unlink.isPending;
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(o) => !pending && onOpenChange(o)}>
+      <Dialog open={open} onOpenChange={(o) => !closeLocked && onOpenChange(o)}>
         <DialogContent className="sm:max-w-[600px] rounded-2xl border-border bg-surface p-6">
           <DialogHeader>
             <DialogTitle className="font-heading text-[17px]">
@@ -127,7 +124,17 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
                 : 'Панель может установить агент по SSH. Ручная команда остаётся запасным путём; её токен одноразовый и живёт 24 часа.'}
             </DialogDescription>
           </DialogHeader>
-          {installed && !installMode ? (
+          {installing ? (
+            <div className="mt-1 flex items-start gap-3 rounded-[11px] border border-brand/30 bg-brand-soft px-4 py-3">
+              <Loader2Icon className="mt-0.5 size-4 flex-none animate-spin text-brand" aria-hidden="true" />
+              <div>
+                <b className="block text-[13px]">Установка уже выполняется</b>
+                <span className="mt-0.5 block text-[12px] leading-relaxed text-text-2">
+                  Окно можно закрыть. Состояние сохранено на сервере и обновится в карточке после завершения.
+                </span>
+              </div>
+            </div>
+          ) : installed && !installMode ? (
             <div className="mt-1 grid gap-2 sm:grid-cols-2">
               <Button
                 type="button"
@@ -179,29 +186,41 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
                   </Button>
                 </div>
               ) : (
-                <code className="mt-1 block min-h-[52px] break-all rounded-[10px] border border-border bg-surface-2 px-3 py-2 font-mono text-[12px]">
-                  {command ?? 'Готовлю команду…'}
-                </code>
+                command && (
+                  <code className="mt-1 block min-h-[52px] break-all rounded-[10px] border border-border bg-surface-2 px-3 py-2 font-mono text-[12px]">
+                    {command}
+                  </code>
+                )
               )}
               <div className="mt-2 flex justify-center">
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={!command}
+                  disabled={enrollment.isPending}
                   className="h-8 rounded-[8px] border-border bg-surface-2 px-2.5 text-[12px] text-text-2 hover:bg-surface-3 hover:text-foreground"
                   onClick={() => {
-                    void navigator.clipboard?.writeText(command ?? '');
+                    if (!command) {
+                      void issue();
+                      return;
+                    }
+                    void navigator.clipboard?.writeText(command);
                     toast.success('Команда скопирована.');
                   }}
                 >
-                  <CopyIcon className="size-3.5" aria-hidden="true" />
-                  Скопировать команду
+                  {enrollment.isPending ? (
+                    <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <CopyIcon className="size-3.5" aria-hidden="true" />
+                  )}
+                  {command ? 'Скопировать команду' : 'Показать ручную команду'}
                 </Button>
               </div>
             </>
           )}
           <DialogActions>
-            {installed && !installMode ? (
+            {installing ? (
+              <DialogSecondaryButton onClick={() => onOpenChange(false)}>Закрыть</DialogSecondaryButton>
+            ) : installed && !installMode ? (
               <>
                 <Button
                   type="button"
@@ -219,15 +238,11 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
             ) : (
               <>
                 <DialogSecondaryButton
-                  disabled={install.isPending}
                   onClick={() => (installed ? setInstallMode(false) : onOpenChange(false))}
                 >
                   {installed ? 'Назад' : 'Закрыть'}
                 </DialogSecondaryButton>
-                <DialogPrimaryButton
-                  disabled={install.isPending || !command}
-                  onClick={() => void doInstall()}
-                >
+                <DialogPrimaryButton disabled={install.isPending} onClick={() => void doInstall()}>
                   {install.isPending && <Loader2Icon className="animate-spin" aria-hidden="true" />}
                   {installed ? 'Переустановить по SSH' : 'Установить по SSH'}
                 </DialogPrimaryButton>

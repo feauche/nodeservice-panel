@@ -43,6 +43,8 @@ export const providers = pgTable('providers', {
   iconSourceUrl: text('icon_source_url'),
   /** Иконка ищется в фоне (после создания или смены сайта/ссылки). */
   iconPending: boolean('icon_pending').notNull().default(false),
+  /** Архивный провайдер скрыт из справочника, но остаётся у старых оплат для точной истории. */
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -59,7 +61,7 @@ export const servers = pgTable('servers', {
   sshPrivateKeyEnc: text('ssh_private_key_enc'),
   tags: jsonb('tags').$type<string[]>().notNull().default([]),
   notes: text('notes'),
-  /** Хостер из справочника providers; при удалении провайдера сбрасывается в NULL (миграция 0019). */
+  /** Активный хостер; при архивировании отвязывается, старые оплаты продолжают ссылаться на провайдера. */
   providerId: uuid('provider_id').references(() => providers.id, { onDelete: 'set null' }),
   /** Слежение за контейнером ноды: auto / on / off (миграция 0027). */
   nodeWatch: text('node_watch').notNull().default('auto'),

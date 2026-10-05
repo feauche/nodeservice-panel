@@ -481,6 +481,12 @@ export function NotificationsPage() {
       </SettingsCard>
       <NotificationGroupHeader
         number={2}
+        title="Резервная тревога"
+        hint="Сообщит о полном падении панели независимо от самой панели"
+      />
+      <WatchdogCard />
+      <NotificationGroupHeader
+        number={3}
         title="Какие сообщения отправлять"
         hint="Сначала общие события, затем отдельные виды инцидентов"
       />
@@ -573,7 +579,7 @@ export function NotificationsPage() {
         ))}
       </SettingsCard>
       <NotificationGroupHeader
-        number={3}
+        number={4}
         title="Как доставлять сообщения"
         hint="Оформление, звук, повторы и ночной режим"
       />
@@ -693,12 +699,6 @@ export function NotificationsPage() {
           />
         </SettingsRow>
       </SettingsCard>
-      <NotificationGroupHeader
-        number={4}
-        title="Резервная тревога"
-        hint="Сообщит о полном падении панели независимо от самой панели"
-      />
-      <WatchdogCard />
       <SaveBar
         dirty={dirty}
         pending={update.isPending}

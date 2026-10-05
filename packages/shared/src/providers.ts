@@ -7,7 +7,7 @@ import { z } from 'zod';
  *  GET    /api/providers                 → { items: Provider[] } (с числом серверов)
  *  POST   /api/providers                 → Provider (iconPending: true — иконка ищется в фоне)
  *  PATCH  /api/providers/:id             → Provider (смена сайта — иконка заново)
- *  DELETE /api/providers/:id             → 204 (у серверов провайдер сбрасывается)
+ *  DELETE /api/providers/:id             → 204 (архив; серверы отвязываются, оплаты сохраняют провайдера)
  *  GET    /api/providers/:id/icon        → картинка (404, если не нашли)
  *  POST   /api/providers/:id/icon/refresh→ Provider
  *  POST   /api/providers/icon-preview    → { iconDataUrl, sourceUrl } — превью в форме до сохранения

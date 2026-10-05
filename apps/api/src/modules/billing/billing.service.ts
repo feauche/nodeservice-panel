@@ -177,7 +177,7 @@ export class BillingService {
       const [p] = await this.db
         .select({ id: providers.id })
         .from(providers)
-        .where(eq(providers.id, body.providerId));
+        .where(and(eq(providers.id, body.providerId), isNull(providers.archivedAt)));
       if (!p) throw problem(HttpStatus.BAD_REQUEST, { detail: 'Провайдер не найден — обновите страницу.' });
     }
   }

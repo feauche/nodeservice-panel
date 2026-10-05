@@ -109,6 +109,22 @@ const outward = (err: unknown, ctx: ReturnType<typeof make>) =>
   `${errorText(err)}\n${JSON.stringify(ctx.installs())}`;
 
 describe('ServersService: установка агента', () => {
+  it('не запускает две установки на одном сервере одновременно', async () => {
+    let finish: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const ctx = make('not_installed', async () => {
+      await gate;
+      return { code: 0 };
+    });
+    const first = ctx.svc.installAgent('s1');
+    await expect(ctx.svc.installAgent('s1')).rejects.toMatchObject({ status: 409 });
+    finish?.();
+    await expect(first).resolves.toMatchObject({ agentStatus: 'pending' });
+    expect(ctx.calls).toHaveLength(1);
+  });
+
   it('скрипт завершился с ошибкой: установка не засчитана, причина названа, секрет не раскрыт', async () => {
     const ctx = make('offline', async (_c, o) => {
       o.onData?.('→ скачиваю nodeservice-agent_linux_amd64 (latest)\n✗ не скачался бинарь\n');

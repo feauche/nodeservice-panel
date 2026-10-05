@@ -100,9 +100,9 @@ describe('ProvidersPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
     await user.click(within(card).getByRole('button', { name: 'Удалить' }));
-    const confirm = await screen.findByRole('alertdialog', { name: 'Удалить провайдера «Aéza»?' });
-    expect(within(confirm).getByText(/провайдер сбросится, сами серверы останутся/)).toBeInTheDocument();
-    await user.click(within(confirm).getByRole('button', { name: 'Да, удалить' }));
+    const confirm = await screen.findByRole('alertdialog', { name: 'Архивировать провайдера «Aéza»?' });
+    expect(within(confirm).getByText(/название сохранится во всей истории оплат/)).toBeInTheDocument();
+    await user.click(within(confirm).getByRole('button', { name: 'В архив' }));
     await waitFor(() => expect(mockProviders.items.map((p) => p.name)).not.toContain('Aéza'));
     expect(mockServers.items[0]?.providerId).toBeNull();
     expect(

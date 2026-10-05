@@ -325,6 +325,8 @@ export const SERVER_PROBLEM = {
   sshCommand: 'https://nodeservice.dev/problems/servers/ssh-command-failed',
   /** Имя уже занято. */
   nameTaken: 'https://nodeservice.dev/problems/servers/name-taken',
+  /** Установка уже идёт на этом сервере. */
+  agentInstallBusy: 'https://nodeservice.dev/problems/servers/agent-install-busy',
   /** Такой хост уже добавлен. */
 } as const;
 

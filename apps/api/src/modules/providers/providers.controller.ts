@@ -71,7 +71,7 @@ export class ProvidersController {
 
   @Delete(':id')
   @HttpCode(204)
-  @ApiOperation({ summary: 'Удалить провайдера (у серверов он сбрасывается)' })
+  @ApiOperation({ summary: 'Архивировать провайдера (серверы отвязываются, история оплат сохраняется)' })
   remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.providers.delete(id);
   }

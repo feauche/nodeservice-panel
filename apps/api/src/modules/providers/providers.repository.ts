@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { asc, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { type ProviderRow, providers, servers } from '../../infra/db/schema/index.js';
@@ -22,7 +22,7 @@ export class ProvidersRepository {
 
   async list(): Promise<ProviderWithCount[]> {
     const [rows, counts] = await Promise.all([
-      this.db.select().from(providers).orderBy(asc(providers.name)),
+      this.db.select().from(providers).where(isNull(providers.archivedAt)).orderBy(asc(providers.name)),
       this.counts(),
     ]);
     // Сначала те, у кого больше серверов, при равенстве — по имени: рабочие хостеры всегда сверху.
@@ -32,7 +32,9 @@ export class ProvidersRepository {
   }
 
   async findById(id: string): Promise<ProviderWithCount | undefined> {
-    const row = await this.db.query.providers.findFirst({ where: eq(providers.id, id) });
+    const row = await this.db.query.providers.findFirst({
+      where: and(eq(providers.id, id), isNull(providers.archivedAt)),
+    });
     if (!row) return undefined;
     const [{ n } = { n: 0 }] = await this.db
       .select({ n: sql<number>`count(*)::int` })
@@ -43,7 +45,10 @@ export class ProvidersRepository {
 
   /** Провайдеры, у которых поиск иконки не завершился (например, API перезапустили). */
   async listIconPending(): Promise<ProviderRow[]> {
-    return this.db.select().from(providers).where(eq(providers.iconPending, true));
+    return this.db
+      .select()
+      .from(providers)
+      .where(and(eq(providers.iconPending, true), isNull(providers.archivedAt)));
   }
 
   async findByName(name: string): Promise<ProviderRow | undefined> {
@@ -84,9 +89,20 @@ export class ProvidersRepository {
     return row;
   }
 
-  async delete(id: string): Promise<boolean> {
-    const rows = await this.db.delete(providers).where(eq(providers.id, id)).returning({ id: providers.id });
-    return rows.length > 0;
+  /** Скрыть провайдера и отвязать текущие серверы, сохранив FK у старых оплат и платежей. */
+  async archive(id: string): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      await tx
+        .update(servers)
+        .set({ providerId: null, updatedAt: new Date() })
+        .where(eq(servers.providerId, id));
+      const rows = await tx
+        .update(providers)
+        .set({ archivedAt: new Date(), iconPending: false, updatedAt: new Date() })
+        .where(and(eq(providers.id, id), isNull(providers.archivedAt)))
+        .returning({ id: providers.id });
+      return rows.length > 0;
+    });
   }
 
   /** Серверы провайдера — для карточки в справочнике. */

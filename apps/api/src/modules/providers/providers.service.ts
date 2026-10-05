@@ -86,7 +86,24 @@ export class ProvidersService implements OnModuleInit {
 
   async create(input: CreateProviderRequest): Promise<Provider> {
     const req = createProviderRequestSchema.parse(input);
-    if (await this.repo.findByName(req.name)) throw providerProblems.nameTaken(req.name);
+    const existing = await this.repo.findByName(req.name);
+    if (existing && !existing.archivedAt) throw providerProblems.nameTaken(req.name);
+    if (existing?.archivedAt) {
+      await this.repo.update(existing.id, {
+        archivedAt: null,
+        siteUrl: req.siteUrl,
+        note: req.note?.trim() || null,
+        iconUrl: req.iconUrl ?? null,
+        iconPending: true,
+      });
+      await this.audit.record({
+        action: 'provider.restored',
+        target: { type: 'provider', id: existing.id, display: req.name },
+        metadata: { billingHistoryPreserved: true },
+      });
+      this.startIconJob(existing.id);
+      return this.get(existing.id);
+    }
     const row = await this.repo.insert({
       name: req.name,
       siteUrl: req.siteUrl,
@@ -141,11 +158,11 @@ export class ProvidersService implements OnModuleInit {
   async delete(id: string): Promise<void> {
     const row = await this.repo.findById(id);
     if (!row) throw providerProblems.notFound();
-    await this.repo.delete(id);
+    if (!(await this.repo.archive(id))) throw providerProblems.notFound();
     await this.audit.record({
-      action: 'provider.deleted',
+      action: 'provider.archived',
       target: { type: 'provider', id, display: row.name },
-      metadata: { serversDetached: row.serversCount },
+      metadata: { serversDetached: row.serversCount, billingHistoryPreserved: true },
     });
   }
 

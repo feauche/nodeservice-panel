@@ -1,10 +1,12 @@
 import { KB_CONTENT_MAX } from '@nodeservice/shared';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { HttpResponse, http } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetMockState } from '@/test/msw/handlers';
 import { mockKnowledge } from '@/test/msw/knowledge-mock';
+import { server } from '@/test/msw/server';
 import { renderPage } from '@/test/render';
 import { KnowledgePage } from './knowledge-page';
 
@@ -39,6 +41,54 @@ describe('KnowledgePage', () => {
       expect(screen.queryByRole('button', { name: /Лимит conntrack/ })).not.toBeInTheDocument(),
     );
     expect(screen.getByRole('button', { name: /Очистка диска/ })).toBeInTheDocument();
+  });
+
+  it('ошибка первой загрузки не выдаёт существующую базу за пустую', async () => {
+    server.use(
+      http.get('/api/knowledge', () =>
+        HttpResponse.json(
+          {
+            type: 'about:blank',
+            title: 'База временно недоступна',
+            status: 503,
+            detail: 'База временно недоступна',
+          },
+          { status: 503, headers: { 'content-type': 'application/problem+json' } },
+        ),
+      ),
+    );
+    renderPage(KnowledgePage, '/knowledge');
+    expect(await screen.findByRole('alert')).toHaveTextContent('База временно недоступна');
+    expect(screen.getByRole('button', { name: 'Повторить загрузку' })).toBeInTheDocument();
+    expect(screen.queryByText('База знаний пуста')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Создать статью' })).not.toBeInTheDocument();
+  });
+
+  it('ошибка фонового обновления сохраняет открытую статью и редактор', async () => {
+    renderPage(KnowledgePage, '/knowledge');
+    const user = userEvent.setup();
+    const target = mockKnowledge.items.find((d) => d.title === 'Лимит conntrack');
+    if (!target) throw new Error('нет статьи в моке');
+    await user.click(await screen.findByRole('button', { name: /Лимит conntrack/ }));
+    expect(await screen.findByRole('heading', { name: 'Лимит conntrack' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Перезапуск Xray/ }));
+    await screen.findByRole('heading', { name: 'Перезапуск Xray' });
+    server.use(
+      http.get('/api/knowledge/:id', ({ params }) =>
+        params.id === target.id
+          ? HttpResponse.json(
+              { type: 'about:blank', title: 'Сбой обновления', status: 503, detail: 'Сбой обновления' },
+              { status: 503, headers: { 'content-type': 'application/problem+json' } },
+            )
+          : undefined,
+      ),
+    );
+    await user.click(screen.getByRole('button', { name: /Лимит conntrack/ }));
+    expect(await screen.findByText(/последняя загруженная версия/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Лимит conntrack' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Изменить' }));
+    expect(await screen.findByLabelText('Содержимое')).toHaveValue(target.content);
+    expect(screen.getByText(/Черновик сохранён и остаётся на экране/)).toBeInTheDocument();
   });
 
   it('создание новой статьи добавляет её в базу', async () => {

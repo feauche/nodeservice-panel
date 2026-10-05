@@ -45,6 +45,11 @@ export const serverProblems = {
       detail: `Сервер с названием «${name}» уже есть.`,
       errors: [{ path: 'name', message: 'Название уже занято' }],
     }),
+  agentInstallBusy: () =>
+    problem(HttpStatus.CONFLICT, {
+      type: SERVER_PROBLEM.agentInstallBusy,
+      detail: 'Установка агента на этом сервере уже идёт. Дождитесь её завершения.',
+    }),
   passwordNeedsVerify: () =>
     problem(HttpStatus.BAD_REQUEST, {
       detail:

@@ -190,6 +190,7 @@ export function KnowledgePage({
 
   const selectedId = selection && 'id' in selection ? selection.id : null;
   const editing = selection?.mode === 'new' || selection?.mode === 'edit';
+  const listUnavailable = list.isError && !list.data;
 
   // Ссылка ?open=<id> — открываем именно эту статью (например, клик по чипу-цитате в Джарвисе).
   useEffect(() => {
@@ -225,7 +226,27 @@ export function KnowledgePage({
         </p>
       </div>
 
-      {editing ? (
+      {list.isError && list.data && (
+        <div className="flex flex-none items-center justify-between gap-3 rounded-[11px] border border-warn/30 bg-warn-soft px-4 py-2.5 text-[12.5px]">
+          <span>Не удалось обновить список. Показана последняя загруженная версия.</span>
+          <Button type="button" variant="outline" className="h-8 px-3" onClick={() => void list.refetch()}>
+            Повторить
+          </Button>
+        </div>
+      )}
+
+      {listUnavailable ? (
+        <div className="grid min-h-0 flex-1 place-items-center rounded-2xl border border-crit/30 bg-crit-soft p-6 text-center">
+          <div>
+            <p role="alert" className="text-[13px] text-crit">
+              {apiErrorMessage(list.error)}
+            </p>
+            <Button type="button" variant="outline" className="mt-3 h-9" onClick={() => void list.refetch()}>
+              Повторить загрузку
+            </Button>
+          </div>
+        </div>
+      ) : editing ? (
         <div className={cn('min-h-0 flex-1', STACKED_EDITOR)}>
           {selection?.mode === 'new' && (
             <Editor key="new" onDone={(id) => setSelection(id ? { mode: 'view', id } : null)} />
@@ -374,11 +395,18 @@ function Viewer({ id, onEdit, onDeleted }: { id: string; onEdit: () => void; onD
   const toc = useMemo(() => tocFromMarkdown(doc.data?.content ?? ''), [doc.data?.content]);
 
   if (doc.isPending) return <ViewerSkeleton />;
-  if (doc.isError || !doc.data)
+  if (!doc.data)
     return (
-      <p className="rounded-2xl border border-crit/30 bg-crit-soft px-4 py-6 text-center text-[13px]">
-        {apiErrorMessage(doc.error)}
-      </p>
+      <div className="grid h-full place-items-center rounded-2xl border border-crit/30 bg-crit-soft p-6 text-center">
+        <div>
+          <p role="alert" className="text-[13px] text-crit">
+            {apiErrorMessage(doc.error)}
+          </p>
+          <Button type="button" variant="outline" className="mt-3 h-9" onClick={() => void doc.refetch()}>
+            Повторить загрузку
+          </Button>
+        </div>
+      </div>
     );
 
   const d = doc.data;
@@ -484,6 +512,15 @@ function Viewer({ id, onEdit, onDeleted }: { id: string; onEdit: () => void; onD
           )}
         </div>
       </header>
+
+      {doc.isError && (
+        <div className="flex flex-none items-center justify-between gap-3 border-b border-warn/30 bg-warn-soft px-6 py-2 text-[12px] sm:px-7">
+          <span>Не удалось обновить статью. На экране сохранена последняя загруженная версия.</span>
+          <Button type="button" variant="outline" className="h-7 px-2.5" onClick={() => void doc.refetch()}>
+            Повторить
+          </Button>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1 gap-5 overflow-hidden pr-2 pl-6 sm:pl-7">
         <div ref={contentRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto py-5 pr-4 sm:py-6">

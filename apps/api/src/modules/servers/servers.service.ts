@@ -61,8 +61,8 @@ export class ServersService {
   private readonly deleteListeners: Array<(id: string) => void> = [];
   /** Когда на сервере закончилась последняя удачная установка агента (в памяти процесса). */
   private readonly installedAt = new Map<string, number>();
-  /** Сколько установок агента идёт на сервере прямо сейчас — в этом процессе. */
-  private readonly installsRunning = new Map<string, number>();
+  /** Серверы, на которых установка агента идёт прямо сейчас — в этом процессе. */
+  private readonly installsRunning = new Set<string>();
 
   constructor(
     private readonly repo: ServersRepository,
@@ -744,13 +744,12 @@ export class ServersService {
   async installAgent(id: string): Promise<Server> {
     // Пока установка идёт, статус «Агент устанавливается…» — её; по этой отметке AgentPendingJob отличает
     // идущую установку от оборванной перезапуском панели.
-    this.installsRunning.set(id, (this.installsRunning.get(id) ?? 0) + 1);
+    if (this.installsRunning.has(id)) throw serverProblems.agentInstallBusy();
+    this.installsRunning.add(id);
     try {
       return await this.runAgentInstall(id);
     } finally {
-      const left = (this.installsRunning.get(id) ?? 1) - 1;
-      if (left > 0) this.installsRunning.set(id, left);
-      else this.installsRunning.delete(id);
+      this.installsRunning.delete(id);
     }
   }
 
