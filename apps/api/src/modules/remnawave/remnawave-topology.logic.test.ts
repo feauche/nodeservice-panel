@@ -10,7 +10,6 @@ const source = (): RemnawaveTopologySource => ({
       remark: 'Вход Россия',
       address: 'ru.example.com',
       port: 443,
-      nodes: ['node-ru'],
       inbound: { configProfileUuid: 'profile-1', configProfileInboundUuid: 'in-1' },
     },
   ],
@@ -84,6 +83,31 @@ describe('buildRemnawaveTopology', () => {
       confidence: 'confirmed',
     });
     expect(JSON.stringify(result)).not.toContain('privateKey');
+  });
+
+  it('не считает хост отвязанным, если его инбаунд активен на ноде', () => {
+    const input = source();
+    (input.hosts[0] as Record<string, unknown>).nodes = [];
+
+    const result = buildRemnawaveTopology(input);
+
+    expect(result.hosts[0]).toMatchObject({ nodeUuids: ['node-ru'], status: 'ok' });
+    expect(result.issues).not.toContainEqual(expect.objectContaining({ kind: 'host_no_nodes' }));
+  });
+
+  it('сообщает о проблеме, только если инбаунд хоста не запущен ни на одной ноде', () => {
+    const input = source();
+    (input.nodes[0] as Record<string, unknown>).configProfile = {
+      activeConfigProfileUuid: 'profile-1',
+      activeInbounds: [],
+    };
+
+    const result = buildRemnawaveTopology(input);
+
+    expect(result.hosts[0]).toMatchObject({ nodeUuids: [], status: 'warning' });
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ kind: 'host_no_nodes', severity: 'warning' }),
+    );
   });
 
   it('не выдумывает ноду для неизвестного сервисного выхода', () => {

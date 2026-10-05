@@ -16,6 +16,17 @@ const rows = (value: unknown): Row[] =>
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 const texts = (value: unknown): string[] =>
   Array.isArray(value) ? value.map(text).filter(Boolean).slice(0, 40) : [];
+const entityIds = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value
+        .map((item) => {
+          if (typeof item === 'string') return item.trim();
+          const entity = row(item);
+          return text(entity.uuid) || text(entity.nodeUuid) || text(entity.id);
+        })
+        .filter(Boolean)
+        .slice(0, 200)
+    : [];
 const number = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
 const clean = (value: string, fallback: string): string => (value || fallback).slice(0, 180);
@@ -266,16 +277,25 @@ export function buildRemnawaveTopology(
       .flatMap((profile) => rows(profile.inbounds).map((item) => ({ profile, item })))
       .find(({ item }) => text(item.uuid) === inboundUuid)?.item;
     const proto = protocolOf(matchingInbound ?? inbound);
-    const nodeUuids = texts(raw.nodes);
+    // Remnawave serves a host through its inbound. The host response can also contain
+    // `nodes` in newer releases, but that list is not present in every API version and
+    // is not the runtime source of truth. Match the host inbound against the active
+    // inbounds reported by each node, as Remnawave itself does when starting profiles.
+    const servingNodeUuids = inboundUuid
+      ? nodes.filter((node) => node.inboundUuids.includes(inboundUuid)).map((node) => node.id)
+      : [];
+    const nodeUuids = inboundUuid ? servingNodeUuids : entityIds(raw.nodes);
     const linked = nodeUuids.map((id) => nodeById.get(id)).filter(Boolean) as RemnawaveTopologyNode[];
     const disabled = Boolean(raw.isDisabled);
     const status: RemnawaveTopologyHost['status'] = disabled
       ? 'unknown'
-      : nodeUuids.length === 0
+      : inboundUuid && nodeUuids.length === 0
         ? 'warning'
-        : linked.length === 0 || linked.every((node) => node.status === 'error')
-          ? 'error'
-          : 'ok';
+        : nodeUuids.length === 0
+          ? 'unknown'
+          : linked.length === 0 || linked.every((node) => node.status === 'error')
+            ? 'error'
+            : 'ok';
     return {
       id: text(raw.uuid) || `host-${index}`,
       name: clean(text(raw.remark) || text(raw.name), `Хост ${index + 1}`),
@@ -360,13 +380,14 @@ export function buildRemnawaveTopology(
   }
   for (const host of hosts) {
     if (host.disabled) continue;
-    if (host.nodeUuids.length === 0)
+    if (host.inboundUuid && host.nodeUuids.length === 0)
       issues.push({
         id: `host-no-node:${host.id}`,
         severity: 'warning',
         kind: 'host_no_nodes',
-        title: `Хост «${host.name}» не привязан к ноде`,
-        detail: 'Remnawave не указала ни одной ноды для этого хоста. Клиентский маршрут нельзя подтвердить.',
+        title: `Инбаунд хоста «${host.name}» не запущен на нодах`,
+        detail:
+          'Ни одна нода Remnawave не указала этот инбаунд среди activeInbounds. Проверьте, что профиль и инбаунд запущены хотя бы на одной ноде.',
         hostIds: [host.id],
         nodeUuids: [],
         routeIds: [],
@@ -377,7 +398,7 @@ export function buildRemnawaveTopology(
         severity: 'error',
         kind: 'host_nodes_down',
         title: `У хоста «${host.name}» нет ноды на связи`,
-        detail: 'Все назначенные хосту ноды отключены либо отсутствуют в ответе Remnawave.',
+        detail: 'Все ноды, которые обслуживают инбаунд этого хоста, сейчас не на связи.',
         hostIds: [host.id],
         nodeUuids: host.nodeUuids,
         routeIds: routes.filter((route) => route.hostIds.includes(host.id)).map((route) => route.id),

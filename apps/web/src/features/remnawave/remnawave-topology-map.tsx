@@ -10,7 +10,7 @@ import {
   UsersIcon,
   XIcon,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -27,7 +27,37 @@ const STATUS = {
 
 const safeId = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_');
 const yFor = (index: number, count: number, height: number): number =>
-  count <= 1 ? height / 2 : 72 + (index * (height - 144)) / (count - 1);
+  count <= 1 ? height / 2 : 96 + (index * (height - 192)) / (count - 1);
+
+function useMeasuredWidth(enabled = true) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    const element = ref.current;
+    if (!element) return;
+    const update = () => setWidth(element.clientWidth);
+    update();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(element);
+    window.addEventListener('resize', update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [enabled]);
+  return [ref, width] as const;
+}
+
+function estimatedCardHeight(title: string, subtitle: string, width: number): number {
+  const textWidth = Math.max(70, width - 74);
+  const lines = (value: string, averageCharacterWidth: number) =>
+    Math.max(
+      1,
+      Math.ceil(Array.from(value).length / Math.max(10, Math.floor(textWidth / averageCharacterWidth))),
+    );
+  return Math.max(80, 42 + lines(title, 7) * 17 + lines(subtitle, 6) * 16);
+}
 
 function Edge({ from, to, status = 'ok' }: { from: Point; to: Point; status?: Status }) {
   const middle = (from.x + to.x) / 2;
@@ -75,11 +105,11 @@ function GraphCard({
       type="button"
       onClick={onClick}
       className={cn(
-        'absolute flex h-16 items-center gap-2.5 rounded-xl border bg-surface px-3 text-left shadow-sm transition-colors hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
+        'absolute flex min-h-20 -translate-y-1/2 items-center gap-2.5 rounded-xl border bg-surface px-3.5 py-3 text-left shadow-sm transition-colors hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
         STATUS[status].border,
         selected && 'ring-2 ring-brand/45',
       )}
-      style={{ left: x, top: y - 32, width }}
+      style={{ left: x, top: y, width }}
     >
       <span
         className={cn(
@@ -89,12 +119,19 @@ function GraphCard({
       >
         <Icon className="size-4" aria-hidden="true" />
       </span>
-      <span className="min-w-0">
-        <span className="flex items-center gap-1.5">
-          <span className={cn('size-1.5 flex-none rounded-full', STATUS[status].dot)} aria-hidden="true" />
-          <span className="truncate text-[12.5px] font-semibold text-foreground">{title}</span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-start gap-1.5">
+          <span
+            className={cn('mt-[5px] size-1.5 flex-none rounded-full', STATUS[status].dot)}
+            aria-hidden="true"
+          />
+          <span className="min-w-0 break-words text-[12.5px] leading-[17px] font-semibold text-foreground">
+            {title}
+          </span>
         </span>
-        <span className="mt-0.5 block truncate text-[10.5px] text-text-3">{subtitle}</span>
+        <span className="mt-1 block [overflow-wrap:anywhere] text-[10.5px] leading-4 text-text-3">
+          {subtitle}
+        </span>
       </span>
     </button>
   );
@@ -130,6 +167,60 @@ function groupTargets(routes: readonly RemnawaveTopologyRoute[]): TargetGroup[] 
   return [...groups.values()];
 }
 
+function sourceNodeIds(target: TargetGroup, hosts: readonly RemnawaveTopologyHost[]): string[] {
+  const hostById = new Map(hosts.map((host) => [host.id, host]));
+  const ids = new Set<string>();
+  for (const route of target.routes)
+    for (const hostId of route.hostIds)
+      for (const nodeId of hostById.get(hostId)?.nodeUuids ?? []) ids.add(nodeId);
+  return [...ids];
+}
+
+function orderByNeighbours<T extends { id: string }>(
+  items: readonly T[],
+  neighbours: (item: T) => readonly string[],
+  neighbourPositions: ReadonlyMap<string, number>,
+): T[] {
+  const original = new Map(items.map((item, index) => [item.id, index]));
+  return [...items].sort((left, right) => {
+    const score = (item: T): number => {
+      const positions = neighbours(item)
+        .map((id) => neighbourPositions.get(id))
+        .filter((value): value is number => value !== undefined);
+      return positions.length
+        ? positions.reduce((sum, value) => sum + value, 0) / positions.length
+        : Number.POSITIVE_INFINITY;
+    };
+    return score(left) - score(right) || (original.get(left.id) ?? 0) - (original.get(right.id) ?? 0);
+  });
+}
+
+function orderedLayers(
+  hosts: readonly RemnawaveTopologyHost[],
+  nodes: RemnawaveTopology['nodes'],
+  targets: readonly TargetGroup[],
+) {
+  let orderedHosts = [...hosts];
+  let orderedNodes = [...nodes];
+  for (let pass = 0; pass < 4; pass += 1) {
+    const hostPositions = new Map(orderedHosts.map((host, index) => [host.id, index]));
+    orderedNodes = orderByNeighbours(
+      orderedNodes,
+      (node) => orderedHosts.filter((host) => host.nodeUuids.includes(node.id)).map((host) => host.id),
+      hostPositions,
+    );
+    const nodePositions = new Map(orderedNodes.map((node, index) => [node.id, index]));
+    orderedHosts = orderByNeighbours(orderedHosts, (host) => host.nodeUuids, nodePositions);
+  }
+  const nodePositions = new Map(orderedNodes.map((node, index) => [node.id, index]));
+  const orderedTargets = orderByNeighbours(
+    targets,
+    (target) => sourceNodeIds(target, orderedHosts),
+    nodePositions,
+  );
+  return { hosts: orderedHosts, nodes: orderedNodes, targets: orderedTargets };
+}
+
 function FocusedFlow({
   topology,
   selected,
@@ -139,6 +230,7 @@ function FocusedFlow({
   selected: NonNullable<Selection>;
   onBack: () => void;
 }) {
+  const [frameRef, viewportWidth] = useMeasuredWidth();
   const targetGroups = groupTargets(topology.routes);
   const chosenHost = selected.kind === 'host' ? topology.hosts.find((item) => item.id === selected.id) : null;
   const chosenNode = selected.kind === 'node' ? topology.nodes.find((item) => item.id === selected.id) : null;
@@ -172,23 +264,70 @@ function FocusedFlow({
     : [...hosts, ...nodes, ...(target ? [target] : [])].some((item) => item.status === 'warning')
       ? 'warning'
       : 'ok';
+  const hostTitle = hosts[0]?.name ?? 'Хост не определён';
+  const hostSubtitle = hosts[0] ? `${hosts[0].address}:${hosts[0].port}` : 'нет подтверждённой связи';
+  const nodeTitle = nodes[0]?.name ?? 'Нода не определена';
+  const nodeSubtitle = nodes[0]?.address ?? 'нет подтверждённой связи';
+  const targetTitle = target?.label ?? 'Выход не определён';
+  const targetSubtitle = routes[0]?.match.join(' · ') ?? 'нет правила';
+  const graphWidth = Math.max(1_260, viewportWidth);
+  const sidePadding = 28;
+  const clientWidth = 150;
+  const cardWidth = 240;
+  const tallestCard = Math.max(
+    estimatedCardHeight('Клиент', 'VPN-подключение', clientWidth),
+    estimatedCardHeight(hostTitle, hostSubtitle, cardWidth),
+    estimatedCardHeight(nodeTitle, nodeSubtitle, cardWidth),
+    estimatedCardHeight(targetTitle, targetSubtitle, cardWidth),
+  );
+  const graphHeight = Math.max(340, tallestCard + 180);
+  const graphY = graphHeight / 2;
+  const firstCenter = sidePadding + clientWidth / 2;
+  const lastCenter = graphWidth - sidePadding - cardWidth / 2;
+  const step = (lastCenter - firstCenter) / 3;
+  const centers = Array.from({ length: 4 }, (_, index) => firstCenter + step * index);
+  const clientLeft = centers[0] - clientWidth / 2;
+  const hostLeft = centers[1] - cardWidth / 2;
+  const nodeLeft = centers[2] - cardWidth / 2;
+  const targetLeft = centers[3] - cardWidth / 2;
   return (
     <div>
       <Button type="button" variant="ghost" onClick={onBack} className="mb-3 h-8 gap-1.5 px-2 text-[12px]">
         <ArrowLeftIcon className="size-3.5" aria-hidden="true" />
         Вся топология
       </Button>
-      <div className="overflow-x-auto rounded-xl border border-border bg-surface-2/35">
-        <div className="relative h-[286px] min-w-[980px]">
+      <div ref={frameRef} className="overflow-x-auto rounded-xl border border-border bg-surface-2/35">
+        <div className="relative" style={{ height: graphHeight, width: graphWidth }}>
+          {['Клиент', 'Хост', 'Нода', 'Назначение'].map((label, index) => (
+            <span
+              key={label}
+              className="absolute top-5 w-[220px] -translate-x-1/2 text-center text-[10px] font-semibold tracking-[0.08em] text-text-3 uppercase"
+              style={{ left: centers[index] }}
+            >
+              {label}
+            </span>
+          ))}
           <svg className="absolute inset-0 size-full" aria-hidden="true">
-            <Edge from={{ x: 135, y: 143 }} to={{ x: 310, y: 143 }} status={hosts[0]?.status ?? 'unknown'} />
-            <Edge from={{ x: 490, y: 143 }} to={{ x: 620, y: 143 }} status={nodes[0]?.status ?? 'unknown'} />
-            <Edge from={{ x: 800, y: 143 }} to={{ x: 895, y: 143 }} status={target?.status ?? 'unknown'} />
+            <Edge
+              from={{ x: clientLeft + clientWidth, y: graphY }}
+              to={{ x: hostLeft, y: graphY }}
+              status={hosts[0]?.status ?? 'unknown'}
+            />
+            <Edge
+              from={{ x: hostLeft + cardWidth, y: graphY }}
+              to={{ x: nodeLeft, y: graphY }}
+              status={nodes[0]?.status ?? 'unknown'}
+            />
+            <Edge
+              from={{ x: nodeLeft + cardWidth, y: graphY }}
+              to={{ x: targetLeft, y: graphY }}
+              status={target?.status ?? 'unknown'}
+            />
           </svg>
           <GraphCard
-            x={25}
-            y={143}
-            width={110}
+            x={clientLeft}
+            y={graphY}
+            width={clientWidth}
             title="Клиент"
             subtitle="VPN-подключение"
             status="ok"
@@ -197,33 +336,33 @@ function FocusedFlow({
             onClick={() => {}}
           />
           <GraphCard
-            x={310}
-            y={143}
-            width={180}
-            title={hosts[0]?.name ?? 'Хост не определён'}
-            subtitle={hosts[0] ? `${hosts[0].address}:${hosts[0].port}` : 'нет подтверждённой связи'}
+            x={hostLeft}
+            y={graphY}
+            width={cardWidth}
+            title={hostTitle}
+            subtitle={hostSubtitle}
             status={hosts[0]?.status ?? 'unknown'}
             icon={NetworkIcon}
             selected={selected.kind === 'host'}
             onClick={() => {}}
           />
           <GraphCard
-            x={620}
-            y={143}
-            width={180}
-            title={nodes[0]?.name ?? 'Нода не определена'}
-            subtitle={nodes[0]?.address ?? 'нет подтверждённой связи'}
+            x={nodeLeft}
+            y={graphY}
+            width={cardWidth}
+            title={nodeTitle}
+            subtitle={nodeSubtitle}
             status={nodes[0]?.status ?? 'unknown'}
             icon={ServerIcon}
             selected={selected.kind === 'node'}
             onClick={() => {}}
           />
           <GraphCard
-            x={895}
-            y={143}
-            width={170}
-            title={target?.label ?? 'Выход не определён'}
-            subtitle={routes[0]?.match.join(' · ') ?? 'нет правила'}
+            x={targetLeft}
+            y={graphY}
+            width={cardWidth}
+            title={targetTitle}
+            subtitle={targetSubtitle}
             status={target?.status ?? 'unknown'}
             icon={target?.kind === 'internet' ? CloudIcon : RouteIcon}
             selected={selected.kind === 'target'}
@@ -232,7 +371,7 @@ function FocusedFlow({
           {bad !== 'ok' && (
             <div
               className={cn(
-                'absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 text-[11.5px]',
+                'absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-2 text-[11.5px]',
                 STATUS[bad].text,
               )}
             >
@@ -246,8 +385,8 @@ function FocusedFlow({
         <div className="mt-3 grid gap-2 md:grid-cols-2">
           {routes.slice(0, 6).map((route) => (
             <div key={route.id} className="rounded-xl border border-border bg-surface-2 px-3.5 py-3">
-              <div className="flex items-center justify-between gap-2 text-[12px] font-semibold">
-                <span className="truncate">{route.targetLabel}</span>
+              <div className="flex items-start justify-between gap-2 text-[12px] font-semibold">
+                <span className="min-w-0 break-words leading-4">{route.targetLabel}</span>
                 <span className="flex-none text-[10.5px] text-text-3">
                   {route.confidence === 'confirmed' ? 'подтверждено' : 'по конфигурации'}
                 </span>
@@ -265,7 +404,14 @@ function FocusedFlow({
 export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology }) {
   const [selected, setSelected] = useState<Selection>(null);
   const targets = useMemo(() => groupTargets(topology.routes), [topology.routes]);
-  if (topology.hosts.length === 0 && topology.nodes.length === 0 && topology.routes.length === 0)
+  const layers = useMemo(
+    () => orderedLayers(topology.hosts, topology.nodes, targets),
+    [topology.hosts, topology.nodes, targets],
+  );
+  const hasTopology = topology.hosts.length > 0 || topology.nodes.length > 0 || topology.routes.length > 0;
+  const graphVisible = hasTopology && selected === null;
+  const [graphFrameRef, viewportWidth] = useMeasuredWidth(graphVisible);
+  if (!hasTopology)
     return (
       <div className="rounded-xl border border-border bg-surface-2/35 px-4 py-12 text-center">
         <NetworkIcon className="mx-auto size-5 text-text-3" aria-hidden="true" />
@@ -279,21 +425,60 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
   if (selected)
     return <FocusedFlow topology={topology} selected={selected} onBack={() => setSelected(null)} />;
 
-  const height = Math.max(
-    470,
-    Math.max(topology.hosts.length, topology.nodes.length, targets.length) * 88 + 110,
+  const graphWidth = Math.max(1_380, viewportWidth);
+  const sidePadding = 28;
+  const clientWidth = 150;
+  const cardWidth = 220;
+  const internetWidth = 190;
+  const tallestCard = Math.max(
+    estimatedCardHeight('Клиенты', 'VPN-трафик', clientWidth),
+    estimatedCardHeight('Интернет', 'назначение', internetWidth),
+    ...layers.hosts.map((host) => estimatedCardHeight(host.name, `${host.address}:${host.port}`, cardWidth)),
+    ...layers.nodes.map((node) =>
+      estimatedCardHeight(node.name, `${node.usersOnline ?? '—'} онлайн · ${node.address}`, cardWidth),
+    ),
+    ...layers.targets.map((target) =>
+      estimatedCardHeight(
+        target.label,
+        `${target.routes.length} ${target.routes.length === 1 ? 'правило' : 'правил'}`,
+        cardWidth,
+      ),
+    ),
   );
+  const rowStep = Math.max(112, tallestCard + 24);
+  const height = Math.max(
+    520,
+    Math.max(layers.hosts.length, layers.nodes.length, layers.targets.length) * rowStep + 150,
+  );
+  const firstCenter = sidePadding + clientWidth / 2;
+  const lastCenter = graphWidth - sidePadding - internetWidth / 2;
+  const columnStep = (lastCenter - firstCenter) / 4;
+  const columnCenters = Array.from({ length: 5 }, (_, index) => firstCenter + columnStep * index);
+  const clientLeft = columnCenters[0] - clientWidth / 2;
+  const hostLeft = columnCenters[1] - cardWidth / 2;
+  const nodeLeft = columnCenters[2] - cardWidth / 2;
+  const targetLeft = columnCenters[3] - cardWidth / 2;
+  const internetLeft = columnCenters[4] - internetWidth / 2;
   const hostPoints = new Map(
-    topology.hosts.map((item, index) => [item.id, { x: 200, y: yFor(index, topology.hosts.length, height) }]),
+    layers.hosts.map((item, index) => [
+      item.id,
+      { x: hostLeft, y: yFor(index, layers.hosts.length, height) },
+    ]),
   );
   const nodePoints = new Map(
-    topology.nodes.map((item, index) => [item.id, { x: 410, y: yFor(index, topology.nodes.length, height) }]),
+    layers.nodes.map((item, index) => [
+      item.id,
+      { x: nodeLeft, y: yFor(index, layers.nodes.length, height) },
+    ]),
   );
   const targetPoints = new Map(
-    targets.map((item, index) => [item.id, { x: 620, y: yFor(index, targets.length, height) }]),
+    layers.targets.map((item, index) => [
+      item.id,
+      { x: targetLeft, y: yFor(index, layers.targets.length, height) },
+    ]),
   );
-  const client = { x: 120, y: height / 2 };
-  const internet = { x: 850, y: height / 2 };
+  const client = { x: clientLeft + clientWidth, y: height / 2 };
+  const internet = { x: internetLeft, y: height / 2 };
 
   return (
     <div>
@@ -317,17 +502,19 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
           </span>
         </div>
       </div>
-      <div className="overflow-x-auto rounded-2xl border border-border bg-surface-2/30">
-        <div className="relative min-w-[1020px]" style={{ height }}>
-          <div className="absolute inset-x-0 top-0 grid grid-cols-[150px_210px_210px_230px_210px] px-[5px] pt-4 text-center text-[10px] font-semibold tracking-[0.08em] text-text-3 uppercase">
-            <span>Клиенты</span>
-            <span>Хосты</span>
-            <span>Ноды</span>
-            <span>Маршруты</span>
-            <span>Назначение</span>
-          </div>
+      <div ref={graphFrameRef} className="overflow-x-auto rounded-2xl border border-border bg-surface-2/30">
+        <div className="relative" style={{ height, width: graphWidth }}>
+          {['Клиенты', 'Хосты', 'Ноды', 'Маршруты', 'Назначение'].map((label, index) => (
+            <span
+              key={label}
+              className="absolute top-4 w-[180px] -translate-x-1/2 text-center text-[10px] font-semibold tracking-[0.08em] text-text-3 uppercase"
+              style={{ left: columnCenters[index] }}
+            >
+              {label}
+            </span>
+          ))}
           <svg className="absolute inset-0 size-full" aria-hidden="true">
-            {topology.hosts.map((host) => {
+            {layers.hosts.map((host) => {
               const point = hostPoints.get(host.id) as Point;
               return (
                 <Edge
@@ -338,7 +525,7 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                 />
               );
             })}
-            {topology.hosts.flatMap((host) =>
+            {layers.hosts.flatMap((host) =>
               host.nodeUuids.map((nodeId) => {
                 const from = hostPoints.get(host.id);
                 const to = nodePoints.get(nodeId);
@@ -346,41 +533,36 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                 return (
                   <Edge
                     key={`${host.id}:${nodeId}`}
-                    from={{ x: from.x + 170, y: from.y }}
+                    from={{ x: from.x + cardWidth, y: from.y }}
                     to={to}
                     status={nodeStatus(topology, nodeId)}
                   />
                 );
               }),
             )}
-            {targets.flatMap((target) => {
+            {layers.targets.flatMap((target) => {
               const to = targetPoints.get(target.id);
               if (!to) return [];
-              const nodeIds = new Set<string>();
-              for (const route of target.routes)
-                for (const hostId of route.hostIds)
-                  for (const id of topology.hosts.find((host) => host.id === hostId)?.nodeUuids ?? [])
-                    nodeIds.add(id);
-              return [...nodeIds].map((nodeId) => {
+              return sourceNodeIds(target, layers.hosts).map((nodeId) => {
                 const from = nodePoints.get(nodeId);
                 return from ? (
                   <Edge
                     key={`${nodeId}:${target.id}`}
-                    from={{ x: from.x + 170, y: from.y }}
+                    from={{ x: from.x + cardWidth, y: from.y }}
                     to={to}
                     status={target.status}
                   />
                 ) : null;
               });
             })}
-            {targets
+            {layers.targets
               .filter((target) => target.kind === 'internet')
               .map((target) => {
                 const from = targetPoints.get(target.id) as Point;
                 return (
                   <Edge
                     key={`${target.id}:internet`}
-                    from={{ x: from.x + 170, y: from.y }}
+                    from={{ x: from.x + cardWidth, y: from.y }}
                     to={internet}
                     status={target.status}
                   />
@@ -388,9 +570,9 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
               })}
           </svg>
           <GraphCard
-            x={20}
+            x={clientLeft}
             y={client.y}
-            width={100}
+            width={clientWidth}
             title="Клиенты"
             subtitle="VPN-трафик"
             status="ok"
@@ -398,14 +580,14 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
             selected={false}
             onClick={() => {}}
           />
-          {topology.hosts.map((host) => {
+          {layers.hosts.map((host) => {
             const point = hostPoints.get(host.id) as Point;
             return (
               <GraphCard
                 key={host.id}
                 x={point.x}
                 y={point.y}
-                width={170}
+                width={cardWidth}
                 title={host.name}
                 subtitle={`${host.address}:${host.port}`}
                 status={host.status}
@@ -415,14 +597,14 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
               />
             );
           })}
-          {topology.nodes.map((node) => {
+          {layers.nodes.map((node) => {
             const point = nodePoints.get(node.id) as Point;
             return (
               <GraphCard
                 key={node.id}
                 x={point.x}
                 y={point.y}
-                width={170}
+                width={cardWidth}
                 title={node.name}
                 subtitle={`${node.usersOnline ?? '—'} онлайн · ${node.address}`}
                 status={node.status}
@@ -432,14 +614,14 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
               />
             );
           })}
-          {targets.map((target) => {
+          {layers.targets.map((target) => {
             const point = targetPoints.get(target.id) as Point;
             return (
               <GraphCard
                 key={target.id}
                 x={point.x}
                 y={point.y}
-                width={170}
+                width={cardWidth}
                 title={target.label}
                 subtitle={`${target.routes.length} ${target.routes.length === 1 ? 'правило' : 'правил'}`}
                 status={target.status}
@@ -450,9 +632,9 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
             );
           })}
           <GraphCard
-            x={850}
+            x={internetLeft}
             y={internet.y}
-            width={150}
+            width={internetWidth}
             title="Интернет"
             subtitle="назначение"
             status="ok"
