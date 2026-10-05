@@ -80,7 +80,8 @@ export function seedBackups(): void {
     item(new Date(base - 1.2 * DAY), 'pre_restore', 41.6 * MB),
     item(new Date(base - 8 * DAY), 'auto', 39.9 * MB),
     item(new Date(base - 15 * DAY), 'auto', 51.2 * MB, {
-      telegram: { ok: false, note: 'Файл больше 50 МБ — бот Telegram такой не пришлёт.' },
+      // Историческая запись до автоматического деления на части.
+      telegram: { ok: false, note: 'файл больше 50 МБ' },
     }),
     item(new Date(base - 22 * DAY), 'pre_update', 35 * MB, { version: '0.35.0', telegram: null }),
   ];
@@ -170,7 +171,7 @@ function startRun(sendTelegram: boolean): void {
       }
       const it = item(new Date(Date.now() + mockBackups.clockSkewMs), 'manual', 42.6 * MB, {
         encrypted: mockBackups.settings.passwordSet,
-        telegram: sendTelegram ? { ok: true, note: null } : null,
+        telegram: sendTelegram ? { ok: true, note: null, parts: 1 } : null,
         contents: {
           db: true,
           env: true,

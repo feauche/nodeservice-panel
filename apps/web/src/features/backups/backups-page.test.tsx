@@ -63,7 +63,25 @@ describe('BackupsPage', () => {
     expect(screen.getByText('С паролем')).toBeInTheDocument();
     expect(within(list).getByText('перед обновлением 0.35.0')).toBeInTheDocument();
     expect(within(list).getAllByText('✓ проверена').length).toBeGreaterThan(0);
-    expect(within(list).getByText('не отправилась')).toBeInTheDocument();
+    expect(within(list).getByText('только уведомление')).toHaveAttribute(
+      'title',
+      expect.stringContaining('Новые крупные копии отправляются частями'),
+    );
+  });
+
+  it('полностью отправленная крупная копия показывает число частей', async () => {
+    const first = mockBackups.items[0] as BackupItem;
+    mockBackups.items[0] = {
+      ...first,
+      size: Math.round(60.9 * 1024 * 1024),
+      telegram: { ok: true, note: null, parts: 2 },
+    };
+    renderPage(BackupsPage, '/settings/backups');
+
+    expect(await screen.findByText('2 части в Telegram')).toHaveAttribute(
+      'title',
+      'Архив полностью отправлен в Telegram частями: 2',
+    );
   });
 
   it('«Сделать копию сейчас»: ход по шагам, готовая копия появляется первой', async () => {

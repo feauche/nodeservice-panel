@@ -6,6 +6,7 @@ import {
   type BackupItem,
   type BackupStage,
   type BackupsResponse,
+  TELEGRAM_FILE_LIMIT_BYTES,
 } from '@nodeservice/shared';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -230,7 +231,7 @@ export function RunDialog({
             <b className="block text-[13px]">Отправить в Telegram</b>
             <span className="text-[12px] text-text-3">
               {telegramReady
-                ? `Файлом${telegramWhere ? ` в «${telegramWhere}»` : ''}. Больше 50 МБ — придёт сообщение, что копия готова.`
+                ? `Файлом${telegramWhere ? ` в «${telegramWhere}»` : ''}. Больше 50 МБ — архив автоматически разделится на части.`
                 : 'Чат для копий не выбран — настройте «Отправку в Telegram» ниже на странице.'}
             </span>
           </span>
@@ -244,8 +245,13 @@ export function RunDialog({
           {made.verified ? ', проверена' : ''}
           {made.telegram
             ? made.telegram.ok
-              ? ', отправлена в Telegram'
-              : `. Telegram: ${made.telegram.note}`
+              ? made.telegram.parts && made.telegram.parts > 1
+                ? `, отправлена в Telegram частями: ${made.telegram.parts}`
+                : ', отправлена в Telegram'
+              : made.size > TELEGRAM_FILE_LIMIT_BYTES &&
+                  /больше 50|уведомление отправлено без файла/i.test(made.telegram.note ?? '')
+                ? ', в Telegram ушло только уведомление без архива'
+                : `. Telegram: ${made.telegram.note}`
             : ''}
           .
         </p>

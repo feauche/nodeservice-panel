@@ -182,6 +182,24 @@ describe('расширенное оформление Telegram', () => {
     expect(blocks.at(-1)?.type).toBe('footer');
   });
 
+  it('резервная копия частями показывает число файлов и команду объединения', () => {
+    const command = 'cat nodeservice-backup-x.tar.gz.enc.part-* > nodeservice-backup-x.tar.gz.enc';
+    const blocks = backupBlocks({
+      when: '5 октября, 17:46',
+      zone: 'Омск',
+      size: '60,9 МБ',
+      contents: 'база, ключи',
+      encrypted: true,
+      parts: 2,
+      mergeCommand: command,
+    });
+    expect(blocks).toContainEqual({
+      type: 'paragraph',
+      text: '📦 Архив разделён на 2 части. Скачайте все части в одну папку.',
+    });
+    expect(blocks).toContainEqual({ type: 'paragraph', text: { type: 'code', text: command } });
+  });
+
   it('образец для кнопки «Проверить» содержит заголовок и таблицу', () => {
     const blocks = sampleBlocks('Чат парка');
     expect(blocks.map((b) => b.type)).toEqual(['heading', 'paragraph', 'table', 'footer']);

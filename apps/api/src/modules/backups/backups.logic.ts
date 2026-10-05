@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import type { BackupSettings } from '@nodeservice/shared';
+import {
+  type BackupSettings,
+  TELEGRAM_BACKUP_PART_BYTES,
+  TELEGRAM_FILE_LIMIT_BYTES,
+} from '@nodeservice/shared';
 
 import { localDate, localMidnight } from '../billing/billing.logic.js';
 
@@ -79,6 +83,48 @@ export function willRetryBackup(now: Date, slot: Date): boolean {
 export function backupName(at: Date, encrypted: boolean, suffix = ''): string {
   const ts = at.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
   return `nodeservice-backup-${ts}${suffix}.tar.gz${encrypted ? '.enc' : ''}`;
+}
+
+export interface TelegramBackupPart {
+  name: string;
+  /** Границы исходного файла; end включительно, как в createReadStream. */
+  start: number;
+  end: number;
+  size: number;
+  number: number;
+  total: number;
+}
+
+/** План частей для Telegram. Маленький архив остаётся одним исходным файлом. */
+export function telegramBackupParts(
+  name: string,
+  size: number,
+  chunkSize = TELEGRAM_BACKUP_PART_BYTES,
+): TelegramBackupPart[] {
+  if (size <= 0 || chunkSize <= 0) return [];
+  const total = size <= TELEGRAM_FILE_LIMIT_BYTES ? 1 : Math.ceil(size / chunkSize);
+  const width = Math.max(2, String(total).length);
+  return Array.from({ length: total }, (_, index) => {
+    const start = index * chunkSize;
+    const end = Math.min(size, start + chunkSize) - 1;
+    const number = index + 1;
+    return {
+      name:
+        total === 1
+          ? name
+          : `${name}.part-${String(number).padStart(width, '0')}-of-${String(total).padStart(width, '0')}`,
+      start,
+      end,
+      size: end - start + 1,
+      number,
+      total,
+    };
+  });
+}
+
+/** Имя архива генерирует NodeService и оно безопасно для этой готовой shell-команды. */
+export function telegramMergeCommand(name: string): string {
+  return `cat ${name}.part-* > ${name}`;
 }
 
 /** Время из имени файла (для копий без описания, например из консоли). */

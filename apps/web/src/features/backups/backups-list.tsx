@@ -1,4 +1,4 @@
-import { BACKUP_KIND_LABELS, type BackupItem } from '@nodeservice/shared';
+import { BACKUP_KIND_LABELS, type BackupItem, TELEGRAM_FILE_LIMIT_BYTES } from '@nodeservice/shared';
 import {
   DownloadIcon,
   LockIcon,
@@ -184,6 +184,10 @@ function IconPill({ title, label, children }: { title: string; label: string; ch
 
 function States({ item }: { item: BackupItem }) {
   const pills: ReactNode[] = [];
+  const telegramWithoutFile =
+    item.telegram?.ok === false &&
+    item.size > TELEGRAM_FILE_LIMIT_BYTES &&
+    /больше 50|уведомление отправлено без файла/i.test(item.telegram.note ?? '');
   if (item.verified === true)
     pills.push(
       <Pill key="v" tone="ok" title="Сразу после создания архив прочитан, база в нём разворачивается">
@@ -205,12 +209,30 @@ function States({ item }: { item: BackupItem }) {
   if (item.telegram)
     pills.push(
       item.telegram.ok ? (
-        <IconPill key="t" title="Архив отправлен файлом в Telegram" label="в Telegram">
-          <SendIcon aria-hidden="true" />
-        </IconPill>
+        item.telegram.parts && item.telegram.parts > 1 ? (
+          <Pill
+            key="t"
+            tone="ok"
+            title={`Архив полностью отправлен в Telegram частями: ${item.telegram.parts}`}
+          >
+            {item.telegram.parts} части в Telegram
+          </Pill>
+        ) : (
+          <IconPill key="t" title="Архив отправлен файлом в Telegram" label="в Telegram">
+            <SendIcon aria-hidden="true" />
+          </IconPill>
+        )
+      ) : telegramWithoutFile ? (
+        <Pill
+          key="t"
+          tone="warn"
+          title="Старая крупная копия: в Telegram ушло только уведомление. Сам архив остался на сервере панели. Новые крупные копии отправляются частями."
+        >
+          только уведомление
+        </Pill>
       ) : (
         <Pill key="t" tone="warn" title={item.telegram.note ?? 'Отправить в Telegram не удалось'}>
-          не отправилась
+          ошибка Telegram
         </Pill>
       ),
     );

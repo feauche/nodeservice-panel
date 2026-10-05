@@ -8,6 +8,8 @@ import {
   isBackupDue,
   keyFingerprint,
   nextBackupAt,
+  telegramBackupParts,
+  telegramMergeCommand,
   timeFromName,
   versionLess,
   willRetryBackup,
@@ -78,6 +80,24 @@ describe('расписание копий', () => {
     expect(timeFromName('nodeservice-backup-20260929-040007.tar.gz')).toEqual(at);
     expect(versionLess('0.38.1', '0.39.0')).toBe(true);
     expect(versionLess('0.39.0', '0.38.9')).toBe(false);
+  });
+
+  it('архив для Telegram делится на последовательные части по 49 МБ', () => {
+    const name = 'nodeservice-backup-20261005-120001.tar.gz.enc';
+    const mib = 1024 * 1024;
+    const parts = telegramBackupParts(name, 60 * mib);
+    expect(parts).toEqual([
+      { name: `${name}.part-01-of-02`, start: 0, end: 49 * mib - 1, size: 49 * mib, number: 1, total: 2 },
+      {
+        name: `${name}.part-02-of-02`,
+        start: 49 * mib,
+        end: 60 * mib - 1,
+        size: 11 * mib,
+        number: 2,
+        total: 2,
+      },
+    ]);
+    expect(telegramMergeCommand(name)).toBe(`cat ${name}.part-* > ${name}`);
   });
 });
 

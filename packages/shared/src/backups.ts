@@ -11,6 +11,8 @@ export const BACKUP_KEEP_MAX = 50;
 export const BACKUP_EXTRA_PATHS_MAX = 20;
 /** Бот Telegram присылает файлы до 50 МБ. */
 export const TELEGRAM_FILE_LIMIT_BYTES = 50 * 1024 * 1024;
+/** Части оставляем чуть меньше предела, чтобы multipart-запрос Telegram не упёрся в лимит. */
+export const TELEGRAM_BACKUP_PART_BYTES = 49 * 1024 * 1024;
 export const BACKUP_RESTORE_CONFIRM = 'ВОССТАНОВИТЬ';
 /** Имя файла копии: только то, что делает панель или консоль. */
 export const BACKUP_NAME_RE = /^nodeservice-backup-[0-9A-Za-z_-]{6,40}\.tar\.gz(\.enc)?$/;
@@ -146,8 +148,15 @@ export const backupItemSchema = z.object({
   encrypted: z.boolean(),
   /** Проверена после создания: архив читается, дамп базы разворачивается. null — не проверялась. */
   verified: z.boolean().nullable(),
-  /** Отправка в Telegram: sent / failed (с причиной) / null — не отправлялась. */
-  telegram: z.object({ ok: z.boolean(), note: z.string().nullable() }).nullable(),
+  /** Отправка архива в Telegram: крупный файл приходит несколькими частями. */
+  telegram: z
+    .object({
+      ok: z.boolean(),
+      note: z.string().nullable(),
+      /** 1 — целый архив, больше — число успешно отправленных частей. У старых записей поля нет. */
+      parts: z.number().int().min(1).optional(),
+    })
+    .nullable(),
   /** Вторая физическая копия в S3-совместимом хранилище. */
   offsite: z.object({ ok: z.boolean(), location: z.string(), note: z.string().nullable() }).nullable(),
   /** Что внутри (если известно): база, ключи, метрики, число путей. */

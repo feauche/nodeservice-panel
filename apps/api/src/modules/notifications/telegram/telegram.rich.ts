@@ -164,7 +164,7 @@ export function digestBlocks(rows: Array<{ time: string; title: string }>, more:
   ];
 }
 
-/** Резервная копия: отдельная rich-карточка, а сам архив приходит следующим сообщением ответом на неё. */
+/** Резервная копия: отдельная rich-карточка, а архив или его части приходят следом. */
 export function backupBlocks(input: {
   when: string;
   zone: string;
@@ -172,6 +172,8 @@ export function backupBlocks(input: {
   contents: string;
   encrypted: boolean;
   fileNote?: string | null;
+  parts?: number;
+  mergeCommand?: string;
 }): RichBlock[] {
   return [
     { type: 'heading', size: 3, text: '🗄 Резервная копия NodeService' },
@@ -188,6 +190,17 @@ export function backupBlocks(input: {
       ],
     },
     ...(!input.encrypted ? [{ type: 'paragraph' as const, text: '⚠ Архив не защищён паролем.' }] : []),
+    ...(input.parts && input.parts > 1
+      ? [
+          {
+            type: 'paragraph' as const,
+            text: `📦 Архив разделён на ${input.parts} части. Скачайте все части в одну папку.`,
+          },
+          ...(input.mergeCommand
+            ? [{ type: 'paragraph' as const, text: { type: 'code' as const, text: input.mergeCommand } }]
+            : []),
+        ]
+      : []),
     ...(input.fileNote ? [{ type: 'paragraph' as const, text: input.fileNote }] : []),
     { type: 'footer', text: 'Восстановить: Настройки → Резервные копии → Восстановить из файла.' },
   ];
