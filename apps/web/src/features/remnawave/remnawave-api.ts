@@ -2,9 +2,11 @@ import {
   REMNAWAVE_SYNC_INTERVAL_MIN,
   type RemnawaveConnectRequest,
   type RemnawaveStatus,
+  type RemnawaveTopology,
   type RemnawaveVpnProbeRequest,
   type RemnawaveVpnProbeStatus,
   remnawaveStatusSchema,
+  remnawaveTopologySchema,
   remnawaveVpnProbeStatusSchema,
 } from '@nodeservice/shared';
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -14,6 +16,8 @@ import { api, request } from '@/lib/api';
 export const remnawaveApi = {
   status: (signal?: AbortSignal): Promise<RemnawaveStatus> =>
     api.get('/remnawave/status', remnawaveStatusSchema, signal),
+  topology: (signal?: AbortSignal): Promise<RemnawaveTopology> =>
+    api.get('/remnawave/topology', remnawaveTopologySchema, signal),
   connect: (body: RemnawaveConnectRequest): Promise<RemnawaveStatus> =>
     api.post('/remnawave/connect', body, remnawaveStatusSchema),
   refresh: (): Promise<RemnawaveStatus> => api.post('/remnawave/refresh', {}, remnawaveStatusSchema),
@@ -25,6 +29,7 @@ export const remnawaveApi = {
 
 export const remnawaveKeys = {
   status: ['remnawave', 'status'] as const,
+  topology: ['remnawave', 'topology'] as const,
 };
 
 export const remnawaveStatusQuery = queryOptions({
@@ -41,11 +46,23 @@ export function useRemnawaveStatus() {
   return useQuery(remnawaveStatusQuery);
 }
 
+export function useRemnawaveTopology(enabled = true) {
+  return useQuery({
+    queryKey: remnawaveKeys.topology,
+    queryFn: ({ signal }) => remnawaveApi.topology(signal),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
 export function useConnectRemnawave() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: remnawaveApi.connect,
-    onSuccess: (status) => qc.setQueryData(remnawaveKeys.status, status),
+    onSuccess: (status) => {
+      qc.setQueryData(remnawaveKeys.status, status);
+      void qc.invalidateQueries({ queryKey: remnawaveKeys.topology });
+    },
   });
 }
 
@@ -53,7 +70,10 @@ export function useRefreshRemnawave() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: remnawaveApi.refresh,
-    onSuccess: (status) => qc.setQueryData(remnawaveKeys.status, status),
+    onSuccess: (status) => {
+      qc.setQueryData(remnawaveKeys.status, status);
+      void qc.invalidateQueries({ queryKey: remnawaveKeys.topology });
+    },
   });
 }
 

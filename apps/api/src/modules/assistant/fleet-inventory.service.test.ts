@@ -48,6 +48,7 @@ function make(list: Server[], probeOver: Record<string, unknown> = {}) {
       available: true,
       ports: [{ proto: 'tcp', address: '0.0.0.0', port: 443, process: 'xray', exposed: true }],
     })),
+    components: vi.fn(async () => ({ remnanode: true, selfsteal: false, psiphon: false })),
     ...probeOver,
   };
   const service = new FleetInventoryService(servers as never, probe as never);
@@ -62,6 +63,26 @@ describe('FleetInventoryService', () => {
       docker: true,
       containers: [{ name: 'remnanode', state: 'running', restarts: 1 }],
       ports: [{ proto: 'tcp', port: 443, process: 'xray', exposed: true }],
+      components: [
+        {
+          key: 'remnanode',
+          installed: true,
+          running: true,
+          detail: 'Контейнер работает.',
+        },
+        {
+          key: 'selfsteal',
+          installed: false,
+          running: null,
+          detail: 'Не установлен.',
+        },
+        {
+          key: 'psiphon',
+          installed: false,
+          running: null,
+          detail: 'Не установлен.',
+        },
+      ],
     });
   });
 

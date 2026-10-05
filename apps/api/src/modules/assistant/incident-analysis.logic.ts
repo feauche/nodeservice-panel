@@ -102,6 +102,7 @@ const ANALYSIS_READ = new Set([
   'run_server_check',
   'get_billing',
   'get_remnawave_profiles',
+  'get_remnawave_topology',
 ]);
 /** Поиск в базе знаний и по Журналу: прошлые решения и изменения — тоже улики. */
 export const ANALYSIS_EXTRA = new Set(['search_kb', 'search_audit']);

@@ -30,6 +30,7 @@ import { VmReaderService } from '../metrics/vm-reader.service.js';
 import { ProvidersService } from '../providers/providers.service.js';
 import { NodeLinkService } from '../remnawave/node-link.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
+import { RemnawaveTopologyService } from '../remnawave/remnawave-topology.service.js';
 import { ServerChecksService } from '../server-checks/server-checks.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import { AutochecksStore } from '../settings/autochecks.store.js';
@@ -103,6 +104,7 @@ export class AssistantService {
     private readonly analysis: IncidentAnalysisService,
     private readonly changes: ChangesService,
     private readonly remnawave: RemnawaveService,
+    private readonly remnawaveTopology: RemnawaveTopologyService,
     private readonly events: EventsService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
     private readonly links: NodeLinkService,
@@ -248,6 +250,7 @@ export class AssistantService {
       fleetStats: this.fleetStats,
       capacity: this.capacity,
       remnawaveProfiles: this.remnawave,
+      remnawaveTopology: this.remnawaveTopology,
       kb: this.kb,
       audit: this.auditRepo,
       conversations: this.repo,

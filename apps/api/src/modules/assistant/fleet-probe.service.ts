@@ -4,6 +4,7 @@ import type { ReachabilityResult, Server } from '@nodeservice/shared';
 import { ServersService } from '../servers/servers.service.js';
 import { SshService } from '../servers/ssh.service.js';
 import {
+  COMPONENTS_COMMAND,
   CONTAINERS_COMMAND,
   certCommand,
   DISK_COMMAND,
@@ -13,6 +14,7 @@ import {
   nodeLogsCommand,
   PORTS_COMMAND,
   parseCert,
+  parseComponents,
   parseContainers,
   parseDisk,
   parseKernel,
@@ -191,6 +193,11 @@ export class FleetProbeService {
   /** Контейнеры Docker: состояние, перезапуски, коды выхода, OOM. */
   async containers(serverId: string) {
     return parseContainers((await this.run(serverId, CONTAINERS_COMMAND)).stdout);
+  }
+
+  /** Наличие Remnanode, Selfsteal и Psiphon без чтения их конфигов и секретов. */
+  async components(serverId: string) {
+    return parseComponents((await this.run(serverId, COMPONENTS_COMMAND)).stdout);
   }
 
   /** Кто какие порты слушает. */

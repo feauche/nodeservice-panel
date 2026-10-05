@@ -1,3 +1,4 @@
+import type { RemnawaveNode } from '@nodeservice/shared';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -60,10 +61,11 @@ describe('RemnawavePage', () => {
     expect(screen.getByText('870')).toBeInTheDocument(); // пользователей
     // Онлайн — сумма по нодам (42 + 0 у ноды не на связи), подписки в сети — подписью.
     expect(screen.getByText('подписок в сети 236')).toBeInTheDocument();
+    expect(screen.getByTestId('rw-cert')).toHaveTextContent(/^Сертификат до \d+ нояб? · \d+ дн/);
+    await user.click(screen.getByRole('button', { name: 'Ноды' }));
     expect(screen.getByText('bridge')).toBeInTheDocument();
     expect(screen.getByText('exit-nl')).toBeInTheDocument();
     expect(screen.getByText('Node did not respond in time')).toBeInTheDocument();
-    expect(screen.getByTestId('rw-cert')).toHaveTextContent(/^Сертификат до \d+ нояб? · \d+ дн/);
     expect(screen.queryByLabelText('Домен панели')).not.toBeInTheDocument();
     expect(await screen.findByText('Remnawave подключена.')).toBeInTheDocument();
   });
@@ -74,6 +76,7 @@ describe('RemnawavePage', () => {
     const user = userEvent.setup();
     await fill(user, 'vpn-panel.example.com', 'rw_pat_good');
     await user.click(screen.getByRole('button', { name: 'Проверить и сохранить' }));
+    await user.click(await screen.findByRole('button', { name: 'Ноды' }));
     // «bridge» стоит на сервере de-fra-01 (адреса совпали), «exit-nl» в панели нет.
     const linked = (await screen.findByText('bridge')).closest('li') as HTMLElement;
     // Имя сервера открывает его профиль: там выбирается, какая это нода.
@@ -145,8 +148,9 @@ describe('RemnawavePage', () => {
     mockRemnawave.domain = 'vpn-panel.example.com';
     mockRemnawave.checkedAt = '2026-09-27T10:00:00.000Z';
     renderPage(Page, '/servers/remnawave');
-    await screen.findByRole('heading', { name: 'Настоящая проверка VPN' });
     const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Настройки' }));
+    await screen.findByRole('heading', { name: 'Настоящая проверка VPN' });
     const field = screen.getByLabelText('Ссылка сервисного пользователя Remnawave');
     await user.type(field, 'https://subscription.example/probe');
     await user.click(screen.getByRole('button', { name: 'Проверить и сохранить' }));
@@ -190,6 +194,8 @@ describe('RemnawavePage', () => {
     ];
     mockRemnawave.cert = null;
     renderPage(Page, '/servers/remnawave');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Ноды' }));
     await screen.findByText('unlimited-node');
     expect(screen.queryByText(/из 0 Б/)).not.toBeInTheDocument();
   });
@@ -201,6 +207,7 @@ describe('RemnawavePage', () => {
     await fill(user, 'vpn-panel.example.com', 'rw_pat_good');
     await user.click(screen.getByRole('button', { name: 'Проверить и сохранить' }));
     await screen.findByRole('heading', { name: 'Подключено' });
+    await user.click(screen.getByRole('button', { name: 'Ноды' }));
 
     const bridgeRow = screen.getByText('bridge').closest('li');
     expect(bridgeRow).not.toBeNull();
@@ -235,10 +242,41 @@ describe('RemnawavePage', () => {
     await user.click(screen.getByRole('button', { name: 'Проверить и сохранить' }));
     await screen.findByRole('heading', { name: 'Подключено' });
 
+    await user.click(screen.getByRole('button', { name: 'Настройки' }));
     await user.click(screen.getByRole('button', { name: 'Отключить' }));
     const dialog = await screen.findByRole('alertdialog');
     await user.click(within(dialog).getByRole('button', { name: 'Да, отключить' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Подключение' })).toBeInTheDocument());
     expect(await screen.findByText('Remnawave отключена.')).toBeInTheDocument();
   });
+
+  it('показывает общую карту и открывает один маршрут по нажатию', async () => {
+    mockRemnawave.connected = true;
+    mockRemnawave.domain = 'vpn-panel.example.com';
+    mockRemnawave.checkedAt = '2026-09-27T10:00:00.000Z';
+    mockRemnawave.stats = null;
+    mockRemnawave.nodes = NODES_FOR_MAP;
+    renderPage(Page, '/servers/remnawave');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Карта трафика' }));
+    expect(await screen.findByRole('heading', { name: 'Как идёт трафик' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Основной вход/ }));
+    expect(screen.getByRole('button', { name: 'Вся топология' })).toBeInTheDocument();
+  });
 });
+
+const NODES_FOR_MAP: RemnawaveNode[] = [
+  {
+    uuid: 'map-node',
+    name: 'Карта - 1',
+    address: '203.0.113.201',
+    countryCode: 'DE',
+    isConnected: true,
+    isDisabled: false,
+    isConnecting: false,
+    lastStatusMessage: null,
+    usersOnline: 12,
+    trafficUsedBytes: 10,
+    trafficLimitBytes: null,
+  },
+];

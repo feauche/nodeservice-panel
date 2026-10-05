@@ -1,4 +1,10 @@
-import type { RemnawaveCert, RemnawaveNode, RemnawaveStats, RemnawaveStatus } from '@nodeservice/shared';
+import type {
+  RemnawaveCert,
+  RemnawaveNode,
+  RemnawaveStats,
+  RemnawaveStatus,
+  RemnawaveTopology,
+} from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
 
 import { mockServers } from './servers-mock';
@@ -135,6 +141,94 @@ function status(): RemnawaveStatus {
   };
 }
 
+function topology(): RemnawaveTopology {
+  const nodes = withServers(mockRemnawave.nodes).map((node) => ({
+    id: node.uuid,
+    name: node.name,
+    address: node.address,
+    countryCode: node.countryCode,
+    connected: node.isConnected,
+    disabled: node.isDisabled,
+    usersOnline: node.usersOnline,
+    profileUuid: 'profile-main',
+    inboundUuids: ['in-main'],
+    serverIds: node.serverIds ?? [],
+    status: node.isDisabled ? ('unknown' as const) : node.isConnected ? ('ok' as const) : ('error' as const),
+  }));
+  const first = nodes[0];
+  const second = nodes[1];
+  const hosts = first
+    ? [
+        {
+          id: 'host-main',
+          name: 'Основной вход',
+          address: first.address,
+          port: 443,
+          disabled: false,
+          profileUuid: 'profile-main',
+          inboundUuid: 'in-main',
+          inboundTag: 'VLESS_IN',
+          protocol: 'vless',
+          network: 'tcp',
+          security: 'reality',
+          nodeUuids: [first.id],
+          status: 'ok' as const,
+        },
+      ]
+    : [];
+  const routes = first
+    ? [
+        {
+          id: 'profile-main:default',
+          profileUuid: 'profile-main',
+          profileName: 'Основной',
+          order: 0,
+          isDefault: true,
+          match: ['Остальной трафик'],
+          inboundTags: [],
+          hostIds: ['host-main'],
+          outboundTag: 'DIRECT',
+          targetKind: 'internet' as const,
+          targetLabel: 'Интернет напрямую',
+          targetNodeUuids: [],
+          status: 'ok' as const,
+          confidence: 'confirmed' as const,
+          note: null,
+        },
+      ]
+    : [];
+  const issues =
+    second && !second.connected
+      ? [
+          {
+            id: `node-down:${second.id}`,
+            severity: 'error' as const,
+            kind: 'node_down',
+            title: `Нода «${second.name}» не на связи`,
+            detail: 'Remnawave помечает ноду отключённой.',
+            hostIds: [],
+            nodeUuids: [second.id],
+            routeIds: [],
+          },
+        ]
+      : [];
+  return {
+    generatedAt: new Date().toISOString(),
+    hosts,
+    nodes,
+    routes,
+    issues,
+    summary: {
+      hosts: hosts.length,
+      nodes: nodes.length,
+      routes: routes.length,
+      errors: issues.length,
+      warnings: 0,
+    },
+    note: 'Тестовая карта связей.',
+  };
+}
+
 const problem = (status_: number, type: string, detail: string) =>
   HttpResponse.json(
     { type, title: detail, status: status_, detail },
@@ -156,6 +250,7 @@ function connectNow(): void {
 
 export const remnawaveHandlers = [
   http.get('/api/remnawave/status', () => HttpResponse.json(status())),
+  http.get('/api/remnawave/topology', () => HttpResponse.json(topology())),
   http.post('/api/remnawave/connect', async ({ request }) => {
     const body = (await request.json()) as { domain?: string; apiKey?: string };
     const domain = (body.domain ?? '').replace(/^https?:\/\//i, '').replace(/\/+$/, '');

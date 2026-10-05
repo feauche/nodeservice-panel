@@ -5,14 +5,20 @@ import type {
   RemnawaveVpnProbeStatus,
 } from '@nodeservice/shared';
 import {
+  AlertTriangleIcon,
   CheckIcon,
   KeyRoundIcon,
+  LayoutDashboardIcon,
+  ListTreeIcon,
   Loader2Icon,
+  MapIcon,
   PlusIcon,
   RefreshCwIcon,
+  ServerIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
   ShieldQuestionIcon,
+  SlidersHorizontalIcon,
   UsersIcon,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -38,7 +44,9 @@ import {
   useDisconnectRemnawave,
   useRefreshRemnawave,
   useRemnawaveStatus,
+  useRemnawaveTopology,
 } from './remnawave-api';
+import { RemnawaveTopologyMap } from './remnawave-topology-map';
 
 /** Общее число байт (строка — может быть огромной) в человекочитаемый вид: «18.4 ТБ». */
 export function formatByteTotal(raw: string | number | null): string {
@@ -448,11 +456,13 @@ function VpnProbeSettings({
 
 export function RemnawavePage() {
   const status = useRemnawaveStatus();
+  const topology = useRemnawaveTopology(status.data?.connected === true);
   const servers = useServers();
   const refresh = useRefreshRemnawave();
   const disconnect = useDisconnectRemnawave();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [addNode, setAddNode] = useState<RemnawaveNode | null>(null);
+  const [tab, setTab] = useState<'overview' | 'map' | 'nodes' | 'problems' | 'settings'>('overview');
 
   /** Серверы панели: у связанной ноды показываем её сервер, у остальных — «Добавить в NodeService». */
   const serverById = useMemo(
@@ -502,77 +512,130 @@ export function RemnawavePage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <section className="rounded-2xl border border-border bg-surface p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="grid size-7 flex-none place-items-center rounded-full bg-ok-soft text-ok">
-                <CheckIcon className="size-4" aria-hidden="true" />
-              </span>
-              <h2 className="font-heading text-[15px] font-bold">Подключено</h2>
-            </div>
-            <p className="mt-1 font-mono text-[13px] text-text-2">{s.domain}</p>
-            {(s.cert || (!s.error && s.checkedAt)) && (
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-                {s.cert && <CertChip cert={s.cert} domain={s.domain ?? ''} />}
-                {!s.error && s.checkedAt && (
-                  <span className="text-[12px] text-text-3">Проверено {formatDate(s.checkedAt)}</span>
-                )}
-              </div>
-            )}
-            {s.error && (
-              <p role="alert" className="mt-1.5 max-w-[560px] text-[12.5px] text-crit">
-                Сейчас недоступна: {s.error}. Последняя попытка
-                {s.lastAttemptAt ? ` — ${formatDate(s.lastAttemptAt)}` : ''}. Показаны данные последней
-                успешной проверки{s.checkedAt ? ` (${formatDate(s.checkedAt)})` : ''}.
-              </p>
-            )}
-          </div>
-          <div className="flex flex-none gap-2">
-            <Button
+      <nav
+        className="overflow-x-auto rounded-2xl border border-border bg-surface p-1.5"
+        aria-label="Разделы Remnawave"
+      >
+        <div className="flex min-w-max gap-1">
+          {(
+            [
+              ['overview', 'Обзор', LayoutDashboardIcon],
+              ['map', 'Карта трафика', MapIcon],
+              ['nodes', 'Ноды', ListTreeIcon],
+              [
+                'problems',
+                `Проблемы${topology.data?.issues.length ? ` · ${topology.data.issues.length}` : ''}`,
+                AlertTriangleIcon,
+              ],
+              ['settings', 'Настройки', SlidersHorizontalIcon],
+            ] as const
+          ).map(([key, label, Icon]) => (
+            <button
+              key={key}
               type="button"
-              variant="outline"
-              disabled={refresh.isPending}
-              onClick={() => void doRefresh()}
-              className="h-9 rounded-[9px] px-3 text-[12.5px]"
+              onClick={() => setTab(key)}
+              className={cn(
+                'inline-flex h-9 items-center gap-1.5 rounded-[10px] px-3 text-[12.5px] font-medium transition-colors',
+                tab === key
+                  ? 'bg-surface-3 text-foreground shadow-sm'
+                  : 'text-text-3 hover:bg-surface-2 hover:text-foreground',
+              )}
             >
-              <RefreshCwIcon
-                className={cn('size-4', refresh.isPending && 'animate-spin')}
-                aria-hidden="true"
-              />
-              Обновить
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setConfirmOpen(true)}
-              className="h-9 rounded-[9px] border-transparent bg-transparent px-3 text-[12.5px] text-crit hover:bg-crit-soft hover:text-crit"
-            >
-              Отключить
-            </Button>
-          </div>
+              <Icon className="size-3.5" aria-hidden="true" />
+              {label}
+            </button>
+          ))}
         </div>
+      </nav>
 
-        {s.stats && (
-          <div className="mt-4 border-t border-border pt-4">
-            <StatsTiles stats={s.stats} nodes={s.nodes} />
-            <p className="mt-2.5 text-[12px] text-text-3">
-              Активные {s.stats.users.active} · выключены {s.stats.users.disabled} · лимит{' '}
-              {s.stats.users.limited} · истекли {s.stats.users.expired} — за сутки {s.stats.online.lastDay}{' '}
-              онлайн, за неделю {s.stats.online.lastWeek}, не заходили {s.stats.online.never}. Версия панели{' '}
-              {s.stats.panelVersion}, аптайм {formatUptime(s.stats.panelUptimeSec)}.
-            </p>
+      {tab === 'overview' && (
+        <section className="rounded-2xl border border-border bg-surface p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="grid size-7 flex-none place-items-center rounded-full bg-ok-soft text-ok">
+                  <CheckIcon className="size-4" aria-hidden="true" />
+                </span>
+                <h2 className="font-heading text-[15px] font-bold">Подключено</h2>
+              </div>
+              <p className="mt-1 font-mono text-[13px] text-text-2">{s.domain}</p>
+              {(s.cert || (!s.error && s.checkedAt)) && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                  {s.cert && <CertChip cert={s.cert} domain={s.domain ?? ''} />}
+                  {!s.error && s.checkedAt && (
+                    <span className="text-[12px] text-text-3">Проверено {formatDate(s.checkedAt)}</span>
+                  )}
+                </div>
+              )}
+              {s.error && (
+                <p role="alert" className="mt-1.5 max-w-[560px] text-[12.5px] text-crit">
+                  Сейчас недоступна: {s.error}. Последняя попытка
+                  {s.lastAttemptAt ? ` — ${formatDate(s.lastAttemptAt)}` : ''}. Показаны данные последней
+                  успешной проверки{s.checkedAt ? ` (${formatDate(s.checkedAt)})` : ''}.
+                </p>
+              )}
+            </div>
+            <div className="flex flex-none gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={refresh.isPending}
+                onClick={() => void doRefresh()}
+                className="h-9 rounded-[9px] px-3 text-[12.5px]"
+              >
+                <RefreshCwIcon
+                  className={cn('size-4', refresh.isPending && 'animate-spin')}
+                  aria-hidden="true"
+                />
+                Обновить
+              </Button>
+            </div>
           </div>
-        )}
-      </section>
 
-      <VpnProbeSettings
-        configured={s.vpnProbeConfigured}
-        routes={s.vpnProbeRoutes}
-        routeDetails={s.vpnProbeRouteDetails}
-      />
+          {s.stats && (
+            <div className="mt-4 border-t border-border pt-4">
+              <StatsTiles stats={s.stats} nodes={s.nodes} />
+              <p className="mt-2.5 text-[12px] text-text-3">
+                Активные {s.stats.users.active} · выключены {s.stats.users.disabled} · лимит{' '}
+                {s.stats.users.limited} · истекли {s.stats.users.expired} — за сутки {s.stats.online.lastDay}{' '}
+                онлайн, за неделю {s.stats.online.lastWeek}, не заходили {s.stats.online.never}. Версия панели{' '}
+                {s.stats.panelVersion}, аптайм {formatUptime(s.stats.panelUptimeSec)}.
+              </p>
+            </div>
+          )}
+          {topology.data && topology.data.issues.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setTab('problems')}
+              className="mt-4 flex w-full items-center justify-between gap-3 rounded-xl border border-warn/30 bg-warn-soft px-3.5 py-3 text-left"
+            >
+              <span className="inline-flex items-center gap-2 text-[12.5px] font-semibold text-warn">
+                <AlertTriangleIcon className="size-4" aria-hidden="true" />
+                Карта нашла {topology.data.issues.length}{' '}
+                {plural(topology.data.issues.length, 'проблему', 'проблемы', 'проблем')}
+              </span>
+              <span className="text-[11.5px] text-warn">Посмотреть →</span>
+            </button>
+          )}
+        </section>
+      )}
 
-      {s.nodes.length > 0 && (
+      {tab === 'map' && (
+        <section className="rounded-2xl border border-border bg-surface p-4 sm:p-5">
+          {topology.isPending && <Skeleton className="h-[520px] rounded-2xl" />}
+          {topology.isError && (
+            <p
+              role="alert"
+              className="rounded-xl border border-crit/30 bg-crit-soft px-4 py-3 text-[13px] text-crit"
+            >
+              {apiErrorMessage(topology.error)}
+            </p>
+          )}
+          {topology.data && <RemnawaveTopologyMap topology={topology.data} />}
+        </section>
+      )}
+
+      {tab === 'nodes' && s.nodes.length > 0 && (
         <section className="overflow-hidden rounded-2xl border border-border bg-surface">
           <h2 className="border-b border-border px-4 py-3 font-heading text-[14px] font-bold">Ноды</h2>
           <ul>
@@ -586,6 +649,99 @@ export function RemnawavePage() {
             ))}
           </ul>
         </section>
+      )}
+
+      {tab === 'nodes' && s.nodes.length === 0 && (
+        <section className="rounded-2xl border border-border bg-surface px-4 py-12 text-center">
+          <ServerIcon className="mx-auto size-5 text-text-3" aria-hidden="true" />
+          <h2 className="mt-2 font-heading text-[14px] font-bold">Нод пока нет</h2>
+          <p className="mx-auto mt-1 max-w-[440px] text-[12px] leading-5 text-text-3">
+            Подключение работает, но Remnawave не вернула ни одной ноды. Добавьте ноду в Remnawave и обновите
+            данные.
+          </p>
+        </section>
+      )}
+
+      {tab === 'problems' && (
+        <section className="overflow-hidden rounded-2xl border border-border bg-surface">
+          <div className="border-b border-border px-4 py-3.5">
+            <h2 className="font-heading text-[14px] font-bold">Проблемы связей</h2>
+            <p className="mt-0.5 text-[11.5px] text-text-3">
+              Только подтверждённые расхождения из текущих данных Remnawave.
+            </p>
+          </div>
+          {topology.isPending && (
+            <div className="p-4">
+              <Skeleton className="h-32 rounded-xl" />
+            </div>
+          )}
+          {topology.data?.issues.length === 0 && (
+            <div className="px-4 py-10 text-center text-[13px] text-text-3">
+              Связи хостов и нод выглядят исправно.
+            </div>
+          )}
+          <ul>
+            {topology.data?.issues.map((issue) => (
+              <li
+                key={issue.id}
+                className="flex items-start gap-3 border-t border-border px-4 py-3.5 first:border-t-0"
+              >
+                {issue.severity === 'error' ? (
+                  <span className="mt-0.5 text-crit text-xl font-light leading-none" aria-hidden="true">
+                    ×
+                  </span>
+                ) : (
+                  <AlertTriangleIcon className="mt-0.5 size-4 flex-none text-warn" aria-hidden="true" />
+                )}
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold">{issue.title}</div>
+                  <p className="mt-1 text-[12px] leading-5 text-text-3">{issue.detail}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {tab === 'settings' && (
+        <>
+          <section className="rounded-2xl border border-border bg-surface p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="font-heading text-[15px] font-bold">Подключение к Remnawave</h2>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-border bg-surface-2 px-3.5 py-3">
+                    <div className="text-[10.5px] font-semibold tracking-[0.06em] text-text-3 uppercase">
+                      Адрес панели
+                    </div>
+                    <div className="mt-1 truncate font-mono text-[12.5px]">{s.domain}</div>
+                  </div>
+                  <div className="rounded-xl border border-border bg-surface-2 px-3.5 py-3">
+                    <div className="text-[10.5px] font-semibold tracking-[0.06em] text-text-3 uppercase">
+                      API-токен
+                    </div>
+                    <div className="mt-1 font-mono text-[12.5px]">
+                      •••••••••••• <span className="font-sans text-text-3">· хранится зашифрованно</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setConfirmOpen(true)}
+                className="h-9 rounded-[9px] border-transparent bg-transparent px-3 text-[12.5px] text-crit hover:bg-crit-soft hover:text-crit"
+              >
+                Отключить
+              </Button>
+            </div>
+          </section>
+          <VpnProbeSettings
+            configured={s.vpnProbeConfigured}
+            routes={s.vpnProbeRoutes}
+            routeDetails={s.vpnProbeRouteDetails}
+          />
+        </>
       )}
 
       <ConfirmDialog

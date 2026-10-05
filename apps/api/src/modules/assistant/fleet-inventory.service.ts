@@ -39,7 +39,11 @@ export class FleetInventoryService {
   async refresh(id: string): Promise<Server> {
     await this.servers.get(id);
     try {
-      const [c, p] = await Promise.all([this.probe.containers(id), this.probe.ports(id)]);
+      const [c, p, installed] = await Promise.all([
+        this.probe.containers(id),
+        this.probe.ports(id),
+        this.probe.components(id),
+      ]);
       // Пустой список при лежащем dockerd не является снимком сервера. Оставляем прежний снимок,
       // чтобы не создать ложное расхождение «контейнер удалён».
       if (c.docker && !c.dockerRunning)
@@ -57,6 +61,46 @@ export class FleetInventoryService {
           process: x.process,
           exposed: x.exposed,
         })),
+        components: [
+          {
+            key: 'remnanode',
+            installed: installed.remnanode,
+            running: installed.remnanode
+              ? c.containers.some(
+                  (container) =>
+                    (container.name.toLowerCase() === 'remnanode' ||
+                      container.image.toLowerCase().includes('remnawave/node')) &&
+                    container.state === 'running',
+                )
+              : null,
+            detail: installed.remnanode
+              ? c.containers.some(
+                  (container) =>
+                    (container.name.toLowerCase() === 'remnanode' ||
+                      container.image.toLowerCase().includes('remnawave/node')) &&
+                    container.state === 'running',
+                )
+                ? 'Контейнер работает.'
+                : 'Compose найден, но работающий контейнер не найден.'
+              : 'Не установлена.',
+          },
+          {
+            key: 'selfsteal',
+            installed: installed.selfsteal,
+            running: null,
+            detail: installed.selfsteal ? 'Команда selfsteal установлена.' : 'Не установлен.',
+          },
+          {
+            key: 'psiphon',
+            installed: installed.psiphon,
+            running: installed.psiphon ? p.ports.some((port) => port.port === 1080) : null,
+            detail: installed.psiphon
+              ? p.ports.some((port) => port.port === 1080)
+                ? 'Локальный SOCKS5 слушает порт 1080.'
+                : 'Установлен, но локальный порт 1080 не слушается.'
+              : 'Не установлен.',
+          },
+        ],
       };
       return await this.servers.saveInventory(id, inventory);
     } catch (err) {

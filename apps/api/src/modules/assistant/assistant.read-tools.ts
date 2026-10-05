@@ -36,6 +36,7 @@ import type { MaintenanceService } from '../maintenance/maintenance.service.js';
 import type { VmReaderService } from '../metrics/vm-reader.service.js';
 import type { ProvidersService } from '../providers/providers.service.js';
 import type { RemnawaveService } from '../remnawave/remnawave.service.js';
+import type { RemnawaveTopologyService } from '../remnawave/remnawave-topology.service.js';
 import type { ServerChecksService } from '../server-checks/server-checks.service.js';
 import type { ServersService } from '../servers/servers.service.js';
 import { INSPECT_TOOL_DEFS, INSPECT_TOOL_NAMES, runInspectTool } from './assistant.inspect-tools.js';
@@ -64,6 +65,12 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
         profile: { type: 'string', description: 'имя или UUID профиля; без него вернётся каталог' },
       },
     },
+  },
+  {
+    name: 'get_remnawave_topology',
+    description:
+      'Безопасная карта Remnawave без секретов: хосты, назначенные им ноды, активные состояния, правила routing, выходы и найденные разрывы. Используй, когда нужно понять путь клиент → хост → нода → выход, найти неверную связку или объяснить, где обрывается маршрут. Пунктирная связь означает конфигурацию, а не измеренный живой трафик.',
+    input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'get_server_detail',
@@ -279,6 +286,7 @@ export interface ReadDeps {
   capacity?: Pick<CapacityService, 'forAssistant'>;
   /** Безопасное чтение конфигураций Remnawave; секреты удаляет сам сервис до передачи модели. */
   remnawaveProfiles?: Pick<RemnawaveService, 'profilesForAssistant'>;
+  remnawaveTopology?: Pick<RemnawaveTopologyService, 'forAssistant'>;
   /** Биллинг: оплаты, сроки, итоги. Нет — инструмент скажет, что раздел недоступен. */
   billing?: Pick<BillingService, 'forAssistant'>;
   /** Живая строка в чате о долгом действии (есть только в чате, не в разборе инцидентов). */
@@ -542,6 +550,10 @@ export async function runReadTool(
     if (!deps.remnawaveProfiles) return none('Чтение профилей Remnawave сейчас недоступно.');
     return none(JSON.stringify(await deps.remnawaveProfiles.profilesForAssistant(arg)));
   }
+  if (name === 'get_remnawave_topology') {
+    if (!deps.remnawaveTopology) return none('Карта Remnawave сейчас недоступна.');
+    return none(JSON.stringify(await deps.remnawaveTopology.forAssistant()));
+  }
 
   if (name === 'get_fleet_status') {
     const [servers, open, providers] = await Promise.all([
@@ -656,6 +668,7 @@ export async function runReadTool(
               docker: s.inventory.docker,
               containers: s.inventory.containers,
               ports: s.inventory.ports,
+              components: s.inventory.components ?? [],
               note: 'Снимок по SSH раз в сутки: свежее состояние даёт inspect_containers и inspect_ports.',
             }
           : null,

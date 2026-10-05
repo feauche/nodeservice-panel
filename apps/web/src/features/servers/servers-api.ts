@@ -89,6 +89,7 @@ export function useServer(id: string) {
 function useApplyServer() {
   const qc = useQueryClient();
   return (server: Server) => {
+    qc.setQueryData(['servers', 'item', server.id], server);
     qc.setQueryData<ServersResponse>(serversKeys.list, (old) =>
       old ? { items: old.items.map((s) => (s.id === server.id ? server : s)) } : old,
     );

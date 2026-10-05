@@ -92,6 +92,7 @@ describe('инструменты и промпты разбора', () => {
         'get_playbook',
         'get_reference',
         'get_remnawave_profiles',
+        'get_remnawave_topology',
         'get_server_checks',
         'get_server_detail',
         'inspect_containers',

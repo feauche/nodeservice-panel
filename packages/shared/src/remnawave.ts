@@ -144,3 +144,87 @@ export const remnawaveVpnProbeStatusSchema = z.object({
   ),
 });
 export type RemnawaveVpnProbeStatus = z.infer<typeof remnawaveVpnProbeStatusSchema>;
+
+export const REMNAWAVE_TOPOLOGY_STATUSES = ['ok', 'warning', 'error', 'unknown'] as const;
+export const REMNAWAVE_TOPOLOGY_CONFIDENCE = ['confirmed', 'inferred', 'unknown'] as const;
+
+/** Безопасная проекция схемы Remnawave: только связи и состояния, без UUID пользователей и ключей Xray. */
+export const remnawaveTopologyHostSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  address: z.string(),
+  port: z.number().int().min(1).max(65_535),
+  disabled: z.boolean(),
+  profileUuid: z.string().nullable(),
+  inboundUuid: z.string().nullable(),
+  inboundTag: z.string().nullable(),
+  protocol: z.string().nullable(),
+  network: z.string().nullable(),
+  security: z.string().nullable(),
+  nodeUuids: z.array(z.string()),
+  status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
+});
+export type RemnawaveTopologyHost = z.infer<typeof remnawaveTopologyHostSchema>;
+
+export const remnawaveTopologyNodeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  address: z.string(),
+  countryCode: z.string().nullable(),
+  connected: z.boolean(),
+  disabled: z.boolean(),
+  usersOnline: z.number().int().min(0).nullable(),
+  profileUuid: z.string().nullable(),
+  inboundUuids: z.array(z.string()),
+  serverIds: z.array(z.string()),
+  status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
+});
+export type RemnawaveTopologyNode = z.infer<typeof remnawaveTopologyNodeSchema>;
+
+export const remnawaveTopologyRouteSchema = z.object({
+  id: z.string(),
+  profileUuid: z.string(),
+  profileName: z.string(),
+  order: z.number().int().min(0),
+  isDefault: z.boolean(),
+  match: z.array(z.string()),
+  inboundTags: z.array(z.string()),
+  hostIds: z.array(z.string()),
+  outboundTag: z.string(),
+  targetKind: z.enum(['internet', 'node', 'service', 'blocked', 'unknown']),
+  targetLabel: z.string(),
+  targetNodeUuids: z.array(z.string()),
+  status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
+  confidence: z.enum(REMNAWAVE_TOPOLOGY_CONFIDENCE),
+  note: z.string().nullable(),
+});
+export type RemnawaveTopologyRoute = z.infer<typeof remnawaveTopologyRouteSchema>;
+
+export const remnawaveTopologyIssueSchema = z.object({
+  id: z.string(),
+  severity: z.enum(['error', 'warning', 'info']),
+  kind: z.string(),
+  title: z.string(),
+  detail: z.string(),
+  hostIds: z.array(z.string()),
+  nodeUuids: z.array(z.string()),
+  routeIds: z.array(z.string()),
+});
+export type RemnawaveTopologyIssue = z.infer<typeof remnawaveTopologyIssueSchema>;
+
+export const remnawaveTopologySchema = z.object({
+  generatedAt: z.iso.datetime(),
+  hosts: z.array(remnawaveTopologyHostSchema),
+  nodes: z.array(remnawaveTopologyNodeSchema),
+  routes: z.array(remnawaveTopologyRouteSchema),
+  issues: z.array(remnawaveTopologyIssueSchema),
+  summary: z.object({
+    hosts: z.number().int().min(0),
+    nodes: z.number().int().min(0),
+    routes: z.number().int().min(0),
+    errors: z.number().int().min(0),
+    warnings: z.number().int().min(0),
+  }),
+  note: z.string(),
+});
+export type RemnawaveTopology = z.infer<typeof remnawaveTopologySchema>;

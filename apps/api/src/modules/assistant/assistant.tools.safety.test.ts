@@ -62,6 +62,7 @@ describe('набор инструментов Джарвиса', () => {
         'get_panel_status',
         'get_playbook',
         'get_remnawave_profiles',
+        'get_remnawave_topology',
         'get_remnawave_status',
         'get_reference',
         'get_server_detail',

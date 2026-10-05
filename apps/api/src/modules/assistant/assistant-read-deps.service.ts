@@ -12,6 +12,7 @@ import { VmReaderService } from '../metrics/vm-reader.service.js';
 import { ProvidersService } from '../providers/providers.service.js';
 import { NodeLinkService } from '../remnawave/node-link.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
+import { RemnawaveTopologyService } from '../remnawave/remnawave-topology.service.js';
 import { ServerChecksService } from '../server-checks/server-checks.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import type { ReadDeps } from './assistant.read-tools.js';
@@ -33,6 +34,7 @@ export class ReadDepsService {
     private readonly fleetStats: FleetStatsService,
     private readonly capacity: CapacityService,
     private readonly remnawave: RemnawaveService,
+    private readonly remnawaveTopology: RemnawaveTopologyService,
     private readonly links: NodeLinkService,
   ) {}
 
@@ -50,6 +52,7 @@ export class ReadDepsService {
       fleetStats: this.fleetStats,
       capacity: this.capacity,
       remnawaveProfiles: this.remnawave,
+      remnawaveTopology: this.remnawaveTopology,
       permissions,
       upstreamTarget: (server, all) =>
         resolveUpstreamTarget(server, all, this.remnawave, this.links).catch(() => null),

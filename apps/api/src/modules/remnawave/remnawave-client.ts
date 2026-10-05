@@ -31,6 +31,13 @@ export interface RemnawaveProfileCatalog {
   xrayJson: Record<string, unknown>[];
 }
 
+export interface RemnawaveTopologySource {
+  hosts: Record<string, unknown>[];
+  nodes: Record<string, unknown>[];
+  profiles: Record<string, unknown>[];
+  metrics: Record<string, unknown>[];
+}
+
 /**
  * SNI (маскировка) и порт активного инбаунда Reality у ноды — не часть публичного статуса
  * (фронтенду не нужно), нужно только для проверки блокировок (J10): без него панель не знает,
@@ -63,6 +70,8 @@ export interface RemnawaveClient {
     kind: RemnawaveProfileKind,
     uuid: string,
   ): Promise<Record<string, unknown>>;
+  /** Хосты, ноды, профили и метрики для безопасной карты связей. */
+  readTopology(domain: string, apiKey: string): Promise<RemnawaveTopologySource>;
 }
 export const REMNAWAVE_CLIENT = Symbol('REMNAWAVE_CLIENT');
 
@@ -277,6 +286,28 @@ export class HttpRemnawaveClient implements RemnawaveClient {
     const section = kind === 'node' ? 'config-profiles' : 'subscription-templates';
     const body = await getJson(`https://${domain}/api/${section}/${encodeURIComponent(uuid)}`, apiKey);
     return (body.response ?? {}) as Record<string, unknown>;
+  }
+
+  async readTopology(domain: string, apiKey: string): Promise<RemnawaveTopologySource> {
+    const base = `https://${domain}`;
+    const [hostsBody, nodesBody, profilesBody, metricsBody] = await Promise.all([
+      getJson(`${base}/api/hosts`, apiKey),
+      getJson(`${base}/api/nodes`, apiKey),
+      getJson(`${base}/api/config-profiles`, apiKey),
+      getJson(`${base}/api/system/nodes/metrics`, apiKey),
+    ]);
+    const profilesResponse = (profilesBody.response ?? {}) as Record<string, unknown>;
+    const metricsResponse = (metricsBody.response ?? {}) as Record<string, unknown>;
+    return {
+      hosts: Array.isArray(hostsBody.response) ? (hostsBody.response as Record<string, unknown>[]) : [],
+      nodes: Array.isArray(nodesBody.response) ? (nodesBody.response as Record<string, unknown>[]) : [],
+      profiles: Array.isArray(profilesResponse.configProfiles)
+        ? (profilesResponse.configProfiles as Record<string, unknown>[])
+        : [],
+      metrics: Array.isArray(metricsResponse.nodes)
+        ? (metricsResponse.nodes as Record<string, unknown>[])
+        : [],
+    };
   }
 
   /** Имя маскировки из профиля конфигурации по тегу инбаунда; любой сбой — null (проверка деградирует до порта). */

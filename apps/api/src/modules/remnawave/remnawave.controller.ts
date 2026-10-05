@@ -3,6 +3,7 @@ import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 import {
   remnawaveConnectRequestSchema,
   remnawaveStatusSchema,
+  remnawaveTopologySchema,
   remnawaveVpnProbeRequestSchema,
   remnawaveVpnProbeStatusSchema,
 } from '@nodeservice/shared';
@@ -11,12 +12,14 @@ import { createZodDto } from 'nestjs-zod';
 import { ServersService } from '../servers/servers.service.js';
 import { NodeLinkService } from './node-link.service.js';
 import { RemnawaveService } from './remnawave.service.js';
+import { RemnawaveTopologyService } from './remnawave-topology.service.js';
 import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
 
 export class RemnawaveStatusDto extends createZodDto(remnawaveStatusSchema) {}
 export class RemnawaveConnectRequestDto extends createZodDto(remnawaveConnectRequestSchema) {}
 export class RemnawaveVpnProbeRequestDto extends createZodDto(remnawaveVpnProbeRequestSchema) {}
 export class RemnawaveVpnProbeStatusDto extends createZodDto(remnawaveVpnProbeStatusSchema) {}
+export class RemnawaveTopologyDto extends createZodDto(remnawaveTopologySchema) {}
 
 @ApiTags('remnawave')
 @ApiCookieAuth()
@@ -27,6 +30,7 @@ export class RemnawaveController {
     private readonly servers: ServersService,
     private readonly links: NodeLinkService,
     private readonly vpnProbe: RemnawaveVpnProbeService,
+    private readonly topologyService: RemnawaveTopologyService,
   ) {}
 
   /** К каждой ноде — серверы панели, на которых она работает: веб сам адреса не сверяет. */
@@ -47,6 +51,7 @@ export class RemnawaveController {
   @ApiOperation({ summary: 'Подключить Remnawave: проверить домен и токен, сохранить при успехе' })
   @ApiOkResponse({ type: RemnawaveStatusDto })
   async connect(@Body() body: RemnawaveConnectRequestDto): Promise<RemnawaveStatusDto> {
+    this.topologyService.clear();
     return this.linked(await this.remnawave.connect(body));
   }
 
@@ -55,13 +60,22 @@ export class RemnawaveController {
   @ApiOperation({ summary: 'Обновить данные Remnawave прямо сейчас' })
   @ApiOkResponse({ type: RemnawaveStatusDto })
   async refresh(): Promise<RemnawaveStatusDto> {
+    this.topologyService.clear();
     return this.linked(await this.remnawave.refresh());
+  }
+
+  @Get('topology')
+  @ApiOperation({ summary: 'Безопасная карта хостов, нод и маршрутов Remnawave' })
+  @ApiOkResponse({ type: RemnawaveTopologyDto })
+  topology(): Promise<RemnawaveTopologyDto> {
+    return this.topologyService.get();
   }
 
   @Delete()
   @HttpCode(204)
   @ApiOperation({ summary: 'Отключить Remnawave (стереть домен и токен)' })
   disconnect(): Promise<void> {
+    this.topologyService.clear();
     return this.remnawave.disconnect();
   }
 

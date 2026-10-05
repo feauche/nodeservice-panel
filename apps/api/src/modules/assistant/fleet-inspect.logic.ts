@@ -94,6 +94,26 @@ export function parseContainers(stdout: string): ContainersResult {
   return { docker: true, dockerRunning: true, containers, attention };
 }
 
+/* ---------- компоненты установщика ноды ---------- */
+
+export const COMPONENTS_COMMAND = SH(
+  [
+    '# ns-inspect:components',
+    'if [ -f /opt/remnanode/docker-compose.yml ]; then echo "remnanode|1"; else echo "remnanode|0"; fi',
+    'if command -v selfsteal >/dev/null 2>&1; then echo "selfsteal|1"; else echo "selfsteal|0"; fi',
+    'if command -v vps-psiphon >/dev/null 2>&1; then echo "psiphon|1"; else echo "psiphon|0"; fi',
+  ].join('\n'),
+);
+
+export function parseComponents(stdout: string): Record<'remnanode' | 'selfsteal' | 'psiphon', boolean> {
+  const found = { remnanode: false, selfsteal: false, psiphon: false };
+  for (const line of stdout.split('\n')) {
+    const [key, value] = line.trim().split('|');
+    if (key === 'remnanode' || key === 'selfsteal' || key === 'psiphon') found[key] = value === '1';
+  }
+  return found;
+}
+
 /* ---------- порты ---------- */
 
 export const PORTS_COMMAND = SH(

@@ -169,6 +169,17 @@ export const serverProfilePatchSchema = z.object({
 });
 export type ServerProfilePatch = z.infer<typeof serverProfilePatchSchema>;
 
+/** Компоненты, которые умеет устанавливать remnanode-installer. */
+export const SERVER_COMPONENT_KEYS = ['remnanode', 'selfsteal', 'psiphon'] as const;
+export const serverComponentSchema = z.object({
+  key: z.enum(SERVER_COMPONENT_KEYS),
+  installed: z.boolean(),
+  /** null — компонент не сообщает отдельное состояние процесса. */
+  running: z.boolean().nullable(),
+  detail: z.string(),
+});
+export type ServerComponent = z.infer<typeof serverComponentSchema>;
+
 /** Снимок фактического состояния сервера по SSH (раз в сутки и по кнопке). */
 export const serverInventorySchema = z.object({
   at: z.iso.datetime({ offset: true }),
@@ -184,6 +195,8 @@ export const serverInventorySchema = z.object({
       exposed: z.boolean(),
     }),
   ),
+  /** Optional сохраняет совместимость со снимками, сделанными до появления этой проверки. */
+  components: z.array(serverComponentSchema).optional(),
 });
 export type ServerInventory = z.infer<typeof serverInventorySchema>;
 
