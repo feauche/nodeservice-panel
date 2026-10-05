@@ -99,6 +99,16 @@ const topology: RemnawaveTopology = {
 };
 
 describe('RemnawaveTopologyMap', () => {
+  it('показывает управление масштабом и фиксированное полотно графа', async () => {
+    render(<RemnawaveTopologyMap topology={topology} />);
+    const user = userEvent.setup();
+
+    expect(screen.getByTestId('topology-viewport')).toHaveClass('overflow-hidden');
+    expect(screen.getByRole('button', { name: 'Показать весь граф' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Уменьшить граф' }));
+    expect(screen.getByText('83%')).toBeInTheDocument();
+  });
+
   it('при наведении на хост выделяет только его собственную цепочку общего профиля', async () => {
     render(<RemnawaveTopologyMap topology={topology} />);
     const user = userEvent.setup();

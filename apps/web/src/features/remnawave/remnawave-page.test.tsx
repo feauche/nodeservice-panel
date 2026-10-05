@@ -258,7 +258,7 @@ describe('RemnawavePage', () => {
     mockRemnawave.nodes = NODES_FOR_MAP;
     renderPage(Page, '/servers/remnawave');
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: 'Карта трафика' }));
+    await user.click(await screen.findByRole('button', { name: 'Граф' }));
     expect(await screen.findByRole('heading', { name: 'Как идёт трафик' })).toBeInTheDocument();
     const host = screen.getByRole('button', { name: /Основной вход/ });
     expect(screen.getAllByRole('button', { name: /Карта - выход/ })).toHaveLength(1);
@@ -267,7 +267,7 @@ describe('RemnawavePage', () => {
     await user.click(host);
     expect(screen.getByRole('button', { name: 'Вернуться ко всей топологии' })).toBeInTheDocument();
     expect(document.querySelectorAll('.ns-topology-flow')).toHaveLength(4);
-    await user.click(screen.getByRole('button', { name: 'Карта трафика' }));
+    await user.click(screen.getByRole('button', { name: 'Граф' }));
     expect(screen.getByRole('heading', { name: 'Как идёт трафик' })).toBeInTheDocument();
   });
 

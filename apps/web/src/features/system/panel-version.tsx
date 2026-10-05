@@ -21,7 +21,7 @@ function releaseLines(notes: string | null | undefined): string[] {
         .replace(/\*\*(.+?)\*\*/g, '$1'),
     )
     .filter((line) => !/^full changelog:?/i.test(line) && line !== UPDATE_COMMAND)
-    .slice(0, 8);
+    .filter((line, index, all) => all.indexOf(line) === index);
 }
 
 function ruDate(value: string | null | undefined): string | null {
@@ -73,7 +73,7 @@ export function PanelVersion({ version, build }: { version: string; build: strin
         {available ? <span className="font-sans">Доступна v{available}</span> : <span>v{shownVersion}</span>}
       </button>
 
-      <DialogContent className="max-h-[calc(100dvh-40px)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-2xl border-border bg-surface p-0 max-md:max-h-[calc(100dvh-16px-env(safe-area-inset-top)-env(safe-area-inset-bottom))] max-md:max-w-[calc(100%-16px)] sm:max-w-[520px]">
+      <DialogContent className="h-[620px] max-h-[calc(100dvh-40px)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-2xl border-border bg-surface p-0 max-md:h-[calc(100dvh-24px)] max-md:max-h-none max-md:max-w-[calc(100%-16px)] sm:max-w-[520px]">
         <DialogHeader className="border-b border-border px-5 py-4 pr-12">
           <DialogTitle className="font-heading text-[17px]">Версия NodeService</DialogTitle>
           <DialogDescription>Стабильные версии панели публикуются как GitHub Release.</DialogDescription>

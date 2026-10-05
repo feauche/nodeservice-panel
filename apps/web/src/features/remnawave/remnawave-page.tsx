@@ -525,7 +525,7 @@ export function RemnawavePage() {
           {(
             [
               ['overview', 'Обзор', LayoutDashboardIcon],
-              ['map', 'Карта трафика', MapIcon],
+              ['map', 'Граф', MapIcon],
               ['configs', 'Конфигурации', SlidersIcon],
               ['nodes', 'Ноды', ListTreeIcon],
               [

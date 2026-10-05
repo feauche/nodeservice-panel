@@ -8,14 +8,18 @@ import {
   ArrowLeftIcon,
   CircleDotIcon,
   CloudIcon,
+  Maximize2Icon,
+  MinusIcon,
+  MoveIcon,
   NetworkIcon,
+  PlusIcon,
   RouteIcon,
   ServerIcon,
   TriangleAlertIcon,
   UsersIcon,
   XIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -71,6 +75,168 @@ function useMeasuredWidth(enabled = true) {
     };
   }, [enabled]);
   return [ref, width] as const;
+}
+
+const MIN_GRAPH_SCALE = 0.18;
+const MAX_GRAPH_SCALE = 1.8;
+
+/** Масштабируемое полотно: колесо меняет масштаб относительно курсора, фон перетаскивается мышью. */
+function GraphViewport({
+  width,
+  height,
+  compact = false,
+  children,
+}: {
+  width: number;
+  height: number;
+  compact?: boolean;
+  children: ReactNode;
+}) {
+  const frameRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [frame, setFrame] = useState({ width: 0, height: 0 });
+  const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
+
+  const fitGraph = useCallback(() => {
+    if (!frame.width || !frame.height) return;
+    const inset = compact ? 32 : 52;
+    const scale = Math.min(
+      1,
+      Math.max(MIN_GRAPH_SCALE, Math.min((frame.width - inset) / width, (frame.height - inset) / height)),
+    );
+    setView({
+      scale,
+      x: (frame.width - width * scale) / 2,
+      y: (frame.height - height * scale) / 2,
+    });
+  }, [compact, frame.height, frame.width, height, width]);
+
+  useEffect(() => {
+    const element = frameRef.current;
+    if (!element) return;
+    const update = () => setFrame({ width: element.clientWidth, height: element.clientHeight });
+    update();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(element);
+    window.addEventListener('resize', update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, []);
+
+  useEffect(() => fitGraph(), [fitGraph]);
+
+  const zoomAt = useCallback((nextScale: number, clientX?: number, clientY?: number) => {
+    const bounds = frameRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    setView((current) => {
+      const scale = Math.min(MAX_GRAPH_SCALE, Math.max(MIN_GRAPH_SCALE, nextScale));
+      const anchorX = clientX === undefined ? bounds.width / 2 : clientX - bounds.left;
+      const anchorY = clientY === undefined ? bounds.height / 2 : clientY - bounds.top;
+      const worldX = (anchorX - current.x) / current.scale;
+      const worldY = (anchorY - current.y) / current.scale;
+      return { scale, x: anchorX - worldX * scale, y: anchorY - worldY * scale };
+    });
+  }, []);
+
+  return (
+    <div
+      ref={frameRef}
+      data-testid="topology-viewport"
+      className={cn(
+        'relative isolate overflow-hidden rounded-2xl border border-border bg-surface-2/30 select-none',
+        compact ? 'h-[430px] max-md:h-[360px]' : 'h-[clamp(520px,68dvh,760px)] max-md:h-[62dvh]',
+        dragging ? 'cursor-grabbing' : 'cursor-grab',
+      )}
+      style={{ touchAction: 'none' }}
+      onWheel={(event) => {
+        event.preventDefault();
+        zoomAt(view.scale * Math.exp(-event.deltaY * 0.0015), event.clientX, event.clientY);
+      }}
+      onPointerDown={(event) => {
+        if ((event.target as HTMLElement).closest('button')) return;
+        dragRef.current = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          left: view.x,
+          top: view.y,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setDragging(true);
+      }}
+      onPointerMove={(event) => {
+        const start = dragRef.current;
+        if (!start || start.pointerId !== event.pointerId) return;
+        setView((current) => ({
+          ...current,
+          x: start.left + event.clientX - start.x,
+          y: start.top + event.clientY - start.y,
+        }));
+      }}
+      onPointerUp={(event) => {
+        if (dragRef.current?.pointerId !== event.pointerId) return;
+        dragRef.current = null;
+        setDragging(false);
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }}
+      onPointerCancel={() => {
+        dragRef.current = null;
+        setDragging(false);
+      }}
+    >
+      <div
+        className="absolute inset-0 opacity-35 [background-image:radial-gradient(var(--border)_1px,transparent_1px)] [background-size:24px_24px]"
+        aria-hidden="true"
+      />
+      <div
+        className="absolute top-0 left-0 will-change-transform"
+        style={{
+          width,
+          height,
+          transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale})`,
+          transformOrigin: '0 0',
+        }}
+      >
+        {children}
+      </div>
+      <div className="absolute top-3 right-3 z-30 flex items-center gap-1 rounded-xl border border-border bg-surface/95 p-1 shadow-pop">
+        <button
+          type="button"
+          aria-label="Уменьшить граф"
+          className="grid size-8 cursor-pointer place-items-center rounded-lg text-text-2 hover:bg-surface-3 hover:text-foreground"
+          onClick={() => zoomAt(view.scale / 1.2)}
+        >
+          <MinusIcon className="size-4" />
+        </button>
+        <span className="w-12 text-center font-mono text-[10px] text-text-3">
+          {Math.round(view.scale * 100)}%
+        </span>
+        <button
+          type="button"
+          aria-label="Увеличить граф"
+          className="grid size-8 cursor-pointer place-items-center rounded-lg text-text-2 hover:bg-surface-3 hover:text-foreground"
+          onClick={() => zoomAt(view.scale * 1.2)}
+        >
+          <PlusIcon className="size-4" />
+        </button>
+        <button
+          type="button"
+          aria-label="Показать весь граф"
+          title="Показать весь граф"
+          className="grid size-8 cursor-pointer place-items-center rounded-lg text-text-2 hover:bg-surface-3 hover:text-foreground"
+          onClick={fitGraph}
+        >
+          <Maximize2Icon className="size-3.5" />
+        </button>
+      </div>
+      <div className="pointer-events-none absolute bottom-3 left-3 z-20 inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface/90 px-2.5 py-1.5 text-[10px] text-text-3 shadow-sm max-sm:hidden">
+        <MoveIcon className="size-3.5" /> Зажмите и тяните · колесо меняет масштаб
+      </div>
+    </div>
+  );
 }
 
 function estimatedCardHeight(title: string, subtitle: string, width: number): number {
@@ -504,8 +670,8 @@ function FocusedFlow({
         <ArrowLeftIcon className="size-4" aria-hidden="true" />
         Вернуться ко всей топологии
       </Button>
-      <div ref={frameRef} className="overflow-x-auto rounded-xl border border-border bg-surface-2/35">
-        <div className="relative" style={{ height: graphHeight, width: graphWidth }}>
+      <div ref={frameRef}>
+        <GraphViewport width={graphWidth} height={graphHeight} compact>
           {['Клиент', 'Хост', 'Входная нода', 'Выход', 'Назначение'].map((label, index) => (
             <span
               key={label}
@@ -632,7 +798,7 @@ function FocusedFlow({
               Путь требует внимания — причина указана в разделе «Проблемы».
             </div>
           )}
-        </div>
+        </GraphViewport>
       </div>
       {visibleSegments.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-text-2">
@@ -800,8 +966,8 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
           </span>
         </div>
       </div>
-      <div ref={graphFrameRef} className="overflow-x-auto rounded-2xl border border-border bg-surface-2/30">
-        <div className="relative" style={{ height, width: graphWidth }}>
+      <div ref={graphFrameRef}>
+        <GraphViewport width={graphWidth} height={height}>
           {['Клиенты', 'Хосты', 'Входные ноды', 'Выход', 'Назначение'].map((label, index) => (
             <span
               key={label}
@@ -993,7 +1159,7 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
             dimmed={hoverContext !== null && !hoverContext.reachesInternet}
             onClick={() => {}}
           />
-        </div>
+        </GraphViewport>
       </div>
       <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
         <CircleDotIcon className="size-3.5" aria-hidden="true" />

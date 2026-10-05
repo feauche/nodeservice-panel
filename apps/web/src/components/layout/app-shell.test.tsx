@@ -118,7 +118,8 @@ describe('AppShell · меню пользователя', () => {
             name: 'NodeService Panel v0.56.0',
             url: 'https://github.com/feauche/nodeservice-panel/releases/tag/v0.56.0',
             publishedAt: '2026-10-02T09:00:00.000Z',
-            notes: '## Что изменилось\n- Надёжнее доставка.\n- Новая диагностика.',
+            notes:
+              '## Что изменилось\n- Надёжнее доставка.\n- Новая диагностика.\n- Пункт 3.\n- Пункт 4.\n- Пункт 5.\n- Пункт 6.\n- Пункт 7.\n- Пункт 8.\n- Пункт 9 тоже виден.',
           },
         }),
       ),
@@ -130,7 +131,8 @@ describe('AppShell · меню пользователя', () => {
     await user.click(indicator);
     const dialog = await screen.findByRole('dialog', { name: 'Версия NodeService' });
     expect(dialog).toHaveTextContent('Надёжнее доставка.');
-    expect(dialog).toHaveClass('grid-rows-[auto_minmax(0,1fr)_auto]');
+    expect(dialog).toHaveTextContent('Пункт 9 тоже виден.');
+    expect(dialog).toHaveClass('h-[620px]', 'grid-rows-[auto_minmax(0,1fr)_auto]');
     expect(screen.getByTestId('panel-version-scroll')).toHaveClass('min-h-0', 'overflow-y-auto');
     expect(screen.getByText('nodeservice update')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Открыть GitHub Release' })).toHaveAttribute(
@@ -139,13 +141,9 @@ describe('AppShell · меню пользователя', () => {
     );
   });
 
-  it('мобильная шапка имеет собственный непрозрачный слой внутри safe area', async () => {
+  it('мобильная шапка имеет сплошной фон без отдельного композиционного слоя', async () => {
     renderPage(Page, '/', ['/login', '/lock']);
-    expect(await screen.findByTestId('app-shell-panel')).toHaveClass(
-      'isolate',
-      'max-md:pt-[env(safe-area-inset-top)]',
-      'max-md:pb-[env(safe-area-inset-bottom)]',
-    );
+    expect(await screen.findByTestId('app-shell-panel')).not.toHaveClass('isolate');
     expect(screen.getByRole('banner')).toHaveClass('relative', 'z-10', 'bg-background');
   });
 
