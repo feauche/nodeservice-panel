@@ -139,12 +139,14 @@ describe('AppShell · меню пользователя', () => {
     );
   });
 
-  it('на телефоне оставляет системную safe area внутри цельного фона панели', async () => {
+  it('мобильная шапка имеет собственный непрозрачный слой внутри safe area', async () => {
     renderPage(Page, '/', ['/login', '/lock']);
     expect(await screen.findByTestId('app-shell-panel')).toHaveClass(
+      'isolate',
       'max-md:pt-[env(safe-area-inset-top)]',
       'max-md:pb-[env(safe-area-inset-bottom)]',
     );
+    expect(screen.getByRole('banner')).toHaveClass('relative', 'z-10', 'bg-background');
   });
 
   it('«Выйти» сначала спрашивает; logout не вызывается до «Да»', async () => {

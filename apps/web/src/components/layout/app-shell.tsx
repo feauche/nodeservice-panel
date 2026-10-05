@@ -606,9 +606,9 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
       {/* Правая часть — одно скруглённое «окно» поверх холста, со своей шапкой. На телефоне — во весь экран. */}
       <div
         data-testid="app-shell-panel"
-        className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-[inset_0_1px_0_var(--ns-inset-hi),0_0_0_1px_var(--ns-hairline)] max-md:rounded-none max-md:border-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:shadow-none"
+        className="isolate flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-[inset_0_1px_0_var(--ns-inset-hi),0_0_0_1px_var(--ns-hairline)] max-md:rounded-none max-md:border-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:shadow-none"
       >
-        <header className="flex h-[58px] min-w-0 flex-none items-center gap-3 border-b border-border px-5 max-md:gap-2 max-md:px-3">
+        <header className="relative z-10 flex h-[58px] min-w-0 flex-none items-center gap-3 border-b border-border bg-background px-5 max-md:gap-2 max-md:px-3">
           <MobileNav openIncidents={openIncidents} unreadNotifications={unreadNotifications} />
           <button
             type="button"
