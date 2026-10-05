@@ -727,8 +727,9 @@ export class BackupsService implements OnModuleInit {
       return res.ok ? { ok: true, note: null, parts: 1 } : { ok: false, note: res.error.slice(0, 200) };
     }
 
-    const partDir = await mkdtemp(join(tmpdir(), 'nodeservice-telegram-'));
+    let partDir: string | null = null;
     try {
+      partDir = await mkdtemp(join(tmpdir(), 'nodeservice-telegram-'));
       for (const part of partsPlan) {
         const partPath = join(partDir, part.name);
         await pipeline(
@@ -761,7 +762,7 @@ export class BackupsService implements OnModuleInit {
         note: `не удалось подготовить части: ${err instanceof Error ? err.message.slice(0, 150) : 'ошибка файла'}`,
       };
     } finally {
-      await rm(partDir, { recursive: true, force: true }).catch(() => undefined);
+      if (partDir) await rm(partDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 

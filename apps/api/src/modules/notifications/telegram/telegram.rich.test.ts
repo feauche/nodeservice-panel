@@ -195,7 +195,7 @@ describe('расширенное оформление Telegram', () => {
     });
     expect(blocks).toContainEqual({
       type: 'paragraph',
-      text: '📦 Архив разделён на 2 части. Скачайте все части в одну папку.',
+      text: '📦 Архив разделён. Частей: 2. Скачайте все файлы в одну папку.',
     });
     expect(blocks).toContainEqual({ type: 'paragraph', text: { type: 'code', text: command } });
   });

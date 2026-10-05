@@ -194,7 +194,7 @@ export function backupBlocks(input: {
       ? [
           {
             type: 'paragraph' as const,
-            text: `📦 Архив разделён на ${input.parts} части. Скачайте все части в одну папку.`,
+            text: `📦 Архив разделён. Частей: ${input.parts}. Скачайте все файлы в одну папку.`,
           },
           ...(input.mergeCommand
             ? [{ type: 'paragraph' as const, text: { type: 'code' as const, text: input.mergeCommand } }]
