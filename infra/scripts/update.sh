@@ -209,6 +209,8 @@ chmod 600 "$APP_DIR/backups/.last-pre-update-code" "$APP_DIR/backups/.last-pre-u
 
 if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     release_image="ghcr.io/feauche/nodeservice-api:$REF"
+    release_repo="${NODESERVICE_PANEL_REPO:-feauche/nodeservice-panel}"
+    digest_url="https://github.com/$release_repo/releases/download/$REF/image-digest.txt"
     echo -e "${C}==> Загрузка готового образа $release_image${N}"
     if ! docker pull "$release_image"; then
         sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
@@ -217,13 +219,22 @@ if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     fi
     image_revision=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$release_image" 2>/dev/null || true)
     image_version=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$release_image" 2>/dev/null || true)
+    expected_digest=$(curl -fsSL --connect-timeout 5 --max-time 15 "$digest_url" 2>/dev/null |
+        sed -n '1s/^\(sha256:[0-9a-f]\{64\}\)[[:space:]].*/\1/p' || true)
+    image_digest=$(docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$release_image" 2>/dev/null |
+        sed -n 's/.*@\(sha256:[0-9a-f]\{64\}\)$/\1/p' | head -n 1 || true)
+    if [[ -z "$expected_digest" || "$image_digest" != "$expected_digest" ]]; then
+        sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
+        git checkout --quiet --detach "$before"
+        die "SHA256 образа не совпал с файлом релиза. Переключение отменено."
+    fi
     if [[ "$image_revision" != "$after_full" || "$image_version" != "$REF" ]]; then
         sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
         git checkout --quiet --detach "$before"
         die "Образ не соответствует тегу: ожидались версия $REF и commit $after_full. Переключение отменено."
     fi
     sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$REF/" "$ENV_FILE"
-    echo -e "${G}Образ проверен:${N} версия $image_version · commit ${image_revision:0:7}"
+    echo -e "${G}Образ проверен:${N} SHA256 ${image_digest:7:12}… · версия $image_version · commit ${image_revision:0:7}"
 else
     echo -e "${Y}Тестовый ref без release-образа — локальная сборка api ($after).${N}"
     sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$after/" "$ENV_FILE"
