@@ -91,6 +91,7 @@ describe('инструменты и промпты разбора', () => {
         'get_metrics_history',
         'get_playbook',
         'get_reference',
+        'get_remnawave_profiles',
         'get_server_checks',
         'get_server_detail',
         'inspect_containers',

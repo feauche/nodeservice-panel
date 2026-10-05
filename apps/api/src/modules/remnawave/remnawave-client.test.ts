@@ -182,6 +182,55 @@ describe('HttpRemnawaveClient.checkCertificate', () => {
   });
 });
 
+describe('HttpRemnawaveClient profiles', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('разделяет конфигурации нод и Xray JSON-шаблоны подписки', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.endsWith('/api/config-profiles'))
+          return new Response(
+            JSON.stringify({ response: { configProfiles: [{ uuid: 'node-1', name: 'Reality' }] } }),
+          );
+        if (url.endsWith('/api/subscription-templates'))
+          return new Response(
+            JSON.stringify({
+              response: {
+                templates: [
+                  { uuid: 'json-1', name: 'Xray', templateType: 'XRAY_JSON' },
+                  { uuid: 'yaml-1', name: 'Clash', templateType: 'MİHOMO' },
+                ],
+              },
+            }),
+          );
+        throw new Error(`неожиданный запрос: ${url}`);
+      }),
+    );
+
+    await expect(new HttpRemnawaveClient().listProfiles('rw.example.com', 'token')).resolves.toEqual({
+      node: [{ uuid: 'node-1', name: 'Reality' }],
+      xrayJson: [{ uuid: 'json-1', name: 'Xray', templateType: 'XRAY_JSON' }],
+    });
+  });
+
+  it('читает выбранный профиль из правильного раздела', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ response: { uuid: 'json 1', name: 'Xray', templateJson: '{}' } })),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await new HttpRemnawaveClient().getProfile(
+      'rw.example.com',
+      'token',
+      'xray_json',
+      'json 1',
+    );
+    expect(result).toMatchObject({ name: 'Xray' });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://rw.example.com/api/subscription-templates/json%201');
+  });
+});
+
 describe('«нод на связи» считается по списку нод, а не по nodes.totalOnline', () => {
   afterEach(() => vi.unstubAllGlobals());
 

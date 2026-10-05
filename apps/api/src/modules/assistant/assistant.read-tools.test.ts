@@ -131,6 +131,25 @@ function deps(over: Partial<Record<keyof ReadDeps, unknown>> = {}): ReadDeps {
   } as unknown as ReadDeps;
 }
 
+describe('get_remnawave_profiles', () => {
+  it('объявлен как чтение и передаёт выбор профиля сервису', async () => {
+    expect(READ_TOOL_DEFS.some((tool) => tool.name === 'get_remnawave_profiles')).toBe(true);
+    const profilesForAssistant = vi.fn(async () => ({
+      connected: true,
+      kind: 'node',
+      name: 'Reality',
+      config: { inbounds: [{ protocol: 'vless', port: 443 }] },
+    }));
+    const result = await runReadTool(
+      'get_remnawave_profiles',
+      { kind: 'node', profile: 'Reality' },
+      deps({ remnawaveProfiles: { profilesForAssistant } }),
+    );
+    expect(profilesForAssistant).toHaveBeenCalledWith({ kind: 'node', profile: 'Reality' });
+    expect(JSON.parse(result?.content ?? '{}')).toMatchObject({ name: 'Reality' });
+  });
+});
+
 const call = async (name: string, arg: Record<string, unknown>, d = deps()) => {
   const out = await runReadTool(name, arg, d);
   if (!out) throw new Error('инструмент не распознан');

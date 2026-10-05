@@ -247,6 +247,7 @@ export class AssistantService {
       billing: this.billing,
       fleetStats: this.fleetStats,
       capacity: this.capacity,
+      remnawaveProfiles: this.remnawave,
       kb: this.kb,
       audit: this.auditRepo,
       conversations: this.repo,

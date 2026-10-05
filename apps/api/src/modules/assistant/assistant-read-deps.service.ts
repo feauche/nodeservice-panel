@@ -49,6 +49,7 @@ export class ReadDepsService {
       billing: this.billing,
       fleetStats: this.fleetStats,
       capacity: this.capacity,
+      remnawaveProfiles: this.remnawave,
       permissions,
       upstreamTarget: (server, all) =>
         resolveUpstreamTarget(server, all, this.remnawave, this.links).catch(() => null),

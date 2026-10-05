@@ -24,6 +24,13 @@ export interface RemnawaveFetched {
   nodes: RemnawaveNode[];
 }
 
+export type RemnawaveProfileKind = 'node' | 'xray_json';
+
+export interface RemnawaveProfileCatalog {
+  node: Record<string, unknown>[];
+  xrayJson: Record<string, unknown>[];
+}
+
 /**
  * SNI (маскировка) и порт активного инбаунда Reality у ноды — не часть публичного статуса
  * (фронтенду не нужно), нужно только для проверки блокировок (J10): без него панель не знает,
@@ -47,6 +54,15 @@ export interface RemnawaveClient {
   checkCertificate(domain: string): Promise<RemnawaveCert>;
   /** SNI и порт для проверки блокировки этой ноды; вызывается только когда проверка реально нужна. */
   findNodeInbound(domain: string, apiKey: string, nodeUuid: string): Promise<RemnawaveNodeInbound | null>;
+  /** Профили конфигурации нод и клиентские Xray JSON-шаблоны. Только чтение. */
+  listProfiles(domain: string, apiKey: string): Promise<RemnawaveProfileCatalog>;
+  /** Полное содержимое одного профиля; сервис обязан скрыть секреты до передачи Джарвису. */
+  getProfile(
+    domain: string,
+    apiKey: string,
+    kind: RemnawaveProfileKind,
+    uuid: string,
+  ): Promise<Record<string, unknown>>;
 }
 export const REMNAWAVE_CLIENT = Symbol('REMNAWAVE_CLIENT');
 
@@ -230,6 +246,37 @@ export class HttpRemnawaveClient implements RemnawaveClient {
       protocol: str(inbound.type) || null,
       network: str(inbound.network) || null,
     };
+  }
+
+  async listProfiles(domain: string, apiKey: string): Promise<RemnawaveProfileCatalog> {
+    const base = `https://${domain}`;
+    const [configBody, templateBody] = await Promise.all([
+      getJson(`${base}/api/config-profiles`, apiKey),
+      getJson(`${base}/api/subscription-templates`, apiKey),
+    ]);
+    const configResponse = (configBody.response ?? {}) as Record<string, unknown>;
+    const templateResponse = (templateBody.response ?? {}) as Record<string, unknown>;
+    const node = Array.isArray(configResponse.configProfiles)
+      ? (configResponse.configProfiles as Record<string, unknown>[])
+      : [];
+    const templates = Array.isArray(templateResponse.templates)
+      ? (templateResponse.templates as Record<string, unknown>[])
+      : [];
+    return {
+      node,
+      xrayJson: templates.filter((row) => str(row.templateType).toUpperCase() === 'XRAY_JSON'),
+    };
+  }
+
+  async getProfile(
+    domain: string,
+    apiKey: string,
+    kind: RemnawaveProfileKind,
+    uuid: string,
+  ): Promise<Record<string, unknown>> {
+    const section = kind === 'node' ? 'config-profiles' : 'subscription-templates';
+    const body = await getJson(`https://${domain}/api/${section}/${encodeURIComponent(uuid)}`, apiKey);
+    return (body.response ?? {}) as Record<string, unknown>;
   }
 
   /** Имя маскировки из профиля конфигурации по тегу инбаунда; любой сбой — null (проверка деградирует до порта). */

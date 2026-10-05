@@ -1,7 +1,7 @@
 import { HttpException } from '@nestjs/common';
 import type { RemnawaveCert, RemnawaveNode, RemnawaveStats } from '@nodeservice/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RemnawaveService } from './remnawave.service.js';
+import { RemnawaveService, sanitizeRemnawaveProfile } from './remnawave.service.js';
 import type { RemnawaveFetched } from './remnawave-client.js';
 import { RemnawaveApiError } from './remnawave-client.js';
 
@@ -30,6 +30,47 @@ const NODE = (over: Partial<RemnawaveNode> = {}): RemnawaveNode => ({
 });
 const CERT: RemnawaveCert = { status: 'ok', expiresAt: '2026-12-01T00:00:00.000Z', daysLeft: 60, note: null };
 
+describe('безопасная копия профиля Remnawave для Джарвиса', () => {
+  it('оставляет структуру протокола и скрывает доступы пользователей', () => {
+    const clean = sanitizeRemnawaveProfile({
+      tag: 'VLESS TCP REALITY',
+      protocol: 'vless',
+      port: 443,
+      settings: {
+        clients: [
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            email: 'service@example.com',
+            flow: 'xtls-rprx-vision',
+          },
+        ],
+      },
+      streamSettings: {
+        realitySettings: {
+          privateKey: 'very-secret',
+          publicKey: 'public-but-identifying',
+          serverNames: ['site.test'],
+        },
+      },
+      unexpectedField: 'user service@example.com has id 11111111-1111-4111-8111-111111111111',
+      shareLink: 'vless://11111111-1111-4111-8111-111111111111@example.com:443',
+    });
+    expect(clean).toMatchObject({
+      tag: 'VLESS TCP REALITY',
+      protocol: 'vless',
+      port: 443,
+      settings: { clients: { hidden: true, count: 1 } },
+      streamSettings: {
+        realitySettings: { privateKey: '[скрыто]', publicKey: '[скрыто]', serverNames: ['site.test'] },
+      },
+    });
+    expect(JSON.stringify(clean)).not.toContain('very-secret');
+    expect(JSON.stringify(clean)).not.toContain('service@example.com');
+    expect(JSON.stringify(clean)).not.toContain('11111111-1111-4111-8111-111111111111');
+    expect(clean).toMatchObject({ shareLink: '[скрыто]' });
+  });
+});
+
 function make() {
   const rows = new Map<string, unknown>();
   const audit: Array<Record<string, unknown>> = [];
@@ -39,6 +80,13 @@ function make() {
     fetchError: null as Error | null,
     cert: CERT,
     fetchCalls: 0,
+    profiles: {
+      node: [
+        { uuid: 'profile-1', name: 'Reality', config: { inbounds: [{ protocol: 'vless', port: 443 }] } },
+      ],
+      xrayJson: [{ uuid: 'template-1', name: 'Xray clients', templateType: 'XRAY_JSON' }],
+    },
+    fullProfile: {} as Record<string, unknown>,
   };
   const store = {
     async load() {
@@ -73,6 +121,12 @@ function make() {
     },
     async checkCertificate() {
       return world.cert;
+    },
+    async listProfiles() {
+      return world.profiles;
+    },
+    async getProfile() {
+      return world.fullProfile;
     },
   };
   const svc = new RemnawaveService(
@@ -164,6 +218,35 @@ describe('RemnawaveService: подключение', () => {
   it('отключение без подключения ничего не пишет в Журнал', async () => {
     await ctx.svc.disconnect();
     expect(ctx.audit).toEqual([]);
+  });
+});
+
+describe('RemnawaveService: профили для Джарвиса', () => {
+  it('показывает каталог, а выбранный JSON отдаёт без клиентов и секретов', async () => {
+    const ctx = make();
+    await ctx.svc.connect({ domain: 'x.example.com', apiKey: 'k' });
+    const catalog = await ctx.svc.profilesForAssistant({});
+    expect(catalog).toMatchObject({
+      connected: true,
+      nodeProfiles: [{ name: 'Reality' }],
+      xrayJsonProfiles: [{ name: 'Xray clients' }],
+    });
+
+    ctx.world.fullProfile = {
+      name: 'Xray clients',
+      templateJson: JSON.stringify({
+        outbounds: [{ protocol: 'vless', settings: { users: [{ id: 'secret-user-id' }] } }],
+        apiKey: 'secret-token',
+      }),
+    };
+    const selected = await ctx.svc.profilesForAssistant({ kind: 'xray_json', profile: 'Xray clients' });
+    expect(selected).toMatchObject({
+      kind: 'xray_json',
+      name: 'Xray clients',
+      config: { outbounds: [{ protocol: 'vless', settings: { users: { hidden: true, count: 1 } } }] },
+    });
+    expect(JSON.stringify(selected)).not.toContain('secret-user-id');
+    expect(JSON.stringify(selected)).not.toContain('secret-token');
   });
 });
 

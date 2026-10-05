@@ -35,6 +35,7 @@ import type { UpstreamTarget } from '../incidents/upstream-target.js';
 import type { MaintenanceService } from '../maintenance/maintenance.service.js';
 import type { VmReaderService } from '../metrics/vm-reader.service.js';
 import type { ProvidersService } from '../providers/providers.service.js';
+import type { RemnawaveService } from '../remnawave/remnawave.service.js';
 import type { ServerChecksService } from '../server-checks/server-checks.service.js';
 import type { ServersService } from '../servers/servers.service.js';
 import { INSPECT_TOOL_DEFS, INSPECT_TOOL_NAMES, runInspectTool } from './assistant.inspect-tools.js';
@@ -51,6 +52,18 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
     description:
       'Сводка по всему парку одним вызовом. Вверху итоги (сколько серверов, агентов в сети, остановленных нод, недоступных по SSH, открытых инцидентов). По каждому серверу: имя, id, адрес, теги, провайдер, агент (статус, версия, когда выходил на связь), SSH, контейнер ноды (следим ли и что видел зонд), ОС, ядра, память, свежие CPU/память/диск в процентах, открытые инциденты. С него начинай любой вопрос «как дела в парке».',
     input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_remnawave_profiles',
+    description:
+      'Прочитать подключённую Remnawave без изменений: профили конфигурации Xray для нод (kind=node) и клиентские Xray JSON-шаблоны подписки (kind=xray_json). Без profile возвращает короткий каталог. С profile (точное имя, уникальная часть имени или UUID) возвращает безопасную копию одной конфигурации. UUID пользователей, email, ключи, пароли, токены, сертификаты и списки клиентов скрываются до передачи тебе. Используй для вопросов о протоколе, inbound, Reality, transport, routing и о том, почему маршрут ноды не распознался.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['node', 'xray_json'] },
+        profile: { type: 'string', description: 'имя или UUID профиля; без него вернётся каталог' },
+      },
+    },
   },
   {
     name: 'get_server_detail',
@@ -264,6 +277,8 @@ export interface ReadDeps {
   /** Статистика парка за период (трафик, нагрузка, доступность, стоимость, онлайн нод). */
   fleetStats?: Pick<FleetStatsService, 'stats'>;
   capacity?: Pick<CapacityService, 'forAssistant'>;
+  /** Безопасное чтение конфигураций Remnawave; секреты удаляет сам сервис до передачи модели. */
+  remnawaveProfiles?: Pick<RemnawaveService, 'profilesForAssistant'>;
   /** Биллинг: оплаты, сроки, итоги. Нет — инструмент скажет, что раздел недоступен. */
   billing?: Pick<BillingService, 'forAssistant'>;
   /** Живая строка в чате о долгом действии (есть только в чате, не в разборе инцидентов). */
@@ -523,6 +538,11 @@ export async function runReadTool(
   arg: Record<string, unknown>,
   deps: ReadDeps,
 ): Promise<ToolOutcome | null> {
+  if (name === 'get_remnawave_profiles') {
+    if (!deps.remnawaveProfiles) return none('Чтение профилей Remnawave сейчас недоступно.');
+    return none(JSON.stringify(await deps.remnawaveProfiles.profilesForAssistant(arg)));
+  }
+
   if (name === 'get_fleet_status') {
     const [servers, open, providers] = await Promise.all([
       deps.servers.list(),
