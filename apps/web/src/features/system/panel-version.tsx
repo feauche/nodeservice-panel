@@ -73,13 +73,16 @@ export function PanelVersion({ version, build }: { version: string; build: strin
         {available ? <span className="font-sans">Доступна v{available}</span> : <span>v{shownVersion}</span>}
       </button>
 
-      <DialogContent className="max-h-[calc(100dvh-40px)] gap-0 overflow-hidden rounded-2xl border-border bg-surface p-0 sm:max-w-[520px]">
+      <DialogContent className="max-h-[calc(100dvh-40px)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-2xl border-border bg-surface p-0 max-md:max-h-[calc(100dvh-16px-env(safe-area-inset-top)-env(safe-area-inset-bottom))] max-md:max-w-[calc(100%-16px)] sm:max-w-[520px]">
         <DialogHeader className="border-b border-border px-5 py-4 pr-12">
           <DialogTitle className="font-heading text-[17px]">Версия NodeService</DialogTitle>
           <DialogDescription>Стабильные версии панели публикуются как GitHub Release.</DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 overflow-y-auto p-5">
+        <div
+          data-testid="panel-version-scroll"
+          className="min-h-0 touch-pan-y overflow-y-auto overscroll-contain p-5 [-webkit-overflow-scrolling:touch]"
+        >
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="rounded-xl border border-border bg-surface-2/50 p-3.5">
               <div className="text-[11px] font-semibold tracking-[0.08em] text-text-3 uppercase">

@@ -11,6 +11,12 @@ export const THEMES = [
 export type ThemeKey = (typeof THEMES)[number]['key'];
 
 const STORAGE_KEY = 'ns-theme';
+/** Цвет системной области Safari/Chrome должен продолжать фон панели, иначе сверху появляется полоса. */
+const THEME_COLORS: Record<ThemeKey, string> = {
+  dark: '#10141b',
+  light: '#eef1f6',
+  black: '#08080a',
+};
 const listeners = new Set<(t: ThemeKey) => void>();
 
 export function isThemeKey(v: unknown): v is ThemeKey {
@@ -25,6 +31,9 @@ export function getTheme(): ThemeKey {
 export function setTheme(key: ThemeKey): void {
   document.documentElement.setAttribute('data-ns-theme', key);
   document.documentElement.style.colorScheme = key === 'light' ? 'light' : 'dark';
+  document
+    .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+    ?.setAttribute('content', THEME_COLORS[key]);
   try {
     localStorage.setItem(STORAGE_KEY, key);
   } catch {

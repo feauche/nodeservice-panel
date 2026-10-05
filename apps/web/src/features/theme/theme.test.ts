@@ -5,6 +5,10 @@ describe('theme', () => {
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.removeAttribute('data-ns-theme');
+    document.head.querySelector('meta[name="theme-color"]')?.remove();
+    const meta = document.createElement('meta');
+    meta.name = 'theme-color';
+    document.head.append(meta);
   });
 
   it('по умолчанию — графит', () => {
@@ -29,6 +33,16 @@ describe('theme', () => {
       seen.push(getTheme());
     }
     expect(seen).toEqual(['light', 'black', 'dark']);
+  });
+
+  it('согласует системную верхнюю область телефона с выбранной темой', () => {
+    const meta = document.head.querySelector('meta[name="theme-color"]');
+    setTheme('light');
+    expect(meta).toHaveAttribute('content', '#eef1f6');
+    setTheme('black');
+    expect(meta).toHaveAttribute('content', '#08080a');
+    setTheme('dark');
+    expect(meta).toHaveAttribute('content', '#10141b');
   });
 
   it('игнорирует мусор в localStorage', () => {

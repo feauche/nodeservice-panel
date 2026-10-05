@@ -128,13 +128,22 @@ describe('AppShell · меню пользователя', () => {
     const indicator = await screen.findByRole('button', { name: 'Доступна v0.56.0' });
     expect(indicator).toBeInTheDocument();
     await user.click(indicator);
-    expect(await screen.findByRole('dialog', { name: 'Версия NodeService' })).toHaveTextContent(
-      'Надёжнее доставка.',
-    );
+    const dialog = await screen.findByRole('dialog', { name: 'Версия NodeService' });
+    expect(dialog).toHaveTextContent('Надёжнее доставка.');
+    expect(dialog).toHaveClass('grid-rows-[auto_minmax(0,1fr)_auto]');
+    expect(screen.getByTestId('panel-version-scroll')).toHaveClass('min-h-0', 'overflow-y-auto');
     expect(screen.getByText('nodeservice update')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Открыть GitHub Release' })).toHaveAttribute(
       'href',
       'https://github.com/feauche/nodeservice-panel/releases/tag/v0.56.0',
+    );
+  });
+
+  it('на телефоне оставляет системную safe area внутри цельного фона панели', async () => {
+    renderPage(Page, '/', ['/login', '/lock']);
+    expect(await screen.findByTestId('app-shell-panel')).toHaveClass(
+      'max-md:pt-[env(safe-area-inset-top)]',
+      'max-md:pb-[env(safe-area-inset-bottom)]',
     );
   });
 
