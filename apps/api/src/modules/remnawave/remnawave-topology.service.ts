@@ -6,7 +6,7 @@ import { ServersService } from '../servers/servers.service.js';
 import { NodeLinkService } from './node-link.service.js';
 import { REMNAWAVE_CLIENT, type RemnawaveClient, type RemnawaveTopologySource } from './remnawave-client.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
-import { buildRemnawaveTopology } from './remnawave-topology.logic.js';
+import { buildRemnawaveTopology, topologyAddresses } from './remnawave-topology.logic.js';
 
 const CACHE_MS = process.env.NODE_ENV === 'test' ? 0 : 60_000;
 
@@ -30,8 +30,11 @@ export class RemnawaveTopologyService {
         detail: 'Remnawave не подключена.',
       });
     const source = await this.client.readTopology(creds.domain, creds.apiKey);
-    const linked = await this.linkedServers(source);
-    const value = buildRemnawaveTopology(source, linked);
+    const [linked, resolvedAddresses] = await Promise.all([
+      this.linkedServers(source),
+      this.links.resolveAddresses(topologyAddresses(source)),
+    ]);
+    const value = buildRemnawaveTopology(source, linked, resolvedAddresses);
     this.cache = { at: Date.now(), value };
     return value;
   }

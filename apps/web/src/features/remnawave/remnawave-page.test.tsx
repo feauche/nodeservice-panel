@@ -260,8 +260,14 @@ describe('RemnawavePage', () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: 'Карта трафика' }));
     expect(await screen.findByRole('heading', { name: 'Как идёт трафик' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /Основной вход/ }));
-    expect(screen.getByRole('button', { name: 'Вся топология' })).toBeInTheDocument();
+    const host = screen.getByRole('button', { name: /Основной вход/ });
+    await user.hover(host);
+    expect(document.querySelectorAll('.ns-topology-flow').length).toBeGreaterThan(0);
+    await user.click(host);
+    expect(screen.getByRole('button', { name: 'Вернуться ко всей топологии' })).toBeInTheDocument();
+    expect(document.querySelectorAll('.ns-topology-flow')).toHaveLength(3);
+    await user.click(screen.getByRole('button', { name: 'Карта трафика' }));
+    expect(screen.getByRole('heading', { name: 'Как идёт трафик' })).toBeInTheDocument();
   });
 });
 

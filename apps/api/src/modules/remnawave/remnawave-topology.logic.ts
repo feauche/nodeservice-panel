@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import type {
   RemnawaveTopology,
   RemnawaveTopologyHost,
@@ -6,6 +7,7 @@ import type {
   RemnawaveTopologyRoute,
 } from '@nodeservice/shared';
 
+import { normalizeAddress } from '../servers/addresses.js';
 import type { RemnawaveTopologySource } from './remnawave-client.js';
 
 type Row = Record<string, unknown>;
@@ -30,6 +32,33 @@ const entityIds = (value: unknown): string[] =>
 const number = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
 const clean = (value: string, fallback: string): string => (value || fallback).slice(0, 180);
+
+/** Хост Remnawave может содержать несколько адресов через запятую; порт не участвует в DNS-сверке. */
+export function topologyAddressTokens(value: unknown): string[] {
+  return text(value)
+    .split(',')
+    .map((part) => {
+      const trimmed = part.trim();
+      const bracketed = trimmed.match(/^\[(.+)\](?::\d+)?$/);
+      if (bracketed?.[1]) return normalizeAddress(bracketed[1]);
+      if (isIP(trimmed) === 6) return normalizeAddress(trimmed);
+      return normalizeAddress(trimmed.replace(/:\d+$/, ''));
+    })
+    .filter(Boolean);
+}
+
+export function topologyAddresses(source: RemnawaveTopologySource): string[] {
+  return [
+    ...source.hosts.flatMap((host) => topologyAddressTokens(host.address)),
+    ...source.nodes.flatMap((node) => topologyAddressTokens(node.address)),
+  ];
+}
+
+function addressIps(value: unknown, resolved: ReadonlyMap<string, readonly string[]>): string[] {
+  return topologyAddressTokens(value).flatMap((address) =>
+    isIP(address) ? [address] : [...(resolved.get(address) ?? [])],
+  );
+}
 
 function configOf(profile: Row): Row {
   if (profile.config && typeof profile.config === 'object') return profile.config as Row;
@@ -238,6 +267,7 @@ function targetForRule(
 export function buildRemnawaveTopology(
   source: RemnawaveTopologySource,
   linkedServerIds: ReadonlyMap<string, readonly string[]> = new Map(),
+  resolvedAddresses: ReadonlyMap<string, readonly string[]> = new Map(),
   generatedAt = new Date().toISOString(),
 ): RemnawaveTopology {
   const metrics = new Map(
@@ -268,6 +298,13 @@ export function buildRemnawaveTopology(
     };
   });
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const nodeIdsByIp = new Map<string, string[]>();
+  for (const [index, raw] of source.nodes.entries())
+    for (const ip of addressIps(raw.address, resolvedAddresses)) {
+      const ids = nodeIdsByIp.get(ip) ?? [];
+      ids.push(nodes[index]?.id ?? '');
+      nodeIdsByIp.set(ip, ids.filter(Boolean));
+    }
 
   const hosts: RemnawaveTopologyHost[] = source.hosts.map((raw, index) => {
     const inbound = row(raw.inbound);
@@ -277,14 +314,23 @@ export function buildRemnawaveTopology(
       .flatMap((profile) => rows(profile.inbounds).map((item) => ({ profile, item })))
       .find(({ item }) => text(item.uuid) === inboundUuid)?.item;
     const proto = protocolOf(matchingInbound ?? inbound);
-    // Remnawave serves a host through its inbound. The host response can also contain
-    // `nodes` in newer releases, but that list is not present in every API version and
-    // is not the runtime source of truth. Match the host inbound against the active
-    // inbounds reported by each node, as Remnawave itself does when starting profiles.
+    // activeInbounds говорит, какие ноды умеют обслуживать профиль. Конкретный же путь
+    // клиента определяет DNS/IP хоста. Иначе один общий профиль рисовал ложный веер
+    // от каждого хоста ко всем нодам профиля.
     const servingNodeUuids = inboundUuid
       ? nodes.filter((node) => node.inboundUuids.includes(inboundUuid)).map((node) => node.id)
       : [];
-    const nodeUuids = inboundUuid ? servingNodeUuids : entityIds(raw.nodes);
+    const explicitNodeUuids = entityIds(raw.nodes);
+    const dnsNodeUuids = [
+      ...new Set(addressIps(raw.address, resolvedAddresses).flatMap((ip) => nodeIdsByIp.get(ip) ?? [])),
+    ];
+    const nodeUuids = dnsNodeUuids.length
+      ? dnsNodeUuids
+      : explicitNodeUuids.length
+        ? explicitNodeUuids
+        : servingNodeUuids.length === 1
+          ? servingNodeUuids
+          : [];
     const linked = nodeUuids.map((id) => nodeById.get(id)).filter(Boolean) as RemnawaveTopologyNode[];
     const disabled = Boolean(raw.isDisabled);
     const status: RemnawaveTopologyHost['status'] = disabled
@@ -380,7 +426,10 @@ export function buildRemnawaveTopology(
   }
   for (const host of hosts) {
     if (host.disabled) continue;
-    if (host.inboundUuid && host.nodeUuids.length === 0)
+    const servingNodes = host.inboundUuid
+      ? nodes.filter((node) => node.inboundUuids.includes(host.inboundUuid as string))
+      : [];
+    if (host.inboundUuid && servingNodes.length === 0)
       issues.push({
         id: `host-no-node:${host.id}`,
         severity: 'warning',
@@ -391,6 +440,18 @@ export function buildRemnawaveTopology(
         hostIds: [host.id],
         nodeUuids: [],
         routeIds: [],
+      });
+    else if (host.inboundUuid && host.nodeUuids.length === 0)
+      issues.push({
+        id: `host-node-unknown:${host.id}`,
+        severity: 'warning',
+        kind: 'host_node_unknown',
+        title: `Не определена нода хоста «${host.name}»`,
+        detail:
+          'Инбаунд активен на нескольких нодах, но DNS/IP хоста не совпал с адресом ноды. Карта не рисует ложную связь со всеми нодами общего профиля.',
+        hostIds: [host.id],
+        nodeUuids: servingNodes.map((node) => node.id),
+        routeIds: routes.filter((route) => route.hostIds.includes(host.id)).map((route) => route.id),
       });
     else if (host.status === 'error')
       issues.push({

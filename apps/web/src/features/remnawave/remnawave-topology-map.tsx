@@ -59,18 +59,50 @@ function estimatedCardHeight(title: string, subtitle: string, width: number): nu
   return Math.max(80, 42 + lines(title, 7) * 17 + lines(subtitle, 6) * 16);
 }
 
-function Edge({ from, to, status = 'ok' }: { from: Point; to: Point; status?: Status }) {
+function Edge({
+  from,
+  to,
+  status = 'ok',
+  active = false,
+  dimmed = false,
+  animated = false,
+}: {
+  from: Point;
+  to: Point;
+  status?: Status;
+  active?: boolean;
+  dimmed?: boolean;
+  animated?: boolean;
+}) {
   const middle = (from.x + to.x) / 2;
   const path = `M ${from.x} ${from.y} C ${middle} ${from.y}, ${middle} ${to.y}, ${to.x} ${to.y}`;
+  const color =
+    status === 'error' ? 'var(--ns-crit)' : status === 'warning' ? 'var(--ns-warn)' : 'var(--ns-accent)';
   return (
-    <g>
-      <path d={path} fill="none" stroke="var(--border)" strokeWidth="1.5" strokeDasharray="6 7" />
-      {status === 'error' && (
+    <g className="transition-opacity duration-200" opacity={dimmed ? 0.1 : 1}>
+      <path
+        d={path}
+        fill="none"
+        stroke={active ? color : 'var(--border)'}
+        strokeWidth={active ? 2.25 : 1.5}
+        strokeDasharray="6 7"
+      />
+      {animated && (
+        <path
+          className="ns-topology-flow motion-reduce:hidden"
+          d={path}
+          fill="none"
+          stroke={color}
+          strokeWidth={active ? 2.5 : 2}
+          strokeLinecap="round"
+        />
+      )}
+      {status === 'error' && !dimmed && (
         <foreignObject x={middle - 10} y={(from.y + to.y) / 2 - 10} width="20" height="20">
           <XIcon className="size-5 text-crit drop-shadow-[0_0_8px_color-mix(in_srgb,var(--crit)_45%,transparent)]" />
         </foreignObject>
       )}
-      {status === 'warning' && (
+      {status === 'warning' && !dimmed && (
         <foreignObject x={middle - 9} y={(from.y + to.y) / 2 - 9} width="18" height="18">
           <TriangleAlertIcon className="size-[18px] fill-warn-soft text-warn" />
         </foreignObject>
@@ -88,7 +120,10 @@ function GraphCard({
   status,
   icon: Icon,
   selected,
+  highlighted = false,
+  dimmed = false,
   onClick,
+  onHoverChange,
 }: {
   x: number;
   y: number;
@@ -98,16 +133,25 @@ function GraphCard({
   status: Status;
   icon: typeof ServerIcon;
   selected: boolean;
+  highlighted?: boolean;
+  dimmed?: boolean;
   onClick: () => void;
+  onHoverChange?: (hovered: boolean) => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      onMouseEnter={() => onHoverChange?.(true)}
+      onMouseLeave={() => onHoverChange?.(false)}
+      onFocus={() => onHoverChange?.(true)}
+      onBlur={() => onHoverChange?.(false)}
       className={cn(
-        'absolute flex min-h-20 -translate-y-1/2 items-center gap-2.5 rounded-xl border bg-surface px-3.5 py-3 text-left shadow-sm transition-colors hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
+        'absolute flex min-h-20 -translate-y-1/2 items-center gap-2.5 rounded-xl border bg-surface px-3.5 py-3 text-left shadow-sm transition-[color,background-color,border-color,box-shadow,opacity] duration-200 hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
         STATUS[status].border,
-        selected && 'ring-2 ring-brand/45',
+        (selected || highlighted) &&
+          'z-10 ring-2 ring-brand/55 shadow-[0_0_24px_color-mix(in_srgb,var(--ns-accent)_14%,transparent)]',
+        dimmed && 'opacity-30',
       )}
       style={{ left: x, top: y, width }}
     >
@@ -174,6 +218,43 @@ function sourceNodeIds(target: TargetGroup, hosts: readonly RemnawaveTopologyHos
     for (const hostId of route.hostIds)
       for (const nodeId of hostById.get(hostId)?.nodeUuids ?? []) ids.add(nodeId);
   return [...ids];
+}
+
+function hostIsInSelection(
+  selection: NonNullable<Selection>,
+  host: RemnawaveTopologyHost,
+  targets: readonly TargetGroup[],
+): boolean {
+  if (selection.kind === 'host') return selection.id === host.id;
+  if (selection.kind === 'node') return host.nodeUuids.includes(selection.id);
+  return (
+    targets
+      .find((target) => target.id === selection.id)
+      ?.routes.some((route) => route.hostIds.includes(host.id)) ?? false
+  );
+}
+
+function nodeIsInSelection(
+  selection: NonNullable<Selection>,
+  nodeId: string,
+  hosts: readonly RemnawaveTopologyHost[],
+  targets: readonly TargetGroup[],
+): boolean {
+  if (selection.kind === 'node') return selection.id === nodeId;
+  if (selection.kind === 'host')
+    return hosts.find((host) => host.id === selection.id)?.nodeUuids.includes(nodeId) ?? false;
+  const target = targets.find((item) => item.id === selection.id);
+  return target ? sourceNodeIds(target, hosts).includes(nodeId) : false;
+}
+
+function targetIsInSelection(
+  selection: NonNullable<Selection>,
+  target: TargetGroup,
+  hosts: readonly RemnawaveTopologyHost[],
+): boolean {
+  if (selection.kind === 'target') return selection.id === target.id;
+  if (selection.kind === 'host') return target.routes.some((route) => route.hostIds.includes(selection.id));
+  return sourceNodeIds(target, hosts).includes(selection.id);
 }
 
 function orderByNeighbours<T extends { id: string }>(
@@ -272,7 +353,7 @@ function FocusedFlow({
   const targetSubtitle = routes[0]?.match.join(' · ') ?? 'нет правила';
   const graphWidth = Math.max(1_260, viewportWidth);
   const sidePadding = 28;
-  const clientWidth = 150;
+  const clientWidth = 200;
   const cardWidth = 240;
   const tallestCard = Math.max(
     estimatedCardHeight('Клиент', 'VPN-подключение', clientWidth),
@@ -292,9 +373,14 @@ function FocusedFlow({
   const targetLeft = centers[3] - cardWidth / 2;
   return (
     <div>
-      <Button type="button" variant="ghost" onClick={onBack} className="mb-3 h-8 gap-1.5 px-2 text-[12px]">
-        <ArrowLeftIcon className="size-3.5" aria-hidden="true" />
-        Вся топология
+      <Button
+        type="button"
+        variant="outline"
+        onClick={onBack}
+        className="mb-4 h-10 gap-2 border-brand/40 bg-brand-soft px-3.5 text-[12.5px] font-semibold text-brand shadow-sm hover:border-brand/60 hover:bg-brand-soft"
+      >
+        <ArrowLeftIcon className="size-4" aria-hidden="true" />
+        Вернуться ко всей топологии
       </Button>
       <div ref={frameRef} className="overflow-x-auto rounded-xl border border-border bg-surface-2/35">
         <div className="relative" style={{ height: graphHeight, width: graphWidth }}>
@@ -312,16 +398,22 @@ function FocusedFlow({
               from={{ x: clientLeft + clientWidth, y: graphY }}
               to={{ x: hostLeft, y: graphY }}
               status={hosts[0]?.status ?? 'unknown'}
+              active
+              animated
             />
             <Edge
               from={{ x: hostLeft + cardWidth, y: graphY }}
               to={{ x: nodeLeft, y: graphY }}
               status={nodes[0]?.status ?? 'unknown'}
+              active
+              animated
             />
             <Edge
               from={{ x: nodeLeft + cardWidth, y: graphY }}
               to={{ x: targetLeft, y: graphY }}
               status={target?.status ?? 'unknown'}
+              active
+              animated
             />
           </svg>
           <GraphCard
@@ -403,6 +495,7 @@ function FocusedFlow({
 
 export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology }) {
   const [selected, setSelected] = useState<Selection>(null);
+  const [hovered, setHovered] = useState<Selection>(null);
   const targets = useMemo(() => groupTargets(topology.routes), [topology.routes]);
   const layers = useMemo(
     () => orderedLayers(topology.hosts, topology.nodes, targets),
@@ -425,9 +518,9 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
   if (selected)
     return <FocusedFlow topology={topology} selected={selected} onBack={() => setSelected(null)} />;
 
-  const graphWidth = Math.max(1_380, viewportWidth);
+  const graphWidth = Math.max(1_500, viewportWidth);
   const sidePadding = 28;
-  const clientWidth = 150;
+  const clientWidth = 200;
   const cardWidth = 220;
   const internetWidth = 190;
   const tallestCard = Math.max(
@@ -479,6 +572,11 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
   );
   const client = { x: clientLeft + clientWidth, y: height / 2 };
   const internet = { x: internetLeft, y: height / 2 };
+  const internetHighlighted = hovered
+    ? layers.targets.some(
+        (target) => target.kind === 'internet' && targetIsInSelection(hovered, target, layers.hosts),
+      )
+    : false;
 
   return (
     <div>
@@ -516,12 +614,16 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
           <svg className="absolute inset-0 size-full" aria-hidden="true">
             {layers.hosts.map((host) => {
               const point = hostPoints.get(host.id) as Point;
+              const active = hovered ? hostIsInSelection(hovered, host, layers.targets) : false;
               return (
                 <Edge
                   key={`client:${host.id}`}
                   from={client}
                   to={{ x: point.x, y: point.y }}
                   status={host.status}
+                  active={active}
+                  dimmed={hovered !== null && !active}
+                  animated={active}
                 />
               );
             })}
@@ -530,12 +632,19 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                 const from = hostPoints.get(host.id);
                 const to = nodePoints.get(nodeId);
                 if (!from || !to) return null;
+                const active = hovered
+                  ? hostIsInSelection(hovered, host, layers.targets) &&
+                    nodeIsInSelection(hovered, nodeId, layers.hosts, layers.targets)
+                  : false;
                 return (
                   <Edge
                     key={`${host.id}:${nodeId}`}
                     from={{ x: from.x + cardWidth, y: from.y }}
                     to={to}
                     status={nodeStatus(topology, nodeId)}
+                    active={active}
+                    dimmed={hovered !== null && !active}
+                    animated={active}
                   />
                 );
               }),
@@ -545,12 +654,19 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
               if (!to) return [];
               return sourceNodeIds(target, layers.hosts).map((nodeId) => {
                 const from = nodePoints.get(nodeId);
+                const active = hovered
+                  ? nodeIsInSelection(hovered, nodeId, layers.hosts, layers.targets) &&
+                    targetIsInSelection(hovered, target, layers.hosts)
+                  : false;
                 return from ? (
                   <Edge
                     key={`${nodeId}:${target.id}`}
                     from={{ x: from.x + cardWidth, y: from.y }}
                     to={to}
                     status={target.status}
+                    active={active}
+                    dimmed={hovered !== null && !active}
+                    animated={active}
                   />
                 ) : null;
               });
@@ -559,12 +675,16 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
               .filter((target) => target.kind === 'internet')
               .map((target) => {
                 const from = targetPoints.get(target.id) as Point;
+                const active = hovered ? targetIsInSelection(hovered, target, layers.hosts) : false;
                 return (
                   <Edge
                     key={`${target.id}:internet`}
                     from={{ x: from.x + cardWidth, y: from.y }}
                     to={internet}
                     status={target.status}
+                    active={active}
+                    dimmed={hovered !== null && !active}
+                    animated={active}
                   />
                 );
               })}
@@ -578,10 +698,12 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
             status="ok"
             icon={UsersIcon}
             selected={false}
+            highlighted={hovered !== null}
             onClick={() => {}}
           />
           {layers.hosts.map((host) => {
             const point = hostPoints.get(host.id) as Point;
+            const highlighted = hovered ? hostIsInSelection(hovered, host, layers.targets) : false;
             return (
               <GraphCard
                 key={host.id}
@@ -593,12 +715,18 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                 status={host.status}
                 icon={NetworkIcon}
                 selected={false}
+                highlighted={highlighted}
+                dimmed={hovered !== null && !highlighted}
                 onClick={() => setSelected({ kind: 'host', id: host.id })}
+                onHoverChange={(value) => setHovered(value ? { kind: 'host', id: host.id } : null)}
               />
             );
           })}
           {layers.nodes.map((node) => {
             const point = nodePoints.get(node.id) as Point;
+            const highlighted = hovered
+              ? nodeIsInSelection(hovered, node.id, layers.hosts, layers.targets)
+              : false;
             return (
               <GraphCard
                 key={node.id}
@@ -610,12 +738,16 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                 status={node.status}
                 icon={ServerIcon}
                 selected={false}
+                highlighted={highlighted}
+                dimmed={hovered !== null && !highlighted}
                 onClick={() => setSelected({ kind: 'node', id: node.id })}
+                onHoverChange={(value) => setHovered(value ? { kind: 'node', id: node.id } : null)}
               />
             );
           })}
           {layers.targets.map((target) => {
             const point = targetPoints.get(target.id) as Point;
+            const highlighted = hovered ? targetIsInSelection(hovered, target, layers.hosts) : false;
             return (
               <GraphCard
                 key={target.id}
@@ -627,7 +759,10 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                 status={target.status}
                 icon={target.kind === 'internet' ? CloudIcon : RouteIcon}
                 selected={false}
+                highlighted={highlighted}
+                dimmed={hovered !== null && !highlighted}
                 onClick={() => setSelected({ kind: 'target', id: target.id })}
+                onHoverChange={(value) => setHovered(value ? { kind: 'target', id: target.id } : null)}
               />
             );
           })}
@@ -640,6 +775,8 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
             status="ok"
             icon={CloudIcon}
             selected={false}
+            highlighted={internetHighlighted}
+            dimmed={hovered !== null && !internetHighlighted}
             onClick={() => {}}
           />
         </div>

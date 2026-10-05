@@ -463,6 +463,7 @@ export function RemnawavePage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [addNode, setAddNode] = useState<RemnawaveNode | null>(null);
   const [tab, setTab] = useState<'overview' | 'map' | 'nodes' | 'problems' | 'settings'>('overview');
+  const [mapResetKey, setMapResetKey] = useState(0);
 
   /** Серверы панели: у связанной ноды показываем её сервер, у остальных — «Добавить в NodeService». */
   const serverById = useMemo(
@@ -533,7 +534,10 @@ export function RemnawavePage() {
             <button
               key={key}
               type="button"
-              onClick={() => setTab(key)}
+              onClick={() => {
+                if (key === 'map' && tab === 'map') setMapResetKey((value) => value + 1);
+                setTab(key);
+              }}
               className={cn(
                 'inline-flex h-9 items-center gap-1.5 rounded-[10px] px-3 text-[12.5px] font-medium transition-colors',
                 tab === key
@@ -631,7 +635,7 @@ export function RemnawavePage() {
               {apiErrorMessage(topology.error)}
             </p>
           )}
-          {topology.data && <RemnawaveTopologyMap topology={topology.data} />}
+          {topology.data && <RemnawaveTopologyMap key={mapResetKey} topology={topology.data} />}
         </section>
       )}
 

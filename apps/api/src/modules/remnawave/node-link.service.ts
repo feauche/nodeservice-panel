@@ -1,4 +1,5 @@
 import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { Inject, Injectable } from '@nestjs/common';
 import type { RemnawaveNode, Server } from '@nodeservice/shared';
 
@@ -60,6 +61,21 @@ export class NodeLinkService {
     if (this.cache.size >= CACHE_MAX) this.cache.clear();
     this.cache.set(host, { at: Date.now(), ips: kept });
     return kept;
+  }
+
+  /**
+   * Адреса хостов и нод для карты Remnawave. Использует тот же кеш и защиту от
+   * краткого сбоя DNS, что и связь «сервер ↔ нода». IP-литералы в DNS не отправляются.
+   */
+  async resolveAddresses(addresses: readonly string[]): Promise<ReadonlyMap<string, readonly string[]>> {
+    const unique = [...new Set(addresses.map(normalizeAddress).filter(Boolean))];
+    const resolved = new Map<string, readonly string[]>();
+    await Promise.all(
+      unique.map(async (address) => {
+        resolved.set(address, isIP(address) ? [address] : await this.ipsOf(address));
+      }),
+    );
+    return resolved;
   }
 
   /** Связи по переданным спискам: у вызывающего они обычно уже есть, читать их второй раз незачем. */

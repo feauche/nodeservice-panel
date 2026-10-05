@@ -26,6 +26,22 @@ describe('NodeLinkService', () => {
     expect(asked).toEqual(['nl1.example.com']);
   });
 
+  it('разрешает адреса для карты, а IP не отправляет в DNS', async () => {
+    const asked: string[] = [];
+    const svc = new NodeLinkService({
+      resolve: async (host) => {
+        asked.push(host);
+        return ['203.0.113.10'];
+      },
+    });
+
+    const result = await svc.resolveAddresses(['Host.Example.com.', '198.51.100.7']);
+
+    expect(result.get('host.example.com')).toEqual(['203.0.113.10']);
+    expect(result.get('198.51.100.7')).toEqual(['198.51.100.7']);
+    expect(asked).toEqual(['host.example.com']);
+  });
+
   it('DNS перестал отвечать — связь держится на прежнем ответе, а не рвётся', async () => {
     vi.useFakeTimers({ now: Date.parse('2026-09-30T10:00:00Z') });
     let alive = true;

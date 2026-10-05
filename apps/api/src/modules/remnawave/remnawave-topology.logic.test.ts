@@ -95,6 +95,18 @@ describe('buildRemnawaveTopology', () => {
     expect(result.issues).not.toContainEqual(expect.objectContaining({ kind: 'host_no_nodes' }));
   });
 
+  it('при общем профиле связывает хост только с нодой, на которую указывает DNS', () => {
+    const input = source();
+    (input.nodes[1] as Record<string, unknown>).configProfile = {
+      activeConfigProfileUuid: 'profile-1',
+      activeInbounds: [{ uuid: 'in-1' }],
+    };
+
+    const result = buildRemnawaveTopology(input, new Map(), new Map([['ru.example.com', ['10.0.0.2']]]));
+
+    expect(result.hosts[0]).toMatchObject({ nodeUuids: ['node-nl'], status: 'error' });
+  });
+
   it('сообщает о проблеме, только если инбаунд хоста не запущен ни на одной ноде', () => {
     const input = source();
     (input.nodes[0] as Record<string, unknown>).configProfile = {
