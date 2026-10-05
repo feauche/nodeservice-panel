@@ -525,7 +525,7 @@ function Viewer({ id, onEdit, onDeleted }: { id: string; onEdit: () => void; onD
       <div className="flex min-h-0 flex-1 gap-5 overflow-hidden pr-2 pl-6 sm:pl-7">
         <div ref={contentRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto py-5 pr-4 sm:py-6">
           {isFleetRules(d) && <JarvisReadsBanner />}
-          <Markdown content={d.content} headingIds className="text-[13.5px]" />
+          <Markdown content={d.content} headingIds copyCode className="text-[13.5px]" />
         </div>
         {toc.length >= 2 && <ArticleToc items={toc} containerRef={contentRef} />}
       </div>

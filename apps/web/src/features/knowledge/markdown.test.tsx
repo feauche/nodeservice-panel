@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import { Markdown } from './markdown';
@@ -56,5 +57,22 @@ describe('Markdown', () => {
     expect(container.querySelector('blockquote')).not.toBeNull();
     expect(container.querySelectorAll('li')).toHaveLength(1);
     expect(container.querySelectorAll('td')).toHaveLength(2);
+  });
+
+  it('копирует только содержимое выбранного блока кода', async () => {
+    const user = userEvent.setup();
+    render(<Markdown copyCode content={'```bash\necho first\n```\n\n```json\n{"second":true}\n```'} />);
+
+    const buttons = screen.getAllByRole('button', { name: 'Скопировать код' });
+    expect(buttons).toHaveLength(2);
+    await user.click(buttons[1] as HTMLButtonElement);
+
+    expect(await navigator.clipboard.readText()).toBe('{"second":true}');
+    expect(screen.getByRole('button', { name: 'Код скопирован' })).toHaveTextContent('Скопировано');
+  });
+
+  it('не показывает копирование вне базы знаний без явного флага', () => {
+    render(<Markdown content={'```bash\necho hidden\n```'} />);
+    expect(screen.queryByRole('button', { name: 'Скопировать код' })).not.toBeInTheDocument();
   });
 });

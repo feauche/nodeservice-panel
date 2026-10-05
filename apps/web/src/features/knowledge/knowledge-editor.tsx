@@ -429,7 +429,7 @@ function EditorForm({
             className={cn('min-h-0 min-w-0 overflow-y-auto px-5 py-4', tab === 'text' && 'max-md:hidden')}
           >
             {preview.trim() ? (
-              <Markdown content={preview} className="text-[13.5px]" />
+              <Markdown content={preview} copyCode className="text-[13.5px]" />
             ) : (
               <p className="text-[12.5px] text-text-3">Здесь появится оформленный вид статьи.</p>
             )}

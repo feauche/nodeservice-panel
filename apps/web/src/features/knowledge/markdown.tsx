@@ -1,7 +1,8 @@
 import hljs from 'highlight.js/lib/common';
 import dockerfile from 'highlight.js/lib/languages/dockerfile';
 import nginx from 'highlight.js/lib/languages/nginx';
-import { createContext, Fragment, type ReactNode, useContext } from 'react';
+import { CheckIcon, CopyIcon } from 'lucide-react';
+import { createContext, Fragment, type ReactNode, useContext, useState } from 'react';
 import { CountryFlag } from '@/components/country-flag';
 import { HEALTH_COLORS, HEALTH_LABELS, type ServerHealth } from '@/features/servers/server-health';
 import { openServer } from '@/features/servers/server-modal-store';
@@ -70,7 +71,8 @@ const LANG_LABEL: Record<string, string> = {
  * Блок кода с подсветкой (highlight.js) и меткой языка в углу — как в редакторах.
  * highlight.js экранирует исходник, поэтому его HTML безопасен для dangerouslySetInnerHTML.
  */
-function CodeBlock({ code, lang }: { code: string; lang: string }) {
+function CodeBlock({ code, lang, copyable }: { code: string; lang: string; copyable: boolean }) {
+  const [copied, setCopied] = useState(false);
   const raw = lang.trim().toLowerCase();
   const norm = LANG_ALIAS[raw] ?? raw;
   let html: string;
@@ -83,12 +85,40 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
     detected = auto.language ?? '';
   }
   const label = LANG_LABEL[detected] ?? (detected || raw || 'txt');
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1_500);
+    } catch {
+      // В небезопасном контексте браузер может запретить Clipboard API.
+    }
+  };
+
   return (
     <div className="relative my-3">
-      <span className="pointer-events-none absolute top-2 right-2 z-10 select-none rounded-[5px] bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-text-3">
-        {label}
-      </span>
-      <pre className="ns-code overflow-x-auto rounded-[10px] border border-border bg-[#0a0c10] px-3.5 py-3 font-mono text-[12px] leading-relaxed">
+      <div className="absolute top-2 right-2 z-10 flex items-center gap-1.5">
+        <span className="pointer-events-none select-none rounded-[5px] bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-text-3">
+          {label}
+        </span>
+        {copyable && (
+          <button
+            type="button"
+            onClick={() => void copy()}
+            aria-label={copied ? 'Код скопирован' : 'Скопировать код'}
+            className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-[6px] border border-white/10 bg-white/[0.07] px-2 text-[10.5px] font-semibold text-text-2 transition-colors hover:bg-white/[0.12] hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand"
+          >
+            {copied ? (
+              <CheckIcon className="size-3.5 text-ok" aria-hidden="true" />
+            ) : (
+              <CopyIcon className="size-3.5" aria-hidden="true" />
+            )}
+            {copied ? 'Скопировано' : 'Копировать'}
+          </button>
+        )}
+      </div>
+      <pre className="ns-code overflow-x-auto rounded-[10px] border border-border bg-[#0a0c10] px-3.5 pt-11 pb-3 font-mono text-[12px] leading-relaxed">
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: highlight.js экранирует исходник */}
         <code className="hljs bg-transparent p-0" dangerouslySetInnerHTML={{ __html: html }} />
       </pre>
@@ -251,10 +281,13 @@ export function Markdown({
   content,
   className,
   headingIds = false,
+  copyCode = false,
 }: {
   content: string;
   className?: string;
   headingIds?: boolean;
+  /** Кнопка копирования у fenced-блоков. Включается для базы знаний и её предпросмотра. */
+  copyCode?: boolean;
 }) {
   const seenHeadings = new Map<string, number>();
   const lines = content.replace(/\r\n/g, '\n').split('\n');
@@ -275,7 +308,7 @@ export function Markdown({
         i += 1;
       }
       i += 1;
-      blocks.push(<CodeBlock key={key++} code={buf.join('\n')} lang={lang} />);
+      blocks.push(<CodeBlock key={key++} code={buf.join('\n')} lang={lang} copyable={copyCode} />);
       continue;
     }
 
