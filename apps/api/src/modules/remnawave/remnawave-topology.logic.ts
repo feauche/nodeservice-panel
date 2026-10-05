@@ -51,6 +51,11 @@ export function topologyAddresses(source: RemnawaveTopologySource): string[] {
   return [
     ...source.hosts.flatMap((host) => topologyAddressTokens(host.address)),
     ...source.nodes.flatMap((node) => topologyAddressTokens(node.address)),
+    ...source.profiles.flatMap((profile) =>
+      rows(configOf(profile).outbounds).flatMap((outbound) =>
+        topologyAddressTokens(outboundAddress(outbound)),
+      ),
+    ),
   ];
 }
 
@@ -151,6 +156,7 @@ function targetOf(
   outboundTag: string,
   outbounds: Row[],
   nodes: RemnawaveTopologyNode[],
+  resolvedAddresses: ReadonlyMap<string, readonly string[]> = new Map(),
   visited = new Set<string>(),
   selectedOutbound?: Row,
 ): TargetAnalysis {
@@ -190,7 +196,7 @@ function targetOf(
     };
   const nextVisited = new Set(visited).add(tag);
   if (dialerProxy) {
-    const nested = targetOf(dialerProxy, outbounds, nodes, nextVisited);
+    const nested = targetOf(dialerProxy, outbounds, nodes, resolvedAddresses, nextVisited);
     return {
       ...nested,
       targetLabel: `${tag} → ${nested.targetLabel}`,
@@ -223,7 +229,14 @@ function targetOf(
       ...metadata,
       explanation: 'Xray намеренно отклоняет подходящий трафик правилом blackhole.',
     };
-  const exact = address ? nodes.filter((node) => node.address.toLowerCase() === address.toLowerCase()) : [];
+  const outboundIps = new Set(addressIps(address, resolvedAddresses));
+  const exact = address
+    ? nodes.filter(
+        (node) =>
+          node.address.toLowerCase() === address.toLowerCase() ||
+          addressIps(node.address, resolvedAddresses).some((ip) => outboundIps.has(ip)),
+      )
+    : [];
   const byName = exact.length
     ? []
     : nodes.filter((node) => norm(tag).includes(norm(node.name)) && norm(node.name).length >= 4);
@@ -287,8 +300,9 @@ function targetForRule(
   outbounds: Row[],
   balancers: Row[],
   nodes: RemnawaveTopologyNode[],
+  resolvedAddresses: ReadonlyMap<string, readonly string[]>,
 ): TargetAnalysis {
-  if (!balancerTag) return targetOf(outboundTag, outbounds, nodes);
+  if (!balancerTag) return targetOf(outboundTag, outbounds, nodes, resolvedAddresses);
   const balancer = balancers.find((item) => text(item.tag) === balancerTag);
   if (!balancer)
     return {
@@ -308,7 +322,7 @@ function targetForRule(
     const tag = text(item.tag);
     return selectors.some((selector) => tag === selector || tag.startsWith(selector));
   });
-  const targets = selected.map((item) => targetOf(text(item.tag), outbounds, nodes));
+  const targets = selected.map((item) => targetOf(text(item.tag), outbounds, nodes, resolvedAddresses));
   const nodeIds = [...new Set(targets.flatMap((target) => target.targetNodeUuids))];
   const labels = [...new Set(targets.map((target) => target.targetLabel))];
   return {
@@ -446,7 +460,14 @@ export function buildRemnawaveTopology(
           (host) => inboundTags.length === 0 || (host.inboundTag && inboundTags.includes(host.inboundTag)),
         )
         .map((host) => host.id);
-      const target = targetForRule(directOutboundTag, balancerTag, outbounds, balancers, nodes);
+      const target = targetForRule(
+        directOutboundTag,
+        balancerTag,
+        outbounds,
+        balancers,
+        nodes,
+        resolvedAddresses,
+      );
       const match = matchBrief(rule);
       routes.push({
         id: `${profileUuid}:rule:${index}`,
@@ -466,7 +487,7 @@ export function buildRemnawaveTopology(
     if (defaultOutbound) {
       const protocol = text(defaultOutbound.protocol).toLowerCase();
       const outboundTag = text(defaultOutbound.tag) || `(без тега) · ${protocol || 'протокол не указан'}`;
-      const target = targetOf(outboundTag, outbounds, nodes, new Set(), defaultOutbound);
+      const target = targetOf(outboundTag, outbounds, nodes, resolvedAddresses, new Set(), defaultOutbound);
       routes.push({
         id: `${profileUuid}:default`,
         profileUuid,
@@ -499,7 +520,7 @@ export function buildRemnawaveTopology(
       const address = outboundAddress(outbound);
       const dialerProxy = text(row(row(outbound.streamSettings).sockopt).dialerProxy) || null;
       const displayTag = tag || `(без тега) · ${protocol || `выход ${index + 1}`}`;
-      const target = targetOf(displayTag, rawOutbounds, nodes, new Set(), outbound);
+      const target = targetOf(displayTag, rawOutbounds, nodes, resolvedAddresses, new Set(), outbound);
       const usedByRules = tag ? rules.filter((rule) => text(rule.outboundTag) === tag).length : 0;
       return {
         tag,

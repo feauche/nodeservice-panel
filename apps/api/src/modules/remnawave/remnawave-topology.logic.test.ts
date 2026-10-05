@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { RemnawaveTopologySource } from './remnawave-client.js';
-import { buildRemnawaveTopology } from './remnawave-topology.logic.js';
+import { buildRemnawaveTopology, topologyAddresses } from './remnawave-topology.logic.js';
 
 const source = (): RemnawaveTopologySource => ({
   hosts: [
@@ -139,6 +139,33 @@ describe('buildRemnawaveTopology', () => {
       status: 'unknown',
     });
     expect(route?.note).toContain('связать его с нодой');
+  });
+
+  it('сопоставляет outbound с выходной нодой через DNS', () => {
+    const input = source();
+    const profile = input.profiles[0] as Record<string, unknown>;
+    profile.config = {
+      routing: { rules: [{ outboundTag: 'BRIDGE_NL' }] },
+      outbounds: [
+        {
+          tag: 'BRIDGE_NL',
+          protocol: 'vless',
+          settings: { vnext: [{ address: 'bridge-nl.example.com' }] },
+        },
+      ],
+    };
+    const resolved = new Map<string, readonly string[]>([
+      ['bridge-nl.example.com', ['10.0.0.2']],
+      ['10.0.0.2', ['10.0.0.2']],
+    ]);
+
+    expect(topologyAddresses(input)).toContain('bridge-nl.example.com');
+    expect(buildRemnawaveTopology(input, new Map(), resolved).routes[0]).toMatchObject({
+      targetKind: 'node',
+      targetLabel: 'Нидерланды - 1',
+      targetNodeUuids: ['node-nl'],
+      confidence: 'confirmed',
+    });
   });
 
   it('проходит цепочку dialerProxy и обнаруживает циклическую ссылку', () => {

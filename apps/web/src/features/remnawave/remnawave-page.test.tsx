@@ -261,11 +261,12 @@ describe('RemnawavePage', () => {
     await user.click(await screen.findByRole('button', { name: 'Карта трафика' }));
     expect(await screen.findByRole('heading', { name: 'Как идёт трафик' })).toBeInTheDocument();
     const host = screen.getByRole('button', { name: /Основной вход/ });
+    expect(screen.getAllByRole('button', { name: /Карта - выход/ })).toHaveLength(1);
     await user.hover(host);
     expect(document.querySelectorAll('.ns-topology-flow').length).toBeGreaterThan(0);
     await user.click(host);
     expect(screen.getByRole('button', { name: 'Вернуться ко всей топологии' })).toBeInTheDocument();
-    expect(document.querySelectorAll('.ns-topology-flow')).toHaveLength(3);
+    expect(document.querySelectorAll('.ns-topology-flow')).toHaveLength(4);
     await user.click(screen.getByRole('button', { name: 'Карта трафика' }));
     expect(screen.getByRole('heading', { name: 'Как идёт трафик' })).toBeInTheDocument();
   });
@@ -301,6 +302,19 @@ const NODES_FOR_MAP: RemnawaveNode[] = [
     isConnecting: false,
     lastStatusMessage: null,
     usersOnline: 12,
+    trafficUsedBytes: 10,
+    trafficLimitBytes: null,
+  },
+  {
+    uuid: 'map-exit-node',
+    name: 'Карта - выход',
+    address: '198.51.100.202',
+    countryCode: 'NL',
+    isConnected: true,
+    isDisabled: false,
+    isConnecting: false,
+    lastStatusMessage: null,
+    usersOnline: 1,
     trafficUsedBytes: 10,
     trafficLimitBytes: null,
   },

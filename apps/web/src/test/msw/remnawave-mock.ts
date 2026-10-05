@@ -187,17 +187,19 @@ function topology(): RemnawaveTopology {
           match: ['Остальной трафик'],
           inboundTags: [],
           hostIds: ['host-main'],
-          outboundTag: 'DIRECT',
-          outboundProtocol: 'freedom',
-          outboundAddress: null,
+          outboundTag: second ? 'BRIDGE_EXIT' : 'DIRECT',
+          outboundProtocol: second ? 'vless' : 'freedom',
+          outboundAddress: second?.address ?? null,
           dialerProxy: null,
-          targetKind: 'internet' as const,
-          targetLabel: 'Интернет напрямую',
-          targetNodeUuids: [],
-          status: 'ok' as const,
+          targetKind: second ? ('node' as const) : ('internet' as const),
+          targetLabel: second?.name ?? 'Интернет напрямую',
+          targetNodeUuids: second ? [second.id] : [],
+          status: second?.status ?? ('ok' as const),
           confidence: 'confirmed' as const,
           note: null,
-          explanation: 'Это маршрут по умолчанию. Xray выпускает трафик напрямую в интернет.',
+          explanation: second
+            ? `Это маршрут по умолчанию. Xray передаёт трафик на ноду «${second.name}».`
+            : 'Это маршрут по умолчанию. Xray выпускает трафик напрямую в интернет.',
         },
       ]
     : [];

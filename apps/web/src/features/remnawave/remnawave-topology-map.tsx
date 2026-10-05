@@ -1,4 +1,9 @@
-import type { RemnawaveTopology, RemnawaveTopologyHost, RemnawaveTopologyRoute } from '@nodeservice/shared';
+import type {
+  RemnawaveTopology,
+  RemnawaveTopologyHost,
+  RemnawaveTopologyNode,
+  RemnawaveTopologyRoute,
+} from '@nodeservice/shared';
 import {
   ArrowLeftIcon,
   CircleDotIcon,
@@ -15,8 +20,25 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 type Status = RemnawaveTopologyHost['status'];
-type Selection = { kind: 'host' | 'node' | 'target'; id: string } | null;
+type Selection = { kind: 'host' | 'node' | 'exit'; id: string } | null;
 type Point = { x: number; y: number };
+
+interface ExitGroup {
+  id: string;
+  label: string;
+  kind: RemnawaveTopologyRoute['targetKind'];
+  status: Status;
+  nodeId: string | null;
+  routes: RemnawaveTopologyRoute[];
+}
+
+interface SelectionContext {
+  hostIds: Set<string>;
+  nodeIds: Set<string>;
+  exitIds: Set<string>;
+  routeIds: Set<string>;
+  reachesInternet: boolean;
+}
 
 const STATUS = {
   ok: { dot: 'bg-ok', border: 'border-ok/35', text: 'text-ok' },
@@ -79,7 +101,7 @@ function Edge({
   const color =
     status === 'error' ? 'var(--ns-crit)' : status === 'warning' ? 'var(--ns-warn)' : 'var(--ns-accent)';
   return (
-    <g className="transition-opacity duration-200" opacity={dimmed ? 0.1 : 1}>
+    <g className="transition-opacity duration-200" opacity={dimmed ? 0.08 : 1}>
       <path
         className={animated ? 'ns-topology-flow' : undefined}
         d={path}
@@ -143,7 +165,7 @@ function GraphCard({
         STATUS[status].border,
         (selected || highlighted) &&
           'z-10 ring-2 ring-brand/55 shadow-[0_0_24px_color-mix(in_srgb,var(--ns-accent)_14%,transparent)]',
-        dimmed && 'opacity-30',
+        dimmed && 'opacity-25',
       )}
       style={{ left: x, top: y, width }}
     >
@@ -173,80 +195,106 @@ function GraphCard({
   );
 }
 
-interface TargetGroup {
-  id: string;
-  label: string;
-  kind: RemnawaveTopologyRoute['targetKind'];
-  status: Status;
-  routes: RemnawaveTopologyRoute[];
+function worseStatus(current: Status, candidate: Status): Status {
+  const rank: Record<Status, number> = { ok: 0, unknown: 1, warning: 2, error: 3 };
+  return rank[candidate] > rank[current] ? candidate : current;
 }
 
-function groupTargets(routes: readonly RemnawaveTopologyRoute[]): TargetGroup[] {
-  const groups = new Map<string, TargetGroup>();
-  for (const route of routes) {
-    const key = `${route.targetKind}:${route.targetLabel}`;
+function sourceNodeIds(route: RemnawaveTopologyRoute, hosts: readonly RemnawaveTopologyHost[]): string[] {
+  const hostById = new Map(hosts.map((host) => [host.id, host]));
+  return [...new Set(route.hostIds.flatMap((hostId) => hostById.get(hostId)?.nodeUuids ?? []))];
+}
+
+function groupExits(
+  routes: readonly RemnawaveTopologyRoute[],
+  nodes: readonly RemnawaveTopologyNode[],
+): ExitGroup[] {
+  const groups = new Map<string, ExitGroup>();
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const add = (
+    key: string,
+    route: RemnawaveTopologyRoute,
+    label: string,
+    nodeId: string | null,
+    status: Status,
+  ) => {
     const found = groups.get(key);
     if (found) {
-      found.routes.push(route);
-      if (route.status === 'error') found.status = 'error';
-      else if (route.status === 'warning' && found.status !== 'error') found.status = 'warning';
-    } else {
-      groups.set(key, {
-        id: safeId(key),
-        label: route.targetLabel,
-        kind: route.targetKind,
-        status: route.status,
-        routes: [route],
-      });
+      if (!found.routes.some((item) => item.id === route.id)) found.routes.push(route);
+      found.status = worseStatus(found.status, status);
+      return;
     }
+    groups.set(key, {
+      id: safeId(key),
+      label,
+      kind: route.targetKind,
+      status,
+      nodeId,
+      routes: [route],
+    });
+  };
+
+  for (const route of routes) {
+    if (route.targetKind === 'internet') continue;
+    if (route.targetKind === 'node' && route.targetNodeUuids.length) {
+      for (const nodeId of route.targetNodeUuids) {
+        const node = nodeById.get(nodeId);
+        add(`node:${nodeId}`, route, node?.name ?? route.targetLabel, nodeId, node?.status ?? route.status);
+      }
+      continue;
+    }
+    const key = `${route.targetKind}:${route.targetLabel}`;
+    add(key, route, route.targetLabel, null, route.status);
   }
   return [...groups.values()];
 }
 
-function sourceNodeIds(target: TargetGroup, hosts: readonly RemnawaveTopologyHost[]): string[] {
-  const hostById = new Map(hosts.map((host) => [host.id, host]));
-  const ids = new Set<string>();
-  for (const route of target.routes)
-    for (const hostId of route.hostIds)
-      for (const nodeId of hostById.get(hostId)?.nodeUuids ?? []) ids.add(nodeId);
-  return [...ids];
+function exitSubtitle(exit: ExitGroup, topology: RemnawaveTopology): string {
+  if (exit.nodeId) {
+    const node = topology.nodes.find((item) => item.id === exit.nodeId);
+    return node ? `${node.usersOnline ?? '—'} онлайн · ${node.address}` : 'выходная нода';
+  }
+  if (exit.kind === 'blocked') return 'трафик будет остановлен';
+  if (exit.kind === 'unknown') return 'назначение не подтверждено';
+  return 'сервис исходящего трафика';
 }
 
-function hostIsInSelection(
-  selection: NonNullable<Selection>,
-  host: RemnawaveTopologyHost,
-  targets: readonly TargetGroup[],
-): boolean {
-  if (selection.kind === 'host') return selection.id === host.id;
-  if (selection.kind === 'node') return host.nodeUuids.includes(selection.id);
-  return (
-    targets
-      .find((target) => target.id === selection.id)
-      ?.routes.some((route) => route.hostIds.includes(host.id)) ?? false
-  );
+function routeExitIds(route: RemnawaveTopologyRoute, exits: readonly ExitGroup[]): string[] {
+  return exits
+    .filter((exit) => exit.routes.some((candidate) => candidate.id === route.id))
+    .map((exit) => exit.id);
 }
 
-function nodeIsInSelection(
+function reachesInternet(route: RemnawaveTopologyRoute): boolean {
+  return route.targetKind === 'internet' || route.targetKind === 'node' || route.targetKind === 'service';
+}
+
+function contextForSelection(
   selection: NonNullable<Selection>,
-  nodeId: string,
-  hosts: readonly RemnawaveTopologyHost[],
-  targets: readonly TargetGroup[],
-): boolean {
-  if (selection.kind === 'node') return selection.id === nodeId;
+  topology: RemnawaveTopology,
+  exits: readonly ExitGroup[],
+): SelectionContext {
+  let routes: RemnawaveTopologyRoute[] = [];
   if (selection.kind === 'host')
-    return hosts.find((host) => host.id === selection.id)?.nodeUuids.includes(nodeId) ?? false;
-  const target = targets.find((item) => item.id === selection.id);
-  return target ? sourceNodeIds(target, hosts).includes(nodeId) : false;
-}
+    routes = topology.routes.filter((route) => route.hostIds.includes(selection.id));
+  else if (selection.kind === 'node')
+    routes = topology.routes.filter((route) => sourceNodeIds(route, topology.hosts).includes(selection.id));
+  else routes = exits.find((exit) => exit.id === selection.id)?.routes ?? [];
 
-function targetIsInSelection(
-  selection: NonNullable<Selection>,
-  target: TargetGroup,
-  hosts: readonly RemnawaveTopologyHost[],
-): boolean {
-  if (selection.kind === 'target') return selection.id === target.id;
-  if (selection.kind === 'host') return target.routes.some((route) => route.hostIds.includes(selection.id));
-  return sourceNodeIds(target, hosts).includes(selection.id);
+  const hostIds = new Set(routes.flatMap((route) => route.hostIds));
+  if (selection.kind === 'host') hostIds.add(selection.id);
+  const nodeIds = new Set(routes.flatMap((route) => sourceNodeIds(route, topology.hosts)));
+  for (const route of routes) for (const nodeId of route.targetNodeUuids) nodeIds.add(nodeId);
+  if (selection.kind === 'node') nodeIds.add(selection.id);
+  const exitIds = new Set(routes.flatMap((route) => routeExitIds(route, exits)));
+  if (selection.kind === 'exit') exitIds.add(selection.id);
+  return {
+    hostIds,
+    nodeIds,
+    exitIds,
+    routeIds: new Set(routes.map((route) => route.id)),
+    reachesInternet: routes.some(reachesInternet),
+  };
 }
 
 function orderByNeighbours<T extends { id: string }>(
@@ -268,30 +316,45 @@ function orderByNeighbours<T extends { id: string }>(
   });
 }
 
-function orderedLayers(
-  hosts: readonly RemnawaveTopologyHost[],
-  nodes: RemnawaveTopology['nodes'],
-  targets: readonly TargetGroup[],
-) {
-  let orderedHosts = [...hosts];
-  let orderedNodes = [...nodes];
+function orderedLayers(topology: RemnawaveTopology, exits: readonly ExitGroup[]) {
+  const entryIds = new Set(topology.hosts.flatMap((host) => host.nodeUuids));
+  let hosts = [...topology.hosts];
+  let entryNodes = topology.nodes.filter((node) => entryIds.has(node.id));
   for (let pass = 0; pass < 4; pass += 1) {
-    const hostPositions = new Map(orderedHosts.map((host, index) => [host.id, index]));
-    orderedNodes = orderByNeighbours(
-      orderedNodes,
-      (node) => orderedHosts.filter((host) => host.nodeUuids.includes(node.id)).map((host) => host.id),
+    const hostPositions = new Map(hosts.map((host, index) => [host.id, index]));
+    entryNodes = orderByNeighbours(
+      entryNodes,
+      (node) => hosts.filter((host) => host.nodeUuids.includes(node.id)).map((host) => host.id),
       hostPositions,
     );
-    const nodePositions = new Map(orderedNodes.map((node, index) => [node.id, index]));
-    orderedHosts = orderByNeighbours(orderedHosts, (host) => host.nodeUuids, nodePositions);
+    const nodePositions = new Map(entryNodes.map((node, index) => [node.id, index]));
+    hosts = orderByNeighbours(hosts, (host) => host.nodeUuids, nodePositions);
   }
-  const nodePositions = new Map(orderedNodes.map((node, index) => [node.id, index]));
-  const orderedTargets = orderByNeighbours(
-    targets,
-    (target) => sourceNodeIds(target, orderedHosts),
+  const nodePositions = new Map(entryNodes.map((node, index) => [node.id, index]));
+  const orderedExits = orderByNeighbours(
+    exits,
+    (exit) => [...new Set(exit.routes.flatMap((route) => sourceNodeIds(route, hosts)))],
     nodePositions,
   );
-  return { hosts: orderedHosts, nodes: orderedNodes, targets: orderedTargets };
+  return { hosts, entryNodes, exits: orderedExits };
+}
+
+function routeDescription(
+  route: RemnawaveTopologyRoute,
+  entryNode: RemnawaveTopologyNode | null,
+  exitNode: RemnawaveTopologyNode | null,
+): string {
+  const from = entryNode ? `на входную ноду «${entryNode.name}»` : 'на входную ноду';
+  const condition = route.isDefault
+    ? 'Весь трафик, для которого не нашлось отдельного условия,'
+    : `Трафик по условию «${route.match.join(' · ')}»`;
+  if (route.targetKind === 'node')
+    return `${condition} приходит ${from}, затем Xray передаёт его на выходную ноду «${exitNode?.name ?? route.targetLabel}».`;
+  if (route.targetKind === 'internet')
+    return `${condition} приходит ${from} и выходит в интернет прямо с неё.`;
+  if (route.targetKind === 'blocked')
+    return `${condition} приходит ${from}, после чего Xray намеренно отклоняет соединение.`;
+  return `${condition} приходит ${from}, затем Xray передаёт его в сервис «${route.targetLabel}».`;
 }
 
 function FocusedFlow({
@@ -304,65 +367,76 @@ function FocusedFlow({
   onBack: () => void;
 }) {
   const [frameRef, viewportWidth] = useMeasuredWidth();
-  const targetGroups = groupTargets(topology.routes);
-  const chosenHost = selected.kind === 'host' ? topology.hosts.find((item) => item.id === selected.id) : null;
-  const chosenNode = selected.kind === 'node' ? topology.nodes.find((item) => item.id === selected.id) : null;
-  const chosenTarget =
-    selected.kind === 'target' ? targetGroups.find((item) => item.id === selected.id) : null;
-  const routes = topology.routes.filter((route) => {
-    if (chosenHost) return route.hostIds.includes(chosenHost.id);
-    if (chosenNode)
-      return (
-        route.targetNodeUuids.includes(chosenNode.id) ||
-        route.hostIds.some((id) =>
-          topology.hosts.find((host) => host.id === id)?.nodeUuids.includes(chosenNode.id),
-        )
-      );
-    return chosenTarget?.routes.some((item) => item.id === route.id) ?? false;
-  });
-  const hosts = topology.hosts.filter((host) =>
-    chosenHost ? host.id === chosenHost.id : routes.some((route) => route.hostIds.includes(host.id)),
-  );
-  const nodes = topology.nodes.filter((node) =>
-    chosenNode
-      ? node.id === chosenNode.id
-      : hosts.some((host) => host.nodeUuids.includes(node.id)) ||
-        routes.some((route) => route.targetNodeUuids.includes(node.id)),
-  );
-  const target = chosenTarget ?? groupTargets(routes)[0] ?? null;
-  const bad: Status = [...hosts, ...nodes, ...(target ? [target] : [])].some(
-    (item) => item.status === 'error',
-  )
-    ? 'error'
-    : [...hosts, ...nodes, ...(target ? [target] : [])].some((item) => item.status === 'warning')
+  const exits = groupExits(topology.routes, topology.nodes);
+  const context = contextForSelection(selected, topology, exits);
+  const routes = topology.routes.filter((route) => context.routeIds.has(route.id));
+  const primaryRoute = routes[0] ?? null;
+  const selectedHost =
+    selected.kind === 'host' ? topology.hosts.find((host) => host.id === selected.id) : null;
+  const host = selectedHost ?? topology.hosts.find((item) => primaryRoute?.hostIds.includes(item.id)) ?? null;
+  const primarySources = primaryRoute ? sourceNodeIds(primaryRoute, topology.hosts) : [];
+  const entryNode =
+    topology.nodes.find(
+      (node) => selected.kind === 'node' && node.id === selected.id && primarySources.includes(node.id),
+    ) ??
+    topology.nodes.find((node) => primarySources.includes(node.id)) ??
+    null;
+  const exitNode = topology.nodes.find((node) => primaryRoute?.targetNodeUuids.includes(node.id)) ?? null;
+  const chosenExit =
+    exits.find((exit) => selected.kind === 'exit' && exit.id === selected.id) ??
+    exits.find((exit) => primaryRoute && exit.routes.some((route) => route.id === primaryRoute.id)) ??
+    null;
+  const exitTitle = primaryRoute
+    ? primaryRoute.targetKind === 'internet'
+      ? 'Напрямую'
+      : (exitNode?.name ?? chosenExit?.label ?? primaryRoute.targetLabel)
+    : 'Выход не определён';
+  const exitSubtitleText = primaryRoute
+    ? primaryRoute.targetKind === 'node'
+      ? (exitNode?.address ?? 'адрес не подтверждён')
+      : primaryRoute.targetKind === 'internet'
+        ? 'с входной ноды'
+        : primaryRoute.targetKind === 'blocked'
+          ? 'трафик останавливается'
+          : 'сервис исходящего трафика'
+    : 'нет подтверждённой связи';
+  const destinationTitle =
+    primaryRoute?.targetKind === 'blocked'
+      ? 'Соединение отклонено'
+      : primaryRoute?.targetKind === 'unknown'
+        ? 'Назначение неизвестно'
+        : 'Интернет';
+  const destinationStatus: Status =
+    primaryRoute?.targetKind === 'blocked'
       ? 'warning'
-      : 'ok';
-  const hostTitle = hosts[0]?.name ?? 'Хост не определён';
-  const hostSubtitle = hosts[0] ? `${hosts[0].address}:${hosts[0].port}` : 'нет подтверждённой связи';
-  const nodeTitle = nodes[0]?.name ?? 'Нода не определена';
-  const nodeSubtitle = nodes[0]?.address ?? 'нет подтверждённой связи';
-  const targetTitle = target?.label ?? 'Выход не определён';
-  const targetSubtitle = routes[0]?.match.join(' · ') ?? 'нет правила';
-  const graphWidth = Math.max(1_260, viewportWidth);
-  const sidePadding = 28;
-  const clientWidth = 200;
-  const cardWidth = 240;
+      : primaryRoute?.targetKind === 'unknown'
+        ? 'unknown'
+        : (primaryRoute?.status ?? 'unknown');
+  const graphWidth = Math.max(1_500, viewportWidth);
+  const sidePadding = 30;
+  const cardWidth = 230;
   const tallestCard = Math.max(
-    estimatedCardHeight('Клиент', 'VPN-подключение', clientWidth),
-    estimatedCardHeight(hostTitle, hostSubtitle, cardWidth),
-    estimatedCardHeight(nodeTitle, nodeSubtitle, cardWidth),
-    estimatedCardHeight(targetTitle, targetSubtitle, cardWidth),
+    estimatedCardHeight('Клиент', 'VPN-подключение', cardWidth),
+    estimatedCardHeight(
+      host?.name ?? 'Хост не определён',
+      host ? `${host.address}:${host.port}` : '',
+      cardWidth,
+    ),
+    estimatedCardHeight(entryNode?.name ?? 'Входная нода не определена', entryNode?.address ?? '', cardWidth),
+    estimatedCardHeight(exitTitle, exitSubtitleText, cardWidth),
+    estimatedCardHeight(destinationTitle, 'куда приходит трафик', cardWidth),
   );
-  const graphHeight = Math.max(340, tallestCard + 180);
+  const graphHeight = Math.max(350, tallestCard + 190);
   const graphY = graphHeight / 2;
-  const firstCenter = sidePadding + clientWidth / 2;
+  const firstCenter = sidePadding + cardWidth / 2;
   const lastCenter = graphWidth - sidePadding - cardWidth / 2;
-  const step = (lastCenter - firstCenter) / 3;
-  const centers = Array.from({ length: 4 }, (_, index) => firstCenter + step * index);
-  const clientLeft = centers[0] - clientWidth / 2;
-  const hostLeft = centers[1] - cardWidth / 2;
-  const nodeLeft = centers[2] - cardWidth / 2;
-  const targetLeft = centers[3] - cardWidth / 2;
+  const step = (lastCenter - firstCenter) / 4;
+  const centers = Array.from({ length: 5 }, (_, index) => firstCenter + step * index);
+  const lefts = centers.map((center) => center - cardWidth / 2);
+  const graphStatus = [host?.status, entryNode?.status, primaryRoute?.status]
+    .filter((status): status is Status => Boolean(status))
+    .reduce<Status>(worseStatus, 'ok');
+
   return (
     <div>
       <Button
@@ -376,7 +450,7 @@ function FocusedFlow({
       </Button>
       <div ref={frameRef} className="overflow-x-auto rounded-xl border border-border bg-surface-2/35">
         <div className="relative" style={{ height: graphHeight, width: graphWidth }}>
-          {['Клиент', 'Хост', 'Нода', 'Назначение'].map((label, index) => (
+          {['Клиент', 'Хост', 'Входная нода', 'Выход', 'Назначение'].map((label, index) => (
             <span
               key={label}
               className="absolute top-5 w-[220px] -translate-x-1/2 text-center text-[10px] font-semibold tracking-[0.08em] text-text-3 uppercase"
@@ -386,32 +460,29 @@ function FocusedFlow({
             </span>
           ))}
           <svg className="absolute inset-0 size-full" aria-hidden="true">
-            <Edge
-              from={{ x: clientLeft + clientWidth, y: graphY }}
-              to={{ x: hostLeft, y: graphY }}
-              status={hosts[0]?.status ?? 'unknown'}
-              active
-              animated
-            />
-            <Edge
-              from={{ x: hostLeft + cardWidth, y: graphY }}
-              to={{ x: nodeLeft, y: graphY }}
-              status={nodes[0]?.status ?? 'unknown'}
-              active
-              animated
-            />
-            <Edge
-              from={{ x: nodeLeft + cardWidth, y: graphY }}
-              to={{ x: targetLeft, y: graphY }}
-              status={target?.status ?? 'unknown'}
-              active
-              animated
-            />
+            {lefts.slice(1).map((left, index) => (
+              <Edge
+                key={left}
+                from={{ x: lefts[index] + cardWidth, y: graphY }}
+                to={{ x: left, y: graphY }}
+                status={
+                  index === 0
+                    ? (host?.status ?? 'unknown')
+                    : index === 1
+                      ? (entryNode?.status ?? 'unknown')
+                      : index === 2
+                        ? (primaryRoute?.status ?? 'unknown')
+                        : destinationStatus
+                }
+                active
+                animated
+              />
+            ))}
           </svg>
           <GraphCard
-            x={clientLeft}
+            x={lefts[0]}
             y={graphY}
-            width={clientWidth}
+            width={cardWidth}
             title="Клиент"
             subtitle="VPN-подключение"
             status="ok"
@@ -420,46 +491,61 @@ function FocusedFlow({
             onClick={() => {}}
           />
           <GraphCard
-            x={hostLeft}
+            x={lefts[1]}
             y={graphY}
             width={cardWidth}
-            title={hostTitle}
-            subtitle={hostSubtitle}
-            status={hosts[0]?.status ?? 'unknown'}
+            title={host?.name ?? 'Хост не определён'}
+            subtitle={host ? `${host.address}:${host.port}` : 'нет подтверждённой связи'}
+            status={host?.status ?? 'unknown'}
             icon={NetworkIcon}
             selected={selected.kind === 'host'}
             onClick={() => {}}
           />
           <GraphCard
-            x={nodeLeft}
+            x={lefts[2]}
             y={graphY}
             width={cardWidth}
-            title={nodeTitle}
-            subtitle={nodeSubtitle}
-            status={nodes[0]?.status ?? 'unknown'}
+            title={entryNode?.name ?? 'Входная нода не определена'}
+            subtitle={entryNode?.address ?? 'нет подтверждённой связи'}
+            status={entryNode?.status ?? 'unknown'}
             icon={ServerIcon}
             selected={selected.kind === 'node'}
             onClick={() => {}}
           />
           <GraphCard
-            x={targetLeft}
+            x={lefts[3]}
             y={graphY}
             width={cardWidth}
-            title={targetTitle}
-            subtitle={targetSubtitle}
-            status={target?.status ?? 'unknown'}
-            icon={target?.kind === 'internet' ? CloudIcon : RouteIcon}
-            selected={selected.kind === 'target'}
+            title={exitTitle}
+            subtitle={exitSubtitleText}
+            status={primaryRoute?.status ?? 'unknown'}
+            icon={primaryRoute?.targetKind === 'node' ? ServerIcon : RouteIcon}
+            selected={selected.kind === 'exit'}
             onClick={() => {}}
           />
-          {bad !== 'ok' && (
+          <GraphCard
+            x={lefts[4]}
+            y={graphY}
+            width={cardWidth}
+            title={destinationTitle}
+            subtitle="куда приходит трафик"
+            status={destinationStatus}
+            icon={primaryRoute?.targetKind === 'blocked' ? XIcon : CloudIcon}
+            selected={false}
+            onClick={() => {}}
+          />
+          {graphStatus !== 'ok' && (
             <div
               className={cn(
                 'absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-2 text-[11.5px]',
-                STATUS[bad].text,
+                STATUS[graphStatus].text,
               )}
             >
-              {bad === 'error' ? <XIcon className="size-4" /> : <TriangleAlertIcon className="size-4" />}
+              {graphStatus === 'error' ? (
+                <XIcon className="size-4" />
+              ) : (
+                <TriangleAlertIcon className="size-4" />
+              )}
               Путь требует внимания — причина указана в разделе «Проблемы».
             </div>
           )}
@@ -467,39 +553,53 @@ function FocusedFlow({
       </div>
       {routes.length > 0 && (
         <div className="mt-3 grid gap-2 lg:grid-cols-2">
-          {routes.slice(0, 6).map((route) => (
-            <div key={route.id} className="rounded-xl border border-border bg-surface-2 px-3.5 py-3.5">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <div className="text-[10.5px] font-semibold tracking-[0.05em] text-text-3 uppercase">
-                    {route.isDefault ? 'Маршрут по умолчанию' : `Правило ${route.order + 1}`}
+          {routes.slice(0, 8).map((route) => {
+            const source = topology.nodes.find((node) =>
+              sourceNodeIds(route, topology.hosts).includes(node.id),
+            );
+            const destination = topology.nodes.find((node) => route.targetNodeUuids.includes(node.id));
+            return (
+              <article key={route.id} className="rounded-xl border border-border bg-surface-2 px-4 py-3.5">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <div className="text-[10.5px] font-semibold tracking-[0.05em] text-text-3 uppercase">
+                      {route.isDefault ? 'Остальной трафик' : route.match.join(' · ')}
+                    </div>
+                    <div className="mt-1 break-words text-[13px] font-semibold">
+                      {route.targetKind === 'node'
+                        ? `Выход через ${destination?.name ?? route.targetLabel}`
+                        : route.targetLabel}
+                    </div>
                   </div>
-                  <div className="mt-1 break-words text-[12.5px] font-semibold">{route.targetLabel}</div>
+                  <span className="rounded-full border border-border px-2 py-1 text-[10px] text-text-3">
+                    {route.confidence === 'confirmed' ? 'связь подтверждена' : 'связь распознана частично'}
+                  </span>
                 </div>
-                <span className="rounded-full border border-border px-2 py-1 text-[10px] text-text-3">
-                  {route.confidence === 'confirmed' ? 'точно из конфига' : 'назначение распознано частично'}
-                </span>
-              </div>
-              <dl className="mt-3 grid grid-cols-[92px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[11.5px] leading-4">
-                <dt className="text-text-3">Когда</dt>
-                <dd className="break-words">{route.match.join(' · ')}</dd>
-                <dt className="text-text-3">Outbound</dt>
-                <dd className="break-words font-mono text-[11px]">{route.outboundTag}</dd>
-                <dt className="text-text-3">Протокол</dt>
-                <dd>{route.outboundProtocol ?? 'не указан'}</dd>
-                {route.outboundAddress && (
-                  <>
-                    <dt className="text-text-3">Адрес</dt>
-                    <dd className="break-all font-mono text-[11px]">{route.outboundAddress}</dd>
-                  </>
-                )}
-              </dl>
-              <p className="mt-3 border-t border-border pt-2.5 text-[11.5px] leading-5 text-text-2">
-                {route.explanation}
-              </p>
-              {route.note && <p className="mt-1.5 text-[11px] leading-4 text-warn">{route.note}</p>}
-            </div>
-          ))}
+                <p className="mt-2.5 text-[11.5px] leading-5 text-text-2">
+                  {routeDescription(route, source ?? null, destination ?? null)}
+                </p>
+                {route.note && <p className="mt-2 text-[11px] leading-4 text-warn">{route.note}</p>}
+                <details className="mt-3 border-t border-border pt-2.5 text-[11px] text-text-3">
+                  <summary className="cursor-pointer font-semibold text-text-2">Технические детали</summary>
+                  <dl className="mt-2.5 grid grid-cols-[88px_minmax(0,1fr)] gap-x-3 gap-y-1.5 leading-4">
+                    <dt>Outbound</dt>
+                    <dd className="break-words font-mono text-[10.5px] text-text-2">{route.outboundTag}</dd>
+                    <dt>Протокол</dt>
+                    <dd className="text-text-2">{route.outboundProtocol ?? 'не указан'}</dd>
+                    {route.outboundAddress && (
+                      <>
+                        <dt>Адрес</dt>
+                        <dd className="break-all font-mono text-[10.5px] text-text-2">
+                          {route.outboundAddress}
+                        </dd>
+                      </>
+                    )}
+                  </dl>
+                  <p className="mt-2 leading-4">{route.explanation}</p>
+                </details>
+              </article>
+            );
+          })}
         </div>
       )}
     </div>
@@ -509,11 +609,8 @@ function FocusedFlow({
 export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology }) {
   const [selected, setSelected] = useState<Selection>(null);
   const [hovered, setHovered] = useState<Selection>(null);
-  const targets = useMemo(() => groupTargets(topology.routes), [topology.routes]);
-  const layers = useMemo(
-    () => orderedLayers(topology.hosts, topology.nodes, targets),
-    [topology.hosts, topology.nodes, targets],
-  );
+  const exits = useMemo(() => groupExits(topology.routes, topology.nodes), [topology.routes, topology.nodes]);
+  const layers = useMemo(() => orderedLayers(topology, exits), [topology, exits]);
   const hasTopology = topology.hosts.length > 0 || topology.nodes.length > 0 || topology.routes.length > 0;
   const graphVisible = hasTopology && selected === null;
   const [graphFrameRef, viewportWidth] = useMeasuredWidth(graphVisible);
@@ -523,38 +620,31 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
         <NetworkIcon className="mx-auto size-5 text-text-3" aria-hidden="true" />
         <h2 className="mt-2 font-heading text-[14px] font-bold">Карту пока не из чего собрать</h2>
         <p className="mx-auto mt-1 max-w-[520px] text-[12px] leading-5 text-text-3">
-          Remnawave не вернула хосты, ноды и правила маршрутизации. После их настройки карта появится здесь
-          автоматически.
+          Remnawave не вернула хосты, ноды и маршруты. После их настройки карта появится здесь автоматически.
         </p>
       </div>
     );
   if (selected)
     return <FocusedFlow topology={topology} selected={selected} onBack={() => setSelected(null)} />;
 
-  const graphWidth = Math.max(1_500, viewportWidth);
+  const graphWidth = Math.max(1_560, viewportWidth);
   const sidePadding = 28;
-  const clientWidth = 200;
-  const cardWidth = 220;
+  const clientWidth = 220;
+  const cardWidth = 230;
   const internetWidth = 190;
   const tallestCard = Math.max(
-    estimatedCardHeight('Клиенты', 'VPN-трафик', clientWidth),
+    estimatedCardHeight('Клиенты', 'VPN-подключения', clientWidth),
     estimatedCardHeight('Интернет', 'назначение', internetWidth),
     ...layers.hosts.map((host) => estimatedCardHeight(host.name, `${host.address}:${host.port}`, cardWidth)),
-    ...layers.nodes.map((node) =>
+    ...layers.entryNodes.map((node) =>
       estimatedCardHeight(node.name, `${node.usersOnline ?? '—'} онлайн · ${node.address}`, cardWidth),
     ),
-    ...layers.targets.map((target) =>
-      estimatedCardHeight(
-        target.label,
-        `${target.routes.length} ${target.routes.length === 1 ? 'правило' : 'правил'}`,
-        cardWidth,
-      ),
-    ),
+    ...layers.exits.map((exit) => estimatedCardHeight(exit.label, exitSubtitle(exit, topology), cardWidth)),
   );
   const rowStep = Math.max(112, tallestCard + 24);
   const height = Math.max(
     520,
-    Math.max(layers.hosts.length, layers.nodes.length, layers.targets.length) * rowStep + 150,
+    Math.max(layers.hosts.length, layers.entryNodes.length, layers.exits.length) * rowStep + 150,
   );
   const firstCenter = sidePadding + clientWidth / 2;
   const lastCenter = graphWidth - sidePadding - internetWidth / 2;
@@ -563,7 +653,7 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
   const clientLeft = columnCenters[0] - clientWidth / 2;
   const hostLeft = columnCenters[1] - cardWidth / 2;
   const nodeLeft = columnCenters[2] - cardWidth / 2;
-  const targetLeft = columnCenters[3] - cardWidth / 2;
+  const exitLeft = columnCenters[3] - cardWidth / 2;
   const internetLeft = columnCenters[4] - internetWidth / 2;
   const hostPoints = new Map(
     layers.hosts.map((item, index) => [
@@ -572,31 +662,30 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
     ]),
   );
   const nodePoints = new Map(
-    layers.nodes.map((item, index) => [
+    layers.entryNodes.map((item, index) => [
       item.id,
-      { x: nodeLeft, y: yFor(index, layers.nodes.length, height) },
+      { x: nodeLeft, y: yFor(index, layers.entryNodes.length, height) },
     ]),
   );
-  const targetPoints = new Map(
-    layers.targets.map((item, index) => [
+  const exitPoints = new Map(
+    layers.exits.map((item, index) => [
       item.id,
-      { x: targetLeft, y: yFor(index, layers.targets.length, height) },
+      { x: exitLeft, y: yFor(index, layers.exits.length, height) },
     ]),
   );
   const client = { x: clientLeft + clientWidth, y: height / 2 };
   const internet = { x: internetLeft, y: height / 2 };
-  const internetHighlighted = hovered
-    ? layers.targets.some(
-        (target) => target.kind === 'internet' && targetIsInSelection(hovered, target, layers.hosts),
-      )
-    : false;
+  const hoverContext = hovered ? contextForSelection(hovered, topology, exits) : null;
 
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-heading text-[15px] font-bold">Как идёт трафик</h2>
-          <p className="mt-1 max-w-[760px] text-[12px] leading-5 text-text-3">{topology.note}</p>
+          <p className="mt-1 max-w-[820px] text-[12px] leading-5 text-text-3">
+            Карта показывает реальные хосты и ноды. Если outbound передаёт трафик на другую ноду, она показана
+            как выходная нода. Технические имена outbound видны внутри выбранного пути.
+          </p>
         </div>
         <div className="flex gap-3 text-[11px] text-text-3">
           <span className="inline-flex items-center gap-1.5">
@@ -615,10 +704,10 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
       </div>
       <div ref={graphFrameRef} className="overflow-x-auto rounded-2xl border border-border bg-surface-2/30">
         <div className="relative" style={{ height, width: graphWidth }}>
-          {['Клиенты', 'Хосты', 'Ноды', 'Маршруты', 'Назначение'].map((label, index) => (
+          {['Клиенты', 'Хосты', 'Входные ноды', 'Выход', 'Назначение'].map((label, index) => (
             <span
               key={label}
-              className="absolute top-4 w-[180px] -translate-x-1/2 text-center text-[10px] font-semibold tracking-[0.08em] text-text-3 uppercase"
+              className="absolute top-4 w-[190px] -translate-x-1/2 text-center text-[10px] font-semibold tracking-[0.08em] text-text-3 uppercase"
               style={{ left: columnCenters[index] }}
             >
               {label}
@@ -627,15 +716,15 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
           <svg className="absolute inset-0 size-full" aria-hidden="true">
             {layers.hosts.map((host) => {
               const point = hostPoints.get(host.id) as Point;
-              const active = hovered ? hostIsInSelection(hovered, host, layers.targets) : false;
+              const active = hoverContext?.hostIds.has(host.id) ?? false;
               return (
                 <Edge
                   key={`client:${host.id}`}
                   from={client}
-                  to={{ x: point.x, y: point.y }}
+                  to={point}
                   status={host.status}
                   active={active}
-                  dimmed={hovered !== null && !active}
+                  dimmed={hoverContext !== null && !active}
                   animated={active}
                 />
               );
@@ -645,10 +734,8 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                 const from = hostPoints.get(host.id);
                 const to = nodePoints.get(nodeId);
                 if (!from || !to) return null;
-                const active = hovered
-                  ? hostIsInSelection(hovered, host, layers.targets) &&
-                    nodeIsInSelection(hovered, nodeId, layers.hosts, layers.targets)
-                  : false;
+                const active =
+                  (hoverContext?.hostIds.has(host.id) && hoverContext.nodeIds.has(nodeId)) ?? false;
                 return (
                   <Edge
                     key={`${host.id}:${nodeId}`}
@@ -656,47 +743,65 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                     to={to}
                     status={nodeStatus(topology, nodeId)}
                     active={active}
-                    dimmed={hovered !== null && !active}
+                    dimmed={hoverContext !== null && !active}
                     animated={active}
                   />
                 );
               }),
             )}
-            {layers.targets.flatMap((target) => {
-              const to = targetPoints.get(target.id);
-              if (!to) return [];
-              return sourceNodeIds(target, layers.hosts).map((nodeId) => {
-                const from = nodePoints.get(nodeId);
-                const active = hovered
-                  ? nodeIsInSelection(hovered, nodeId, layers.hosts, layers.targets) &&
-                    targetIsInSelection(hovered, target, layers.hosts)
-                  : false;
-                return from ? (
-                  <Edge
-                    key={`${nodeId}:${target.id}`}
-                    from={{ x: from.x + cardWidth, y: from.y }}
-                    to={to}
-                    status={target.status}
-                    active={active}
-                    dimmed={hovered !== null && !active}
-                    animated={active}
-                  />
-                ) : null;
+            {topology.routes.flatMap((route) => {
+              const sources = sourceNodeIds(route, layers.hosts);
+              if (route.targetKind === 'internet')
+                return sources.map((nodeId) => {
+                  const from = nodePoints.get(nodeId);
+                  if (!from) return null;
+                  const active = hoverContext?.routeIds.has(route.id) ?? false;
+                  return (
+                    <Edge
+                      key={`${route.id}:${nodeId}:internet`}
+                      from={{ x: from.x + cardWidth, y: from.y }}
+                      to={internet}
+                      status={route.status}
+                      active={active}
+                      dimmed={hoverContext !== null && !active}
+                      animated={active}
+                    />
+                  );
+                });
+              return routeExitIds(route, layers.exits).flatMap((exitId) => {
+                const to = exitPoints.get(exitId);
+                if (!to) return [];
+                return sources.map((nodeId) => {
+                  const from = nodePoints.get(nodeId);
+                  if (!from) return null;
+                  const active = hoverContext?.routeIds.has(route.id) ?? false;
+                  return (
+                    <Edge
+                      key={`${route.id}:${nodeId}:${exitId}`}
+                      from={{ x: from.x + cardWidth, y: from.y }}
+                      to={to}
+                      status={route.status}
+                      active={active}
+                      dimmed={hoverContext !== null && !active}
+                      animated={active}
+                    />
+                  );
+                });
               });
             })}
-            {layers.targets
-              .filter((target) => target.kind === 'internet')
-              .map((target) => {
-                const from = targetPoints.get(target.id) as Point;
-                const active = hovered ? targetIsInSelection(hovered, target, layers.hosts) : false;
+            {layers.exits
+              .filter((exit) => exit.routes.some(reachesInternet))
+              .map((exit) => {
+                const from = exitPoints.get(exit.id) as Point;
+                const active = hoverContext?.exitIds.has(exit.id) ?? false;
                 return (
                   <Edge
-                    key={`${target.id}:internet`}
+                    key={`${exit.id}:internet`}
                     from={{ x: from.x + cardWidth, y: from.y }}
                     to={internet}
-                    status={target.status}
+                    status={exit.status}
                     active={active}
-                    dimmed={hovered !== null && !active}
+                    dimmed={hoverContext !== null && !active}
                     animated={active}
                   />
                 );
@@ -707,16 +812,16 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
             y={client.y}
             width={clientWidth}
             title="Клиенты"
-            subtitle="VPN-трафик"
+            subtitle="VPN-подключения"
             status="ok"
             icon={UsersIcon}
             selected={false}
-            highlighted={hovered !== null}
+            highlighted={hoverContext !== null}
             onClick={() => {}}
           />
           {layers.hosts.map((host) => {
             const point = hostPoints.get(host.id) as Point;
-            const highlighted = hovered ? hostIsInSelection(hovered, host, layers.targets) : false;
+            const highlighted = hoverContext?.hostIds.has(host.id) ?? false;
             return (
               <GraphCard
                 key={host.id}
@@ -729,17 +834,15 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                 icon={NetworkIcon}
                 selected={false}
                 highlighted={highlighted}
-                dimmed={hovered !== null && !highlighted}
+                dimmed={hoverContext !== null && !highlighted}
                 onClick={() => setSelected({ kind: 'host', id: host.id })}
                 onHoverChange={(value) => setHovered(value ? { kind: 'host', id: host.id } : null)}
               />
             );
           })}
-          {layers.nodes.map((node) => {
+          {layers.entryNodes.map((node) => {
             const point = nodePoints.get(node.id) as Point;
-            const highlighted = hovered
-              ? nodeIsInSelection(hovered, node.id, layers.hosts, layers.targets)
-              : false;
+            const highlighted = hoverContext?.nodeIds.has(node.id) ?? false;
             return (
               <GraphCard
                 key={node.id}
@@ -752,30 +855,30 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
                 icon={ServerIcon}
                 selected={false}
                 highlighted={highlighted}
-                dimmed={hovered !== null && !highlighted}
+                dimmed={hoverContext !== null && !highlighted}
                 onClick={() => setSelected({ kind: 'node', id: node.id })}
                 onHoverChange={(value) => setHovered(value ? { kind: 'node', id: node.id } : null)}
               />
             );
           })}
-          {layers.targets.map((target) => {
-            const point = targetPoints.get(target.id) as Point;
-            const highlighted = hovered ? targetIsInSelection(hovered, target, layers.hosts) : false;
+          {layers.exits.map((exit) => {
+            const point = exitPoints.get(exit.id) as Point;
+            const highlighted = hoverContext?.exitIds.has(exit.id) ?? false;
             return (
               <GraphCard
-                key={target.id}
+                key={exit.id}
                 x={point.x}
                 y={point.y}
                 width={cardWidth}
-                title={target.label}
-                subtitle={`${target.routes.length} ${target.routes.length === 1 ? 'правило' : 'правил'}`}
-                status={target.status}
-                icon={target.kind === 'internet' ? CloudIcon : RouteIcon}
+                title={exit.label}
+                subtitle={exitSubtitle(exit, topology)}
+                status={exit.status}
+                icon={exit.nodeId ? ServerIcon : RouteIcon}
                 selected={false}
                 highlighted={highlighted}
-                dimmed={hovered !== null && !highlighted}
-                onClick={() => setSelected({ kind: 'target', id: target.id })}
-                onHoverChange={(value) => setHovered(value ? { kind: 'target', id: target.id } : null)}
+                dimmed={hoverContext !== null && !highlighted}
+                onClick={() => setSelected({ kind: 'exit', id: exit.id })}
+                onHoverChange={(value) => setHovered(value ? { kind: 'exit', id: exit.id } : null)}
               />
             );
           })}
@@ -788,15 +891,15 @@ export function RemnawaveTopologyMap({ topology }: { topology: RemnawaveTopology
             status="ok"
             icon={CloudIcon}
             selected={false}
-            highlighted={internetHighlighted}
-            dimmed={hovered !== null && !internetHighlighted}
+            highlighted={hoverContext?.reachesInternet ?? false}
+            dimmed={hoverContext !== null && !hoverContext.reachesInternet}
             onClick={() => {}}
           />
         </div>
       </div>
       <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
         <CircleDotIcon className="size-3.5" aria-hidden="true" />
-        Нажмите на хост, ноду или выход, чтобы открыть аккуратную схему одного пути.
+        Нажмите на хост, входную или выходную ноду, чтобы открыть один путь без лишних связей.
       </p>
     </div>
   );
