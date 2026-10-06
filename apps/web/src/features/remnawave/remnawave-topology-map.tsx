@@ -141,20 +141,30 @@ function GraphViewport({
     });
   }, []);
 
+  // React может зарегистрировать wheel-обработчик как passive в зависимости от браузера. Для полотна
+  // нужен явный non-passive listener: колесо всегда меняет масштаб и никогда не прокручивает страницу.
+  useEffect(() => {
+    const element = frameRef.current;
+    if (!element) return;
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      zoomAt(view.scale * Math.exp(-event.deltaY * 0.0015), event.clientX, event.clientY);
+    };
+    element.addEventListener('wheel', handleWheel, { passive: false });
+    return () => element.removeEventListener('wheel', handleWheel);
+  }, [view.scale, zoomAt]);
+
   return (
     <div
       ref={frameRef}
       data-testid="topology-viewport"
       className={cn(
-        'relative isolate overflow-hidden rounded-2xl border border-border bg-surface-2/30 select-none',
+        'relative isolate overflow-hidden overscroll-contain rounded-2xl border border-border bg-surface-2/30 select-none',
         compact ? 'h-[430px] max-md:h-[360px]' : 'h-[clamp(520px,68dvh,760px)] max-md:h-[62dvh]',
         dragging ? 'cursor-grabbing' : 'cursor-grab',
       )}
       style={{ touchAction: 'none' }}
-      onWheel={(event) => {
-        event.preventDefault();
-        zoomAt(view.scale * Math.exp(-event.deltaY * 0.0015), event.clientX, event.clientY);
-      }}
       onPointerDown={(event) => {
         if ((event.target as HTMLElement).closest('button')) return;
         dragRef.current = {

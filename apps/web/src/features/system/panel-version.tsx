@@ -31,18 +31,43 @@ function ruDate(value: string | null | undefined): string | null {
   );
 }
 
-export function PanelVersion({ version, build }: { version: string; build: string }) {
+function ruBuildDate(value: string | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    ...(value.includes('T') ? { hour: '2-digit', minute: '2-digit' } : {}),
+  }).format(date);
+}
+
+export function PanelVersion({
+  version,
+  commit,
+  builtAt,
+}: {
+  version: string;
+  commit?: string;
+  builtAt?: string;
+}) {
   const release = usePanelRelease();
   const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'update' | 'commit' | null>(null);
   const available = release.data?.status === 'available' && release.data.latestVersion;
   const shownVersion = version === 'dev' ? (release.data?.currentVersion ?? version) : version;
   const lines = releaseLines(release.data?.release?.notes);
+  const buildDate = ruBuildDate(builtAt);
+  const shortCommit = commit && commit.length > 10 ? commit.slice(0, 7) : commit;
+  const buildSummary = [shortCommit ? `сборка ${shortCommit}` : null, buildDate ? `от ${buildDate}` : null]
+    .filter(Boolean)
+    .join(' ');
 
-  const copy = async () => {
-    await navigator.clipboard?.writeText(UPDATE_COMMAND);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1_500);
+  const copy = async (kind: 'update' | 'commit', value: string) => {
+    await navigator.clipboard?.writeText(value);
+    setCopied(kind);
+    window.setTimeout(() => setCopied(null), 1_500);
   };
 
   return (
@@ -54,7 +79,7 @@ export function PanelVersion({ version, build }: { version: string; build: strin
         title={
           available
             ? `Установлена v${shownVersion} · доступна v${available}`
-            : `NodeService v${shownVersion}${build ? ` · ${build}` : ''}`
+            : `NodeService v${shownVersion}${buildSummary ? ` · ${buildSummary}` : ''}`
         }
         className={cn(
           'inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-[10px] border px-2.5 font-mono text-[11px] font-semibold transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
@@ -75,7 +100,7 @@ export function PanelVersion({ version, build }: { version: string; build: strin
 
       <DialogContent
         className={cn(
-          'grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-2xl border-border bg-surface p-0 max-md:max-w-[calc(100%-16px)] sm:max-w-[520px]',
+          'grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-2xl border-border bg-surface p-0 max-md:max-w-[calc(100%-16px)] sm:max-w-[620px]',
           available
             ? 'h-[620px] max-h-[calc(100dvh-40px)] max-md:h-[calc(100dvh-24px)] max-md:max-h-none'
             : 'max-h-[calc(100dvh-40px)] max-md:max-h-[calc(100dvh-16px-env(safe-area-inset-top)-env(safe-area-inset-bottom))]',
@@ -98,7 +123,7 @@ export function PanelVersion({ version, build }: { version: string; build: strin
               <div className="mt-1.5 font-mono text-[17px] font-semibold text-foreground">
                 v{shownVersion}
               </div>
-              {build && <div className="mt-1 text-[11.5px] text-text-3">{build}</div>}
+              {buildDate && <div className="mt-1 text-[11.5px] text-text-3">Собрана {buildDate}</div>}
             </div>
             <div
               className={cn(
@@ -119,6 +144,30 @@ export function PanelVersion({ version, build }: { version: string; build: strin
               )}
             </div>
           </div>
+
+          {commit && (
+            <div className="mt-2 flex min-w-0 items-center gap-3 rounded-xl border border-border bg-surface-2/50 px-3.5 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-[10.5px] font-semibold tracking-[0.08em] text-text-3 uppercase">
+                  Сборка
+                </div>
+                <code className="mt-1 block break-all font-mono text-[11.5px] leading-relaxed text-text-2">
+                  {commit}
+                </code>
+              </div>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                className="flex-none"
+                title="Скопировать хэш сборки"
+                aria-label="Скопировать хэш сборки"
+                onClick={() => void copy('commit', commit)}
+              >
+                {copied === 'commit' ? <CheckIcon /> : <CopyIcon />}
+              </Button>
+            </div>
+          )}
 
           {available ? (
             <div className="mt-4">
@@ -142,9 +191,14 @@ export function PanelVersion({ version, build }: { version: string; build: strin
                   <code className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-foreground">
                     {UPDATE_COMMAND}
                   </code>
-                  <Button type="button" size="sm" variant="outline" onClick={() => void copy()}>
-                    {copied ? <CheckIcon /> : <CopyIcon />}
-                    {copied ? 'Скопировано' : 'Копировать'}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void copy('update', UPDATE_COMMAND)}
+                  >
+                    {copied === 'update' ? <CheckIcon /> : <CopyIcon />}
+                    {copied === 'update' ? 'Скопировано' : 'Копировать'}
                   </Button>
                 </div>
               </div>

@@ -11,7 +11,7 @@ const pkg = JSON.parse(readFileSync(path.resolve(import.meta.dirname, 'package.j
   version: string;
 };
 
-/** Короткий хэш коммита: в Docker приходит build-arg (в контексте сборки нет .git), локально — из git. */
+/** Хэш коммита: в Docker приходит полный build-arg (в контексте сборки нет .git), локально — короткий из git. */
 function commit(): string {
   if (process.env.APP_COMMIT) return process.env.APP_COMMIT;
   try {

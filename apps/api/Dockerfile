@@ -19,9 +19,15 @@ COPY . .
 # Хэш коммита и дата сборки попадают в подсказку у версии панели (в контексте сборки нет .git).
 ARG APP_COMMIT=dev
 ARG APP_BUILT_AT=
+ARG USE_PREBUILT=false
 ENV APP_COMMIT=$APP_COMMIT APP_BUILT_AT=$APP_BUILT_AT
-# Сначала общий пакет: web и api импортируют его из dist (в git и в контекст сборки dist не попадает).
-RUN pnpm --filter @nodeservice/shared build && pnpm --filter web build && pnpm --filter api build \
+# Обычная локальная сборка сама создаёт dist. Release CI уже проверил и собрал dist один раз, поэтому
+# multi-arch образ использует готовый результат и не повторяет Vite/TypeScript под медленным QEMU.
+RUN if [ "$USE_PREBUILT" = "true" ]; then \
+      test -f packages/shared/dist/index.js && test -f apps/web/dist/index.html && test -f apps/api/dist/main.js; \
+    else \
+      pnpm --filter @nodeservice/shared build && pnpm --filter web build && pnpm --filter api build; \
+    fi \
  && pnpm --filter api deploy --legacy --prod /out/api \
  && cp -r apps/api/dist /out/api/dist \
  && cp -r apps/api/drizzle /out/api/drizzle \

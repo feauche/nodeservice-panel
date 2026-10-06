@@ -126,6 +126,13 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
     unlink.isPending ||
     diagnostics.isPending;
   const closeLocked = uninstall.isPending || unlink.isPending;
+  const shownAgentVersion = server.agentVersion
+    ? server.agentVersion.startsWith('v')
+      ? server.agentVersion
+      : `v${server.agentVersion}`
+    : null;
+  const managementActionClass =
+    'h-[76px] min-w-0 justify-start rounded-[11px] border-border bg-surface-2 px-3.5 py-3 text-left whitespace-normal';
 
   return (
     <>
@@ -141,7 +148,7 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
             </DialogTitle>
             <DialogDescription className="text-[12.5px] text-text-2">
               {installed && !installMode
-                ? `Агент ${server.agentVersion ? `v${server.agentVersion}` : 'установлен'} · ${server.agentStatus === 'online' ? 'сейчас на связи' : 'сейчас не отвечает'}.`
+                ? `Агент ${shownAgentVersion ?? 'установлен'} · ${server.agentStatus === 'online' ? 'сейчас на связи' : 'сейчас не отвечает'}.`
                 : 'Панель может установить агент по SSH. Ручная команда остаётся запасным путём; её токен одноразовый и живёт 24 часа.'}
             </DialogDescription>
           </DialogHeader>
@@ -161,7 +168,7 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
                 type="button"
                 variant="outline"
                 disabled={pending}
-                className="h-auto min-w-0 justify-start rounded-[11px] border-border bg-surface-2 px-3.5 py-3 text-left whitespace-normal"
+                className={managementActionClass}
                 onClick={() => void doUpdate()}
               >
                 <RefreshCwIcon className="size-4 flex-none" aria-hidden="true" />
@@ -176,7 +183,7 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
                 type="button"
                 variant="outline"
                 disabled={pending}
-                className="h-auto min-w-0 justify-start rounded-[11px] border-border bg-surface-2 px-3.5 py-3 text-left whitespace-normal"
+                className={managementActionClass}
                 onClick={() => {
                   setCommand(null);
                   setError(null);
@@ -195,7 +202,7 @@ export function AgentInstallDialog({ server, open, onOpenChange }: Props) {
                 type="button"
                 variant="outline"
                 disabled={pending}
-                className="h-auto min-w-0 justify-start rounded-[11px] border-border bg-surface-2 px-3.5 py-3 text-left whitespace-normal sm:col-span-2"
+                className={`${managementActionClass} sm:col-span-2`}
                 onClick={() => diagnostics.mutate(server.id)}
               >
                 {diagnostics.isPending ? (

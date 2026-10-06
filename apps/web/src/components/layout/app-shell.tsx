@@ -76,12 +76,8 @@ const NAV_AUTOMATION = [
 ] as const;
 /** Версия панели из сборки; в тестах и dev без define — «dev». */
 const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
-const APP_BUILD = [
-  typeof __APP_COMMIT__ === 'string' ? `сборка ${__APP_COMMIT__}` : null,
-  typeof __APP_BUILT_AT__ === 'string' ? `от ${__APP_BUILT_AT__.split('-').reverse().join('.')}` : null,
-]
-  .filter(Boolean)
-  .join(' ');
+const APP_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : undefined;
+const APP_BUILT_AT = typeof __APP_BUILT_AT__ === 'string' ? __APP_BUILT_AT__ : undefined;
 
 /** Нижняя группа меню — служебное: Журнал внизу, рядом с «Свернуть меню». */
 const NAV_BOTTOM = [{ to: '/audit', label: 'Журнал', icon: ListIcon }] as const;
@@ -783,7 +779,7 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
             </>
           )}
           <div className="flex-1" />
-          <PanelVersion version={APP_VERSION} build={APP_BUILD} />
+          <PanelVersion version={APP_VERSION} commit={APP_COMMIT} builtAt={APP_BUILT_AT} />
           <ThemeMenu />
           <UserMenu />
         </header>

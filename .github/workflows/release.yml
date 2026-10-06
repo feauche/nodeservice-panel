@@ -58,7 +58,14 @@ jobs:
       - name: Зависимости
         run: pnpm install --frozen-lockfile
 
+      - name: Подготовить метаданные образа
+        id: image_meta
+        run: echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Полная проверка
+        env:
+          APP_COMMIT: ${{ github.sha }}
+          APP_BUILT_AT: ${{ steps.image_meta.outputs.built_at }}
         run: |
           pnpm lint
           pnpm typecheck
@@ -80,10 +87,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Подготовить метаданные образа
-        id: image_meta
-        run: echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-
       - name: Собрать и опубликовать проверенный образ
         id: image
         uses: docker/build-push-action@v6
@@ -94,6 +97,8 @@ jobs:
           push: true
           provenance: mode=max
           sbom: true
+          cache-from: type=gha,scope=release-api
+          cache-to: type=gha,mode=max,scope=release-api
           tags: |
             ghcr.io/feauche/nodeservice-api:${{ github.ref_name }}
             ghcr.io/feauche/nodeservice-api:latest
@@ -101,6 +106,7 @@ jobs:
             APP_COMMIT=${{ github.sha }}
             APP_BUILT_AT=${{ steps.image_meta.outputs.built_at }}
             APP_VERSION=${{ github.ref_name }}
+            USE_PREBUILT=true
 
       - name: Записать проверяемый digest образа
         run: |

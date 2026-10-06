@@ -1,5 +1,5 @@
 import type { RemnawaveTopology } from '@nodeservice/shared';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
@@ -107,6 +107,16 @@ describe('RemnawaveTopologyMap', () => {
     expect(screen.getByRole('button', { name: 'Показать весь граф' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Уменьшить граф' }));
     expect(screen.getByText('83%')).toBeInTheDocument();
+  });
+
+  it('колесо над графом меняет масштаб и не прокручивает страницу', () => {
+    render(<RemnawaveTopologyMap topology={topology} />);
+    const viewport = screen.getByTestId('topology-viewport');
+    const wheel = new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true });
+
+    act(() => viewport.dispatchEvent(wheel));
+
+    expect(wheel.defaultPrevented).toBe(true);
   });
 
   it('при наведении на хост выделяет только его собственную цепочку общего профиля', async () => {

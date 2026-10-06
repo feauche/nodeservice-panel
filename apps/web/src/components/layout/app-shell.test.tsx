@@ -1,10 +1,11 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store';
 import { resetNavigationLayout, setNavigationLayout } from '@/features/settings/navigation-layout';
+import { PanelVersion } from '@/features/system/panel-version';
 import { mockCustomSites, mockMe, resetMockState } from '@/test/msw/handlers';
 import { server } from '@/test/msw/server';
 import { renderPage } from '@/test/render';
@@ -15,6 +16,16 @@ function Page() {
     <AppShell title="Обзор">
       <div>содержимое</div>
     </AppShell>
+  );
+}
+
+function VersionDetailsPage() {
+  return (
+    <PanelVersion
+      version="0.66.1"
+      commit="2a036bb5c716b404edc2b4a8f665f5be1074f2e"
+      builtAt="2026-10-06T05:57:50Z"
+    />
   );
 }
 
@@ -199,6 +210,19 @@ describe('AppShell · меню пользователя', () => {
     expect(dialog).toHaveTextContent('Установлена последняя стабильная версия.');
     expect(dialog).not.toHaveClass('h-[620px]');
     expect(dialog).toHaveClass('max-h-[calc(100dvh-40px)]');
+    expect(dialog).toHaveClass('sm:max-w-[620px]');
+  });
+
+  it('полный хэш сборки переносится отдельно, копируется и не ломает дату', async () => {
+    renderPage(VersionDetailsPage, '/');
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId('panel-version'));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Версия NodeService' });
+    const buildHash = within(dialog).getByText(/^[0-9a-f]{7,40}$/i);
+    expect(buildHash).toHaveClass('break-all');
+    expect(within(dialog).getByRole('button', { name: 'Скопировать хэш сборки' })).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent(/T\d{2}:\d{2}:\d{2}Z\.\d{2}\./);
   });
 
   it('мобильная шапка имеет сплошной фон без отдельного композиционного слоя', async () => {

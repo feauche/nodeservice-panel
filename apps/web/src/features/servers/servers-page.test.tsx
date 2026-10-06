@@ -549,6 +549,13 @@ describe('ServersPage', () => {
     // Установленный агент сначала открывает безопасное управление, а не сразу выпускает новый токен.
     await user.click(await screen.findByRole('menuitem', { name: 'Управление агентом' }));
     let dialog = await screen.findByRole('dialog', { name: 'Управление агентом' });
+    const managementActions = [
+      within(dialog).getByRole('button', { name: /Обновить агент/ }),
+      within(dialog).getByRole('button', { name: /Переустановить/ }),
+      within(dialog).getByRole('button', { name: /Проверить установку/ }),
+    ];
+    for (const action of managementActions) expect(action).toHaveClass('h-[76px]');
+    expect(dialog).not.toHaveTextContent('Агент vv');
     await user.click(within(dialog).getByRole('button', { name: /Проверить установку/ }));
     expect(await within(dialog).findByText('Установка в порядке')).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: /Переустановить/ }));
