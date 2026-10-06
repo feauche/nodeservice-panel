@@ -969,9 +969,11 @@ export class TelegramService {
     file: { path: string; name: string },
     caption: string,
     replyTo: number | null = null,
+    silent = false,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const fields: Record<string, string> = { chat_id: d.chatId, caption, parse_mode: 'HTML' };
     if (d.topic !== null) fields.message_thread_id = String(d.topic);
+    if (silent) fields.disable_notification = 'true';
     if (replyTo !== null)
       fields.reply_parameters = JSON.stringify({ message_id: replyTo, allow_sending_without_reply: true });
     const call = (chatId: string) =>

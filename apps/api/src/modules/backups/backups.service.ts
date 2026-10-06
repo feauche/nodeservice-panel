@@ -714,16 +714,17 @@ export class BackupsService implements OnModuleInit {
           encrypted,
           ...(split && mergeCommand ? { parts: partsPlan.length, mergeCommand } : {}),
         }),
+        true,
       );
       if (!summary.ok) return { ok: false, note: `сообщение: ${summary.error.slice(0, 170)}` };
       replyTo = summary.messageId;
     } else if (split) {
-      const summary = await this.telegram.sendTo(d, deliveryCaption);
+      const summary = await this.telegram.sendTo(d, deliveryCaption, true);
       if (!summary.ok) return { ok: false, note: `сообщение: ${summary.error.slice(0, 170)}` };
     }
     if (!split) {
       const fileCaption = replyTo === null ? caption : '📎 <b>Архив резервной копии</b>';
-      const res = await this.telegram.sendFileTo(d, { path, name }, fileCaption, replyTo);
+      const res = await this.telegram.sendFileTo(d, { path, name }, fileCaption, replyTo, true);
       return res.ok ? { ok: true, note: null, parts: 1 } : { ok: false, note: res.error.slice(0, 200) };
     }
 
@@ -742,6 +743,7 @@ export class BackupsService implements OnModuleInit {
           { path: partPath, name: part.name },
           partCaption,
           replyTo,
+          true,
         );
         // Не держим на диске ещё одну полную копию: после отправки освобождаем каждую часть сразу.
         await rm(partPath, { force: true }).catch(() => undefined);
@@ -754,6 +756,7 @@ export class BackupsService implements OnModuleInit {
       await this.telegram.sendTo(
         d,
         `✅ <b>Все части резервной копии отправлены</b>\n\nОбъединить после скачивания:\n<code>${esc(mergeCommand ?? '')}</code>`,
+        true,
       );
       return { ok: true, note: null, parts: partsPlan.length };
     } catch (err) {
