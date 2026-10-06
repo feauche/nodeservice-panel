@@ -1,4 +1,9 @@
-import type { AgentStatus, OverviewServerMetrics, Server } from '@nodeservice/shared';
+import type {
+  AgentStatus,
+  OverviewServerMetrics,
+  RemnawaveServerReadiness,
+  Server,
+} from '@nodeservice/shared';
 import { formatPct } from '@/features/overview/overview-format';
 
 /** Одно слово о сервере для точки статуса, фильтра и цвета спарклайна. */
@@ -35,7 +40,7 @@ export interface ServerState {
    * О чём причина: связь (агент и SSH), нода или нагрузка. По этому «Обзор» не показывает одно и то же
    * дважды — строкой сервера и делом.
    */
-  about: 'link' | 'node' | 'load' | null;
+  about: 'link' | 'node' | 'vpn' | 'load' | null;
 }
 
 type SilentAgent = Exclude<AgentStatus, 'online'>;
@@ -79,7 +84,11 @@ export function nodeProblem(server: Server): string | null {
  * нода — тоже сбой: сервер отвечает, но клиентов не обслуживает. Про недоступный сервер ноду не называем:
  * что с ней сейчас, панель не видит.
  */
-export function serverState(server: Server, metrics?: OverviewServerMetrics | null): ServerState {
+export function serverState(
+  server: Server,
+  metrics?: OverviewServerMetrics | null,
+  readiness?: RemnawaveServerReadiness | null,
+): ServerState {
   const agent = server.agentStatus;
   const sshFailed = server.sshOk === false;
   if (agent !== 'online' && sshFailed)
@@ -89,6 +98,10 @@ export function serverState(server: Server, metrics?: OverviewServerMetrics | nu
   if (sshFailed) return { health: 'warn', about: 'link', reason: 'SSH не пускает' };
   if (agent !== 'online') return { health: 'warn', about: 'link', reason: AGENT_REASON[agent] };
   if (server.sshOk === null) return { health: 'warn', about: 'link', reason: 'SSH не проверен' };
+  const vpn = readiness?.items.find((item) => item.key === 'vpn');
+  if (vpn?.status === 'error') return { health: 'crit', about: 'vpn', reason: 'Настоящий VPN не работает' };
+  if (vpn?.status === 'warning')
+    return { health: 'warn', about: 'vpn', reason: 'Настоящий VPN работает нестабильно' };
   if (metrics) {
     if ((metrics.cpuPct ?? 0) >= CPU_WARN_PCT)
       return { health: 'warn', about: 'load', reason: `CPU ${formatPct(metrics.cpuPct)}%` };
@@ -101,6 +114,10 @@ export function serverState(server: Server, metrics?: OverviewServerMetrics | nu
 }
 
 /** Только уровень — для точки, фильтра и подсчётов. */
-export function serverHealth(server: Server, metrics?: OverviewServerMetrics | null): ServerHealth {
-  return serverState(server, metrics).health;
+export function serverHealth(
+  server: Server,
+  metrics?: OverviewServerMetrics | null,
+  readiness?: RemnawaveServerReadiness | null,
+): ServerHealth {
+  return serverState(server, metrics, readiness).health;
 }

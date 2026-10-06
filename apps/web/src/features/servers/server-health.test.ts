@@ -159,6 +159,29 @@ describe('serverHealth', () => {
     expect(serverHealth(base)).toBe('ok');
   });
 
+  it('учитывает настоящую VPN-пробу после связи, ноды и SSH', () => {
+    const readiness = {
+      serverId: base.id,
+      serverName: base.name,
+      status: 'error' as const,
+      items: [
+        {
+          key: 'vpn' as const,
+          label: 'Настоящий VPN',
+          status: 'error' as const,
+          detail: '0 из 4 точек.',
+          checkedAt: '2026-10-06T12:00:00.000Z',
+        },
+      ],
+    };
+    expect(serverState(base, null, readiness)).toEqual({
+      health: 'crit',
+      about: 'vpn',
+      reason: 'Настоящий VPN не работает',
+    });
+    expect(serverState({ ...base, sshOk: false }, null, readiness).reason).toBe('SSH не пускает');
+  });
+
   it('подписи уровней не называют сервер выключенным: что он «офлайн», панель не знает', () => {
     for (const label of Object.values(HEALTH_LABELS)) expect(label).not.toMatch(/офлайн/i);
     expect(HEALTH_LABELS.crit).toBe('Сбой');

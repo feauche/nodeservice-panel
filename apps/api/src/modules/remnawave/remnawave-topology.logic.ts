@@ -680,6 +680,7 @@ export function buildRemnawaveTopology(
               host.nodeUuids.length && route && (route.targetKind !== 'node' || exitNodeUuid)
                 ? route.confidence
                 : 'unknown',
+            diagnostics: null,
             segments: [
               segment('client_host', 'client', host.id, host.status),
               segment(
@@ -728,6 +729,7 @@ export function buildRemnawaveTopology(
     readiness: [],
     profiles,
     issues,
+    configSnapshot: null,
     summary: {
       hosts: hosts.length,
       nodes: nodes.length,

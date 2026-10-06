@@ -152,6 +152,9 @@ describe('Remnawave e2e (J4)', () => {
       stats: null,
       nodes: [],
       cert: null,
+      vpnProbeConfigured: false,
+      vpnProbeRoutes: null,
+      vpnProbeRouteDetails: [],
     });
   });
 

@@ -53,6 +53,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useOverviewMetrics } from '@/features/overview/overview-api';
+import { useRemnawaveStatus, useRemnawaveTopology } from '@/features/remnawave/remnawave-api';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -84,6 +85,8 @@ const HEALTH_FILTERS: Array<{ key: HealthFilter; label: string }> = [
 export function ServersPage({ tag, onTag }: ServersPageProps) {
   const servers = useServers();
   const overview = useOverviewMetrics();
+  const remnawave = useRemnawaveStatus();
+  const topology = useRemnawaveTopology(remnawave.data?.connected === true);
   const [q, setQ] = useState('');
   const [health, setHealth] = useState<HealthFilter>('all');
   /** Выбранные страны фильтра (коды) и особое значение «без страны». */
@@ -145,12 +148,16 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
     () => new Map((overview.data?.servers ?? []).map((m) => [m.serverId, m])),
     [overview.data],
   );
-  const healthOf = (s: Server) => serverHealth(s, metricsById.get(s.id));
+  const readinessById = useMemo(
+    () => new Map((topology.data?.readiness ?? []).map((item) => [item.serverId, item])),
+    [topology.data?.readiness],
+  );
+  const healthOf = (s: Server) => serverHealth(s, metricsById.get(s.id), readinessById.get(s.id));
   const counts = useMemo(() => {
     const c: Record<HealthFilter, number> = { all: items.length, ok: 0, warn: 0, crit: 0 };
-    for (const s of items) c[serverHealth(s, metricsById.get(s.id))] += 1;
+    for (const s of items) c[serverHealth(s, metricsById.get(s.id), readinessById.get(s.id))] += 1;
     return c;
-  }, [items, metricsById]);
+  }, [items, metricsById, readinessById]);
   const filtered = visual.filter((s) => {
     if (health !== 'all' && healthOf(s) !== health) return false;
     if (selectedTags.length > 0 && !selectedTags.every((t) => s.tags.includes(t))) return false;
@@ -519,7 +526,14 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
         </p>
       )}
       {view === 'list' ? (
-        filtered.length > 0 && <ServerList servers={filtered} metricsById={metricsById} onOpen={openDetail} />
+        filtered.length > 0 && (
+          <ServerList
+            servers={filtered}
+            metricsById={metricsById}
+            readinessById={readinessById}
+            onOpen={openDetail}
+          />
+        )
       ) : (
         <DndContext
           sensors={sensors}
@@ -540,6 +554,7 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
                   key={s.id}
                   server={s}
                   metrics={metricsById.get(s.id) ?? null}
+                  readiness={readinessById.get(s.id) ?? null}
                   onOpen={openDetail}
                   onEdit={openEdit}
                 />
@@ -551,7 +566,11 @@ export function ServersPage({ tag, onTag }: ServersPageProps) {
               ? (() => {
                   const active = items.find((s) => s.id === activeId);
                   return active ? (
-                    <ServerCardGhost server={active} metrics={metricsById.get(active.id) ?? null} />
+                    <ServerCardGhost
+                      server={active}
+                      metrics={metricsById.get(active.id) ?? null}
+                      readiness={readinessById.get(active.id) ?? null}
+                    />
                   ) : null;
                 })()
               : null}

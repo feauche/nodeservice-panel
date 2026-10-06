@@ -379,6 +379,13 @@
       "when": 1791172800000,
       "tag": "0056_provider_archive",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1791266400000,
+      "tag": "0057_remnawave_config_snapshots",
+      "breakpoints": true
     }
   ]
 }

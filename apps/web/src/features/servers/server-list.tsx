@@ -1,4 +1,4 @@
-import type { OverviewServerMetrics, Server } from '@nodeservice/shared';
+import type { OverviewServerMetrics, RemnawaveServerReadiness, Server } from '@nodeservice/shared';
 import { ChevronRightIcon } from 'lucide-react';
 import { useState } from 'react';
 import { formatPct } from '@/features/overview/overview-format';
@@ -63,10 +63,12 @@ function Pct({ value, warn, offline }: { value: number | null | undefined; warn:
 export function ServerList({
   servers,
   metricsById,
+  readinessById,
   onOpen,
 }: {
   servers: Server[];
   metricsById: Map<string, OverviewServerMetrics>;
+  readinessById?: Map<string, RemnawaveServerReadiness>;
   onOpen: (server: Server) => void;
 }) {
   const providers = useProviders();
@@ -96,7 +98,7 @@ export function ServerList({
           const m = metricsById.get(s.id) ?? null;
           // Что не так — из того же правила, что цвет точки: колонка «Состояние» не спорит с точкой,
           // и остановленная нода видна здесь так же, как пилюлей на карточке.
-          const { health, reason: problem } = serverState(s, m);
+          const { health, reason: problem } = serverState(s, m, readinessById?.get(s.id));
           // Метрики шлёт агент: нет его на связи — цифр нет. SSH и нода их не гасят.
           const offline = s.agentStatus !== 'online';
           const agentVersion = s.agentVersion

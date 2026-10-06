@@ -81,6 +81,22 @@ function inboundProtocol(
       : null;
 }
 
+type ProbeNetworkType = 'residential' | 'mobile' | 'datacenter' | 'unknown';
+
+function probeNetworkType(server: Pick<Server, 'tags' | 'providerId'>): ProbeNetworkType {
+  const tags = new Set((server.tags ?? []).map((tag) => tag.toLowerCase()));
+  if ([...tags].some((tag) => /^(?:lte|mobile|cellular|мобильн)/u.test(tag))) return 'mobile';
+  if ([...tags].some((tag) => /^(?:home|residential|домашн)/u.test(tag))) return 'residential';
+  if (server.providerId || [...tags].some((tag) => /^(?:dc|vps|datacenter|датацентр)/u.test(tag)))
+    return 'datacenter';
+  return 'unknown';
+}
+
+function probeNetworkIdentity(server: Pick<Server, 'id' | 'tags' | 'providerId'>): string {
+  const asn = (server.tags ?? []).find((tag) => /^asn?\d{2,10}$/i.test(tag));
+  return asn?.toLowerCase() ?? server.providerId ?? server.id;
+}
+
 /** Проверка «из каждой страны»: что увидели и — если не увидел никто — почему. */
 export interface CountryReachResult {
   results: CountryReach[];
@@ -242,8 +258,12 @@ export class NodeBlockCheckService {
     );
     const ru = eligible
       .filter((server) => server.country.code === 'RU')
-      .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
-      .slice(0, 2);
+      .sort((a, b) => {
+        const rank = (server: Server) =>
+          probeNetworkType(server) === 'residential' || probeNetworkType(server) === 'mobile' ? 0 : 1;
+        return rank(a) - rank(b) || a.name.localeCompare(b.name, 'ru');
+      })
+      .slice(0, 3);
     const foreign = eligible
       .filter((server) => server.country.code !== 'RU')
       .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
@@ -269,10 +289,23 @@ export class NodeBlockCheckService {
     const networkFailure = (probe: VpnProbeResult) =>
       !probe.ok && (probe.stage === 'connect' || probe.stage === 'download');
     const probeErrors = [...vpnProbes, ...vpnForeign].filter((probe) => !probe.ok && !networkFailure(probe));
+    const consumer = ru
+      .map((server, index) => ({ server, probe: vpnProbes[index] }))
+      .filter(
+        ({ server, probe }) =>
+          probe && (probeNetworkType(server) === 'residential' || probeNetworkType(server) === 'mobile'),
+      );
+    const consumerNetworks = new Set(consumer.map(({ server }) => probeNetworkIdentity(server)));
+    const enoughConsumerNetworks = consumerNetworks.size >= 2;
     let vpnVerdict: VpnProbeVerdict;
-    if (ruOk) vpnVerdict = vpnProbes.every((probe) => probe.ok) ? 'ok' : 'mixed';
-    else if (enoughGeography && vpnProbes.every(networkFailure) && vpnForeign.every((probe) => probe.ok))
+    if (
+      enoughGeography &&
+      enoughConsumerNetworks &&
+      consumer.every(({ probe }) => probe && networkFailure(probe)) &&
+      vpnForeign.every((probe) => probe.ok)
+    )
       vpnVerdict = 'regional_block';
+    else if (ruOk) vpnVerdict = vpnProbes.every((probe) => probe.ok) ? 'ok' : 'mixed';
     else if (enoughGeography && [...vpnProbes, ...vpnForeign].every(networkFailure))
       vpnVerdict = 'failed_everywhere';
     else vpnVerdict = 'mixed';
@@ -286,11 +319,13 @@ export class NodeBlockCheckService {
           ? `Часть настоящих VPN-проб не состоялась на проверяющих серверах: ${probeErrors
               .map((probe) => probe.from)
               .join(', ')}.`
-          : vpnProbes.length < 2
-            ? `Для уверенного вывода нужны два российских сервера с агентом v${minimumAgentVersion}+.`
-            : vpnForeign.length < 2
-              ? `Для уверенного вывода нужны две зарубежные страны с агентом v${minimumAgentVersion}+.`
-              : null,
+          : !enoughConsumerNetworks
+            ? 'Для уверенного вывода о ТСПУ нужны две независимые домашние или мобильные сети РФ. Пометьте проверяющие серверы тегами home/residential или mobile/lte и, при возможности, ASN в виде as12345.'
+            : vpnProbes.length < 2
+              ? `Для уверенного вывода нужны два российских сервера с агентом v${minimumAgentVersion}+.`
+              : vpnForeign.length < 2
+                ? `Для уверенного вывода нужны две зарубежные страны с агентом v${minimumAgentVersion}+.`
+                : null,
     };
   }
 

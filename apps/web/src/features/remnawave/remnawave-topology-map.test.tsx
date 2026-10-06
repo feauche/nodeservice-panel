@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { RemnawaveTopologyMap } from './remnawave-topology-map';
 
 const topology: RemnawaveTopology = {
+  configSnapshot: null,
   paths: [],
   readiness: [],
   generatedAt: '2026-10-05T12:00:00.000Z',
@@ -129,5 +130,75 @@ describe('RemnawaveTopologyMap', () => {
     expect(screen.getByRole('button', { name: /Хост A/ })).not.toHaveClass('opacity-25');
     expect(screen.getByRole('button', { name: /Хост B/ })).toHaveClass('opacity-25');
     expect(screen.getByRole('button', { name: /Нода B/ })).toHaveClass('opacity-25');
+  });
+
+  it('в выбранном пути показывает настоящие VPN-пробы и безопасное изменение конфигурации', async () => {
+    const detailed = structuredClone(topology);
+    detailed.paths = [
+      {
+        id: 'path-a',
+        hostId: 'host-a',
+        inboundTag: 'VLESS_IN',
+        entryNodeUuid: 'node-a',
+        routeId: 'shared-profile:default',
+        outboundTag: 'SERVICE',
+        exitNodeUuid: null,
+        destination: 'service',
+        status: 'warning',
+        confidence: 'confirmed',
+        segments: [],
+        diagnostics: {
+          availability24h: 99.82,
+          availability7d: 99.95,
+          lastFailureAt: '2026-10-05T11:00:00.000Z',
+          note: 'Для вывода нужны независимые сети.',
+          samples: [
+            {
+              checkedAt: '2026-10-05T12:00:00.000Z',
+              status: 'warning',
+              verdict: 'mixed',
+              passed: 1,
+              total: 2,
+              observations: [
+                {
+                  from: 'Россия - домашняя',
+                  country: 'RU',
+                  networkType: 'residential',
+                  provider: 'Ростелеком',
+                  asn: 'AS12389',
+                  ok: true,
+                  latencyMs: 84,
+                  stage: 'done',
+                  detail: 'Маршрут работает.',
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+    detailed.configSnapshot = {
+      hash: '1234567890abcdef',
+      capturedAt: '2026-10-05T12:00:00.000Z',
+      previousAt: '2026-10-05T11:00:00.000Z',
+      changes: [
+        {
+          kind: 'route',
+          entityId: 'shared-profile:default',
+          label: 'Общий профиль → SERVICE',
+          field: 'Адрес выхода',
+          before: '127.0.0.1:1080',
+          after: '127.0.0.1:2080',
+        },
+      ],
+    };
+    render(<RemnawaveTopologyMap topology={detailed} />);
+    await userEvent.click(screen.getByRole('button', { name: /Хост A/ }));
+
+    expect(screen.getByText('Настоящая VPN-проба')).toBeInTheDocument();
+    expect(screen.getByText(/Ростелеком · AS12389/)).toBeInTheDocument();
+    expect(screen.getByText('Что изменилось в Remnawave')).toBeInTheDocument();
+    expect(screen.getByText(/Общий профиль → SERVICE · Адрес выхода/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Отчёт для хостера' })).toBeInTheDocument();
   });
 });

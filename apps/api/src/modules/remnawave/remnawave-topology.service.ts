@@ -2,20 +2,27 @@ import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import {
   blockCheckResultSchema,
   REMNAWAVE_PROBLEM,
+  type RemnawavePathDiagnostics,
   type RemnawaveServerReadiness,
   type RemnawaveTopology,
   type Server,
 } from '@nodeservice/shared';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
-import { serverChecks } from '../../infra/db/schema/index.js';
+import { remnawaveConfigSnapshots, serverChecks } from '../../infra/db/schema/index.js';
 import { BillingService } from '../billing/billing.service.js';
 import { billingItemBelongsToServer, serverBillingAliases } from '../billing/server-billing-identity.js';
+import { ProvidersService } from '../providers/providers.service.js';
 import { ServersService } from '../servers/servers.service.js';
 import { NodeLinkService } from './node-link.service.js';
 import { REMNAWAVE_CLIENT, type RemnawaveClient, type RemnawaveTopologySource } from './remnawave-client.js';
+import {
+  diffTopologySnapshots,
+  safeTopologySnapshot,
+  topologySnapshotHash,
+} from './remnawave-config-snapshot.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
 import { buildRemnawaveTopology, topologyAddresses } from './remnawave-topology.logic.js';
 
@@ -31,6 +38,7 @@ export class RemnawaveTopologyService {
     private readonly servers: ServersService,
     private readonly links: NodeLinkService,
     private readonly billing: BillingService,
+    private readonly providers: ProvidersService,
     @Inject(DB) private readonly db: Db,
   ) {}
 
@@ -49,9 +57,51 @@ export class RemnawaveTopologyService {
       this.links.resolveAddresses(topologyAddresses(source)),
     ]);
     const value = buildRemnawaveTopology(source, linked, resolvedAddresses);
+    value.configSnapshot = await this.captureConfigSnapshot(value);
     await this.addRuntime(value, fleet);
     this.cache = { at: Date.now(), value };
     return value;
+  }
+
+  private async captureConfigSnapshot(
+    topology: RemnawaveTopology,
+  ): Promise<RemnawaveTopology['configSnapshot']> {
+    const snapshot = safeTopologySnapshot(topology);
+    const hash = topologySnapshotHash(snapshot);
+    const recent = await this.db
+      .select()
+      .from(remnawaveConfigSnapshots)
+      .orderBy(desc(remnawaveConfigSnapshots.capturedAt))
+      .limit(2);
+    const latest = recent[0];
+    if (latest?.hash === hash)
+      return {
+        hash,
+        capturedAt: latest.capturedAt.toISOString(),
+        previousAt: recent[1]?.capturedAt.toISOString() ?? null,
+        changes: latest.changes,
+      };
+    const changes = diffTopologySnapshots(
+      (latest?.snapshot as Parameters<typeof diffTopologySnapshots>[0]) ?? null,
+      snapshot,
+    );
+    const [created] = await this.db
+      .insert(remnawaveConfigSnapshots)
+      .values({ hash, snapshot, changes })
+      .returning();
+    if (!created) return null;
+    await this.db.execute(sql`
+      delete from remnawave_config_snapshots
+      where id not in (
+        select id from remnawave_config_snapshots order by captured_at desc limit 30
+      )
+    `);
+    return {
+      hash,
+      capturedAt: created.capturedAt.toISOString(),
+      previousAt: latest?.capturedAt.toISOString() ?? null,
+      changes,
+    };
   }
 
   /** Та же безопасная проекция для Джарвиса: конфиги и секреты в неё не входят изначально. */
@@ -95,16 +145,29 @@ export class RemnawaveTopologyService {
   }
 
   private async addRuntime(topology: RemnawaveTopology, fleet: Server[]): Promise<void> {
-    const [checks, billing] = await Promise.all([
+    const [checks, billing, providers] = await Promise.all([
       this.db
-        .selectDistinctOn([serverChecks.serverId])
+        .select()
         .from(serverChecks)
         .where(eq(serverChecks.check, 'russia_access'))
-        .orderBy(serverChecks.serverId, desc(serverChecks.startedAt)),
+        .orderBy(desc(serverChecks.startedAt)),
       this.billing.list(false).catch(() => ({ items: [] })),
+      this.providers.list().catch(() => []),
     ]);
     const serverById = new Map(fleet.map((server) => [server.id, server]));
-    const checkByServer = new Map(checks.map((check) => [check.serverId, check]));
+    const serverByName = new Map(fleet.map((server) => [server.name, server]));
+    const providerById = new Map(providers.map((provider) => [provider.id, provider.name]));
+    const checksByServer = new Map<string, typeof checks>();
+    for (const check of checks) {
+      const rows = checksByServer.get(check.serverId) ?? [];
+      if (rows.length < 48) rows.push(check);
+      checksByServer.set(check.serverId, rows);
+    }
+    const checkByServer = new Map(
+      [...checksByServer.entries()].flatMap(([serverId, rows]) =>
+        rows[0] ? [[serverId, rows[0]] as const] : [],
+      ),
+    );
     const nodeById = new Map(topology.nodes.map((node) => [node.id, node]));
     const routeById = new Map(topology.routes.map((route) => [route.id, route]));
 
@@ -136,6 +199,74 @@ export class RemnawaveTopologyService {
           : verdict === 'regional_block' || verdict === 'failed_everywhere'
             ? ('error' as const)
             : ('unknown' as const);
+    const probeNetwork = (server: Server | undefined) => {
+      const tags = new Set(server?.tags.map((tag) => tag.toLowerCase()) ?? []);
+      const mobile = [...tags].some((tag) => /^(?:lte|mobile|cellular|мобильн)/u.test(tag));
+      const residential = [...tags].some((tag) => /^(?:home|residential|домашн)/u.test(tag));
+      const datacenter = [...tags].some((tag) => /^(?:dc|vps|datacenter|датацентр)/u.test(tag));
+      const asnTag = [...tags].find((tag) => /^asn?\d{2,10}$/i.test(tag));
+      return {
+        networkType: mobile
+          ? ('mobile' as const)
+          : residential
+            ? ('residential' as const)
+            : datacenter || server?.providerId
+              ? ('datacenter' as const)
+              : ('unknown' as const),
+        provider: server?.providerId ? (providerById.get(server.providerId) ?? null) : null,
+        asn: asnTag ? `AS${asnTag.replace(/^asn?/i, '')}` : null,
+      };
+    };
+    const diagnostics = (serverId: string | undefined): RemnawavePathDiagnostics | null => {
+      if (!serverId) return null;
+      const samples = (checksByServer.get(serverId) ?? []).flatMap((row) => {
+        const measured = checkResult(row.serverId);
+        let result = measured?.row.id === row.id ? measured.result : null;
+        if (!result && row.output) {
+          try {
+            const parsed = blockCheckResultSchema.safeParse(JSON.parse(row.output));
+            result = parsed.success ? parsed.data : null;
+          } catch {
+            result = null;
+          }
+        }
+        if (!result) return [];
+        const observations = [...(result.vpnProbes ?? []), ...(result.vpnForeign ?? [])].map((probe) => ({
+          ...probeNetwork(serverByName.get(probe.from)),
+          from: probe.from,
+          country: probe.country,
+          ok: probe.ok,
+          latencyMs: probe.latencyMs,
+          stage: probe.stage,
+          detail: probe.detail,
+        }));
+        const passed = observations.filter((probe) => probe.ok).length;
+        return [
+          {
+            checkedAt: (row.finishedAt ?? row.startedAt).toISOString(),
+            status: vpnStatus(result.vpnVerdict),
+            verdict: result.vpnVerdict ?? ('unavailable' as const),
+            passed,
+            total: observations.length,
+            observations,
+          },
+        ];
+      });
+      const availability = (since: number) => {
+        const recent = samples.filter((sample) => Date.parse(sample.checkedAt) >= since && sample.total > 0);
+        const total = recent.reduce((sum, sample) => sum + sample.total, 0);
+        const passed = recent.reduce((sum, sample) => sum + sample.passed, 0);
+        return total ? Math.round((passed / total) * 10_000) / 100 : null;
+      };
+      const lastFailure = samples.find((sample) => sample.total > sample.passed);
+      return {
+        availability24h: availability(Date.now() - 24 * 60 * 60_000),
+        availability7d: availability(Date.now() - 7 * 24 * 60 * 60_000),
+        lastFailureAt: lastFailure?.checkedAt ?? null,
+        samples,
+        note: 'ТСПУ подтверждается только повторяемым расхождением минимум в двух независимых домашних или мобильных сетях РФ при успешном зарубежном контроле.',
+      };
+    };
 
     for (const path of topology.paths) {
       const entry = path.entryNodeUuid ? nodeById.get(path.entryNodeUuid) : undefined;
@@ -144,6 +275,7 @@ export class RemnawaveTopologyService {
       const server = serverId ? serverById.get(serverId) : undefined;
       const route = path.routeId ? routeById.get(path.routeId) : undefined;
       const measured = checkResult(serverId);
+      path.diagnostics = diagnostics(serverId);
       for (const segment of path.segments) {
         if (segment.kind === 'host_inbound') {
           const item = component(server, 'selfsteal');
@@ -308,6 +440,21 @@ export class RemnawaveTopologyService {
             ? `${paths.filter((path) => path.destination !== 'unknown').length} маршрутов с понятным назначением.`
             : 'Маршрут не найден.',
           topology.generatedAt,
+        ),
+        item(
+          'vpn',
+          'Настоящий VPN',
+          paths.some((path) => path.diagnostics?.samples[0]?.status === 'error')
+            ? 'error'
+            : paths.some((path) => path.diagnostics?.samples[0]?.status === 'warning')
+              ? 'warning'
+              : paths.some((path) => path.diagnostics?.samples[0]?.status === 'ok')
+                ? 'ok'
+                : 'unknown',
+          paths.some((path) => path.diagnostics?.samples[0])
+            ? `Последняя проба: ${paths.find((path) => path.diagnostics?.samples[0])?.diagnostics?.samples[0]?.passed ?? 0} из ${paths.find((path) => path.diagnostics?.samples[0])?.diagnostics?.samples[0]?.total ?? 0} точек.`
+            : 'Настоящая VPN-проба ещё не выполнялась.',
+          paths.find((path) => path.diagnostics?.samples[0])?.diagnostics?.samples[0]?.checkedAt ?? null,
         ),
         item(
           'billing',

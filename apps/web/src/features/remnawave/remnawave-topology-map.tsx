@@ -1,4 +1,6 @@
 import type {
+  RemnawaveConfigSnapshot,
+  RemnawavePathDiagnostics,
   RemnawaveTopology,
   RemnawaveTopologyHost,
   RemnawaveTopologyNode,
@@ -6,7 +8,9 @@ import type {
 } from '@nodeservice/shared';
 import {
   ArrowLeftIcon,
+  BotIcon,
   CircleDotIcon,
+  ClipboardCopyIcon,
   CloudIcon,
   Maximize2Icon,
   MinusIcon,
@@ -21,6 +25,8 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { ASSISTANT_DRAFT_KEY } from '@/features/assistant/assistant-api';
+import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 
 type Status = RemnawaveTopologyHost['status'];
@@ -574,6 +580,142 @@ function routeDescription(
   return `${condition} приходит ${from}, затем Xray передаёт его в сервис «${route.targetLabel}».`;
 }
 
+const NETWORK_TYPE_LABELS: Record<
+  RemnawavePathDiagnostics['samples'][number]['observations'][number]['networkType'],
+  string
+> = {
+  residential: 'домашняя сеть',
+  mobile: 'мобильная сеть',
+  datacenter: 'дата-центр',
+  unknown: 'тип сети не указан',
+};
+
+const formatAvailability = (value: number | null): string =>
+  value === null ? 'пока нет данных' : `${value.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} %`;
+
+function ProbeHistory({ diagnostics }: { diagnostics: RemnawavePathDiagnostics }) {
+  const samples = [...diagnostics.samples].reverse();
+  return (
+    <section className="rounded-xl border border-border bg-surface-2/55 p-3.5 sm:p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-[12.5px] font-semibold">Настоящая VPN-проба</h3>
+          <p className="mt-0.5 text-[10.5px] leading-4 text-text-3">
+            Авторизация и передача данных через сервисную подписку, отдельно от TCP и обычного TLS.
+          </p>
+        </div>
+        <div className="flex gap-1.5">
+          <span className="rounded-full border border-border px-2 py-1 text-[10px] text-text-2">
+            24 ч · {formatAvailability(diagnostics.availability24h)}
+          </span>
+          <span className="rounded-full border border-border px-2 py-1 text-[10px] text-text-2">
+            7 дн · {formatAvailability(diagnostics.availability7d)}
+          </span>
+        </div>
+      </div>
+      {samples.length > 0 ? (
+        <>
+          <div className="mt-3 flex h-[64px] items-end gap-1 rounded-lg border border-border bg-bg-2 px-2 py-2">
+            {samples.map((sample) => {
+              const height = sample.total ? Math.max(12, Math.round((sample.passed / sample.total) * 44)) : 8;
+              return (
+                <span
+                  key={sample.checkedAt}
+                  className={cn(
+                    'min-w-1 flex-1 rounded-sm',
+                    sample.status === 'ok'
+                      ? 'bg-ok'
+                      : sample.status === 'warning'
+                        ? 'bg-warn'
+                        : sample.status === 'error'
+                          ? 'bg-crit'
+                          : 'bg-text-3',
+                  )}
+                  style={{ height }}
+                  title={`${new Date(sample.checkedAt).toLocaleString('ru-RU')} · ${sample.passed} из ${sample.total}`}
+                />
+              );
+            })}
+          </div>
+          <div className="mt-3 grid gap-2 lg:grid-cols-2">
+            {(diagnostics.samples[0]?.observations ?? []).map((probe) => (
+              <article
+                key={`${probe.from}:${probe.country ?? ''}`}
+                className="grid grid-cols-[8px_minmax(0,1fr)_auto] gap-2 rounded-lg border border-border bg-surface px-3 py-2.5"
+              >
+                <span className={cn('mt-1.5 size-2 rounded-full', probe.ok ? 'bg-ok' : 'bg-warn')} />
+                <div className="min-w-0">
+                  <div className="truncate text-[11.5px] font-semibold">{probe.from}</div>
+                  <div className="mt-0.5 text-[9.5px] leading-4 text-text-3">
+                    {[NETWORK_TYPE_LABELS[probe.networkType], probe.provider, probe.asn]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </div>
+                </div>
+                <div className={cn('text-right text-[10px]', probe.ok ? 'text-ok' : 'text-warn')}>
+                  {probe.ok ? 'VPN работает' : 'сбой'}
+                  <div className="mt-0.5 text-[9px] text-text-3">
+                    {probe.latencyMs === null ? '—' : `${probe.latencyMs} мс`}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="mt-3 rounded-lg border border-border bg-bg-2 px-3 py-4 text-[11px] text-text-3">
+          История начнёт заполняться после плановой или ручной проверки доступности этого сервера.
+        </p>
+      )}
+      <p className="mt-2.5 text-[10px] leading-4 text-text-3">{diagnostics.note}</p>
+    </section>
+  );
+}
+
+function ConfigChanges({ snapshot, ids }: { snapshot: RemnawaveConfigSnapshot | null; ids: Set<string> }) {
+  if (!snapshot) return null;
+  const relevant = snapshot.changes.filter((change) => ids.has(change.entityId));
+  const changes = relevant.length ? relevant : snapshot.changes.slice(0, 6);
+  return (
+    <section className="rounded-xl border border-border bg-surface-2/55 p-3.5 sm:p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-[12.5px] font-semibold">Что изменилось в Remnawave</h3>
+          <p className="mt-0.5 text-[10px] text-text-3">
+            Безопасный снимок {snapshot.hash.slice(0, 8)} ·{' '}
+            {new Date(snapshot.capturedAt).toLocaleString('ru-RU')}
+          </p>
+        </div>
+        <span className="rounded-full border border-border px-2 py-1 text-[9.5px] text-text-3">
+          секреты не сохраняются
+        </span>
+      </div>
+      {changes.length ? (
+        <div className="mt-3 space-y-2">
+          {changes.map((change) => (
+            <div
+              key={`${change.kind}:${change.entityId}:${change.field}:${change.before}:${change.after}`}
+              className="rounded-lg border border-border bg-bg-2 px-3 py-2.5"
+            >
+              <div className="text-[10.5px] font-semibold">
+                {change.label} · {change.field}
+              </div>
+              <div className="mt-1 grid gap-1 font-mono text-[9.5px] leading-4 sm:grid-cols-2">
+                <span className="break-all text-crit">− {change.before ?? 'нет'}</span>
+                <span className="break-all text-ok">+ {change.after ?? 'нет'}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 rounded-lg border border-border bg-bg-2 px-3 py-4 text-[11px] text-text-3">
+          Это первый снимок либо конфигурация не менялась с предыдущего чтения.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function FocusedFlow({
   topology,
   selected,
@@ -668,18 +810,87 @@ function FocusedFlow({
       (candidate.exitNodeUuid === exitNode?.id || (!candidate.exitNodeUuid && !exitNode)),
   );
   const visibleSegments = path?.segments.filter((segment) => segment.runtime) ?? [];
+  const relatedIds = new Set(
+    [host?.id, entryNode?.id, exitNode?.id, primaryRoute?.id, primaryRoute?.profileUuid].filter(
+      (value): value is string => Boolean(value),
+    ),
+  );
+  const askJarvis = () => {
+    try {
+      localStorage.setItem(
+        ASSISTANT_DRAFT_KEY,
+        `Проверь маршрут Remnawave «${host?.name ?? primaryRoute?.profileName ?? 'выбранный путь'}». Прочитай карту Remnawave, историю настоящих VPN-проб и последние изменения конфигурации. Объясни простыми словами, где проблема и что проверить. Не делай вывод о ТСПУ без двух независимых домашних или мобильных сетей РФ.`,
+      );
+    } catch {
+      // Переход к Джарвису остаётся доступен, даже если браузер запретил localStorage.
+    }
+  };
+  const copySupportReport = async () => {
+    const samples = path?.diagnostics?.samples ?? [];
+    const latest = samples[0];
+    const changes = (topology.configSnapshot?.changes ?? []).filter((change) =>
+      relatedIds.has(change.entityId),
+    );
+    const lines = [
+      'NodeService · безопасный отчёт о VPN-маршруте',
+      `Создан: ${new Date().toLocaleString('ru-RU')}`,
+      `Хост: ${host ? `${host.name} · ${host.address}:${host.port}` : 'не определён'}`,
+      `Входная нода: ${entryNode ? `${entryNode.name} · ${entryNode.address}` : 'не определена'}`,
+      `Выход: ${exitTitle}${exitNode?.address ? ` · ${exitNode.address}` : ''}`,
+      `Маршрут: ${primaryRoute?.explanation ?? 'не определён'}`,
+      '',
+      'Фактическое состояние участков:',
+      ...visibleSegments.map(
+        (segment) =>
+          `- ${segment.runtime?.label}: ${segment.runtime?.detail} (${segment.runtime?.checkedAt ? new Date(segment.runtime.checkedAt).toLocaleString('ru-RU') : 'время неизвестно'})`,
+      ),
+      '',
+      `Настоящий VPN: ${latest ? `${latest.passed} из ${latest.total} точек · ${latest.verdict}` : 'не проверен'}`,
+      ...(latest?.observations.map(
+        (probe) =>
+          `- ${probe.from} (${probe.country ?? 'страна неизвестна'}, ${NETWORK_TYPE_LABELS[probe.networkType]}${probe.provider ? `, ${probe.provider}` : ''}${probe.asn ? `, ${probe.asn}` : ''}): ${probe.ok ? 'работает' : probe.detail}${probe.latencyMs === null ? '' : ` · ${probe.latencyMs} мс`}`,
+      ) ?? []),
+      '',
+      'Последние изменения конфигурации:',
+      ...(changes.length
+        ? changes.map(
+            (change) =>
+              `- ${change.label} · ${change.field}: ${change.before ?? 'нет'} → ${change.after ?? 'нет'}`,
+          )
+        : ['- Для этого пути изменений не найдено.']),
+      '',
+      'Секреты, UUID клиентов, ключи и токены в отчёт не включены.',
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      toast.success('Безопасный отчёт скопирован.');
+    } catch {
+      toast.error('Браузер не дал скопировать отчёт.');
+    }
+  };
 
   return (
     <div>
-      <Button
-        type="button"
-        variant="outline"
-        onClick={onBack}
-        className="mb-4 h-10 gap-2 border-brand/40 bg-brand-soft px-3.5 text-[12.5px] font-semibold text-brand shadow-sm hover:border-brand/60 hover:bg-brand-soft"
-      >
-        <ArrowLeftIcon className="size-4" aria-hidden="true" />
-        Вернуться ко всей топологии
-      </Button>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onBack}
+          className="h-10 gap-2 border-brand/40 bg-brand-soft px-3.5 text-[12.5px] font-semibold text-brand shadow-sm hover:border-brand/60 hover:bg-brand-soft"
+        >
+          <ArrowLeftIcon className="size-4" aria-hidden="true" />
+          Вернуться ко всей топологии
+        </Button>
+        <div className="flex-1" />
+        <Button asChild type="button" variant="outline" className="h-10 gap-2" onClick={askJarvis}>
+          <a href="/assistant">
+            <BotIcon className="size-4" /> Спросить Джарвиса
+          </a>
+        </Button>
+        <Button type="button" className="h-10 gap-2" onClick={() => void copySupportReport()}>
+          <ClipboardCopyIcon className="size-4" /> Отчёт для хостера
+        </Button>
+      </div>
       <div ref={frameRef}>
         <GraphViewport width={graphWidth} height={graphHeight} compact>
           {['Клиент', 'Хост', 'Входная нода', 'Выход', 'Назначение'].map((label, index) => (
@@ -823,6 +1034,12 @@ function FocusedFlow({
               {segment.runtime?.label}: {segment.runtime?.detail}
             </span>
           ))}
+        </div>
+      )}
+      {(path?.diagnostics || topology.configSnapshot) && (
+        <div className="mt-3 grid gap-3 xl:grid-cols-2">
+          {path?.diagnostics ? <ProbeHistory diagnostics={path.diagnostics} /> : <div />}
+          <ConfigChanges snapshot={topology.configSnapshot} ids={relatedIds} />
         </div>
       )}
       {routes.length > 0 && (

@@ -219,6 +219,7 @@ function topology(): RemnawaveTopology {
         ]
       : [];
   return {
+    configSnapshot: null,
     paths: [],
     readiness: [],
     generatedAt: new Date().toISOString(),

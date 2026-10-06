@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module.js';
 import { BillingModule } from '../billing/billing.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { ProvidersModule } from '../providers/providers.module.js';
 import { ServersModule } from '../servers/servers.module.js';
 import { DnsHostResolver, HOST_RESOLVER, NodeLinkService } from './node-link.service.js';
 import { RemnawaveController } from './remnawave.controller.js';
@@ -15,7 +16,7 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
 
 /** J4: подключение к панели Remnawave, только чтение (домен + токен API с правами на чтение). */
 @Module({
-  imports: [AuditModule, BillingModule, ServersModule, NotificationsModule],
+  imports: [AuditModule, BillingModule, ServersModule, NotificationsModule, ProvidersModule],
   controllers: [RemnawaveController],
   providers: [
     RemnawaveSettingsStore,

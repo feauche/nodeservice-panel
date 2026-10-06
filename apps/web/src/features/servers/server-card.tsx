@@ -4,6 +4,7 @@ import type { Provider } from '@nodeservice/shared';
 import {
   AGENT_STATUS_LABELS,
   type OverviewServerMetrics,
+  type RemnawaveServerReadiness,
   SERVER_PROBLEM,
   type Server,
 } from '@nodeservice/shared';
@@ -341,11 +342,13 @@ function AddressLine({ server }: { server: Server }) {
 export function ServerCardGhost({
   server,
   metrics,
+  readiness,
 }: {
   server: Server;
   metrics?: OverviewServerMetrics | null;
+  readiness?: RemnawaveServerReadiness | null;
 }) {
-  const { health, reason } = serverState(server, metrics);
+  const { health, reason } = serverState(server, metrics, readiness);
   const provider = useServerProvider(server);
   return (
     <div className="relative flex h-full cursor-grabbing flex-col gap-3 rounded-2xl border border-border-2 bg-surface p-4 shadow-float">
@@ -381,6 +384,8 @@ interface Props {
   server: Server;
   /** Последние значения и спарклайн CPU из /metrics/overview; null — метрик нет. */
   metrics?: OverviewServerMetrics | null;
+  /** Готовность VPN из единой модели Remnawave. */
+  readiness?: RemnawaveServerReadiness | null;
   /** Клик по карточке: страница сервера (метрики, журнал). */
   onOpen: (server: Server) => void;
   /** Меню «Изменить»: модалка настроек. */
@@ -391,7 +396,7 @@ interface Props {
  * Карточка сервера: точка состояния, имя и адрес, действия; пилюли агента и SSH;
  * CPU / RAM / сеть; спарклайн CPU в цвет состояния; система и теги.
  */
-export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
+export function ServerCard({ server, metrics, readiness, onOpen, onEdit }: Props) {
   const check = useCheckServer();
   const duplicate = useDuplicateServer();
   const sortable = useSortable({ id: server.id });
@@ -401,7 +406,7 @@ export function ServerCard({ server, metrics, onOpen, onEdit }: Props) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [mismatch, setMismatch] = useState<{ offered: string } | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
-  const { health, reason } = serverState(server, metrics);
+  const { health, reason } = serverState(server, metrics, readiness);
 
   const doCheck = async () => {
     try {

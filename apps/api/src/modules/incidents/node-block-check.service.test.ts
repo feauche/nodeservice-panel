@@ -127,8 +127,8 @@ describe('настоящая VPN-проба через агенты', () => {
   };
   const all = [
     srv('target', 'KZ', live),
-    srv('ru1', 'RU', live),
-    srv('ru2', 'RU', live),
+    srv('ru1', 'RU', { ...live, tags: ['home', 'as12345'] }),
+    srv('ru2', 'RU', { ...live, tags: ['mobile', 'as67890'] }),
     srv('de', 'DE', live),
     srv('nl', 'NL', live),
   ];
@@ -187,6 +187,23 @@ describe('настоящая VPN-проба через агенты', () => {
     expect(result.vpnForeign).toHaveLength(2);
     expect(attempts.get('ru1')).toBe(2);
     expect(attempts.get('ru2')).toBe(2);
+  });
+
+  it('не даёт российскому ЦОД скрыть блокировку в двух независимых потребительских сетях', async () => {
+    const withDatacenter = [...all, srv('ru-dc', 'RU', { ...live, tags: ['dc'], providerId: 'provider-dc' })];
+    const { svc } = service((id) => id === 'ru-dc' || !id.startsWith('ru'));
+
+    const result = await svc.check(
+      'Казахстан - 1',
+      '10.0.0.6',
+      443,
+      'mask.example',
+      'target',
+      withDatacenter,
+    );
+
+    expect(result).toMatchObject({ verdict: 'tspu', vpnVerdict: 'regional_block' });
+    expect(result.vpnProbes?.find((probe) => probe.from === 'ru-dc')?.ok).toBe(true);
   });
 
   it('не подтверждает блокировку, если повтор настоящего VPN-сеанса прошёл', async () => {

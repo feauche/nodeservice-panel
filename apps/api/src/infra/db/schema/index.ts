@@ -10,4 +10,5 @@ export * from './incidents.js';
 export * from './knowledge.js';
 export * from './meta.js';
 export * from './notifications.js';
+export * from './remnawave.js';
 export * from './servers.js';
