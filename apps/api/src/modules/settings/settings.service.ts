@@ -11,6 +11,9 @@ import {
   type AppearanceSettings,
   type AppearanceSettingsUpdate,
   appearanceSettingsSchema,
+  CUSTOM_SITES_DEFAULTS,
+  type CustomSites,
+  customSitesSchema,
   TERMINAL_SNIPPETS_DEFAULTS,
   type TerminalSnippets,
   terminalSnippetsSchema,
@@ -34,6 +37,7 @@ const KEY_APPEARANCE = 'settings.appearance';
 const timeZoneChosen = (raw: unknown): boolean =>
   typeof (raw as { timeZone?: unknown } | null | undefined)?.timeZone === 'string';
 const KEY_SNIPPETS = 'settings.snippets';
+const KEY_CUSTOM_SITES = 'settings.custom_sites';
 
 @Injectable()
 export class SettingsService {
@@ -131,6 +135,30 @@ export class SettingsService {
       changes: diffChanges(
         { snippets: current.items.map((i) => i.name).join(', ') || '—' },
         { snippets: parsed.items.map((i) => i.name).join(', ') || '—' },
+      ),
+    });
+    return parsed;
+  }
+
+  /** До пяти внешних ссылок в отдельном блоке бокового меню; запись хранится в бэкапе панели. */
+  async getCustomSites(): Promise<CustomSites> {
+    const raw = await this.readJson(KEY_CUSTOM_SITES);
+    const parsed = customSitesSchema.safeParse(raw ?? CUSTOM_SITES_DEFAULTS);
+    if (!parsed.success) {
+      this.log.warn('Список своих сайтов повреждён, использую пустой список');
+      return CUSTOM_SITES_DEFAULTS;
+    }
+    return parsed.data;
+  }
+
+  async updateCustomSites(next: CustomSites): Promise<CustomSites> {
+    const current = await this.getCustomSites();
+    const parsed = customSitesSchema.parse(next);
+    await this.writeJson(KEY_CUSTOM_SITES, parsed);
+    this.audit.extend({
+      changes: diffChanges(
+        { sites: current.items.map((site) => `${site.name} — ${site.url}`).join(', ') || '—' },
+        { sites: parsed.items.map((site) => `${site.name} — ${site.url}`).join(', ') || '—' },
       ),
     });
     return parsed;

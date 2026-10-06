@@ -51,6 +51,7 @@ export interface MockState {
 }
 
 export const mockSnippets: { items: Array<{ id: string; name: string; command: string }> } = { items: [] };
+export const mockCustomSites: { items: Array<{ id: string; name: string; url: string }> } = { items: [] };
 
 export const mockAppearance: { logoUrl: string | null; brandName: string; timeZone: string } = {
   logoUrl: null,
@@ -94,6 +95,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
   resetServerChecks();
   resetTelegram();
   mockSnippets.items = [];
+  mockCustomSites.items = [];
   Object.assign(mockState, {
     setupRequired: false,
     authenticated: false,
@@ -214,6 +216,18 @@ export const handlers = [
     const body = (await request.json()) as typeof mockSnippets;
     mockSnippets.items = body.items;
     return HttpResponse.json(mockSnippets);
+  }),
+  http.get('/api/settings/custom-sites', () => {
+    if (!mockState.authenticated) return problem(401, AUTH_PROBLEM.unauthenticated, 'Требуется вход');
+    return HttpResponse.json(mockCustomSites);
+  }),
+  http.put('/api/settings/custom-sites', async ({ request }) => {
+    if (!mockState.authenticated) return problem(401, AUTH_PROBLEM.unauthenticated, 'Требуется вход');
+    const csrf = csrfGuard(request);
+    if (csrf) return csrf;
+    const body = (await request.json()) as typeof mockCustomSites;
+    mockCustomSites.items = body.items;
+    return HttpResponse.json(mockCustomSites);
   }),
   http.get('/api/settings/appearance', () => HttpResponse.json(mockAppearance)),
   http.put('/api/settings/appearance', async ({ request }) => {

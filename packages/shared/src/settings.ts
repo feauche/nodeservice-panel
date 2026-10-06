@@ -126,3 +126,31 @@ export type TerminalSnippets = z.infer<typeof terminalSnippetsSchema>;
 
 /** Список по умолчанию пустой: базовый набор команд для VPN-нод появится отдельным шагом. */
 export const TERMINAL_SNIPPETS_DEFAULTS: TerminalSnippets = { items: [] };
+
+/* ---------- свои сайты в боковом меню ---------- */
+export const CUSTOM_SITE_NAME_MAX = 40;
+export const CUSTOM_SITE_URL_MAX = 2048;
+export const CUSTOM_SITES_MAX = 5;
+
+/** Безопасная внешняя ссылка: браузер может открыть только обычный сайт по HTTP(S). */
+export const customSiteSchema = z.object({
+  id: z.uuid(),
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Введите название')
+    .max(CUSTOM_SITE_NAME_MAX, `Название — до ${CUSTOM_SITE_NAME_MAX} символов`),
+  url: z
+    .url({ protocol: /^https?$/, error: 'Введите ссылку вида https://example.com' })
+    .max(CUSTOM_SITE_URL_MAX, 'Слишком длинная ссылка'),
+});
+export type CustomSite = z.infer<typeof customSiteSchema>;
+
+export const customSitesSchema = z.object({
+  items: z
+    .array(customSiteSchema)
+    .max(CUSTOM_SITES_MAX, `Можно добавить не больше ${CUSTOM_SITES_MAX} сайтов`),
+});
+export type CustomSites = z.infer<typeof customSitesSchema>;
+
+export const CUSTOM_SITES_DEFAULTS: CustomSites = { items: [] };

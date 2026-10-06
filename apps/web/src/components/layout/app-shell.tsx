@@ -32,6 +32,7 @@ import { useOpenIncidentsCount } from '@/features/incidents/incidents-api';
 import { useNotifications } from '@/features/notifications/notifications-api';
 import { useSecurityOverview } from '@/features/security/security-api';
 import { useIdleLock } from '@/features/security/use-idle-lock';
+import { CustomSitesNav } from '@/features/settings/custom-sites-nav';
 import { PanelVersion } from '@/features/system/panel-version';
 import { isSectionOpen, LOCKED_HINT } from '@/lib/stages';
 import { cn } from '@/lib/utils';
@@ -464,6 +465,7 @@ function NavList({
       {NAV_AUTOMATION.map((n) => (
         <NavItem key={n.to} {...n} collapsed={collapsed} mode={mode} onNavigate={onNavigate} />
       ))}
+      <CustomSitesNav collapsed={collapsed} mode={mode} onNavigate={onNavigate} />
       <div className="flex-1" />
       {NAV_BOTTOM.map((n) => (
         <NavItem key={n.to} {...n} collapsed={collapsed} mode={mode} onNavigate={onNavigate} />

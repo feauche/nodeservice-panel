@@ -10,6 +10,7 @@ import {
   AssistantStatusDto,
   AutochecksSettingsDto,
   AutochecksSettingsUpdateDto,
+  CustomSitesDto,
   IncidentsSettingsDto,
   IncidentsSettingsUpdateDto,
   TerminalSnippetsDto,
@@ -56,6 +57,23 @@ export class SettingsController {
   @ApiOkResponse({ type: TerminalSnippetsDto })
   updateSnippets(@Body() body: TerminalSnippetsDto): Promise<TerminalSnippetsDto> {
     return this.settings.updateSnippets(body);
+  }
+
+  @Get('custom-sites')
+  @ApiOperation({ summary: 'Свои сайты в боковом меню' })
+  @ApiOkResponse({ type: CustomSitesDto })
+  getCustomSites(): Promise<CustomSitesDto> {
+    return this.settings.getCustomSites();
+  }
+
+  @Put('custom-sites')
+  @Audit('settings.custom_sites.updated', {
+    target: { type: 'settings', id: 'custom-sites', display: 'Свои сайты' },
+  })
+  @ApiOperation({ summary: 'Заменить список своих сайтов в боковом меню' })
+  @ApiOkResponse({ type: CustomSitesDto })
+  updateCustomSites(@Body() body: CustomSitesDto): Promise<CustomSitesDto> {
+    return this.settings.updateCustomSites(body);
   }
 
   @Get('autochecks')

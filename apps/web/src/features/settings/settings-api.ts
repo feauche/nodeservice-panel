@@ -5,6 +5,8 @@ import {
   type AutochecksSettingsUpdate,
   appearanceSettingsSchema,
   autochecksSettingsSchema,
+  type CustomSites,
+  customSitesSchema,
   type TerminalSnippets,
   terminalSnippetsSchema,
 } from '@nodeservice/shared';
@@ -26,7 +28,29 @@ export const settingsApi = {
     api.get('/settings/snippets', terminalSnippetsSchema, signal),
   updateSnippets: (body: TerminalSnippets): Promise<TerminalSnippets> =>
     api.put('/settings/snippets', body, terminalSnippetsSchema),
+  customSites: (signal?: AbortSignal): Promise<CustomSites> =>
+    api.get('/settings/custom-sites', customSitesSchema, signal),
+  updateCustomSites: (body: CustomSites): Promise<CustomSites> =>
+    api.put('/settings/custom-sites', body, customSitesSchema),
 };
+
+export const customSitesQuery = {
+  queryKey: ['settings', 'custom-sites'] as const,
+  queryFn: ({ signal }: { signal?: AbortSignal }) => settingsApi.customSites(signal),
+  staleTime: 60_000,
+};
+
+export function useCustomSites() {
+  return useQuery(customSitesQuery);
+}
+
+export function useUpdateCustomSites() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: settingsApi.updateCustomSites,
+    onSuccess: (data) => qc.setQueryData(customSitesQuery.queryKey, data),
+  });
+}
 
 export const snippetsQuery = {
   queryKey: ['settings', 'snippets'] as const,

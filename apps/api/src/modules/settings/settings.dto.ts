@@ -5,6 +5,7 @@ import {
   assistantStatusSchema,
   autochecksSettingsSchema,
   autochecksSettingsUpdateSchema,
+  customSitesSchema,
   incidentsSettingsSchema,
   incidentsSettingsUpdateSchema,
   terminalSnippetsSchema,
@@ -13,6 +14,7 @@ import { createZodDto } from 'nestjs-zod';
 
 export class AppearanceSettingsDto extends createZodDto(appearanceSettingsSchema) {}
 export class TerminalSnippetsDto extends createZodDto(terminalSnippetsSchema) {}
+export class CustomSitesDto extends createZodDto(customSitesSchema) {}
 export class AppearanceSettingsUpdateDto extends createZodDto(appearanceSettingsUpdateSchema) {}
 export class AutochecksSettingsDto extends createZodDto(autochecksSettingsSchema) {}
 export class AutochecksSettingsUpdateDto extends createZodDto(autochecksSettingsUpdateSchema) {}

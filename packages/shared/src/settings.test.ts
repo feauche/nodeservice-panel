@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { appearanceSettingsSchema, brandNamePlain, brandNameSchema, parseBrandName } from './settings.js';
+import {
+  appearanceSettingsSchema,
+  brandNamePlain,
+  brandNameSchema,
+  customSitesSchema,
+  parseBrandName,
+} from './settings.js';
 
 describe('parseBrandName', () => {
   it('красит сегменты кодами цвета, пробелы сохраняет', () => {
@@ -23,5 +29,27 @@ describe('parseBrandName', () => {
   });
   it('схема подставляет название по умолчанию', () => {
     expect(appearanceSettingsSchema.parse({ logoUrl: null }).brandName).toBe('Node[#accent]Service');
+  });
+});
+
+describe('customSitesSchema', () => {
+  const site = (n: number, url = `https://site-${n}.example`) => ({
+    id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
+    name: `Сайт ${n}`,
+    url,
+  });
+
+  it('принимает не больше пяти HTTP(S)-ссылок', () => {
+    expect(
+      customSitesSchema.parse({ items: Array.from({ length: 5 }, (_, i) => site(i + 1)) }).items,
+    ).toHaveLength(5);
+    expect(
+      customSitesSchema.safeParse({ items: Array.from({ length: 6 }, (_, i) => site(i + 1)) }).success,
+    ).toBe(false);
+  });
+
+  it('не принимает опасные протоколы и пустое название', () => {
+    expect(customSitesSchema.safeParse({ items: [site(1, 'javascript:alert(1)')] }).success).toBe(false);
+    expect(customSitesSchema.safeParse({ items: [{ ...site(1), name: '   ' }] }).success).toBe(false);
   });
 });

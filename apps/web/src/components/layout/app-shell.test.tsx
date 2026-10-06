@@ -4,7 +4,7 @@ import { HttpResponse, http } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store';
-import { mockMe, resetMockState } from '@/test/msw/handlers';
+import { mockCustomSites, mockMe, resetMockState } from '@/test/msw/handlers';
 import { server } from '@/test/msw/server';
 import { renderPage } from '@/test/render';
 import { AppShell, resetNavGroupState } from './app-shell';
@@ -104,6 +104,25 @@ describe('AppShell · меню пользователя', () => {
     );
     await user.keyboard('{Escape}');
     await user.click(screen.getByRole('button', { name: 'Развернуть меню' }));
+  });
+
+  it('добавляет до пяти своих сайтов отдельным блоком и открывает ссылку в новой вкладке', async () => {
+    renderPage(Page, '/', ['/login', '/lock']);
+    const user = userEvent.setup();
+    expect(await screen.findByText('Свои сайты')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Добавить сайт' }));
+    expect(await screen.findByRole('dialog', { name: 'Свои сайты' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Добавить сайт' }));
+    await user.type(screen.getByRole('textbox', { name: 'Название сайта 1' }), 'Grafana');
+    await user.type(screen.getByRole('textbox', { name: 'Ссылка сайта 1' }), 'panel.example.com');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+
+    const link = await screen.findByRole('link', { name: 'Grafana' });
+    expect(link).toHaveAttribute('href', 'https://panel.example.com');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(mockCustomSites.items).toHaveLength(1);
   });
 
   it('вариант A: версия в шапке, а новый релиз открывает детали и команду', async () => {
