@@ -141,6 +141,33 @@ describe('AppShell · меню пользователя', () => {
     );
   });
 
+  it('актуальная версия открывается в компактном окне без фиксированной высоты', async () => {
+    server.use(
+      http.get('/api/system/release', () =>
+        HttpResponse.json({
+          currentVersion: '0.64.0',
+          latestVersion: '0.64.0',
+          status: 'current',
+          checkedAt: '2026-10-06T03:00:00.000Z',
+          release: {
+            name: 'NodeService Panel v0.64.0',
+            url: 'https://github.com/feauche/nodeservice-panel/releases/tag/v0.64.0',
+            publishedAt: '2026-10-06T02:00:00.000Z',
+            notes: '- Текущая версия.',
+          },
+        }),
+      ),
+    );
+    renderPage(Page, '/', ['/login', '/lock']);
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId('panel-version'));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Версия NodeService' });
+    expect(dialog).toHaveTextContent('Установлена последняя стабильная версия.');
+    expect(dialog).not.toHaveClass('h-[620px]');
+    expect(dialog).toHaveClass('max-h-[calc(100dvh-40px)]');
+  });
+
   it('мобильная шапка имеет сплошной фон без отдельного композиционного слоя', async () => {
     renderPage(Page, '/', ['/login', '/lock']);
     expect(await screen.findByTestId('app-shell-panel')).not.toHaveClass('isolate');
