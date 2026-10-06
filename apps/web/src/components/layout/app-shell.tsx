@@ -15,7 +15,7 @@ import {
   XIcon,
 } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { type ComponentType, type ReactNode, useCallback, useEffect, useState } from 'react';
 import { BrandLogo, BrandName } from '@/components/brand-logo';
 import { JarvisIcon } from '@/components/jarvis-icon';
 import { ThemeMenu } from '@/components/theme-menu';
@@ -32,7 +32,8 @@ import { useOpenIncidentsCount } from '@/features/incidents/incidents-api';
 import { useNotifications } from '@/features/notifications/notifications-api';
 import { useSecurityOverview } from '@/features/security/security-api';
 import { useIdleLock } from '@/features/security/use-idle-lock';
-import { CustomSitesNav } from '@/features/settings/custom-sites-nav';
+import { CustomSitesNav, CustomSitesTopMenu } from '@/features/settings/custom-sites-nav';
+import { useNavigationLayout } from '@/features/settings/navigation-layout';
 import { PanelVersion } from '@/features/system/panel-version';
 import { isSectionOpen, LOCKED_HINT } from '@/lib/stages';
 import { cn } from '@/lib/utils';
@@ -474,20 +475,137 @@ function NavList({
   );
 }
 
-/** Телефон: гамбургер в шапке открывает выезжающее слева меню — полную копию боковой колонки. */
-function MobileNav({
+function TopBadge({ value }: { value: number | undefined }) {
+  if (!value) return null;
+  return (
+    <span className="inline-flex min-w-[17px] justify-center rounded-full bg-crit px-1 text-[10px] font-bold leading-[17px] text-white tabular-nums">
+      {value}
+    </span>
+  );
+}
+
+function TopNavLink({ to, label, icon: Icon, badge }: NavEntry & { badge?: number | undefined }) {
+  return (
+    <Link
+      to={to}
+      activeOptions={{ exact: to === '/' }}
+      className="inline-flex h-9 items-center gap-1.5 rounded-[9px] px-2.5 text-[12.5px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground data-[status=active]:bg-brand-soft data-[status=active]:text-brand focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand"
+    >
+      <Icon className="size-4 flex-none" aria-hidden="true" />
+      <span>{label}</span>
+      <TopBadge value={badge} />
+    </Link>
+  );
+}
+
+function TopNavGroup({
+  label,
+  icon: Icon,
+  active,
+  children,
+}: {
+  label: string;
+  icon: ComponentType<{ className?: string; 'aria-hidden'?: boolean | 'true' | 'false' }>;
+  active: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className={cn(
+          'inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[9px] px-2.5 text-[12.5px] font-medium whitespace-nowrap text-text-2 outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand data-open:bg-surface-2 data-open:text-foreground',
+          active && 'bg-brand-soft text-brand',
+        )}
+      >
+        <Icon className="size-4" aria-hidden="true" />
+        <span>{label}</span>
+        <ChevronDownIcon className="size-3.5 text-text-3" aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-[190px]">
+        {children}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** Полная настольная навигация выбранного варианта B. */
+function TopNavigation({
   openIncidents,
   unreadNotifications,
 }: {
   openIncidents: number | undefined;
   unreadNotifications: number | undefined;
 }) {
+  const pathname = useRouterState({ select: (st) => st.location.pathname });
+  const inServers = pathname === '/servers' || pathname.startsWith('/servers/');
+  const inAutomation = pathname === '/assistant' || pathname === '/knowledge';
+
+  return (
+    <nav data-testid="top-navigation" aria-label="Верхнее меню" className="flex min-w-0 items-center gap-0.5">
+      <TopNavLink {...NAV[0]} />
+      <TopNavGroup label="Серверы" icon={ServerIcon} active={inServers}>
+        {SERVERS_GROUP.items.map((item) => (
+          <DropdownMenuItem key={item.to} asChild>
+            <Link
+              to={item.to}
+              className={cn(
+                'cursor-pointer text-[13px]',
+                (item.to === '/servers' ? pathname === item.to : pathname.startsWith(item.to)) &&
+                  'font-semibold text-brand',
+              )}
+            >
+              {item.label}
+            </Link>
+          </DropdownMenuItem>
+        ))}
+      </TopNavGroup>
+      <TopNavLink {...NAV[2]} badge={openIncidents} />
+      <TopNavLink {...NAV[3]} badge={unreadNotifications} />
+      <TopNavGroup label="Автоматизация" icon={JarvisIcon} active={inAutomation}>
+        {NAV_AUTOMATION.map((item) => {
+          const Icon = item.icon;
+          return (
+            <DropdownMenuItem key={item.to} asChild>
+              <Link
+                to={item.to}
+                className={cn(
+                  'cursor-pointer text-[13px]',
+                  pathname === item.to && 'font-semibold text-brand',
+                )}
+              >
+                <Icon aria-hidden="true" />
+                {item.label}
+              </Link>
+            </DropdownMenuItem>
+          );
+        })}
+      </TopNavGroup>
+      <CustomSitesTopMenu />
+      <TopNavLink {...NAV[4]} />
+      <TopNavLink {...NAV_BOTTOM[0]} />
+    </nav>
+  );
+}
+
+/** Телефон: гамбургер в шапке открывает выезжающее слева меню — полную копию боковой колонки. */
+function MobileNav({
+  openIncidents,
+  unreadNotifications,
+  hideAt = 'md',
+}: {
+  openIncidents: number | undefined;
+  unreadNotifications: number | undefined;
+  hideAt?: 'md' | 'xl';
+}) {
   const [open, setOpen] = useState(false);
   return (
     <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
       <DialogPrimitive.Trigger
         aria-label="Открыть меню"
-        className="grid size-9 flex-none cursor-pointer place-items-center rounded-[10px] border border-border bg-surface text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-2 md:hidden [&_svg]:size-[17px]"
+        className={cn(
+          'grid size-9 flex-none cursor-pointer place-items-center rounded-[10px] border border-border bg-surface text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-2 [&_svg]:size-[17px]',
+          hideAt === 'xl' ? 'xl:hidden' : 'md:hidden',
+        )}
       >
         <MenuIcon aria-hidden="true" />
       </DialogPrimitive.Trigger>
@@ -544,6 +662,8 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
   const openIncidents = useOpenIncidentsCount();
   const notifications = useNotifications();
   const unreadNotifications = notifications.data?.unread;
+  const navigationLayout = useNavigationLayout();
+  const topLayout = navigationLayout === 'top';
   const [collapsed, setCollapsed] = useState(readRail);
   useEffect(() => {
     try {
@@ -554,76 +674,114 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
   }, [collapsed]);
 
   return (
-    <div className="flex h-dvh gap-2 bg-canvas p-2 max-md:gap-0 max-md:p-0">
+    <div
+      data-navigation-layout={navigationLayout}
+      className="flex h-dvh gap-2 bg-canvas p-2 max-md:gap-0 max-md:p-0"
+    >
       {/* Левая колонка лежит прямо на холсте — без рамок и подложки. На телефоне её заменяет выезжающее меню. */}
-      <aside
-        className={cn(
-          'flex w-[248px] min-w-0 flex-none flex-col px-2 pt-1 pb-1 transition-[width] duration-200 max-md:hidden',
-          collapsed && 'w-16',
-        )}
-      >
-        <div
+      {!topLayout && (
+        <aside
+          data-testid="app-shell-sidebar"
           className={cn(
-            'flex h-[52px] min-w-0 items-center gap-[11px] px-3',
-            collapsed && 'justify-center px-0',
+            'flex w-[248px] min-w-0 flex-none flex-col px-2 pt-1 pb-1 transition-[width] duration-200 max-md:hidden',
+            collapsed && 'w-16',
           )}
         >
-          <BrandLogo />
-          <BrandName className={cn('truncate text-[15.5px]', collapsed && 'hidden')} />
-        </div>
-
-        <nav
-          aria-label="Разделы"
-          className={cn(
-            'mt-2 flex min-h-0 flex-1 flex-col gap-[3px] overflow-x-hidden overflow-y-auto px-1',
-            collapsed && 'px-0',
-          )}
-        >
-          <NavList
-            collapsed={collapsed}
-            mode="rail"
-            openIncidents={openIncidents}
-            unreadNotifications={unreadNotifications}
-          />
-          <button
-            type="button"
-            onClick={() => setCollapsed((v) => !v)}
-            aria-label={collapsed ? 'Развернуть меню' : 'Свернуть меню'}
-            aria-expanded={!collapsed}
+          <div
             className={cn(
-              'mt-1.5 flex w-full cursor-pointer items-center gap-2.5 rounded-[10px] px-3 py-2 text-[12.5px] text-text-3 transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
+              'flex h-[52px] min-w-0 items-center gap-[11px] px-3',
               collapsed && 'justify-center px-0',
             )}
           >
-            <ChevronLeftIcon
-              className={cn('size-4 flex-none transition-transform', collapsed && 'rotate-180')}
-              aria-hidden="true"
+            <BrandLogo />
+            <BrandName className={cn('truncate text-[15.5px]', collapsed && 'hidden')} />
+          </div>
+
+          <nav
+            aria-label="Разделы"
+            className={cn(
+              'mt-2 flex min-h-0 flex-1 flex-col gap-[3px] overflow-x-hidden overflow-y-auto px-1',
+              collapsed && 'px-0',
+            )}
+          >
+            <NavList
+              collapsed={collapsed}
+              mode="rail"
+              openIncidents={openIncidents}
+              unreadNotifications={unreadNotifications}
             />
-            <span className={cn('whitespace-nowrap', collapsed && 'hidden')}>Свернуть меню</span>
-            <span className="flex-1" />
-          </button>
-        </nav>
-      </aside>
+            <button
+              type="button"
+              onClick={() => setCollapsed((v) => !v)}
+              aria-label={collapsed ? 'Развернуть меню' : 'Свернуть меню'}
+              aria-expanded={!collapsed}
+              className={cn(
+                'mt-1.5 flex w-full cursor-pointer items-center gap-2.5 rounded-[10px] px-3 py-2 text-[12.5px] text-text-3 transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
+                collapsed && 'justify-center px-0',
+              )}
+            >
+              <ChevronLeftIcon
+                className={cn('size-4 flex-none transition-transform', collapsed && 'rotate-180')}
+                aria-hidden="true"
+              />
+              <span className={cn('whitespace-nowrap', collapsed && 'hidden')}>Свернуть меню</span>
+              <span className="flex-1" />
+            </button>
+          </nav>
+        </aside>
+      )}
 
       {/* Правая часть — одно скруглённое «окно» поверх холста, со своей шапкой. На телефоне — во весь экран. */}
       <div
         data-testid="app-shell-panel"
         className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-[inset_0_1px_0_var(--ns-inset-hi),0_0_0_1px_var(--ns-hairline)] max-md:rounded-none max-md:border-0 max-md:shadow-none"
       >
-        <header className="relative z-10 flex h-[58px] min-w-0 flex-none items-center gap-3 border-b border-border bg-background px-5 max-md:gap-2 max-md:px-3">
-          <MobileNav openIncidents={openIncidents} unreadNotifications={unreadNotifications} />
-          <button
-            type="button"
-            disabled
-            title="Команды и поиск — этап 6"
-            className="flex h-9 w-full max-w-[260px] items-center gap-2 rounded-[10px] border border-border bg-surface px-3 text-[13px] text-text-3 disabled:cursor-default max-md:w-9 max-md:justify-center max-md:px-0"
-          >
-            <SearchIcon className="size-[15px] flex-none" aria-hidden="true" />
-            <span className="min-w-0 flex-1 truncate text-left max-md:sr-only">Поиск и команды</span>
-            <kbd className="rounded-[5px] border border-border bg-surface-2 px-1.5 font-mono text-[10.5px] leading-[1.5] text-text-3 max-md:hidden">
-              ⌘K
-            </kbd>
-          </button>
+        <header
+          className={cn(
+            'relative z-10 flex h-[58px] min-w-0 flex-none items-center gap-3 border-b border-border bg-background px-5 max-md:gap-2 max-md:px-3',
+            topLayout && 'xl:px-4',
+          )}
+        >
+          {topLayout ? (
+            <>
+              <div className="hidden min-w-0 items-center gap-3 xl:flex">
+                <Link
+                  to="/"
+                  aria-label="NodeService — на обзор"
+                  className="mr-1 flex flex-none items-center gap-2.5 rounded-[9px] pr-1 outline-none focus-visible:outline-2 focus-visible:outline-brand"
+                >
+                  <BrandLogo />
+                  <BrandName className="text-[14.5px]" />
+                </Link>
+                <TopNavigation openIncidents={openIncidents} unreadNotifications={unreadNotifications} />
+              </div>
+              <div className="flex min-w-0 items-center gap-2 xl:hidden">
+                <MobileNav
+                  hideAt="xl"
+                  openIncidents={openIncidents}
+                  unreadNotifications={unreadNotifications}
+                />
+                <BrandLogo />
+                <BrandName className="truncate text-[14.5px] max-sm:hidden" />
+              </div>
+            </>
+          ) : (
+            <>
+              <MobileNav openIncidents={openIncidents} unreadNotifications={unreadNotifications} />
+              <button
+                type="button"
+                disabled
+                title="Команды и поиск — этап 6"
+                className="flex h-9 w-full max-w-[260px] items-center gap-2 rounded-[10px] border border-border bg-surface px-3 text-[13px] text-text-3 disabled:cursor-default max-md:w-9 max-md:justify-center max-md:px-0"
+              >
+                <SearchIcon className="size-[15px] flex-none" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate text-left max-md:sr-only">Поиск и команды</span>
+                <kbd className="rounded-[5px] border border-border bg-surface-2 px-1.5 font-mono text-[10.5px] leading-[1.5] text-text-3 max-md:hidden">
+                  ⌘K
+                </kbd>
+              </button>
+            </>
+          )}
           <div className="flex-1" />
           <PanelVersion version={APP_VERSION} build={APP_BUILD} />
           <ThemeMenu />

@@ -4,6 +4,7 @@ import { HttpResponse, http } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store';
+import { resetNavigationLayout, setNavigationLayout } from '@/features/settings/navigation-layout';
 import { mockCustomSites, mockMe, resetMockState } from '@/test/msw/handlers';
 import { server } from '@/test/msw/server';
 import { renderPage } from '@/test/render';
@@ -22,6 +23,7 @@ describe('AppShell · меню пользователя', () => {
     resetMockState({ authenticated: true });
     useAuthStore.setState({ me: mockMe, hydrated: true });
     resetNavGroupState();
+    resetNavigationLayout();
   });
 
   it('в рейле открыты основные разделы и у Уведомлений виден счётчик', async () => {
@@ -123,6 +125,18 @@ describe('AppShell · меню пользователя', () => {
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     expect(mockCustomSites.items).toHaveLength(1);
+  });
+
+  it('режим «Сверху» заменяет сайдбар полным верхним меню с группами', async () => {
+    setNavigationLayout('top');
+    renderPage(Page, '/', ['/login', '/lock', '/servers', '/servers/providers']);
+    expect(await screen.findByTestId('top-navigation')).toBeInTheDocument();
+    expect(screen.queryByTestId('app-shell-sidebar')).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Серверы/ }));
+    expect(await screen.findByRole('menuitem', { name: 'Все серверы' })).toHaveAttribute('href', '/servers');
+    expect(screen.getByRole('menuitem', { name: 'Remnawave' })).toHaveAttribute('href', '/servers/remnawave');
   });
 
   it('вариант A: версия в шапке, а новый релиз открывает детали и команду', async () => {

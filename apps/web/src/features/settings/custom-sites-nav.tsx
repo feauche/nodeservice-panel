@@ -1,8 +1,22 @@
 import { CUSTOM_SITES_MAX, type CustomSite, type CustomSites, customSitesSchema } from '@nodeservice/shared';
-import { ExternalLinkIcon, Globe2Icon, Loader2Icon, PlusIcon, Trash2Icon } from 'lucide-react';
+import {
+  ChevronDownIcon,
+  ExternalLinkIcon,
+  Globe2Icon,
+  Loader2Icon,
+  PlusIcon,
+  Trash2Icon,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -95,7 +109,7 @@ function SitesDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
         <DialogHeader className="flex-none gap-1 px-6 pt-5 pb-1">
           <DialogTitle className="font-heading text-[18px]">Свои сайты</DialogTitle>
           <DialogDescription className="text-[13px] text-text-2">
-            До пяти нужных сайтов отдельным блоком в боковом меню. Ссылки открываются в новой вкладке.
+            До пяти нужных сайтов отдельной группой в меню. Ссылки открываются в новой вкладке.
           </DialogDescription>
         </DialogHeader>
 
@@ -296,6 +310,45 @@ export function CustomSitesNav({
         </span>
       </button>
 
+      <SitesDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+    </>
+  );
+}
+
+/** Свои сайты в верхнем режиме навигации. */
+export function CustomSitesTopMenu() {
+  const sites = useCustomSites();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const items = sites.data?.items ?? [];
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[9px] px-2.5 text-[12.5px] font-medium text-text-2 outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand data-open:bg-surface-2 data-open:text-foreground">
+          <Globe2Icon className="size-4" aria-hidden="true" />
+          <span>Свои сайты</span>
+          <ChevronDownIcon className="size-3.5 text-text-3" aria-hidden="true" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-[210px]">
+          {items.map((site) => (
+            <DropdownMenuItem key={site.id} asChild>
+              <a href={site.url} target="_blank" rel="noopener noreferrer" className="cursor-pointer">
+                <Globe2Icon aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">{site.name}</span>
+                <ExternalLinkIcon className="ml-auto size-3.5 text-text-3" aria-hidden="true" />
+              </a>
+            </DropdownMenuItem>
+          ))}
+          {items.length > 0 && <DropdownMenuSeparator />}
+          <DropdownMenuItem
+            onSelect={() => window.setTimeout(() => setDialogOpen(true), 0)}
+            className="cursor-pointer"
+          >
+            <PlusIcon aria-hidden="true" />
+            {items.length >= CUSTOM_SITES_MAX ? 'Управлять сайтами' : 'Добавить сайт'}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <SitesDialog open={dialogOpen} onOpenChange={setDialogOpen} />
     </>
   );
