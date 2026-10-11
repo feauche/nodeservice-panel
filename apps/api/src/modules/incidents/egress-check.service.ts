@@ -40,7 +40,7 @@ export class EgressCheckService {
     return this.last.get(serverId) ?? null;
   }
 
-  /** Последний результат без новой проверки (для разбора Джарвиса), если он свежий. */
+  /** Последний результат без новой проверки (для разбора Ассистента), если он свежий. */
   cached(serverId: string): EgressReport | null {
     const hit = this.cache.get(serverId);
     return hit && Date.now() - hit.at < 10 * 60_000 ? hit.value : null;

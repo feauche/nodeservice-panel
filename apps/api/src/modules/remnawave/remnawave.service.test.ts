@@ -30,7 +30,7 @@ const NODE = (over: Partial<RemnawaveNode> = {}): RemnawaveNode => ({
 });
 const CERT: RemnawaveCert = { status: 'ok', expiresAt: '2026-12-01T00:00:00.000Z', daysLeft: 60, note: null };
 
-describe('безопасная копия профиля Remnawave для Джарвиса', () => {
+describe('безопасная копия профиля Remnawave для Ассистента', () => {
   it('оставляет структуру протокола и скрывает доступы пользователей', () => {
     const clean = sanitizeRemnawaveProfile({
       tag: 'VLESS TCP REALITY',
@@ -221,7 +221,7 @@ describe('RemnawaveService: подключение', () => {
   });
 });
 
-describe('RemnawaveService: профили для Джарвиса', () => {
+describe('RemnawaveService: профили для Ассистента', () => {
   it('показывает каталог, а выбранный JSON отдаёт без клиентов и секретов', async () => {
     const ctx = make();
     await ctx.svc.connect({ domain: 'x.example.com', apiKey: 'k' });

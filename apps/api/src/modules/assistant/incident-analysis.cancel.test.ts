@@ -71,7 +71,7 @@ function setup(llmRun: (input: LlmRunInput) => Promise<LlmResp>) {
     {} as never,
     // Связь нод с серверами — в этих сценариях не нужна.
     {} as never,
-    // Настройки окружения: адрес панели для подсказок Джарвиса.
+    // Настройки окружения: адрес панели для подсказок Ассистента.
     { get: () => 'https://panel.test' } as never,
   );
   return { svc, store, released, audits };
@@ -98,7 +98,7 @@ describe('отмена идущего разбора', () => {
     expect(after.analysis?.steps).toContain('Читаю снимок сигналов и хронологию');
     expect(aborted).toBe(1);
 
-    // Оборванный запрос не превращает отмену в ошибку «Не удалось получить ответ Джарвиса».
+    // Оборванный запрос не превращает отмену в ошибку «Не удалось получить ответ Ассистента».
     await sleep(30);
     expect(store.inc.analysis?.status).toBe('cancelled');
     // Сообщение в Telegram, которое ждало разбора, уходит как есть.

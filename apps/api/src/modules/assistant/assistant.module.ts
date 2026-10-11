@@ -27,15 +27,13 @@ import { CheckExplainService } from './check-explain.service.js';
 import { FleetInventoryController } from './fleet-inventory.controller.js';
 import { FleetInventoryService } from './fleet-inventory.service.js';
 import { FleetProbeService } from './fleet-probe.service.js';
-import { IncidentAnalysisController } from './incident-analysis.controller.js';
-import { IncidentAnalysisService } from './incident-analysis.service.js';
 import { KbReviewService } from './kb-review.service.js';
 import { LLM_PROVIDER } from './llm.provider.js';
 import { TerminalHintController } from './terminal-hint.controller.js';
 import { TerminalHintService } from './terminal-hint.service.js';
 import { ZvenoProvider } from './zveno.provider.js';
 
-/** Этап 9: Джарвис. Провайдер LLM за токеном — в тестах подменяется фейком. */
+/** Этап 9: Ассистент. Провайдер LLM за токеном — в тестах подменяется фейком. */
 @Module({
   imports: [
     ServersModule,
@@ -56,7 +54,6 @@ import { ZvenoProvider } from './zveno.provider.js';
   ],
   controllers: [
     AssistantController,
-    IncidentAnalysisController,
     TerminalHintController,
     CheckExplainController,
     FleetInventoryController,
@@ -64,7 +61,6 @@ import { ZvenoProvider } from './zveno.provider.js';
   ],
   providers: [
     AssistantService,
-    IncidentAnalysisService,
     FleetProbeService,
     FleetInventoryService,
     ReadDepsService,

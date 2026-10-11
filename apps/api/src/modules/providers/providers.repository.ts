@@ -22,7 +22,11 @@ export class ProvidersRepository {
 
   async list(): Promise<ProviderWithCount[]> {
     const [rows, counts] = await Promise.all([
-      this.db.select().from(providers).where(isNull(providers.archivedAt)).orderBy(asc(providers.name)),
+      this.db
+        .select()
+        .from(providers)
+        .where(and(isNull(providers.archivedAt), isNull(providers.remotePanel)))
+        .orderBy(asc(providers.name)),
       this.counts(),
     ]);
     // Сначала те, у кого больше серверов, при равенстве — по имени: рабочие хостеры всегда сверху.
@@ -33,7 +37,7 @@ export class ProvidersRepository {
 
   async findById(id: string): Promise<ProviderWithCount | undefined> {
     const row = await this.db.query.providers.findFirst({
-      where: and(eq(providers.id, id), isNull(providers.archivedAt)),
+      where: and(eq(providers.id, id), isNull(providers.archivedAt), isNull(providers.remotePanel)),
     });
     if (!row) return undefined;
     const [{ n } = { n: 0 }] = await this.db
@@ -52,7 +56,9 @@ export class ProvidersRepository {
   }
 
   async findByName(name: string): Promise<ProviderRow | undefined> {
-    return this.db.query.providers.findFirst({ where: sql`lower(${providers.name}) = lower(${name})` });
+    return this.db.query.providers.findFirst({
+      where: and(isNull(providers.remotePanel), sql`lower(${providers.name}) = lower(${name})`),
+    });
   }
 
   async insert(values: typeof providers.$inferInsert): Promise<ProviderRow> {
@@ -99,7 +105,7 @@ export class ProvidersRepository {
       const rows = await tx
         .update(providers)
         .set({ archivedAt: new Date(), iconPending: false, updatedAt: new Date() })
-        .where(and(eq(providers.id, id), isNull(providers.archivedAt)))
+        .where(and(eq(providers.id, id), isNull(providers.archivedAt), isNull(providers.remotePanel)))
         .returning({ id: providers.id });
       return rows.length > 0;
     });

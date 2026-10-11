@@ -25,6 +25,7 @@ import { ClsService } from 'nestjs-cls';
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import {
+  appMeta,
   type BillingItemRow,
   type BillingPaymentRow,
   billingItems,
@@ -78,7 +79,7 @@ const validTz = (tz: string | undefined): string => {
 
 const minor = (amount: number): number => Math.round(amount * 100);
 
-/** Строка биллинга для Джарвиса и разбора инцидента. */
+/** Строка биллинга для Ассистента и разбора инцидента. */
 export interface BillingBrief {
   id: string;
   kind: string;
@@ -138,6 +139,7 @@ export class BillingService {
       title: row.title,
       providerId: row.providerId,
       serverIds: row.serverIds.filter((id) => ids.has(id)),
+      nodeRefs: row.nodeRefs ?? [],
       domain: row.domain,
       amountMinor: row.amountMinor,
       currency: row.currency,
@@ -176,14 +178,34 @@ export class BillingService {
     return { items: await Promise.all(rows.map((r) => this.toDto(r, now, known))) };
   }
 
-  private async validate(body: BillingItemUpsert): Promise<void> {
+  private async validate(
+    body: BillingItemUpsert,
+    previousProvider?: string | null,
+    previousNodes: NonNullable<BillingItemUpsert['nodeRefs']> = [],
+  ): Promise<void> {
+    if (body.nodeRefs?.length) {
+      const setting = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, 'settings.remnawave') });
+      const snapshot = setting ? JSON.parse(setting.value) : null;
+      body.nodeRefs = body.nodeRefs.map((ref) => {
+        const prior = previousNodes.find((n) => n.panel === ref.panel && n.uuid === ref.uuid);
+        const node =
+          snapshot?.domain === ref.panel
+            ? snapshot.snapshot?.nodes?.find((n: { uuid: string }) => n.uuid === ref.uuid)
+            : null;
+        if (!node && !prior)
+          throw problem(HttpStatus.BAD_REQUEST, {
+            detail: 'Нода не найдена в подключённой панели. Обновите список.',
+          });
+        return { panel: ref.panel, uuid: ref.uuid, name: node?.name ?? prior?.name ?? ref.name };
+      });
+    }
     const known = await this.knownServerIds();
     const unknown = body.serverIds.filter((id) => !known.has(id));
     if (unknown.length > 0)
       throw problem(HttpStatus.BAD_REQUEST, {
         detail: 'Один из выбранных серверов не найден — обновите страницу.',
       });
-    if (body.providerId) {
+    if (body.providerId && body.providerId !== previousProvider) {
       const [p] = await this.db
         .select({ id: providers.id })
         .from(providers)
@@ -199,6 +221,7 @@ export class BillingService {
       title: body.title,
       providerId: body.providerId,
       serverIds: [...new Set(body.serverIds)],
+      ...(body.nodeRefs !== undefined ? { nodeRefs: body.nodeRefs } : {}),
       domain: body.domain || null,
       amountMinor: minor(body.amount),
       currency: body.currency,
@@ -247,7 +270,7 @@ export class BillingService {
 
   async update(id: string, body: BillingItemUpsert): Promise<BillingItem> {
     const before = await this.findRow(id);
-    await this.validate(body);
+    await this.validate(body, before.providerId, before.nodeRefs ?? []);
     const paidUntilChanged = new Date(body.paidUntil).getTime() !== before.paidUntil.getTime();
     const timeZone = paidUntilChanged
       ? validTz(await this.notifications.timeZone().catch(() => DEFAULT_TZ))
@@ -773,7 +796,7 @@ export class BillingService {
     };
   }
 
-  /* ─────────── Для Джарвиса и разбора инцидентов ─────────── */
+  /* ─────────── Для Ассистента и разбора инцидентов ─────────── */
 
   private async briefs(rows: BillingItemRow[], now: Date): Promise<BillingBrief[]> {
     const [srv, prov] = await Promise.all([
@@ -790,7 +813,10 @@ export class BillingService {
         kind: BILLING_KIND_LABELS[it.kind],
         title: it.title,
         provider: it.providerId ? (pName.get(it.providerId) ?? null) : null,
-        servers: it.serverIds.map((id) => sName.get(id)).filter((x): x is string => Boolean(x)),
+        servers: [
+          ...it.serverIds.map((id) => sName.get(id)).filter((x): x is string => Boolean(x)),
+          ...(it.nodeRefs ?? []).map((n) => n.name),
+        ],
         domain: it.domain,
         amount: formatMoney(it.amountMinor, it.currency),
         amountRub:
@@ -806,7 +832,7 @@ export class BillingService {
     return out;
   }
 
-  /** Всё про биллинг для Джарвиса: активные оплаты по сроку, итоги месяца, при желании — архив. */
+  /** Всё про биллинг для Ассистента: активные оплаты по сроку, итоги месяца, при желании — архив. */
   async forAssistant(opts: { archived?: boolean; serverId?: string | null } = {}): Promise<{
     items: BillingBrief[];
     archived?: BillingBrief[];
@@ -826,7 +852,7 @@ export class BillingService {
     const now = new Date();
     let active = await this.activeRows();
     if (opts.serverId) active = active.filter((i) => i.serverIds.includes(opts.serverId as string));
-    // Границы «месяца» и «года» — по поясу панели, как и остальное время у Джарвиса.
+    // Границы «месяца» и «года» — по поясу панели, как и остальное время у Ассистента.
     const tz = await this.notifications.timeZone().catch(() => DEFAULT_TZ);
     const s = await this.summary(tz);
     const f = await this.forecast(tz);
@@ -893,7 +919,7 @@ export class BillingService {
   /**
    * Окно оплаты сервера (см. payment-window.ts): что просрочено, что истекает в ближайшие сутки, где
    * автоплатёж только что продлил срок, и ближайший срок остальных оплат. Факты идут в текст инцидента и
-   * в разбор Джарвиса; сроки — в поясе панели. total = 0 — оплат этого сервера в «Биллинге» нет.
+   * в разбор Ассистента; сроки — в поясе панели. total = 0 — оплат этого сервера в «Биллинге» нет.
    * Берутся оплаты всех видов: какой вид что объясняет, решает тот, кто пишет вывод (payment-hint.ts).
    */
   async paymentWindowForServer(
@@ -1187,7 +1213,7 @@ export class BillingService {
             : ''
         }`,
         // Страница биллинга — подпункт «Серверы»; ?item открывает окно «Продлить» у этой оплаты.
-        link: { to: `/servers/billing?item=${it.id}`, label: 'Открыть биллинг' },
+        link: { to: `/billing?item=${it.id}`, label: 'Открыть биллинг' },
         telegram: {
           event: kind === 'overdue' ? 'billing_overdue' : 'billing_soon',
           html,

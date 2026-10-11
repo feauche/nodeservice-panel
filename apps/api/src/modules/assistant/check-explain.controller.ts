@@ -15,7 +15,7 @@ export class CheckExplainController {
 
   @Post()
   @HttpCode(200)
-  @ApiOperation({ summary: 'Джарвис пересказывает итог проверки простыми словами (сохраняется у запуска)' })
+  @ApiOperation({ summary: 'Ассистент пересказывает итог проверки простыми словами (сохраняется у запуска)' })
   @ApiOkResponse({ type: ServerCheckRunDto })
   explain(
     @Param('id', ParseUUIDPipe) id: string,

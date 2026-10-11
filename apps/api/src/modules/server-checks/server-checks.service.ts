@@ -106,12 +106,12 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Запуск от Джарвиса: актор «Джарвис» в Журнале. Тяжёлые сюда не попадают — их Джарвис только
+   * Запуск от Ассистента: актор «Ассистент» в Журнале. Тяжёлые сюда не попадают — их Ассистент только
    * предлагает карточкой, а подтверждение приходит от человека через start().
    */
   async startForJarvis(serverId: string, check: ServerCheckKey): Promise<ServerCheckRun> {
-    if (SERVER_CHECK_META[check].heavy) throw new Error('Тяжёлые проверки Джарвис сам не запускает.');
-    const actor: AuditActor = { ...SYSTEM_ACTOR, display: 'Джарвис' };
+    if (SERVER_CHECK_META[check].heavy) throw new Error('Тяжёлые проверки Ассистент сам не запускает.');
+    const actor: AuditActor = { ...SYSTEM_ACTOR, display: 'Ассистент' };
     return (await this.launch(serverId, check, 'manual', actor)).run;
   }
 

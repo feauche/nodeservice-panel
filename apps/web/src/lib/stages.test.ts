@@ -6,7 +6,9 @@ describe('stages · поэтапное открытие разделов', () =>
   it('открыты все готовые разделы, включая все настройки; будущие — под замком', () => {
     for (const to of [
       HOME_SECTION,
-      '/servers',
+      '/nodes',
+      '/integrations/dpi',
+      '/integrations/dns',
       '/incidents',
       '/audit',
       '/assistant',

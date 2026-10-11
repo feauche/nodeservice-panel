@@ -7,7 +7,7 @@ import { KnowledgePage } from '@/features/knowledge/knowledge-page';
 import { requireSectionOpen } from '@/lib/stages';
 
 const knowledgeSearchSchema = z.object({
-  /** Открытая статья (?open=<id>) — например, из цитаты Джарвиса; ссылку можно переслать. */
+  /** Открытая статья (?open=<id>) — например, из цитаты Ассистента; ссылку можно переслать. */
   open: z.uuid().optional().catch(undefined),
 });
 

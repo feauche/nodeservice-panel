@@ -180,7 +180,7 @@ export function UpstreamField({
                       onChange={(e) => onChange({ ...value, owner: e.target.value })}
                       className="h-10 rounded-[10px] bg-surface-2"
                     />
-                    <p className={HINT}>Кому писать, если лёг вход. Видите вы и Джарвис.</p>
+                    <p className={HINT}>Кому писать, если лёг вход. Видите вы и Ассистент.</p>
                   </div>
                 </div>
               )}

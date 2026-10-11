@@ -102,7 +102,7 @@ function setup(timeZone: (() => Promise<string>) | undefined) {
     {} as never,
     // Связь нод с серверами — в этих сценариях не нужна.
     {} as never,
-    // Настройки окружения: адрес панели для подсказок Джарвиса.
+    // Настройки окружения: адрес панели для подсказок Ассистента.
     { get: () => 'https://panel.test' } as never,
   );
   const done = async () => {

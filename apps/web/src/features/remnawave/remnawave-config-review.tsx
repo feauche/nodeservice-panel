@@ -209,7 +209,7 @@ export function RemnawaveConfigReview({ topology }: { topology: RemnawaveTopolog
             onClick={askJarvis}
             className="inline-flex h-9 items-center gap-2 rounded-[10px] bg-cta px-3.5 text-[12.5px] font-semibold text-cta-foreground hover:brightness-105"
           >
-            <BotIcon className="size-4" /> Проверить с Джарвисом
+            <BotIcon className="size-4" /> Проверить с Ассистентом
           </Link>
         </div>
         <div className="mt-4 grid gap-2.5 md:grid-cols-3">

@@ -71,7 +71,7 @@ export const incidentsKeys = {
   weekStats: ['incidents', 'week-stats'] as const,
 };
 
-/** Идёт ли по какому-то инциденту попытка или разбор Джарвиса — тогда данные перечитываются часто. */
+/** Идёт ли по какому-то инциденту попытка или разбор Ассистента — тогда данные перечитываются часто. */
 export const hasRunningAttempt = (items: Incident[] | undefined): boolean =>
   Boolean(
     items?.some((i) => i.analysis?.status === 'running' || i.attempts.some((a) => a.status === 'running')),

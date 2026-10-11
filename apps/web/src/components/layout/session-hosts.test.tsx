@@ -52,8 +52,8 @@ describe('SessionHosts: запрос пароля относится к стра
   it('«назад» в браузере при открытом запросе пароля отменяет действие покинутой страницы', async () => {
     const router = renderApp('/incidents');
     await screen.findByRole('heading', { level: 1, name: 'Инциденты' });
-    await act(() => router.navigate({ to: '/servers' }));
-    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    await act(() => router.navigate({ to: '/nodes' }));
+    await screen.findByRole('heading', { level: 1, name: 'Ноды' });
 
     const pending = requestStepUp();
     expect(await screen.findByRole('dialog', { name: 'Подтвердите пароль' })).toBeInTheDocument();
@@ -67,8 +67,8 @@ describe('SessionHosts: запрос пароля относится к стра
   });
 
   it('без ухода со страницы запрос ждёт пароля и после него выполняет действие', async () => {
-    renderApp('/servers');
-    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    renderApp('/nodes');
+    await screen.findByRole('heading', { level: 1, name: 'Ноды' });
 
     const pending = requestStepUp();
     const dialog = await screen.findByRole('dialog', { name: 'Подтвердите пароль' });

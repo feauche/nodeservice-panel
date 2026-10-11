@@ -1180,7 +1180,7 @@ export class BackupsService implements OnModuleInit {
     return true;
   }
 
-  /** Для Джарвиса и «Состояния панели»: когда была последняя копия. */
+  /** Для Ассистента и «Состояния панели»: когда была последняя копия. */
   async lastBackup(): Promise<{ at: string; kind: string; size: string; verified: boolean | null } | null> {
     const last = (await this.items())[0];
     return last

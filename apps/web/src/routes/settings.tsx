@@ -43,7 +43,7 @@ const GROUPS = [
       { to: '/settings/incidents', label: 'Инциденты', icon: TriangleAlertIcon },
     ],
   },
-  { title: 'Помощник', items: [{ to: '/settings/assistant', label: 'Джарвис', icon: JarvisIcon }] },
+  { title: 'Помощник', items: [{ to: '/settings/assistant', label: 'Ассистент', icon: JarvisIcon }] },
 ] as const;
 
 /** Сервисные страницы вне панели — маленькими кнопками у заголовка, с подсказкой куда ведут. */
@@ -115,7 +115,7 @@ function SettingsLayout() {
                       />
                       {t.label}
                     </Link>
-                    {/* Подразделы Джарвиса — прямо в рейке под ним (вариант A), только когда он открыт. */}
+                    {/* Подразделы Ассистента — прямо в рейке под ним (вариант A), только когда он открыт. */}
                     {t.to === '/settings/assistant' &&
                       onAssistant &&
                       ASSISTANT_SECTIONS.map((sec) => (

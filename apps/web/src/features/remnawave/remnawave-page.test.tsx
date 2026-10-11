@@ -271,7 +271,7 @@ describe('RemnawavePage', () => {
     expect(screen.getByRole('heading', { name: 'Как идёт трафик' })).toBeInTheDocument();
   });
 
-  it('объясняет профили, правила и выход по умолчанию и готовит вопрос Джарвису', async () => {
+  it('объясняет профили, правила и выход по умолчанию и готовит вопрос Ассистенту', async () => {
     mockRemnawave.connected = true;
     mockRemnawave.domain = 'vpn-panel.example.com';
     mockRemnawave.checkedAt = '2026-09-27T10:00:00.000Z';
@@ -286,7 +286,7 @@ describe('RemnawavePage', () => {
     expect(screen.getByText('Выходы — куда Xray отправляет трафик')).toBeInTheDocument();
     expect(screen.getAllByText('выход по умолчанию').length).toBeGreaterThan(0);
 
-    await user.click(screen.getByRole('link', { name: 'Проверить с Джарвисом' }));
+    await user.click(screen.getByRole('link', { name: 'Проверить с Ассистентом' }));
     expect(localStorage.getItem('ns.assistant.draft')).toContain('Проверь все конфигурации Xray');
   });
 });

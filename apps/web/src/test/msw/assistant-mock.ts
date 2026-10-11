@@ -25,7 +25,7 @@ interface AssistantMock {
   messages: Record<string, AssistantMessage[]>;
   /** Сколько «думает» мок-сервер до ответа; в тестах ноль. */
   chatDelayMs: number;
-  /** Изменения по предложению Джарвиса (J5) по id. */
+  /** Изменения по предложению Ассистента (J5) по id. */
   changes: Record<string, AssistantChange>;
   /** Карточки, которые при применении отвечают «состояние изменилось» или «ошибка»: так видны эти состояния. */
   applyOutcome: Record<string, 'stale' | 'failed'>;
@@ -150,7 +150,7 @@ function makeChange(kind: ChangeKind): AssistantChangeProposal {
         { label: 'Ожидаемые порты', before: '—', after: '22, 443', added: ['22', '443'] },
       ],
       consequence:
-        'Для критичного сервера Джарвис будет называть последствия и окно обслуживания. Панель начнёт сверять ожидаемое со снимком состояния и показывать расхождения.',
+        'Для критичного сервера Ассистент будет называть последствия и окно обслуживания. Панель начнёт сверять ожидаемое со снимком состояния и показывать расхождения.',
       reversible: true,
     },
     notes: {
@@ -256,7 +256,7 @@ function makeChange(kind: ChangeKind): AssistantChangeProposal {
   if (kind === 'expired') {
     change.status = 'expired';
     change.note =
-      'Предложение не применили за 24 ч: состояние могло измениться. Попросите Джарвиса предложить заново.';
+      'Предложение не применили за 24 ч: состояние могло измениться. Попросите Ассистента предложить заново.';
     change.createdAt = new Date(now.getTime() - 25 * 3_600_000).toISOString();
     change.expiresAt = new Date(now.getTime() - 3_600_000).toISOString();
   }
@@ -306,7 +306,7 @@ const CHANGE_TRIGGERS: Array<[RegExp, ChangeKind[]]> = [
   [/просроч/i, ['expired']],
 ];
 
-/** Демо-ответ Джарвиса: цитаты (база знаний + инцидент) и предложение автопочинки. */
+/** Демо-ответ Ассистента: цитаты (база знаний + инцидент) и предложение автопочинки. */
 function buildReply(text = ''): AssistantMessage {
   const kinds = CHANGE_TRIGGERS.find(([re]) => re.test(text))?.[1];
   if (kinds && mockAssistant.permissions.changes)
@@ -431,7 +431,7 @@ function decide(change: AssistantChange, action: 'apply' | 'reject' | 'revert') 
   if (outcome === 'stale')
     Object.assign(change, {
       status: 'stale',
-      note: 'Состояние изменилось после предложения, ничего не применено. Сейчас: Заметка: Проверка связи. Попросите Джарвиса предложить заново.',
+      note: 'Состояние изменилось после предложения, ничего не применено. Сейчас: Заметка: Проверка связи. Попросите Ассистента предложить заново.',
     });
   else if (outcome === 'failed')
     Object.assign(change, { status: 'failed', note: 'Название «ru-entry-9» уже занято другим сервером.' });
@@ -487,7 +487,10 @@ export const assistantHandlers = [
   }),
   http.post('/api/servers/:id/terminal/hint', async ({ request }) => {
     if (!mockAssistant.enabled)
-      return aProblem(409, 'Джарвис выключен: задайте провайдера, ключ и модель в «Настройки → Джарвис».');
+      return aProblem(
+        409,
+        'Ассистент выключен: задайте провайдера, ключ и модель в «Настройки → Ассистент».',
+      );
     const body = (await request.json().catch(() => ({}))) as { text?: string; question?: string };
     const text = (body.text ?? '').trim();
     if (!text) return aProblem(400, 'В терминале пока нет вывода: подсказывать нечего.');
@@ -566,7 +569,7 @@ export const assistantHandlers = [
     HttpResponse.json({ items: mockAssistant.messages[String(params.id)] ?? [] }),
   ),
   http.post('/api/assistant/chat', async ({ request }) => {
-    if (!mockAssistant.enabled) return aProblem(409, 'Джарвис выключен: не задан ключ модели.');
+    if (!mockAssistant.enabled) return aProblem(409, 'Ассистент выключен: не задан ключ модели.');
     const body = (await request.json()) as {
       message: string;
       conversationId?: string;

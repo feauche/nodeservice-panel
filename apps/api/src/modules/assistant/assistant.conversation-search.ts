@@ -1,4 +1,4 @@
-/** Поиск по прошлым беседам с Джарвисом: слова без регистра и «ё», все слова в одном сообщении. */
+/** Поиск по прошлым беседам с Ассистентом: слова без регистра и «ё», все слова в одном сообщении. */
 export interface PastMessage {
   conversationId: string;
   title: string;
@@ -10,7 +10,7 @@ export interface PastMessage {
 export interface ConversationHit {
   chat: string;
   at: string;
-  who: 'администратор' | 'Джарвис';
+  who: 'администратор' | 'Ассистент';
   snippet: string;
 }
 
@@ -52,7 +52,7 @@ export function searchPastMessages(rows: PastMessage[], query: string, limit: nu
     out.push({
       chat: r.title,
       at: r.createdAt.toISOString(),
-      who: r.role === 'user' ? 'администратор' : 'Джарвис',
+      who: r.role === 'user' ? 'администратор' : 'Ассистент',
       snippet: snippetAround(r.content, words),
     });
     if (out.length >= limit) break;

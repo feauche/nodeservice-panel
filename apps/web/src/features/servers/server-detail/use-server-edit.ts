@@ -117,7 +117,7 @@ const profileOf = (s: Server): ProfileFields => ({
 const profileKey = (p: ProfileFields) => JSON.stringify([canon(p.profile), p.nodeWatch, p.nodeLink]);
 
 /**
- * Черновик поверх сохранённого. Если сохранённое поменялось со стороны (Джарвис, другая вкладка браузера),
+ * Черновик поверх сохранённого. Если сохранённое поменялось со стороны (Ассистент, другая вкладка браузера),
  * а черновик не трогали, черновик подтягивается; свои правки не затираются.
  */
 function useDraft<T>(saved: T, keyOf: (v: T) => string) {

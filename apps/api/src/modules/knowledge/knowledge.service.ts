@@ -27,7 +27,7 @@ export class KnowledgeService implements OnModuleInit {
     private readonly audit: AuditService,
   ) {}
 
-  /** Глоссарий «Пояснения» есть всегда и закреплён: Джарвис читает его и пополняет. */
+  /** Глоссарий «Пояснения» есть всегда и закреплён: Ассистент читает его и пополняет. */
   async onModuleInit(): Promise<void> {
     try {
       await this.ensureGlossary();
@@ -41,7 +41,7 @@ export class KnowledgeService implements OnModuleInit {
     }
   }
 
-  /** «Правила парка» есть всегда и закреплены: пишет владелец, Джарвис только читает. */
+  /** «Правила парка» есть всегда и закреплены: пишет владелец, Ассистент только читает. */
   async ensureFleetRules(): Promise<KbDocumentRow> {
     const existing = await this.repo.findByTitle(FLEET_RULES_TITLE);
     if (existing) {
@@ -57,7 +57,7 @@ export class KnowledgeService implements OnModuleInit {
     });
   }
 
-  /** Текст правил для инструкции Джарвиса; null — владелец ещё ничего не написал. */
+  /** Текст правил для инструкции Ассистента; null — владелец ещё ничего не написал. */
   async fleetRules(): Promise<string | null> {
     const doc = await this.repo.findByTitle(FLEET_RULES_TITLE);
     return doc ? fleetRulesText(doc.content) : null;
@@ -156,7 +156,7 @@ export class KnowledgeService implements OnModuleInit {
   }
 
   /**
-   * Снимок перед пополнением глоссария Джарвисом. Пока идёт серия дополнений (несколько вызовов за один разговор),
+   * Снимок перед пополнением глоссария Ассистентом. Пока идёт серия дополнений (несколько вызовов за один разговор),
    * версия одна: она хранит состояние до всей серии, а история не забивается копиями всего словаря — сводка
    * (какие термины добавлены/уточнены) при этом копится по всей серии, а не берётся только с последнего вызова.
    */
@@ -176,7 +176,7 @@ export class KnowledgeService implements OnModuleInit {
       throw problem(HttpStatus.CONFLICT, { detail: 'Служебную статью нельзя отправить в архив.' });
     if (before.pinned && patch.title !== undefined && patch.title !== before.title)
       throw problem(HttpStatus.CONFLICT, {
-        detail: 'Название служебной статьи менять нельзя: по нему её находит Джарвис.',
+        detail: 'Название служебной статьи менять нельзя: по нему её находит Ассистент.',
       });
     // Перед изменением сохраняем предыдущее состояние в историю версий.
     await this.snapshot(before, opts?.reason ?? 'edit');
@@ -283,7 +283,7 @@ export class KnowledgeService implements OnModuleInit {
   }
 }
 
-/** Серия пополнений глоссария Джарвисом в пределах этого срока пишет одну версию истории, а не по копии на каждый вызов. */
+/** Серия пополнений глоссария Ассистентом в пределах этого срока пишет одну версию истории, а не по копии на каждый вызов. */
 const GLOSSARY_SNAPSHOT_GAP_MS = 10 * 60_000;
 
 /** Что попало в Журнал о пополнении: какие термины добавлены и исправлены (не больше 30 названий). */
@@ -300,7 +300,7 @@ const GLOSSARY_TITLE = 'Пояснения';
 const RESERVED_TITLES = new Set([GLOSSARY_TITLE, FLEET_RULES_TITLE]);
 const GLOSSARY_HEADER = `# Пояснения
 
-Короткий словарь терминов и аббревиатур — что это простыми словами. Пополняется Джарвисом автоматически.
+Короткий словарь терминов и аббревиатур — что это простыми словами. Пополняется Ассистентом автоматически.
 
 | Термин | Простыми словами |
 | --- | --- |`;

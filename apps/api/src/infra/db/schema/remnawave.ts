@@ -1,6 +1,6 @@
 import type { RemnawaveConfigSnapshot } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
-import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { index, jsonb, pgTable, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 /**
  * Безопасные версии топологии Remnawave. Здесь нет исходных Xray-конфигов, UUID клиентов,
@@ -19,3 +19,17 @@ export const remnawaveConfigSnapshots = pgTable(
 );
 
 export type RemnawaveConfigSnapshotRow = typeof remnawaveConfigSnapshots.$inferSelect;
+
+export const remnaMetricSamples = pgTable(
+  'remna_metric_samples',
+  {
+    panel: text('panel').notNull(),
+    nodeUuid: uuid('node_uuid').notNull(),
+    sampledAt: timestamp('sampled_at', { withTimezone: true }).notNull(),
+    values: jsonb('values').$type<Record<string, number | null>>().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.panel, t.nodeUuid, t.sampledAt] }),
+    index('remna_metric_samples_time_idx').on(t.sampledAt),
+  ],
+);

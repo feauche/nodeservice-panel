@@ -34,7 +34,7 @@ interface Stored {
   vpnProbeRouteDetails?: RemnawaveVpnProbeStatus['routeDetails'];
 }
 
-/** Домен и токен Remnawave хранятся шифрованными (как ключ Джарвиса), в app_meta. */
+/** Домен и токен Remnawave хранятся шифрованными (как ключ Ассистента), в app_meta. */
 @Injectable()
 export class RemnawaveSettingsStore {
   constructor(

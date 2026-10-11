@@ -46,7 +46,7 @@ import type { ToolOutcome } from './assistant.tools.js';
 import type { FleetProbeService } from './fleet-probe.service.js';
 import type { LlmToolDef } from './llm.provider.js';
 
-/** Инструменты только для чтения (уровень T0): Джарвис видит парк, но ничего не меняет. */
+/** Инструменты только для чтения (уровень T0): Ассистент видит парк, но ничего не меняет. */
 export const READ_TOOL_DEFS: LlmToolDef[] = [
   {
     name: 'get_fleet_status',
@@ -177,7 +177,7 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
   ...INSPECT_TOOL_DEFS,
   {
     name: 'get_reference',
-    description: `Справочник Джарвиса: подробные знания по теме. Без id возвращает список тем. Открывайте нужную тему до ответа, когда вопрос про устройство панели и инцидентов, метрики, VPN-стек, блокировки, Linux, обслуживание, работу с базой знаний, безопасность или про то, как строить ответ. id: ${REFERENCE.map((t) => t.id).join(' | ')}. Данные о конкретных серверах берите не отсюда, а из инструментов чтения.`,
+    description: `Справочник Ассистента: подробные знания по теме. Без id возвращает список тем. Открывайте нужную тему до ответа, когда вопрос про устройство панели и инцидентов, метрики, VPN-стек, блокировки, Linux, обслуживание, работу с базой знаний, безопасность или про то, как строить ответ. id: ${REFERENCE.map((t) => t.id).join(' | ')}. Данные о конкретных серверах берите не отсюда, а из инструментов чтения.`,
     input_schema: { type: 'object', properties: { id: { type: 'string' } } },
   },
   {
@@ -274,10 +274,10 @@ export interface ReadDeps {
     | 'certificate'
     | 'logs'
   >;
-  /** Что разрешено Джарвису сейчас: чтения по SSH и предложения проверяются на этом. */
+  /** Что разрешено Ассистенту сейчас: чтения по SSH и предложения проверяются на этом. */
   permissions: AssistantPermissions;
   /**
-   * Джарвис работает сам, без администратора (автоматический разбор): сторонние скрипты проверок не
+   * Ассистент работает сам, без администратора (автоматический разбор): сторонние скрипты проверок не
    * запускает — только свою проверку. Сторонние идут по кнопке или по просьбе администратора.
    */
   unattended?: boolean;
@@ -319,12 +319,12 @@ export const toolsFor = (tools: LlmToolDef[], permissions: AssistantPermissions)
   });
 
 const denied = (what: string, perm: AssistantPermission): ToolOutcome => ({
-  content: `В разрешениях Джарвиса выключено: ${what} (${perm}). Скажите администратору прямо: включить это можно в «Настройки → Джарвис → Разрешения». Данных с сервера нет, ничего не выдумывайте.`,
+  content: `В разрешениях Ассистента выключено: ${what} (${perm}). Скажите администратору прямо: включить это можно в «Настройки → Ассистент → Разрешения». Данных с сервера нет, ничего не выдумывайте.`,
   citations: [],
   proposals: [],
 });
 
-/** Сколько Джарвис ждёт запущенную им проверку: дольше — отвечает «идёт, результат во вкладке». */
+/** Сколько Ассистент ждёт запущенную им проверку: дольше — отвечает «идёт, результат во вкладке». */
 const RUN_CHECK_WAIT_MS = 4 * 60_000;
 
 const HISTORY_METRICS = new Set<string>([...SERVER_METRIC_KEYS, 'memPct', 'diskPct']);
@@ -361,7 +361,7 @@ export function findServer(servers: Server[], key: string): Server | undefined {
   return part.length === 1 ? part[0] : undefined;
 }
 
-/** Страна сервера для Джарвиса: код, название, кто задал (человек или автоопределение), доля согласных источников. */
+/** Страна сервера для Ассистента: код, название, кто задал (человек или автоопределение), доля согласных источников. */
 export function countryBrief(c: Server['country']) {
   if (!c.code && c.status !== 'detecting' && c.status !== 'failed') return null;
   return {
@@ -375,7 +375,7 @@ export function countryBrief(c: Server['country']) {
   };
 }
 
-/** Профиль сервера в парке для Джарвиса: роль, важность, что ожидается и расхождения со снимком. */
+/** Профиль сервера в парке для Ассистента: роль, важность, что ожидается и расхождения со снимком. */
 export function profileBrief(s: Server, nowMs: number = Date.now(), fleet: readonly Server[] = []) {
   const p = s.profile;
   const up = p.upstream;
@@ -428,7 +428,7 @@ export interface SeriesSummary {
   points: Array<{ at: string; v: number }>;
 }
 
-/** Сводка ряда: Джарвису нужна форма (пик, тренд), а не сотни точек. */
+/** Сводка ряда: Ассистенту нужна форма (пик, тренд), а не сотни точек. */
 export function summarizeSeries(raw: Array<[number, number]>): SeriesSummary | null {
   const pts = raw.filter(([, v]) => Number.isFinite(v));
   if (pts.length === 0) return null;

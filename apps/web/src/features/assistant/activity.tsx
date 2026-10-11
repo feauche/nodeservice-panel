@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 
 type LiveActivity = AssistantActivity & { conversationId: string; seenAt: number };
 
-/** Живые строки «Идёт проверка…» из потока событий панели: пока ответ Джарвиса ещё не пришёл. */
+/** Живые строки «Идёт проверка…» из потока событий панели: пока ответ Ассистента ещё не пришёл. */
 export const useActivityStore = create<{
   items: Record<string, LiveActivity>;
   upsert: (conversationId: string, a: AssistantActivity) => void;

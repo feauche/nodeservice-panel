@@ -2,13 +2,8 @@ import { z } from 'zod';
 
 import { NODE_LINK_BY } from './servers.js';
 
-/**
- * Подключение к панели Remnawave (J4), только чтение. Владелец создаёт в самой Remnawave токен API
- * с правами только на чтение (в её разделе «API Tokens») и вставляет сюда домен и токен один раз.
- * Наша панель со своей стороны никогда не вызывает эндпоинты записи Remnawave — какие бы права у
- * токена ни были, а Remnawave не даёт способа заранее узнать права чужого токена (нет самопроверки),
- * поэтому мы не утверждаем, что «проверили» его права: доверяем тому, что владелец создал его как read-only.
- */
+/** Ноды и метрики читаются из Remnawave. Название и ссылка провайдера сохраняются
+ * обратно по его UUID только по явному действию владельца; остальные поля не изменяются. */
 
 export const REMNAWAVE_PROBLEM = {
   domainUnreachable: 'urn:nodeservice:problem:remnawave-domain-unreachable',
@@ -21,6 +16,7 @@ export const remnawaveNodeSchema = z.object({
   name: z.string(),
   /** Адрес ноды в Remnawave — сверяется с адресом наших серверов, чтобы связать карточки без ручной настройки. */
   address: z.string(),
+  port: z.number().int().nullable().optional(),
   countryCode: z.string().nullable(),
   isConnected: z.boolean(),
   isDisabled: z.boolean(),
@@ -33,6 +29,21 @@ export const remnawaveNodeSchema = z.object({
    * Серверы NodeService, на которых работает эта нода (обычно один; первый — основной); пусто — сервер в
    * панели не найден. Считается при отдаче статуса: в сохранённом снимке Remnawave этих полей нет.
    */
+  providerName: z.string().nullable().optional(),
+  providerUuid: z.string().nullable().optional(),
+  providerUrl: z.string().nullable().optional(),
+  providerIcon: z.string().nullable().optional(),
+  cpuCount: z.number().nullable().optional(),
+  cpuModel: z.string().nullable().optional(),
+  cpuPercent: z.number().nullable().optional(),
+  memoryUsedBytes: z.number().nullable().optional(),
+  memoryTotalBytes: z.number().nullable().optional(),
+  loadAverage: z.array(z.number().nullable()).optional(),
+  rxBytesPerSec: z.number().nullable().optional(),
+  txBytesPerSec: z.number().nullable().optional(),
+  uptime: z.string().nullable().optional(),
+  nodeVersion: z.string().nullable().optional(),
+  xrayVersion: z.string().nullable().optional(),
   serverIds: z.array(z.string()).optional(),
   /** Как найдена связь с основным сервером; null — связи нет. */
   linkedBy: z.enum(NODE_LINK_BY).nullable().optional(),
@@ -85,6 +96,7 @@ export const REMNAWAVE_SYNC_INTERVAL_MIN = 1;
 export const REMNAWAVE_CERT_CHECK_INTERVAL_MIN = 30;
 
 export const remnawaveStatusSchema = z.object({
+  providerError: z.string().nullable().optional(),
   connected: z.boolean(),
   domain: z.string().nullable(),
   /** Время последнего успешного чтения. При ошибке не меняется. */
@@ -266,7 +278,7 @@ export const remnawavePathDiagnosticsSchema = z.object({
 export type RemnawavePathDiagnostics = z.infer<typeof remnawavePathDiagnosticsSchema>;
 
 /**
- * Единая модель пути, которой пользуются карта, готовность сервера, инциденты и Джарвис.
+ * Единая модель пути, которой пользуются карта, готовность сервера, инциденты и Ассистент.
  * Техническое правило/outbound остаётся отдельным звеном и не маскируется под сервер.
  */
 export const remnawaveTopologyPathSchema = z.object({
@@ -392,3 +404,77 @@ export const remnawaveTopologySchema = z.object({
   note: z.string(),
 });
 export type RemnawaveTopology = z.infer<typeof remnawaveTopologySchema>;
+
+/** Local presentation thresholds; these do not change the remote node configuration. */
+export const nodePreferencesSchema = z.object({
+  channelMbps: z.number().positive().max(1000000).nullable().default(null),
+  note: z.string().trim().max(1000).default(''),
+  cpuWarningPercent: z.number().int().min(1).max(100).default(85),
+  memoryWarningPercent: z.number().int().min(1).max(100).default(85),
+});
+export type NodePreferences = z.infer<typeof nodePreferencesSchema>;
+
+const providerWebUrl = z.url().refine((value) => {
+  return /^https?:\/\//i.test(value) && !value.split('/')[2]?.includes('@');
+}, 'Укажите ссылку HTTP или HTTPS без пароля');
+export const remnaProviderUpdateSchema = z
+  .object({
+    name: z.string().trim().min(2).max(30).optional(),
+    loginUrl: providerWebUrl.nullable().optional(),
+  })
+  .refine((value) => value.name !== undefined || value.loginUrl !== undefined, 'Укажите название или ссылку');
+export const remnaProviderSchema = z.object({
+  uuid: z.uuid(),
+  name: z.string(),
+  loginUrl: z.string().nullable(),
+  faviconLink: z.string().nullable(),
+  nodes: z.array(z.object({ uuid: z.string(), name: z.string(), countryCode: z.string().nullable() })),
+});
+export const remnaProvidersSchema = z.object({ providers: z.array(remnaProviderSchema) });
+export type RemnaProvider = z.infer<typeof remnaProviderSchema>;
+export type RemnaProviderUpdate = z.infer<typeof remnaProviderUpdateSchema>;
+
+/** Local presentation only: never written to the upstream node order. */
+export const nodeLayoutSchema = z
+  .object({
+    folders: z
+      .array(z.object({ id: z.uuid(), name: z.string().trim().min(1).max(60) }))
+      .max(50)
+      .default([]),
+    order: z.array(z.uuid()).max(2000).default([]),
+    rootOrder: z
+      .array(z.string().regex(/^(folder:)?[0-9a-f-]{36}$/i))
+      .max(2050)
+      .default([]),
+    placement: z.record(z.uuid(), z.uuid()).default({}),
+    collapsedFolders: z.array(z.uuid()).max(50).default([]),
+  })
+  .superRefine((value, ctx) => {
+    const ids = new Set(value.folders.map((f) => f.id));
+    if (
+      ids.size !== value.folders.length ||
+      new Set(value.order).size !== value.order.length ||
+      new Set(value.rootOrder).size !== value.rootOrder.length ||
+      new Set(value.collapsedFolders).size !== value.collapsedFolders.length
+    )
+      ctx.addIssue({ code: 'custom', message: 'Порядок содержит повторения.' });
+    if (Object.keys(value.placement).some((id) => ids.has(id)))
+      ctx.addIssue({ code: 'custom', message: 'Папки нельзя вкладывать друг в друга.' });
+    if (Object.values(value.placement).some((id) => !ids.has(id)))
+      ctx.addIssue({ code: 'custom', message: 'Папка не найдена.' });
+    if (value.collapsedFolders.some((id) => !ids.has(id)))
+      ctx.addIssue({ code: 'custom', message: 'Свёрнутая папка не найдена.' });
+  });
+export type NodeLayout = z.infer<typeof nodeLayoutSchema>;
+
+export const remnaPermissionsSchema = z.object({
+  items: z.array(
+    z.object({
+      scope: z.string(),
+      label: z.string(),
+      why: z.string(),
+      state: z.enum(['granted', 'denied', 'unknown']),
+      checkedAt: z.string().nullable(),
+    }),
+  ),
+});

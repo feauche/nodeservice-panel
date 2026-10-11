@@ -1,12 +1,32 @@
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { CUSTOM_SITES_MAX, type CustomSite, type CustomSites, customSitesSchema } from '@nodeservice/shared';
 import {
+  ArrowDownIcon,
+  ArrowUpIcon,
   ChevronDownIcon,
   ExternalLinkIcon,
   Globe2Icon,
+  GripVerticalIcon,
   Loader2Icon,
   PlusIcon,
   Trash2Icon,
 } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -33,6 +53,10 @@ function normalizedUrl(value: string): string {
 }
 
 function SitesDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   const sites = useCustomSites();
   const update = useUpdateCustomSites();
   const [rows, setRows] = useState<CustomSite[]>([]);
@@ -134,57 +158,80 @@ function SitesDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
               Пока здесь пусто. Добавьте первую ссылку.
             </p>
           ) : (
-            <ul className="flex flex-col gap-2.5">
-              {rows.map((site, index) => {
-                const nameError = errors[`${site.id}.name`];
-                const urlError = errors[`${site.id}.url`];
-                return (
-                  <li
-                    key={site.id}
-                    className="grid grid-cols-[180px_minmax(0,1fr)_36px] items-start gap-2 max-sm:grid-cols-[minmax(0,1fr)_36px]"
-                  >
-                    <div className="min-w-0">
-                      <Input
-                        aria-label={`Название сайта ${index + 1}`}
-                        placeholder="Название"
-                        value={site.name}
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={({ active, over }) => {
+                if (over && active.id !== over.id)
+                  setRows((r) =>
+                    arrayMove(
+                      r,
+                      r.findIndex((s) => s.id === active.id),
+                      r.findIndex((s) => s.id === over.id),
+                    ),
+                  );
+              }}
+            >
+              <SortableContext items={rows.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+                <ul className="flex flex-col gap-2.5">
+                  {rows.map((site, index) => {
+                    const nameError = errors[`${site.id}.name`];
+                    const urlError = errors[`${site.id}.url`];
+                    return (
+                      <SortableSite
+                        key={site.id}
+                        site={site}
                         disabled={busy}
-                        aria-invalid={nameError ? true : undefined}
-                        onChange={(event) => patch(site.id, 'name', event.target.value)}
-                        className={cn(inputClass, nameError && 'border-crit')}
-                      />
-                      {nameError && <p className="mt-1 text-[11.5px] text-crit">{nameError}</p>}
-                    </div>
-                    <div className="min-w-0 max-sm:order-3 max-sm:col-span-2">
-                      <Input
-                        aria-label={`Ссылка сайта ${index + 1}`}
-                        placeholder="https://example.com"
-                        value={site.url}
-                        disabled={busy}
-                        inputMode="url"
-                        spellCheck={false}
-                        autoCapitalize="none"
-                        aria-invalid={urlError ? true : undefined}
-                        onChange={(event) => patch(site.id, 'url', event.target.value)}
-                        onBlur={(event) => patch(site.id, 'url', normalizedUrl(event.target.value))}
-                        className={cn(inputClass, 'font-mono text-[12px]', urlError && 'border-crit')}
-                      />
-                      {urlError && <p className="mt-1 text-[11.5px] text-crit">{urlError}</p>}
-                    </div>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      aria-label={`Удалить сайт ${site.name || index + 1}`}
-                      title="Удалить"
-                      onClick={() => remove(site.id)}
-                      className="grid size-9 cursor-pointer place-items-center rounded-[9px] text-text-3 transition-colors hover:bg-crit-soft hover:text-crit disabled:opacity-50"
-                    >
-                      <Trash2Icon className="size-4" aria-hidden="true" />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+                        index={index}
+                        count={rows.length}
+                        move={(to) => setRows((r) => arrayMove(r, index, to))}
+                      >
+                        <div className="grid grid-cols-[minmax(90px,.7fr)_minmax(0,1fr)_32px] items-start gap-2 max-sm:grid-cols-[minmax(0,1fr)_32px]">
+                          <div className="min-w-0">
+                            <Input
+                              aria-label={`Название сайта ${index + 1}`}
+                              placeholder="Название"
+                              value={site.name}
+                              disabled={busy}
+                              aria-invalid={nameError ? true : undefined}
+                              onChange={(event) => patch(site.id, 'name', event.target.value)}
+                              className={cn(inputClass, nameError && 'border-crit')}
+                            />
+                            {nameError && <p className="mt-1 text-[11.5px] text-crit">{nameError}</p>}
+                          </div>
+                          <div className="min-w-0 max-sm:order-3 max-sm:col-span-2">
+                            <Input
+                              aria-label={`Ссылка сайта ${index + 1}`}
+                              placeholder="https://example.com"
+                              value={site.url}
+                              disabled={busy}
+                              inputMode="url"
+                              spellCheck={false}
+                              autoCapitalize="none"
+                              aria-invalid={urlError ? true : undefined}
+                              onChange={(event) => patch(site.id, 'url', event.target.value)}
+                              onBlur={(event) => patch(site.id, 'url', normalizedUrl(event.target.value))}
+                              className={cn(inputClass, 'font-mono text-[12px]', urlError && 'border-crit')}
+                            />
+                            {urlError && <p className="mt-1 text-[11.5px] text-crit">{urlError}</p>}
+                          </div>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            aria-label={`Удалить сайт ${site.name || index + 1}`}
+                            title="Удалить"
+                            onClick={() => remove(site.id)}
+                            className="grid size-9 cursor-pointer place-items-center rounded-[9px] text-text-3 transition-colors hover:bg-crit-soft hover:text-crit disabled:opacity-50"
+                          >
+                            <Trash2Icon className="size-4" aria-hidden="true" />
+                          </button>
+                        </div>
+                      </SortableSite>
+                    );
+                  })}
+                </ul>
+              </SortableContext>
+            </DndContext>
           )}
 
           <button
@@ -275,7 +322,7 @@ export function CustomSitesNav({
             iconOnly && 'justify-center px-0',
           )}
         >
-          <Globe2Icon className="size-[17px] flex-none" aria-hidden="true" />
+          <SiteIcon site={site} />
           <span
             className={cn('min-w-0 flex-1 truncate', railOnPhone && 'max-md:sr-only', iconOnly && 'sr-only')}
           >
@@ -324,7 +371,7 @@ export function CustomSitesTopMenu() {
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[9px] px-2.5 text-[12.5px] font-medium text-text-2 outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand data-open:bg-surface-2 data-open:text-foreground">
+        <DropdownMenuTrigger className="inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-2.5 text-[12.5px] font-medium whitespace-nowrap text-text-2 outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand data-open:bg-surface-2 data-open:text-foreground">
           <Globe2Icon className="size-4" aria-hidden="true" />
           <span>Свои сайты</span>
           <ChevronDownIcon className="size-3.5 text-text-3" aria-hidden="true" />
@@ -333,7 +380,7 @@ export function CustomSitesTopMenu() {
           {items.map((site) => (
             <DropdownMenuItem key={site.id} asChild>
               <a href={site.url} target="_blank" rel="noopener noreferrer" className="cursor-pointer">
-                <Globe2Icon aria-hidden="true" />
+                <SiteIcon site={site} />
                 <span className="min-w-0 flex-1 truncate">{site.name}</span>
                 <ExternalLinkIcon className="ml-auto size-3.5 text-text-3" aria-hidden="true" />
               </a>
@@ -351,5 +398,86 @@ export function CustomSitesTopMenu() {
       </DropdownMenu>
       <SitesDialog open={dialogOpen} onOpenChange={setDialogOpen} />
     </>
+  );
+}
+
+function SiteIcon({ site }: { site: CustomSite }) {
+  const src = `/api/settings/custom-sites/${site.id}/icon?v=${encodeURIComponent(site.url)}`;
+  const [broken, setBroken] = useState('');
+  return broken === src ? (
+    <Globe2Icon className="size-[17px] flex-none text-text-3" />
+  ) : (
+    <img
+      src={src}
+      alt=""
+      referrerPolicy="no-referrer"
+      onError={() => setBroken(src)}
+      className="size-[18px] flex-none rounded-[4px] object-contain"
+    />
+  );
+}
+function SortableSite({
+  site,
+  children,
+  disabled,
+  index,
+  count,
+  move,
+}: {
+  site: CustomSite;
+  children: ReactNode;
+  disabled: boolean;
+  index: number;
+  count: number;
+  move: (i: number) => void;
+}) {
+  const s = useSortable({ id: site.id, disabled });
+  return (
+    <li
+      ref={s.setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(s.transform),
+        transition: s.transition,
+        opacity: s.isDragging ? 0.4 : 1,
+      }}
+      className="flex items-start gap-2 rounded-xl border border-border bg-surface p-2"
+    >
+      <div className="flex shrink-0 flex-col items-center gap-1">
+        <button
+          type="button"
+          ref={s.setActivatorNodeRef}
+          {...s.attributes}
+          {...s.listeners}
+          disabled={disabled}
+          aria-label={`Переместить сайт ${site.name || index + 1}`}
+          className="grid size-8 touch-none place-items-center rounded-md text-text-3 hover:bg-surface-2"
+        >
+          <GripVerticalIcon className="size-4" />
+        </button>
+      </div>
+      <div className="min-w-0 flex-1">
+        {children}
+        <div className="mt-1 flex gap-1">
+          <button
+            type="button"
+            disabled={disabled || index === 0}
+            onClick={() => move(index - 1)}
+            aria-label={`Поднять сайт ${site.name || index + 1}`}
+            className="rounded p-1 text-text-3 hover:bg-surface-2 disabled:opacity-30"
+          >
+            <ArrowUpIcon className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            disabled={disabled || index === count - 1}
+            onClick={() => move(index + 1)}
+            aria-label={`Опустить сайт ${site.name || index + 1}`}
+            className="rounded p-1 text-text-3 hover:bg-surface-2 disabled:opacity-30"
+          >
+            <ArrowDownIcon className="size-3.5" />
+          </button>
+        </div>
+      </div>
+    </li>
   );
 }

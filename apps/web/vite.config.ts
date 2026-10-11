@@ -25,9 +25,11 @@ function commit(): string {
 
 export default defineConfig({
   define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
-    __APP_COMMIT__: JSON.stringify(commit()),
-    __APP_BUILT_AT__: JSON.stringify(process.env.APP_BUILT_AT || new Date().toISOString().slice(0, 10)),
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(pkg.version),
+    'import.meta.env.VITE_APP_COMMIT': JSON.stringify(commit()),
+    'import.meta.env.VITE_APP_BUILT_AT': JSON.stringify(
+      process.env.APP_BUILT_AT || new Date().toISOString().slice(0, 10),
+    ),
   },
   plugins: [
     tanstackRouter({

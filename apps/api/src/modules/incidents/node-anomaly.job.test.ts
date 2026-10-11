@@ -548,7 +548,7 @@ describe('падение онлайна ноды', () => {
     expect(opened).toHaveLength(1);
   });
 
-  it('ошибка диагностики не скрывает подтверждённое падение: открывается честное дело для Джарвиса', async () => {
+  it('ошибка диагностики не скрывает подтверждённое падение: открывается честное дело для Ассистента', async () => {
     const { snap, opened, pushed, checkFailure } = setup();
     checkFailure.value = true;
     await snap(node({ usersOnline: 200 }));

@@ -23,7 +23,7 @@ const MONTH_IN = [
 
 /** Плитка биллинга в «Обзоре»: просрочки или ближайшая оплата и расходы месяца. Оплат нет — плитки нет. */
 export function BillingTile() {
-  const open = isSectionOpen('/servers/billing');
+  const open = isSectionOpen('/billing');
   const summary = useBillingSummary(open);
   const s = summary.data;
   if (!open || !s || (!s.next && s.month.spentRubMinor === 0)) return null;
@@ -37,7 +37,7 @@ export function BillingTile() {
       : 'Биллинг: ближайших оплат нет';
   return (
     <Link
-      to="/servers/billing"
+      to="/billing"
       data-testid="billing-tile"
       className={cn(
         'flex items-center gap-3 rounded-2xl border bg-surface px-4 py-3.5 transition-colors',

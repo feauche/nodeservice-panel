@@ -82,7 +82,7 @@ export function ThemeMenu({ className }: { className?: string }) {
             <DropdownMenuRadioItem
               key={t.key}
               value={t.key}
-              className="w-full gap-[11px] rounded-[10px] px-2.5 py-[9px] pr-2.5 text-text-2 focus:bg-surface-2 focus:text-foreground data-[state=checked]:text-foreground [&>span:first-child]:hidden"
+              className="w-full gap-[11px] rounded-[10px] px-2.5 py-[9px] pr-2.5 text-text-2 focus:bg-surface-2 focus:text-foreground data-[state=checked]:text-foreground [&>[data-slot=dropdown-menu-radio-item-indicator]]:hidden"
             >
               <Swatch theme={t.key} />
               <span className="min-w-0 flex-1">

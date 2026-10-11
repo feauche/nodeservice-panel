@@ -6,6 +6,7 @@ import {
   type BillingStatPeriod,
   type BillingTotal,
 } from '@nodeservice/shared';
+import { Link } from '@tanstack/react-router';
 import { PlusIcon, SearchIcon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -239,6 +240,12 @@ export function BillingPage({
             ЦБ: курс не получен
           </span>
         ) : null}
+        <Link
+          to="/billing/providers"
+          className="inline-flex h-9 items-center justify-center rounded-[10px] border border-border bg-surface px-4 text-[13px] font-medium text-text-2 hover:bg-surface-2 hover:text-foreground"
+        >
+          Провайдеры
+        </Link>
         <Button
           type="button"
           onClick={() => setAdding(true)}
@@ -350,7 +357,7 @@ export function BillingPage({
               <p className="mt-1 max-w-[460px] text-[12.5px] text-text-3">
                 {archived
                   ? 'Сюда попадает то, что больше не оплачивается: меню «⋯» у карточки → «В архив». История оплат сохраняется.'
-                  : 'Добавьте серверы, аренду, домены и сертификаты с датой следующей оплаты. Панель напомнит в Telegram, посчитает расходы в рублях по курсу ЦБ, а Джарвис учтёт неоплату, если сервер упадёт.'}
+                  : 'Добавьте серверы, аренду, домены и сертификаты с датой следующей оплаты. Панель напомнит в Telegram, посчитает расходы в рублях по курсу ЦБ, а Ассистент учтёт неоплату, если сервер упадёт.'}
               </p>
               {!archived && (
                 <Button

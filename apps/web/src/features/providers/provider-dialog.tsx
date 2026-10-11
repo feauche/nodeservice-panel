@@ -5,6 +5,8 @@ import {
   type Provider,
   providerIconUrlSchema,
   providerSiteHost,
+  providerSiteUrlSchema,
+  type UpdateProviderRequest,
 } from '@nodeservice/shared';
 import { Link2Icon, Loader2Icon } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
@@ -16,7 +18,7 @@ import { apiErrorMessage, isApiError } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { capFirst, cn } from '@/lib/utils';
 import { ProviderIcon } from './provider-icon';
-import { providersApi, useCreateProvider, useUpdateProvider } from './providers-api';
+import { providersApi, useCreateProvider, useProviderApiBase, useUpdateProvider } from './providers-api';
 
 const PREVIEW_DEBOUNCE_MS = 500;
 
@@ -36,6 +38,8 @@ interface Props {
  * и из окна сервера, и из формы добавления — поэтому z-index выше остальных диалогов.
  */
 export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }: Props) {
+  const remote = useProviderApiBase() !== '/providers';
+  const initial = useRef({ name: '', siteUrl: '', note: '', iconUrl: '' });
   const create = useCreateProvider();
   const update = useUpdateProvider();
   const [name, setName] = useState('');
@@ -56,6 +60,12 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
   // biome-ignore lint/correctness/useExhaustiveDependencies: форма заполняется при открытии
   useEffect(() => {
     if (!open) return;
+    initial.current = {
+      name: provider?.name ?? '',
+      siteUrl: provider?.siteUrl ?? '',
+      note: provider?.note ?? '',
+      iconUrl: provider?.iconUrl ?? '',
+    };
     setName(provider?.name ?? '');
     setSiteUrl(provider?.siteUrl ?? '');
     const knownIcon = provider?.iconUrl ?? provider?.iconSourceUrl ?? '';
@@ -117,6 +127,46 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
     // по дереву React до внешней формы и отправил бы её — останавливаем здесь.
     e.stopPropagation();
     if (busy) return;
+    if (remote && (name.trim().length < 2 || name.trim().length > 30)) {
+      setErrors({ name: 'От 2 до 30 символов в Remnawave' });
+      return;
+    }
+    if (remote && provider) {
+      const body: UpdateProviderRequest = {};
+      if (name.trim() !== initial.current.name) body.name = name.trim();
+      if (siteUrl.trim() !== initial.current.siteUrl) {
+        if (!siteUrl.trim()) body.siteUrl = '';
+        else {
+          const parsedSite = providerSiteUrlSchema.safeParse(siteUrl);
+          if (!parsedSite.success) {
+            setErrors({ siteUrl: 'Укажите корректный адрес сайта' });
+            return;
+          }
+          body.siteUrl = parsedSite.data;
+        }
+      }
+      if (note.trim() !== initial.current.note) body.note = note.trim() || null;
+      if (manualUrl !== initial.current.iconUrl) {
+        if (!manualUrl) body.iconUrl = null;
+        else {
+          const parsedIcon = providerIconUrlSchema.safeParse(manualUrl);
+          if (!parsedIcon.success) {
+            setErrors({ iconUrl: 'Укажите корректную ссылку на иконку' });
+            return;
+          }
+          body.iconUrl = parsedIcon.data;
+        }
+      }
+      try {
+        const saved = await update.mutateAsync({ id: provider.id, body });
+        toast.success(`«${saved.name}» сохранён в Remnawave.`);
+        onSaved?.(saved);
+        onOpenChange(false);
+      } catch (err) {
+        setErrors({ form: apiErrorMessage(err) });
+      }
+      return;
+    }
     const parsed = createProviderRequestSchema.safeParse({
       name,
       siteUrl,
@@ -135,10 +185,14 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
         ? await update.mutateAsync({
             id: provider.id,
             body: {
-              name: parsed.data.name,
-              siteUrl: parsed.data.siteUrl,
-              note: note.trim() || null,
-              iconUrl: parsed.data.iconUrl ?? null,
+              ...(!remote || name.trim() !== initial.current.name ? { name: parsed.data.name } : {}),
+              ...(!remote || parsed.data.siteUrl !== initial.current.siteUrl
+                ? { siteUrl: parsed.data.siteUrl }
+                : {}),
+              ...(!remote || note.trim() !== initial.current.note ? { note: note.trim() || null } : {}),
+              ...(!remote || manualUrl !== initial.current.iconUrl
+                ? { iconUrl: parsed.data.iconUrl ?? null }
+                : {}),
             },
           })
         : await create.mutateAsync(parsed.data);
@@ -255,7 +309,9 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
               label={
                 <>
                   Сайт
-                  <span className="ml-0.5 text-crit after:content-['*']" aria-hidden="true" />
+                  {!(remote && provider) && (
+                    <span className="ml-0.5 text-crit after:content-['*']" aria-hidden="true" />
+                  )}
                 </>
               }
               error={errors.siteUrl || undefined}
@@ -363,7 +419,8 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
         </form>
         <div className="flex flex-none items-center gap-3 border-t border-border bg-bg-2 px-6 py-3.5 max-sm:flex-col max-sm:items-stretch">
           <p className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">
-            <span className="text-crit">*</span> обязательные поля. Провайдер общий для всех серверов.
+            <span className="text-crit">*</span> обязательные поля. Провайдер общий для всех{' '}
+            {remote ? 'нод' : 'серверов'}.
           </p>
           <div className="flex gap-2 max-sm:flex-col">
             <DialogSecondaryButton

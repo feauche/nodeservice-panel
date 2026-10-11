@@ -9,7 +9,7 @@ import { PanelVersion } from '@/features/system/panel-version';
 import { mockCustomSites, mockMe, resetMockState } from '@/test/msw/handlers';
 import { server } from '@/test/msw/server';
 import { renderPage } from '@/test/render';
-import { AppShell, resetNavGroupState } from './app-shell';
+import { AppShell } from './app-shell';
 
 function Page() {
   return (
@@ -33,90 +33,54 @@ describe('AppShell · меню пользователя', () => {
   beforeEach(() => {
     resetMockState({ authenticated: true });
     useAuthStore.setState({ me: mockMe, hydrated: true });
-    resetNavGroupState();
     resetNavigationLayout();
   });
 
-  it('в рейле открыты основные разделы и у Уведомлений виден счётчик', async () => {
+  it('в рейле открыты основные разделы без центра уведомлений', async () => {
     renderPage(Page, '/', [
       '/login',
       '/lock',
-      '/servers',
+      '/nodes',
       '/incidents',
       '/notifications',
       '/settings',
       '/settings/security',
     ]);
-    expect(await screen.findByRole('link', { name: 'Серверы' })).toHaveAttribute('href', '/servers');
+    expect(await screen.findByRole('link', { name: 'Ноды' })).toHaveAttribute('href', '/nodes');
     expect(screen.getByRole('link', { name: 'Обзор' })).toHaveAttribute('href', '/');
     expect(screen.getByRole('link', { name: 'Журнал' })).toHaveAttribute('href', '/audit');
     expect(screen.getByRole('link', { name: /Инциденты/ })).toHaveAttribute('href', '/incidents');
-    expect(await screen.findByRole('link', { name: /Уведомления/ })).toHaveAttribute(
-      'href',
-      '/notifications',
-    );
+    expect(screen.queryByRole('link', { name: /Уведомления/ })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Настройки' })).toHaveAttribute('href', '/settings');
-    expect(screen.getByRole('link', { name: 'Джарвис' })).toHaveAttribute('href', '/assistant');
+    expect(screen.getByRole('link', { name: 'Ассистент' })).toHaveAttribute('href', '/assistant');
+    expect(screen.getByText('Помощь')).toBeInTheDocument();
+    expect(screen.queryByText('Автоматизация')).not.toBeInTheDocument();
+    expect(screen.getByText('Интеграции')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'DPI Checker' })).toHaveAttribute('href', '/integrations/dpi');
+    const dns = screen.getByRole('link', { name: 'DNS интеграции' });
+    expect(dns).toHaveAttribute('href', '/integrations/dns');
+    expect(dns.querySelectorAll('img')).toHaveLength(2);
     expect(screen.getByRole('link', { name: 'База знаний' })).toHaveAttribute('href', '/knowledge');
     expect(await screen.findByTestId('panel-version')).toHaveTextContent('v0.55.0');
   });
 
-  it('«Серверы» раскрываются в «Все серверы» и «Провайдеры»; шеврон сворачивает подпункты', async () => {
-    const { router } = renderPage(Page, '/', ['/login', '/lock', '/servers', '/servers/providers']);
-    const toggle = await screen.findByRole('button', { name: 'Показать подпункты «Серверы»' });
-    expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    // вне раздела подпункты скрыты (inert) и не в фокусе
-    expect(screen.getByRole('link', { name: 'Серверы' })).toHaveAttribute('href', '/servers');
+  it('Ноды — прямой переход без подменю и отдельного Remnawave', async () => {
+    const { router } = renderPage(Page, '/', ['/nodes', '/billing']);
     const user = userEvent.setup();
-    await user.click(toggle);
-    expect(screen.getByRole('button', { name: 'Скрыть подпункты «Серверы»' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    );
-    expect(screen.getByRole('link', { name: 'Все серверы' })).toHaveAttribute('href', '/servers');
-    expect(screen.getByRole('link', { name: 'Провайдеры' })).toHaveAttribute('href', '/servers/providers');
-    await user.click(screen.getByRole('link', { name: 'Провайдеры' }));
-    await waitFor(() => expect(router.state.location.pathname).toBe('/servers/providers'));
+    const nodes = await screen.findByRole('link', { name: 'Ноды' });
+    expect(nodes).toHaveAttribute('href', '/nodes');
+    expect(screen.queryByRole('button', { name: /Показать подпункты/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Remnawave' })).not.toBeInTheDocument();
+    await user.click(nodes);
+    await waitFor(() => expect(router.state.location.pathname).toBe('/nodes'));
   });
 
-  it('клик по самому пункту «Серверы» раскрывает подпункты, переход в другой раздел их не сворачивает', async () => {
-    // Каждый раздел рисует свой AppShell — меню создаётся заново при переходе, как в приложении.
-    const pages = { '/servers': Page, '/incidents': Page };
-    const { router } = renderPage(Page, '/', ['/servers', '/incidents'], '/', pages);
-    const user = userEvent.setup();
-    const toggle = () => screen.getByRole('button', { name: /подпункты «Серверы»/ });
-    expect(await screen.findByRole('button', { name: 'Показать подпункты «Серверы»' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
-    // не на шеврон, а на сам пункт
-    await user.click(screen.getByRole('link', { name: 'Серверы' }));
-    await waitFor(() => expect(router.state.location.pathname).toBe('/servers'));
-    await waitFor(() => expect(toggle()).toHaveAttribute('aria-expanded', 'true'));
-    // уходим в «Инциденты» — группа остаётся раскрытой
-    await user.click(screen.getByRole('link', { name: /Инциденты/ }));
-    await waitFor(() => expect(router.state.location.pathname).toBe('/incidents'));
-    await waitFor(() => expect(toggle()).toHaveAttribute('aria-expanded', 'true'));
-    // свернули руками — и это тоже запоминается при следующем переходе
-    await user.click(toggle());
-    expect(toggle()).toHaveAttribute('aria-expanded', 'false');
-    await user.click(screen.getByRole('link', { name: 'Обзор' }));
-    await waitFor(() => expect(router.state.location.pathname).toBe('/'));
-    await waitFor(() => expect(toggle()).toHaveAttribute('aria-expanded', 'false'));
-  });
-
-  it('в свёрнутом рейле «Серверы» — всплывающее меню с подпунктами', async () => {
-    renderPage(Page, '/', ['/login', '/lock', '/servers', '/servers/providers']);
+  it('Ноды остаются прямой ссылкой в свёрнутом меню', async () => {
+    renderPage(Page, '/', ['/nodes', '/billing']);
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: 'Свернуть меню' }));
-    await user.click(screen.getByRole('button', { name: 'Серверы' }));
-    expect(await screen.findByRole('menuitem', { name: 'Все серверы' })).toHaveAttribute('href', '/servers');
-    expect(screen.getByRole('menuitem', { name: 'Провайдеры' })).toHaveAttribute(
-      'href',
-      '/servers/providers',
-    );
-    await user.keyboard('{Escape}');
-    await user.click(screen.getByRole('button', { name: 'Развернуть меню' }));
+    expect(screen.getByRole('link', { name: 'Ноды' })).toHaveAttribute('href', '/nodes');
+    expect(screen.queryByRole('button', { name: 'Ноды' })).not.toBeInTheDocument();
   });
 
   it('добавляет до пяти своих сайтов отдельным блоком и открывает ссылку в новой вкладке', async () => {
@@ -140,14 +104,14 @@ describe('AppShell · меню пользователя', () => {
 
   it('режим «Сверху» заменяет сайдбар полным верхним меню с группами', async () => {
     setNavigationLayout('top');
-    renderPage(Page, '/', ['/login', '/lock', '/servers', '/servers/providers']);
+    renderPage(Page, '/', ['/login', '/lock', '/nodes', '/billing/providers']);
     expect(await screen.findByTestId('top-navigation')).toBeInTheDocument();
     expect(screen.queryByTestId('app-shell-sidebar')).not.toBeInTheDocument();
 
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /Серверы/ }));
-    expect(await screen.findByRole('menuitem', { name: 'Все серверы' })).toHaveAttribute('href', '/servers');
-    expect(screen.getByRole('menuitem', { name: 'Remnawave' })).toHaveAttribute('href', '/servers/remnawave');
+    expect(screen.getByRole('link', { name: 'Ноды' })).toHaveAttribute('href', '/nodes');
+    expect(screen.getByRole('link', { name: 'Биллинг' })).toHaveAttribute('href', '/billing');
+    expect(screen.queryByRole('button', { name: /Серверы/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Remnawave' })).not.toBeInTheDocument();
   });
 
   it('вариант A: версия в шапке, а новый релиз открывает детали и команду', async () => {

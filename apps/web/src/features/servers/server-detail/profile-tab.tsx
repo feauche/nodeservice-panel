@@ -296,7 +296,7 @@ function RoleCard({
 
 /**
  * Вкладка «Профиль» (J3, вариант A5 + R2): нода Remnawave, функции сервера, важность, окно обслуживания и
- * таблица «ожидается / сейчас». Профиль читает Джарвис; расхождения считает панель по снимку состояния по SSH.
+ * таблица «ожидается / сейчас». Профиль читает Ассистент; расхождения считает панель по снимку состояния по SSH.
  */
 export function ProfileTab({ server, edit }: { server: Server; edit: ServerEdit['profile'] }) {
   const refresh = useRefreshInventory();
@@ -357,7 +357,7 @@ export function ProfileTab({ server, edit }: { server: Server; edit: ServerEdit[
       <div className="flex items-start gap-2.5 rounded-[10px] border border-l-[3px] border-border border-l-brand bg-surface px-3 py-2.5 text-[12.5px] leading-normal text-text-2">
         <InfoIcon className="mt-0.5 size-[15px] flex-none text-brand" aria-hidden="true" />
         <p className="m-0">
-          <b className="font-semibold text-foreground">Зачем.</b> Джарвис по этим данным понимает, что
+          <b className="font-semibold text-foreground">Зачем.</b> Ассистент по этим данным понимает, что
           сломается при сбое, и осторожнее предлагает перезапуск. Заполнять необязательно: без профиля он
           работает как раньше.
         </p>
@@ -482,7 +482,7 @@ export function ProfileTab({ server, edit }: { server: Server; edit: ServerEdit[
               );
             })}
           </ul>
-          <p className="m-0 text-[11.5px] text-text-3">Сейчас важность влияет только на советы Джарвиса.</p>
+          <p className="m-0 text-[11.5px] text-text-3">Сейчас важность влияет только на советы Ассистента.</p>
         </div>
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -500,7 +500,7 @@ export function ProfileTab({ server, edit }: { server: Server; edit: ServerEdit[
             className="h-10 rounded-[10px] bg-surface-2"
           />
           <p className="m-0 text-[12px] leading-normal text-text-3">
-            Когда можно обновлять и перезагружать сервер. Джарвис учтёт это, когда будет предлагать такие
+            Когда можно обновлять и перезагружать сервер. Ассистент учтёт это, когда будет предлагать такие
             шаги.
           </p>
         </div>

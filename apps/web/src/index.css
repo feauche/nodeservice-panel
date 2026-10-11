@@ -8,7 +8,7 @@
 @import "@fontsource-variable/jetbrains-mono";
 
 /*
-  Темы NodeService: графит (по умолчанию, без атрибута), светлая, чёрная.
+  Темы NodeService: графит по умолчанию, светлая, чёрная.
   Атрибут data-ns-theme на <html>. Токены ns-* — эталон из design/preview.html;
   ниже они отображаются в переменные shadcn/ui, чтобы готовые компоненты
   автоматически выглядели «по-нашему».
@@ -263,20 +263,20 @@
   --ns-bg-2: #e8ecf2;
   --ns-canvas: #dde2ea;
   --ns-surface: #ffffff;
-  --ns-surface-2: #f6f8fb;
+  --ns-surface-2: #f0f3f8;
   --ns-surface-3: #eef2f8;
-  --ns-border: #dfe4ec;
-  --ns-border-2: #ccd4e0;
+  --ns-border: #cbd3df;
+  --ns-border-2: #b2bfd0;
   --ns-text: #1a2130;
   --ns-text-2: #586274;
-  --ns-text-3: #8b95a7;
+  --ns-text-3: #626f82;
   --ns-accent: #2f6fe0;
   --ns-accent-soft: rgba(47, 111, 224, 0.1);
   --ns-teal: #178f82;
   --ns-on-accent: #ffffff;
-  --ns-ok: #1fae6b;
-  --ns-warn: #c78a1a;
-  --ns-crit: #dc4756;
+  --ns-ok: #137a49;
+  --ns-warn: #90600a;
+  --ns-crit: #bd2b3e;
   --ns-ok-soft: rgba(31, 174, 107, 0.12);
   --ns-warn-soft: rgba(199, 138, 26, 0.12);
   --ns-crit-soft: rgba(220, 71, 86, 0.12);

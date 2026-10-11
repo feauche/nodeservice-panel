@@ -468,7 +468,7 @@ export class ServersService {
     }
     const profilePatch = patch.profile ? normalizeProfilePatch(patch.profile) : undefined;
     // Вход имеет смысл только у чистого выхода: сняли «выпускает трафик» или поставили «принимает
-    // подключения» — сохранённый вход убираем, чтобы он не путал проверку и Джарвиса.
+    // подключения» — сохранённый вход убираем, чтобы он не путал проверку и Ассистента.
     const rolesAfter = (profilePatch?.roles ?? row.roles ?? []) as ServerRole[];
     let upstream: ServerUpstream | null | undefined = profilePatch?.upstream as
       | ServerUpstream

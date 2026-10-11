@@ -13,8 +13,11 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { NodeDialog } from '@/features/nodes/node-dialog';
+import { useNodes } from '@/features/nodes/nodes-api';
 import { openServer } from '@/features/servers/server-modal-store';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -24,6 +27,7 @@ import { ProviderDialog } from './provider-dialog';
 import { ProviderIcon } from './provider-icon';
 import {
   useDeleteProvider,
+  useProviderApiBase,
   useProviderServers,
   useProviders,
   useRefreshProviderIcon,
@@ -38,6 +42,7 @@ const BTN =
  * иконка, сайт, его серверы и заметка про аккаунт и оплату.
  */
 export function ProvidersPage() {
+  const remote = useProviderApiBase() !== '/providers';
   const providers = useProviders();
   const remove = useDeleteProvider();
   const refresh = useRefreshProviderIcon();
@@ -66,7 +71,11 @@ export function ProvidersPage() {
       await remove.mutateAsync(active.id);
       setDeleting(false);
       setSelected(null);
-      toast.success(`Провайдер «${active.name}» перенесён в архив.`);
+      toast.success(
+        remote
+          ? `Провайдер «${active.name}» удалён из Remnawave.`
+          : `Провайдер «${active.name}» перенесён в архив.`,
+      );
     } catch (err) {
       setDeleting(false);
       toast.error(apiErrorMessage(err));
@@ -136,7 +145,7 @@ export function ProvidersPage() {
           ) : (
             <ArrowDownAZIcon className="size-4" aria-hidden="true" />
           )}
-          {sort === 'servers' ? 'По серверам' : 'По имени'}
+          {sort === 'servers' ? (remote ? 'По нодам' : 'По серверам') : 'По имени'}
         </Button>
         <Button
           type="button"
@@ -165,11 +174,11 @@ export function ProvidersPage() {
         </div>
       ) : (
         // Витрина «Провайдеры», вариант 1: колонки одной высоты, страница не прокручивается, список
-        // слева и карточка справа живут в собственной прокрутке — так же устроены «Джарвис» и «База
+        // слева и карточка справа живут в собственной прокрутке — так же устроены «Ассистент» и «База
         // знаний». Оболочка оставляет снизу 60px, «съедаем» лишнее отрицательным полем (как там же):
         // на десктопе низ 24px (лишние 36px), на телефоне 16px (лишние 44px). 258px измерено по месту
         // (шапка + заголовок страницы + строка поиска у «Провайдеров» выше, чем у безымянных страниц).
-        <div className="-mb-11 grid gap-4 overflow-hidden md:-mb-9 lg:h-[calc(100dvh-258px)] lg:min-h-[420px] lg:grid-cols-[300px_minmax(0,1fr)]">
+        <div className="-mb-11 grid gap-4 overflow-hidden md:-mb-9 lg:h-[calc(100dvh-298px)] lg:min-h-[420px] lg:grid-cols-[300px_minmax(0,1fr)]">
           <ul
             className="flex min-h-0 flex-col overflow-y-auto overscroll-contain rounded-2xl border border-border bg-surface"
             aria-label="Провайдеры"
@@ -193,8 +202,10 @@ export function ProvidersPage() {
                     <span className="block truncate text-[13.5px] font-semibold">{p.name}</span>
                     <span className="block truncate text-[11.5px] text-text-3">
                       {p.serversCount === 0
-                        ? 'Серверов нет'
-                        : `${p.serversCount} ${plural(p.serversCount, 'сервер', 'сервера', 'серверов')}`}
+                        ? remote
+                          ? 'Нод нет'
+                          : 'Серверов нет'
+                        : `${p.serversCount} ${remote ? plural(p.serversCount, 'нода', 'ноды', 'нод') : plural(p.serversCount, 'сервер', 'сервера', 'серверов')}`}
                     </span>
                   </span>
                 </button>
@@ -226,13 +237,19 @@ export function ProvidersPage() {
           open={deleting}
           onOpenChange={setDeleting}
           kind="warn"
-          title={`Архивировать провайдера «${active.name}»?`}
-          description={
-            active.serversCount > 0
-              ? `У ${active.serversCount} ${plural(active.serversCount, 'сервера', 'серверов', 'серверов')} провайдер сбросится. Сам провайдер скроется из справочника, а его название сохранится во всей истории оплат.`
-              : 'Провайдер скроется из справочника, а его название сохранится во всей истории оплат.'
+          title={
+            remote
+              ? `Удалить провайдера «${active.name}» из Remnawave?`
+              : `Архивировать провайдера «${active.name}»?`
           }
-          yesLabel="В архив"
+          description={
+            remote
+              ? 'В Remnawave ноды будут отвязаны от провайдера; его записи инфраструктурного биллинга и история оплат будут удалены. Сами ноды сохранятся. Действие необратимо.'
+              : active.serversCount > 0
+                ? `У ${active.serversCount} ${plural(active.serversCount, 'сервера', 'серверов', 'серверов')} провайдер сбросится. Сам провайдер скроется из справочника, а его название сохранится во всей истории оплат.`
+                : 'Провайдер скроется из справочника, а его название сохранится во всей истории оплат.'
+          }
+          yesLabel={remote ? 'Удалить' : 'В архив'}
           loading={remove.isPending}
           onConfirm={doDelete}
         />
@@ -254,6 +271,8 @@ function ProviderCard({
   onRefresh: () => void;
   refreshing: boolean;
 }) {
+  const remote = useProviderApiBase() !== '/providers';
+  const [nodeId, setNodeId] = useState<string | null>(null);
   const servers = useProviderServers(provider.id);
   const update = useUpdateProvider();
   const [note, setNote] = useState(provider.note ?? '');
@@ -333,13 +352,16 @@ function ProviderCard({
       </div>
       <div className="flex flex-col gap-5 px-5 py-4">
         <div>
-          <div className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">Серверы</div>
+          <div className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
+            {remote ? 'Ноды' : 'Серверы'}
+          </div>
           {servers.isPending ? (
             <Skeleton className="mt-2 h-10 rounded-[10px]" />
           ) : (servers.data?.length ?? 0) === 0 ? (
             <p className="mt-2 rounded-[10px] border border-dashed border-border-2 px-4 py-4 text-center text-[12.5px] text-text-3">
-              Серверов у этого провайдера пока нет. Провайдер выбирается в окне сервера, вкладка
-              «Подключение».
+              {remote
+                ? 'У этого провайдера пока нет привязанных нод в Remnawave.'
+                : 'Серверов у этого провайдера пока нет. Провайдер выбирается в окне сервера, вкладка «Подключение».'}
             </p>
           ) : (
             <ul className="mt-2 overflow-hidden rounded-[10px] border border-border">
@@ -347,7 +369,7 @@ function ProviderCard({
                 <li key={s.id} className="border-t border-border first:border-t-0">
                   <button
                     type="button"
-                    onClick={() => openServer(s.id)}
+                    onClick={() => (remote ? setNodeId(s.id) : openServer(s.id))}
                     className="flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left text-[13px] transition-colors hover:bg-surface-2"
                   >
                     <span className="min-w-0 flex-1 truncate font-medium">{s.name}</span>
@@ -386,6 +408,30 @@ function ProviderCard({
           </div>
         </div>
       </div>
+      {nodeId && <ProviderNodeDialog uuid={nodeId} onClose={() => setNodeId(null)} />}
     </section>
+  );
+}
+
+function ProviderNodeDialog({ uuid, onClose }: { uuid: string; onClose: () => void }) {
+  const query = useNodes();
+  const node = query.data?.nodes.find((n) => n.uuid === uuid);
+  return node ? (
+    <NodeDialog node={node} stale={Boolean(query.data?.error)} onClose={onClose} />
+  ) : (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Нода</DialogTitle>
+          <DialogDescription>
+            {query.isPending
+              ? 'Загружаем метрики ноды…'
+              : query.isError
+                ? 'Не удалось загрузить ноду. Попробуйте ещё раз.'
+                : 'Нода больше не доступна в Remnawave.'}
+          </DialogDescription>
+        </DialogHeader>
+      </DialogContent>
+    </Dialog>
   );
 }

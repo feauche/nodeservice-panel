@@ -18,7 +18,7 @@ describe('ProvidersPage', () => {
     const aeza = mockProviders.items[0];
     if (!aeza || !mockServers.items[0]) throw new Error('seed');
     mockServers.items[0].providerId = aeza.id;
-    renderPage(ProvidersPage, '/servers/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
     const list = await screen.findByRole('list', { name: 'Провайдеры' });
     expect(within(list).getAllByRole('button')).toHaveLength(3);
     expect(within(list).getByRole('button', { name: /Aéza/ })).toHaveAttribute('aria-pressed', 'true');
@@ -44,7 +44,7 @@ describe('ProvidersPage', () => {
   });
 
   it('добавление: превью иконки по адресу сайта, новый провайдер становится выбранным', async () => {
-    renderPage(ProvidersPage, '/servers/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
     await screen.findByRole('list', { name: 'Провайдеры' });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Добавить провайдера' }));
@@ -82,7 +82,7 @@ describe('ProvidersPage', () => {
     const aeza = mockProviders.items[0];
     if (!aeza || !mockServers.items[0]) throw new Error('seed');
     mockServers.items[0].providerId = aeza.id;
-    renderPage(ProvidersPage, '/servers/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
     const card = await screen.findByTestId('provider-card');
     const user = userEvent.setup();
     const note = within(card).getByLabelText('Заметка');
@@ -111,7 +111,7 @@ describe('ProvidersPage', () => {
   });
 
   it('ручная ссылка на иконку: превью по ней, сохраняется; в «Изменить» поле заполнено источником', async () => {
-    renderPage(ProvidersPage, '/servers/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
     await screen.findByRole('list', { name: 'Провайдеры' });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Добавить провайдера' }));
@@ -161,7 +161,7 @@ describe('ProvidersPage', () => {
   });
 
   it('«Изменить» у провайдера с найденной иконкой показывает адрес источника, без правок режим не меняется', async () => {
-    renderPage(ProvidersPage, '/servers/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
     const card = await screen.findByTestId('provider-card');
     expect(within(card).getByText(/Иконка с сайта: aeza\.net\/favicon\.ico/)).toBeInTheDocument();
     const user = userEvent.setup();
@@ -175,7 +175,7 @@ describe('ProvidersPage', () => {
   });
 
   it('сайт за защитой: иконка из кэша Google, подписи в форме и на карточке', async () => {
-    renderPage(ProvidersPage, '/servers/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
     await screen.findByRole('list', { name: 'Провайдеры' });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Добавить провайдера' }));
@@ -199,7 +199,7 @@ describe('ProvidersPage', () => {
 
   it('пустой справочник: подсказка и кнопка добавления', async () => {
     mockProviders.items = [];
-    renderPage(ProvidersPage, '/servers/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
     expect(await screen.findByText('Провайдеров пока нет')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Добавить первого провайдера' })).toBeInTheDocument();
   });

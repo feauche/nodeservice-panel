@@ -52,6 +52,7 @@ export const providerIconUrlSchema = z
   .pipe(z.url({ protocol: /^https?$/ }));
 
 export const providerSchema = z.object({
+  selectable: z.boolean().optional(),
   id: z.uuid(),
   name: z.string(),
   siteUrl: z.string(),

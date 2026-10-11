@@ -377,7 +377,7 @@ function CheckRow({
             <div className="rounded-[10px] border border-ai/30 bg-ai-soft px-3 py-2.5 text-[12.5px]">
               <div className="mb-1 flex items-center gap-1.5 text-[11.5px] font-semibold text-ai">
                 <JarvisIcon className="size-3.5" aria-hidden="true" />
-                Джарвис
+                Ассистент
               </div>
               {run.explanation ? (
                 <p className="m-0 whitespace-pre-line">{run.explanation}</p>

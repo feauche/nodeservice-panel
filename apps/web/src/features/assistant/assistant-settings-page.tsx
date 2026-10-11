@@ -2,27 +2,13 @@ import {
   ASSISTANT_LEVEL_HINTS,
   ASSISTANT_LEVEL_LABELS,
   ASSISTANT_LEVEL_TOKENS,
-  ASSISTANT_PERMISSION_GROUPS,
-  ASSISTANT_PERMISSION_HINTS,
-  ASSISTANT_PERMISSION_KEYS,
-  ASSISTANT_PERMISSION_LABELS,
-  ASSISTANT_PERMISSION_RISKS,
-  ASSISTANT_PERMISSIONS_DEFAULT,
-  ASSISTANT_PRESET_KEYS,
-  ASSISTANT_PRESETS,
   ASSISTANT_PROVIDER_LABELS,
   ASSISTANT_PROVIDERS,
-  ASSISTANT_RISK_LABELS,
   type AssistantLevel,
-  type AssistantPermission,
-  type AssistantPermissions,
   type AssistantProvider,
-  type AssistantRisk,
   type AssistantSettingsUpdate,
-  matchAssistantPreset,
 } from '@nodeservice/shared';
 import { useSearch } from '@tanstack/react-router';
-import { LockIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { JarvisIcon } from '@/components/jarvis-icon';
@@ -39,7 +25,6 @@ import {
   Segmented,
   SettingsCard,
   SettingsRow,
-  Toggle,
 } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -59,102 +44,7 @@ const LEVEL_EXAMPLES: Record<AssistantLevel, string> = {
     'Conntrack запоминает каждое соединение, чтобы работали NAT и файрвол. Предел задаёт nf_conntrack_max. При переполнении в журнале ядра будет «table full». Как проверить и поднять предел: команды ниже.',
 };
 
-const RISK_TONE: Record<AssistantRisk, string> = {
-  reads: 'bg-ok-soft text-ok',
-  writes: 'bg-brand-soft text-brand',
-  servers: 'bg-warn-soft text-warn',
-  provider: 'bg-ai-soft text-ai',
-  confirm: 'bg-surface-3 text-text-2',
-};
-
-function RiskBadge({ risk }: { risk: AssistantRisk }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex h-5 items-center rounded-md px-2 text-[11px] font-semibold whitespace-nowrap',
-        RISK_TONE[risk],
-      )}
-    >
-      {ASSISTANT_RISK_LABELS[risk]}
-    </span>
-  );
-}
-
-/** Строка разрешения: название, метки риска, пояснение и переключатель. */
-function PermissionRow({
-  perm,
-  checked,
-  disabled,
-  note,
-  onChange,
-}: {
-  perm: AssistantPermission;
-  checked: boolean;
-  disabled?: boolean;
-  note?: string;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center gap-3.5 border-t border-border py-3 first:border-t-0 max-sm:items-start">
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13.5px] font-semibold">
-          {ASSISTANT_PERMISSION_LABELS[perm]}
-          {ASSISTANT_PERMISSION_RISKS[perm].map((r) => (
-            <RiskBadge key={r} risk={r} />
-          ))}
-        </div>
-        <div className="mt-0.5 text-[12.5px] text-text-3">{ASSISTANT_PERMISSION_HINTS[perm]}</div>
-        {note && <div className="mt-0.5 text-[12px] text-warn">{note}</div>}
-      </div>
-      <Toggle
-        id={`as-perm-${perm}`}
-        checked={checked}
-        disabled={disabled}
-        onChange={onChange}
-        aria-label={ASSISTANT_PERMISSION_LABELS[perm]}
-      />
-    </div>
-  );
-}
-
-/** То, что включено всегда и без переключателя: показываем, чтобы не гадать, что ещё видит Джарвис. */
-function AlwaysRow({ title, hint, risks }: { title: string; hint: string; risks: AssistantRisk[] }) {
-  return (
-    <div className="flex items-center gap-3.5 border-t border-border py-3 first:border-t-0 max-sm:items-start">
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13.5px] font-semibold">
-          {title}
-          {risks.map((r) => (
-            <RiskBadge key={r} risk={r} />
-          ))}
-        </div>
-        <div className="mt-0.5 text-[12.5px] text-text-3">{hint}</div>
-      </div>
-      <span className="flex flex-none items-center gap-1.5 text-[12px] text-text-3">
-        <LockIcon className="size-3.5" aria-hidden="true" />
-        Всегда
-      </span>
-    </div>
-  );
-}
-
-function PermissionGroup({
-  title,
-  note,
-  children,
-}: {
-  title: string;
-  note?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <SettingsCard title={title} hint={note}>
-      {children}
-    </SettingsCard>
-  );
-}
-
-/** Настройки → «Джарвис»: подключение, подробность ответов, разрешения и то, что уходит провайдеру. */
+/** Настройки → «Ассистент»: подключение, подробность ответов и данные режима только для чтения. */
 export function AssistantSettingsPage() {
   const settings = useAssistantSettings();
   const update = useUpdateAssistantSettings();
@@ -164,7 +54,6 @@ export function AssistantSettingsPage() {
   const [provider, setProvider] = useState<AssistantProvider>('zveno');
   const [model, setModel] = useState('');
   const [level, setLevel] = useState<AssistantLevel>('intermediate');
-  const [permissions, setPermissions] = useState<AssistantPermissions>({ ...ASSISTANT_PERMISSIONS_DEFAULT });
   const [confirmClear, setConfirmClear] = useState(false);
 
   const data = settings.data;
@@ -173,7 +62,6 @@ export function AssistantSettingsPage() {
       setProvider(data.provider);
       setModel(data.model);
       setLevel(data.level);
-      setPermissions(data.permissions);
     }
   }, [data]);
 
@@ -181,18 +69,7 @@ export function AssistantSettingsPage() {
   const dirtyConnection =
     Boolean(apiKey.trim()) || model !== (data?.model ?? '') || provider !== (data?.provider ?? 'zveno');
   const dirtyBehavior = level !== (data?.level ?? 'intermediate');
-  const dirtyPermissions = data
-    ? ASSISTANT_PERMISSION_KEYS.some((k) => permissions[k] !== data.permissions[k])
-    : false;
-  const dirty = dirtyConnection || dirtyBehavior || dirtyPermissions;
-
-  const setPerm = (perm: AssistantPermission, value: boolean) =>
-    setPermissions((prev) => {
-      const next = { ...prev, [perm]: value };
-      // Автоматический разбор без разбора вообще не работает: выключаем вместе.
-      if (perm === 'analysis' && !value) next.autoAnalysis = false;
-      return next;
-    });
+  const dirty = dirtyConnection || dirtyBehavior;
 
   const reset = () => {
     if (!data) return;
@@ -200,7 +77,6 @@ export function AssistantSettingsPage() {
     setProvider(data.provider);
     setModel(data.model);
     setLevel(data.level);
-    setPermissions(data.permissions);
   };
 
   const save = async () => {
@@ -209,13 +85,12 @@ export function AssistantSettingsPage() {
       ...(provider !== data.provider ? { provider } : {}),
       ...(model.trim() !== data.model ? { model: model.trim() } : {}),
       ...(level !== data.level ? { level } : {}),
-      ...(dirtyPermissions ? { permissions } : {}),
       ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
     };
     try {
       await update.mutateAsync(patch);
       setApiKey('');
-      toast.success('Настройки Джарвиса сохранены.');
+      toast.success('Настройки Ассистента сохранены.');
     } catch (err) {
       toast.error(apiErrorMessage(err));
     }
@@ -225,14 +100,13 @@ export function AssistantSettingsPage() {
     try {
       await update.mutateAsync({ clearKey: true });
       setConfirmClear(false);
-      toast.success('Ключ удалён: Джарвис выключен.');
+      toast.success('Ключ удалён: Ассистент выключен.');
     } catch (err) {
       setConfirmClear(false);
       toast.error(apiErrorMessage(err));
     }
   };
 
-  const preset = matchAssistantPreset(permissions);
   const providerName = ASSISTANT_PROVIDER_LABELS[provider];
 
   if (settings.isPending)
@@ -245,7 +119,7 @@ export function AssistantSettingsPage() {
   if (settings.isError || !data)
     return (
       <div className="rounded-2xl border border-crit/30 bg-crit-soft px-5 py-4 text-[13px] text-text-2">
-        <p>Настройки Джарвиса не загрузились. Форма заблокирована, чтобы не затереть рабочие значения.</p>
+        <p>Настройки Ассистента не загрузились. Форма заблокирована, чтобы не затереть рабочие значения.</p>
         <p className="mt-1 text-text-3">{settings.error ? apiErrorMessage(settings.error) : 'Нет данных.'}</p>
         <button
           type="button"
@@ -262,11 +136,11 @@ export function AssistantSettingsPage() {
       <UnsavedChangesGuard dirty={dirty} />
       <SectionHeader
         icon={JarvisIcon}
-        title={`Джарвис · ${ASSISTANT_SECTIONS.find((x) => x.key === section)?.label ?? ''}`}
+        title={`Ассистент · ${ASSISTANT_SECTIONS.find((x) => x.key === section)?.label ?? ''}`}
         description={
           enabled
-            ? 'Ключ задан: Джарвис отвечает в чате, разбирает инциденты и подсказывает в терминале.'
-            : 'Ключ не задан: чат, разбор инцидентов и подсказки не работают.'
+            ? 'Ключ задан: Ассистент отвечает на вопросы по данным всего парка в режиме только для чтения.'
+            : 'Ключ не задан: ответы Ассистента недоступны.'
         }
         aside={<Pill tone={enabled ? 'ok' : 'muted'}>{enabled ? 'Включён' : 'Выключен'}</Pill>}
       />
@@ -278,7 +152,7 @@ export function AssistantSettingsPage() {
           {section === 'connection' && (
             <SettingsCard
               title="Подключение"
-              hint="Куда обращается Джарвис за ответами. Ключ хранится в панели зашифрованным."
+              hint="Куда обращается Ассистент за ответами. Ключ хранится в панели зашифрованным."
             >
               <SettingsRow
                 stack
@@ -356,7 +230,7 @@ export function AssistantSettingsPage() {
           {section === 'behavior' && (
             <SettingsCard
               title="Подробность ответов"
-              hint="Как подробно Джарвис объясняет. Влияет на длину ответов и на расход токенов у провайдера."
+              hint="Как подробно Ассистент объясняет. Влияет на длину ответов и на расход токенов у провайдера."
             >
               <div className="flex flex-col gap-4 py-3">
                 <Segmented
@@ -401,101 +275,17 @@ export function AssistantSettingsPage() {
             </SettingsCard>
           )}
 
-          {section === 'permissions' && (
-            <>
-              <SettingsCard
-                title="Готовые наборы"
-                hint={preset ? 'Одним нажатием, дальше можно поправить.' : 'Сейчас настроено вручную.'}
-              >
-                <div
-                  role="radiogroup"
-                  aria-label="Готовые наборы разрешений"
-                  className="grid gap-2.5 py-3 md:grid-cols-3"
-                >
-                  {ASSISTANT_PRESET_KEYS.map((k) => (
-                    // biome-ignore lint/a11y/useSemanticElements: карточка-переключатель со своей раскладкой
-                    <button
-                      key={k}
-                      type="button"
-                      role="radio"
-                      aria-checked={preset === k}
-                      onClick={() => setPermissions({ ...ASSISTANT_PRESETS[k].permissions })}
-                      className={cn(
-                        'cursor-pointer rounded-xl border px-3.5 py-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-brand',
-                        preset === k
-                          ? 'border-brand bg-brand-soft'
-                          : 'border-border bg-surface hover:bg-surface-2',
-                      )}
-                    >
-                      <div className="font-heading text-[14px] font-bold">{ASSISTANT_PRESETS[k].label}</div>
-                      <div className="mt-0.5 text-[12px] text-text-3">{ASSISTANT_PRESETS[k].description}</div>
-                    </button>
-                  ))}
-                </div>
-              </SettingsCard>
-
-              <PermissionGroup title="Всегда включено" note="без переключателей">
-                <AlwaysRow
-                  title="Метрики, инциденты, Журнал, база знаний"
-                  hint="Видит состояние парка и историю событий."
-                  risks={['reads', 'provider']}
-                />
-                <AlwaysRow
-                  title="Автоглоссарий «Пояснения»"
-                  hint="Термины и аббревиатуры пополняют закреплённую статью в базе знаний."
-                  risks={['writes']}
-                />
-              </PermissionGroup>
-
-              {ASSISTANT_PERMISSION_GROUPS.map((g) => (
-                <PermissionGroup key={g.key} title={g.title} note={g.note}>
-                  {g.keys.map((k) => (
-                    <PermissionRow
-                      key={k}
-                      perm={k}
-                      checked={permissions[k]}
-                      disabled={k === 'autoAnalysis' && !permissions.analysis}
-                      note={
-                        k === 'autoAnalysis' && !permissions.analysis
-                          ? 'Сначала включите «Разбор по кнопке».'
-                          : undefined
-                      }
-                      onChange={(v) => setPerm(k, v)}
-                    />
-                  ))}
-                </PermissionGroup>
-              ))}
-              <p className="px-1 text-[12px] text-text-3">
-                Джарвис сам ничего не меняет: изменения серверов, инцидентов и автопочинки он лишь предлагает
-                карточкой, а применяете их вы.
-              </p>
-            </>
-          )}
-
           {section === 'privacy' && (
             <SettingsCard
               title="Данные для провайдера"
-              hint={`Что уходит провайдеру нейросети (${providerName}), когда Джарвис отвечает. Зависит от разрешений.`}
+              hint={`Что уходит провайдеру нейросети (${providerName}), когда Ассистент отвечает в режиме только для чтения.`}
             >
               <ul className="my-3 flex list-disc flex-col gap-1.5 pl-5 text-[13px] text-text-2">
                 <li>Метрики, состояние серверов и их названия.</li>
                 <li>Инциденты, их хронология и попытки починки.</li>
                 <li>Журнал событий и статьи базы знаний, которые нужны для ответа.</li>
-                {permissions.reach && (
-                  <li>Итог проверки доступности: какие порты открыты с других серверов парка.</li>
-                )}
-                {permissions.processes && (
-                  <li>Имена самых тяжёлых процессов и проценты CPU и памяти, без командных строк.</li>
-                )}
-                {permissions.nodeLogs && (
-                  <li>Последние строки журнала ноды. Секреты, uuid, адреса и почта в них скрываются.</li>
-                )}
-                {permissions.terminalHints && (
-                  <li>
-                    Только по вашей кнопке: последние строки терминала. Секреты, uuid, адреса и почта в них
-                    скрываются.
-                  </li>
-                )}
+                <li>Сохранённые метрики нод, результаты прошлых проверок и данные Remnawave.</li>
+                <li>Ассистент не запускает проверки, SSH-команды и изменения.</li>
               </ul>
               <p className="mb-3 text-[12.5px] text-text-3">
                 Ключ хранится в панели зашифрованным и используется только для запросов к провайдеру.
@@ -512,7 +302,7 @@ export function AssistantSettingsPage() {
         onOpenChange={setConfirmClear}
         kind="crit"
         title="Убрать ключ модели?"
-        description="Джарвис выключится, пока вы не добавите ключ снова."
+        description="Ассистент выключится, пока вы не добавите ключ снова."
         yesLabel="Да, убрать"
         loading={update.isPending}
         onConfirm={clearKey}

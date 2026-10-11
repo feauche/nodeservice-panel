@@ -9,6 +9,6 @@ import { ProvidersService } from './providers.service.js';
 @Module({
   controllers: [ProvidersController],
   providers: [ProvidersRepository, ProvidersService, IconFetchService],
-  exports: [ProvidersService],
+  exports: [ProvidersService, IconFetchService],
 })
 export class ProvidersModule {}

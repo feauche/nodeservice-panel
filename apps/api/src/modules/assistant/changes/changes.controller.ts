@@ -20,14 +20,14 @@ export class ChangesController {
 
   // Статический маршрут раньше `:id`, иначе ParseUUIDPipe отвергнет «summary».
   @Get('summary')
-  @ApiOperation({ summary: 'Сколько изменений по предложениям Джарвиса применено, отменено, отклонено' })
+  @ApiOperation({ summary: 'Сколько изменений по предложениям Ассистента применено, отменено, отклонено' })
   @ApiOkResponse({ type: AssistantChangesSummaryDto })
   summary(@Query() q: SummaryQueryDto): Promise<AssistantChangesSummaryDto> {
     return this.changes.summary(q.days);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Изменение по предложению Джарвиса: превью, состояние, итог' })
+  @ApiOperation({ summary: 'Изменение по предложению Ассистента: превью, состояние, итог' })
   @ApiOkResponse({ type: AssistantChangeDto })
   get(@Param('id', ParseUUIDPipe) id: string): Promise<AssistantChangeDto> {
     return this.changes.get(id);

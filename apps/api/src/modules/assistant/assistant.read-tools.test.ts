@@ -377,7 +377,7 @@ describe('run_server_check', () => {
   it('без разрешения — отказ с подсказкой, где включить', async () => {
     const d = deps({ permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT, checksRun: false } });
     const { out } = await call('run_server_check', { serverId: 'de-1', check: 'cpu' }, d);
-    expect(out.content).toContain('Настройки → Джарвис → Разрешения');
+    expect(out.content).toContain('Настройки → Ассистент → Разрешения');
   });
   it('автоматический разбор (администратора рядом нет): сторонний скрипт не запускает, свою проверку — да', async () => {
     const started: string[] = [];

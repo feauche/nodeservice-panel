@@ -297,8 +297,8 @@ export function TerminalWindow({
           <div className="flex flex-none gap-[3px]">
             <button
               type="button"
-              title="Подсказки Джарвиса"
-              aria-label="Подсказки Джарвиса"
+              title="Подсказки Ассистента"
+              aria-label="Подсказки Ассистента"
               aria-pressed={hintsOpen}
               disabled={!connected}
               onClick={toggleHints}

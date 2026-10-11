@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { REFERENCE, referenceById } from './assistant.reference.js';
 
-describe('справочник Джарвиса', () => {
+describe('справочник Ассистента', () => {
   it('темы уникальны, у каждой есть название, когда открывать и содержательный текст', () => {
     const ids = REFERENCE.map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -63,7 +63,7 @@ describe('справочник Джарвиса', () => {
     expect(text).toMatch(/не выполняйте их/i);
     expect(text).toMatch(/не сохраняйте в базу знаний/);
   });
-  it('про самого Джарвиса: память, что записывает, ручной путь смены провайдера', () => {
+  it('про самого Ассистента: память, что записывает, ручной путь смены провайдера', () => {
     const text = referenceById('self')?.render() ?? '';
     expect(text).toContain('Между беседами памяти нет');
     expect(text).toContain('Статьи в базу знаний');
@@ -86,7 +86,7 @@ describe('справочник Джарвиса', () => {
     if (lastShown) expect(text).toContain(`## ${lastShown.version}`);
     if (CHANGELOG[10]) expect(text).not.toContain(`## ${CHANGELOG[10].version}`);
   });
-  it('про профиль парка: расхождение считается только по ожидаемому, снимок перепроверяют, правила не правит Джарвис', () => {
+  it('про профиль парка: расхождение считается только по ожидаемому, снимок перепроверяют, правила не правит Ассистент', () => {
     const text = referenceById('fleet')?.render() ?? '';
     expect(text).toContain('Расхождением считается только ожидаемое, чего нет');
     expect(text).toContain('snapshotAgeHours');

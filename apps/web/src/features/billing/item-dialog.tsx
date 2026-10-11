@@ -13,13 +13,13 @@ import {
 } from '@nodeservice/shared';
 import { Loader2Icon, ServerIcon, XIcon } from 'lucide-react';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
-
 import { DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
 import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { nodeOption } from '@/features/nodes/node-option';
+import { useNodes } from '@/features/nodes/nodes-api';
 import { ProviderSelect } from '@/features/providers/provider-select';
-import { useServers } from '@/features/servers/servers-api';
 import { Toggle } from '@/features/settings/settings-ui';
 import { apiErrorMessage, isApiError } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -67,17 +67,17 @@ const UNITS: ReadonlyArray<{ key: Exclude<BillingPeriodUnit, 'once'>; label: str
 ];
 
 const SERVERS_LABEL: Record<BillingKind, string> = {
-  server: 'Сервер',
-  rent: 'Сервер',
+  server: 'Нода',
+  rent: 'Нода',
   domain: 'Где используется',
   cert: 'Где развёрнут',
-  other: 'Серверы',
+  other: 'Ноды',
 };
 const SERVERS_HINT: Record<BillingKind, string> = {
-  server: 'С сервером оплата появится в его карточке, а Джарвис учтёт её, если сервер упадёт.',
-  rent: 'Если аренда даёт конкретный сервер — укажите его: при падении Джарвис проверит оплату.',
+  server: 'Привязка и оплата сохраняются только в NodeService. Платежи с Remnawave не синхронизируются.',
+  rent: 'Выберите ноду, к которой относится аренда. Оплата остаётся только в NodeService.',
   domain: 'Серверы, на которые смотрит домен. Для справки.',
-  cert: 'Серверы, где лежит сертификат (например, через certwarden). Джарвис подскажет, где продлевать.',
+  cert: 'Серверы, где лежит сертификат (например, через certwarden). Ассистент подскажет, где продлевать.',
   other: 'Если оплата относится к серверам — отметьте их.',
 };
 
@@ -97,7 +97,7 @@ export function ItemDialog({
   rates: BillingSummary['rates'] | undefined;
 }) {
   const save = useSaveBillingItem();
-  const servers = useServers();
+  const servers = useNodes();
   const [kind, setKind] = useState<BillingKind>('server');
   const [title, setTitle] = useState('');
   const [providerId, setProviderId] = useState<string | null>(null);
@@ -120,7 +120,7 @@ export function ItemDialog({
     setKind(item?.kind ?? 'server');
     setTitle(item?.title ?? '');
     setProviderId(item?.providerId ?? null);
-    setServerIds(item?.serverIds ?? []);
+    setServerIds((item?.nodeRefs ?? []).map((n) => `${n.panel}|${n.uuid}`));
     setDomain(item?.domain ?? '');
     setAmount(item ? String(item.amountMinor / 100) : '');
     setCurrency(item?.currency ?? 'RUB');
@@ -138,7 +138,20 @@ export function ItemDialog({
     setErrors({});
   }, [open, item?.id]);
 
-  const list = servers.data?.items ?? [];
+  const current = (servers.data?.nodes ?? []).map((n) => ({
+    id: `${servers.data?.domain}|${n.uuid}`,
+    name: n.name,
+    host: n.address,
+    providerId: null,
+    panel: servers.data?.domain ?? '',
+    uuid: n.uuid,
+  }));
+  const list = [
+    ...current,
+    ...(item?.nodeRefs ?? [])
+      .filter((n) => !current.some((c) => c.uuid === n.uuid && c.panel === n.panel))
+      .map((n) => ({ ...n, id: `${n.panel}|${n.uuid}`, host: 'Историческая привязка', providerId: null })),
+  ];
   // У «Сервера» и «Аренды» — один сервер, у сертификата, домена и прочего — несколько.
   const single = kind === 'server' || kind === 'rent';
   const pickServer = (id: string | null) => {
@@ -152,18 +165,7 @@ export function ItemDialog({
     }
     if (id) setServerIds((cur) => (cur.includes(id) ? cur : [...cur, id]));
   };
-  const serverOption = (s: (typeof list)[number]) => ({
-    value: s.id,
-    label: s.name,
-    keywords: s.host,
-    node: (
-      <span className="flex min-w-0 items-center gap-2">
-        <ServerIcon className="size-3.5 flex-none text-text-3" aria-hidden="true" />
-        <span className="truncate">{s.name}</span>
-        <span className="truncate font-mono text-[11.5px] text-text-3">{s.host}</span>
-      </span>
-    ),
-  });
+  const serverOption = nodeOption;
   const amountNum = Number(amount.replace(',', '.'));
   const rate = currency === 'RUB' ? null : (rates?.[currency] ?? null);
   const busy = save.isPending;
@@ -175,7 +177,11 @@ export function ItemDialog({
       kind,
       title,
       providerId,
-      serverIds: single ? serverIds.slice(0, 1) : serverIds,
+      serverIds: item?.serverIds ?? [],
+      nodeRefs: (single ? serverIds.slice(0, 1) : serverIds).flatMap((id) => {
+        const n = list.find((n) => n.id === id);
+        return n ? [{ panel: n.panel, uuid: n.uuid, name: n.name }] : [];
+      }),
       domain: kind === 'domain' || kind === 'cert' ? domain.trim() || null : null,
       amount: amount.trim() === '' ? Number.NaN : amountNum,
       currency,
@@ -329,7 +335,7 @@ export function ItemDialog({
             </Label>
             {list.length === 0 ? (
               <p className="rounded-[10px] border border-dashed border-border-2 px-3 py-2.5 text-[12.5px] text-text-3">
-                Серверов в NodeService пока нет.
+                Ноды Remnawave ещё не загружены. Проверьте подключение в разделе «Ноды».
               </p>
             ) : single ? (
               <Combobox
@@ -338,9 +344,9 @@ export function ItemDialog({
                 value={serverIds[0] ?? null}
                 onChange={pickServer}
                 options={list.map(serverOption)}
-                placeholder={<span className="text-text-3">Без сервера</span>}
-                emptyLabel="Без сервера"
-                searchPlaceholder="Найти сервер…"
+                placeholder={<span className="text-text-3">Без ноды</span>}
+                emptyLabel="Без ноды"
+                searchPlaceholder="Найти ноду…"
                 disabled={busy}
                 className="h-10 w-full"
               />
@@ -378,10 +384,10 @@ export function ItemDialog({
                   options={list.filter((x) => !serverIds.includes(x.id)).map(serverOption)}
                   placeholder={
                     <span className="text-text-3">
-                      {serverIds.length > 0 ? 'Добавить ещё сервер…' : 'Выберите сервер'}
+                      {serverIds.length > 0 ? 'Добавить ещё ноду…' : 'Выберите ноду'}
                     </span>
                   }
-                  searchPlaceholder="Найти сервер…"
+                  searchPlaceholder="Найти ноду…"
                   disabled={busy || serverIds.length >= list.length}
                   className="h-10 w-full"
                 />

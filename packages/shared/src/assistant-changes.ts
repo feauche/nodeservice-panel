@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ACTION_LEVELS } from './incidents.js';
 
 /**
- * Изменения по предложению Джарвиса (J5). Джарвис не меняет ничего сам: он создаёт «изменение» с превью
+ * Изменения по предложению Ассистента (J5). Ассистент не меняет ничего сам: он создаёт «изменение» с превью
  * «было → станет», а применяет его человек кнопкой. Перед применением панель заново читает состояние и
  * отказывает, если оно изменилось после предложения; после применения проверяет результат и по возможности
  * умеет откатить.
@@ -91,7 +91,7 @@ export const assistantChangeSchema = z.object({
     id: z.string().nullable(),
     label: z.string(),
   }),
-  /** Почему Джарвис это предлагает (его слова). */
+  /** Почему Ассистент это предлагает (его слова). */
   reason: z.string().nullable(),
   rows: z.array(changeRowSchema),
   /** Что важно знать до нажатия: последствия одной фразой. */
@@ -112,7 +112,7 @@ export const assistantChangeSchema = z.object({
 });
 export type AssistantChange = z.infer<typeof assistantChangeSchema>;
 
-/** Сводка для настроек: что сделано по предложениям Джарвиса. */
+/** Сводка для настроек: что сделано по предложениям Ассистента. */
 export const assistantChangesSummarySchema = z.object({
   days: z.number().int(),
   applied: z.number().int().min(0),

@@ -120,26 +120,26 @@ describe('TerminalHost / TerminalWindow', () => {
     expect(ws.sent.some((m) => m.includes('\\n') || m.includes('\\r'))).toBe(false);
   });
 
-  it('подсказки Джарвиса: кнопка в шапке неактивна до подключения, панель открывается и закрывается', async () => {
-    // Джарвис включён: без него панель рисует ссылку в настройки, а хост в этом тесте без роутера.
+  it('подсказки Ассистента: кнопка в шапке неактивна до подключения, панель открывается и закрывается', async () => {
+    // Ассистент включён: без него панель рисует ссылку в настройки, а хост в этом тесте без роутера.
     mockAssistant.enabled = true;
     preflightOk();
     renderHost();
     act(() => useTerminalStore.getState().open(TARGET));
     await screen.findByRole('dialog', { name: 'Терминал de-fra-01' });
-    const toggle = screen.getByRole('button', { name: 'Подсказки Джарвиса' });
+    const toggle = screen.getByRole('button', { name: 'Подсказки Ассистента' });
     expect(toggle).toBeDisabled();
     await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
     act(() => (MockWebSocket.instances[0] as MockWebSocket).emit({ t: 'y' }));
     await waitFor(() => expect(toggle).toBeEnabled());
     const user = userEvent.setup();
-    expect(screen.queryByRole('complementary', { name: 'Подсказки Джарвиса' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('complementary', { name: 'Подсказки Ассистента' })).not.toBeInTheDocument();
     await user.click(toggle);
-    expect(await screen.findByRole('complementary', { name: 'Подсказки Джарвиса' })).toBeInTheDocument();
+    expect(await screen.findByRole('complementary', { name: 'Подсказки Ассистента' })).toBeInTheDocument();
     expect(toggle).toHaveAttribute('aria-pressed', 'true');
     await user.click(screen.getByRole('button', { name: 'Скрыть подсказки' }));
     await waitFor(() =>
-      expect(screen.queryByRole('complementary', { name: 'Подсказки Джарвиса' })).not.toBeInTheDocument(),
+      expect(screen.queryByRole('complementary', { name: 'Подсказки Ассистента' })).not.toBeInTheDocument(),
     );
   });
 
@@ -281,13 +281,13 @@ describe('терминал поверх разделов (настоящие м�
   });
 
   it('переход в другой раздел не закрывает SSH-сессию и не пересоздаёт окно', async () => {
-    const router = renderApp('/servers');
-    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const router = renderApp('/nodes');
+    await screen.findByRole('heading', { level: 1, name: 'Ноды' });
     const { win, ws, name } = await openLiveTerminal();
 
     await act(() => router.navigate({ to: '/incidents' }));
     await screen.findByRole('heading', { level: 1, name: 'Инциденты' });
-    await act(() => router.navigate({ to: '/servers/billing' }));
+    await act(() => router.navigate({ to: '/billing' }));
     await screen.findByRole('heading', { level: 1, name: 'Биллинг' });
 
     // То же окно и тот же сокет: сессия на сервере не закрывалась и не открывалась заново.
@@ -297,8 +297,8 @@ describe('терминал поверх разделов (настоящие м�
   });
 
   it('блокировка экрана прячет терминал, но не закрывает сессию; после разблокировки окно на месте', async () => {
-    const router = renderApp('/servers');
-    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const router = renderApp('/nodes');
+    await screen.findByRole('heading', { level: 1, name: 'Ноды' });
     const { win, ws, name } = await openLiveTerminal();
     const user = userEvent.setup();
 
@@ -324,8 +324,8 @@ describe('терминал поверх разделов (настоящие м�
   });
 
   it('меню и настройка сниппетов, открытые в момент блокировки, не остаются над экраном блокировки', async () => {
-    const router = renderApp('/servers');
-    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const router = renderApp('/nodes');
+    await screen.findByRole('heading', { level: 1, name: 'Ноды' });
     const { win, ws } = await openLiveTerminal();
     const user = userEvent.setup();
     // Блокировка по бездействию (или из другой вкладки) — без клика по меню учётной записи.
@@ -345,9 +345,9 @@ describe('терминал поверх разделов (настоящие м�
 
     act(() => {
       useAuthStore.getState().unlock();
-      void router.navigate({ to: '/servers' });
+      void router.navigate({ to: '/nodes' });
     });
-    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    await screen.findByRole('heading', { level: 1, name: 'Ноды' });
     expect(screen.queryByRole('menu')).toBeNull();
     await user.click(within(win).getByRole('button', { name: 'Сниппеты' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Настроить сниппеты' }));
@@ -359,8 +359,8 @@ describe('терминал поверх разделов (настоящие м�
   });
 
   it('выход из учётной записи закрывает терминал: сессия панели кончилась', async () => {
-    const router = renderApp('/servers');
-    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const router = renderApp('/nodes');
+    await screen.findByRole('heading', { level: 1, name: 'Ноды' });
     const { ws } = await openLiveTerminal();
     const user = userEvent.setup();
 
@@ -373,8 +373,8 @@ describe('терминал поверх разделов (настоящие м�
   });
 
   it('сессия истекла по бездействию: терминал закрывается вместе с ней, как и сказано в «Политике»', async () => {
-    const router = renderApp('/servers');
-    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const router = renderApp('/nodes');
+    await screen.findByRole('heading', { level: 1, name: 'Ноды' });
     const { ws } = await openLiveTerminal();
 
     // Сервер сессию уже не знает; панель узнаёт об этом очередным опросом статуса.
@@ -386,8 +386,8 @@ describe('терминал поверх разделов (настоящие м�
   });
 
   it('Escape в окне сервера закрывает только окно сервера, терминал остаётся', async () => {
-    renderApp('/servers');
-    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    renderApp('/nodes');
+    await screen.findByRole('heading', { level: 1, name: 'Ноды' });
     const first = mockServers.items[0];
     if (!first) throw new Error('в моке нет серверов');
     act(() => openServer(first.id));
@@ -407,8 +407,8 @@ describe('терминал поверх разделов (настоящие м�
   });
 
   it('Escape внутри терминала не закрывает окно сервера и не спрашивает про несохранённое', async () => {
-    renderApp('/servers');
-    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    renderApp('/nodes');
+    await screen.findByRole('heading', { level: 1, name: 'Ноды' });
     const first = mockServers.items[0];
     if (!first) throw new Error('в моке нет серверов');
     act(() => openServer(first.id, 'connection'));
@@ -435,8 +435,8 @@ describe('терминал поверх разделов (настоящие м�
   });
 
   it('ссылка внутри окна сервера («Открыть в Журнале») не пересоздаёт окно и не рвёт терминал', async () => {
-    const router = renderApp('/servers');
-    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    const router = renderApp('/nodes');
+    await screen.findByRole('heading', { level: 1, name: 'Ноды' });
     const first = mockServers.items[0];
     if (!first) throw new Error('в моке нет серверов');
     act(() => openServer(first.id, 'journal'));
@@ -460,8 +460,8 @@ describe('терминал поверх разделов (настоящие м�
   it('жест «назад» не пересоздаёт окно сервера: несохранённые правки остаются', async () => {
     const router = renderApp('/incidents');
     await screen.findByRole('heading', { level: 1, name: 'Инциденты' });
-    await act(() => router.navigate({ to: '/servers' }));
-    await screen.findByRole('heading', { level: 1, name: 'Серверы' });
+    await act(() => router.navigate({ to: '/nodes' }));
+    await screen.findByRole('heading', { level: 1, name: 'Ноды' });
     const first = mockServers.items[0];
     if (!first) throw new Error('в моке нет серверов');
     act(() => openServer(first.id, 'connection'));

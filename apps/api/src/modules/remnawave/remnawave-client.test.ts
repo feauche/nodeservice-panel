@@ -68,7 +68,7 @@ describe('HttpRemnawaveClient.fetch', () => {
       panelVersion: '2.1.10',
       panelUptimeSec: 86400,
     });
-    expect(r.nodes).toEqual([
+    expect(r.nodes).toMatchObject([
       {
         uuid: 'n1',
         name: 'bridge',

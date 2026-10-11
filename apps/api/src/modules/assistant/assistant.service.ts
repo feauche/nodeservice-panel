@@ -9,7 +9,6 @@ import {
   type AssistantStatus,
   type ReachabilityResult,
 } from '@nodeservice/shared';
-
 import { problem } from '../../common/filters/problem-details.filter.js';
 import type { Env } from '../../config/env.schema.js';
 import type { AssistantMessageRow } from '../../infra/db/schema/index.js';
@@ -29,6 +28,7 @@ import { MaintenanceService } from '../maintenance/maintenance.service.js';
 import { VmReaderService } from '../metrics/vm-reader.service.js';
 import { ProvidersService } from '../providers/providers.service.js';
 import { NodeLinkService } from '../remnawave/node-link.service.js';
+import { NodeMetricsService } from '../remnawave/node-metrics.controller.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { RemnawaveTopologyService } from '../remnawave/remnawave-topology.service.js';
 import { ServerChecksService } from '../server-checks/server-checks.service.js';
@@ -36,15 +36,12 @@ import { ServersService } from '../servers/servers.service.js';
 import { AutochecksStore } from '../settings/autochecks.store.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
 import { buildSystem } from './assistant.prompt.js';
-import { toolsFor } from './assistant.read-tools.js';
 import { AssistantRepository } from './assistant.repository.js';
-import { ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
+import { PASSIVE_ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
 import { ChangesService } from './changes/changes.service.js';
 import { mergeReach, sameReachTarget } from './fleet-probe.logic.js';
 import { FleetProbeService } from './fleet-probe.service.js';
-import { autoGlossary, glossaryImportReply } from './glossary-import.js';
-import { IncidentAnalysisService } from './incident-analysis.service.js';
 import {
   describeLlmError,
   LLM_PROVIDER,
@@ -56,7 +53,7 @@ import {
 } from './llm.provider.js';
 
 const MAX_TOOL_ROUNDS = 8;
-/** Сколько карточек изменений Джарвис может выдать за один ответ. */
+/** Сколько карточек изменений Ассистент может выдать за один ответ. */
 const MAX_CHANGE_CARDS = 3;
 /** Сколько раз за ход можно «подтолкнуть» модель, если она ответила пустотой или пообещала вызов без вызова. */
 const MAX_NUDGES = 2;
@@ -75,7 +72,7 @@ const NUDGE_EMPTY = 'Ответ пустой. Вызовите нужный ин
 const NUDGE_FINAL =
   'Дайте итоговый ответ администратору по уже полученным данным. Инструменты больше недоступны, ничего не обещайте вызвать.';
 
-/** Джарвис: цикл tool-use, предложения действий (human-in-the-loop), беседы в БД. */
+/** Ассистент: цикл tool-use, предложения действий (human-in-the-loop), беседы в БД. */
 @Injectable()
 export class AssistantService {
   private readonly log = new Logger(AssistantService.name);
@@ -101,9 +98,9 @@ export class AssistantService {
     private readonly audit: AuditService,
     private readonly autochecks: AutochecksStore,
     private readonly incidentSettings: IncidentsSettingsStore,
-    private readonly analysis: IncidentAnalysisService,
     private readonly changes: ChangesService,
     private readonly remnawave: RemnawaveService,
+    private readonly nodeMetrics: NodeMetricsService,
     private readonly remnawaveTopology: RemnawaveTopologyService,
     private readonly events: EventsService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
@@ -143,38 +140,6 @@ export class AssistantService {
     return (await this.repo.messages(conversationId)).map((r) => this.toMessage(r));
   }
 
-  /** Словарь терминов из режима «Анализ»: ответ без модели, термины уже дописаны в «Пояснения». */
-  private async finishGlossaryImport(
-    conv: { id: string; title: string },
-    message: string,
-    model: string,
-    found: number,
-    res: { id: string; added: number; skipped: string[] },
-  ): Promise<AssistantChatResponse> {
-    const content = glossaryImportReply(found, res.added, res.skipped);
-    const row = await this.repo.addMessage({
-      conversationId: conv.id,
-      role: 'assistant',
-      content,
-      citations: [{ type: 'kb', id: res.id, label: 'Пояснения' }],
-    });
-    await this.audit.record({
-      action: 'assistant.chat',
-      target: { type: 'assistant', id: conv.id, display: conv.title },
-      metadata: {
-        question: previewText(message),
-        answer: previewText(content),
-        model,
-        glossaryImport: `найдено ${found}, добавлено ${res.added}`,
-        toolCalls: 0,
-        messages: 1,
-        proposals: 0,
-      },
-    });
-    const out = this.toMessage(row);
-    return { conversationId: conv.id, message: out, messages: [out] };
-  }
-
   /** Вызов модели: сбой провайдера не должен превращаться в «Что-то пошло не так на сервере». */
   private async runLlm(input: LlmRunInput): Promise<LlmResp> {
     try {
@@ -191,7 +156,7 @@ export class AssistantService {
     const cfg = await this.settings.config();
     if (!cfg)
       throw problem(HttpStatus.CONFLICT, {
-        detail: 'Джарвис выключен: задай провайдера, ключ и модель в Настройки → Джарвис.',
+        detail: 'Ассистент выключен: задай провайдера, ключ и модель в Настройки → Ассистент.',
       });
     const { apiKey, model, level, permissions } = cfg;
 
@@ -203,28 +168,6 @@ export class AssistantService {
 
     await this.repo.addMessage({ conversationId: conv.id, role: 'user', content: message });
 
-    // Термины из словаря, который автор сам пометил («Термины», «Глоссарий», таблица терминов), сервер
-    // дописывает в «Пояснения» сам, не полагаясь на модель. Если весь текст словарь и сервер взял из него всё,
-    // статья не нужна и модель не зовётся; иначе модель строит статью из остального, знает, какие термины уже
-    // добавлены, и решает по строкам словаря, которые сервер не взял. Вопрос, вывод команды и список
-    // «проблема: решение» разбирает модель.
-    let glossaryLine: string | null = null;
-    let glossaryCitation: AssistantCitation | null = null;
-    let glossaryHint: string | null = null;
-    const auto = autoGlossary(message);
-    if (auto) {
-      const defs = auto.terms;
-      const res = await this.knowledge.appendGlossary(defs, { auditSource: 'auto' });
-      if (auto.pure) return this.finishGlossaryImport(conv, message, model, defs.length, res);
-      glossaryLine = `Термины из строк-определений: найдено ${defs.length}, добавлено новых в «Пояснения» ${res.added}, уже были ${res.skipped.length}.`;
-      glossaryCitation = { type: 'kb', id: res.id, label: 'Пояснения' };
-      // Термины названы поимённо: иначе модель выбросит из статьи и соседние строки «проблема: решение».
-      glossaryHint = `СЕРВЕР УЖЕ ДОБАВИЛ в глоссарий «Пояснения» термины из раздела-словаря этого текста (найдено ${defs.length}, новых ${res.added}): ${defs.map((d) => d.term).join(', ')}. Не добавляй их повторно и не включай эти определения в статьи. Остальное содержание (шаги, команды, списки «проблема: решение») разбирай как обычно; если это была инструкция, строй статью из него. Другие термины и аббревиатуры, которые есть в тексте не в виде этих определений, добавь через add_glossary_terms.`;
-      // Строки словаря, которые сервер не взял, молча не пропадают: по ним решает модель и говорит владельцу.
-      if (auto.rejected.length > 0)
-        glossaryHint += ` Строки раздела-словаря, которые сервер не взял (в пояснении точка с запятой, путь, дата или хэш, мало русских букв или это совет «сделайте…»): ${auto.rejected.join(', ')}. Реши по каждой: настоящее определение добавь через add_glossary_terms, а вывод команды, настройки и пункты «проблема: решение» в глоссарий не добавляй. В ответе назови, какие из этих строк добавил, а какие нет и почему.`;
-    }
-
     // История беседы → сообщения модели (только текст; предыдущий tool-контекст не тащим).
     const prior = await this.repo.messages(conv.id);
     const messages: LlmMsg[] = prior
@@ -233,8 +176,6 @@ export class AssistantService {
         role: m.role as 'user' | 'assistant',
         content: [{ type: 'text', text: m.content }],
       }));
-
-    if (glossaryHint) appendUserText(messages, glossaryHint);
 
     let changeCards = 0;
     const deps: ToolDeps = {
@@ -258,7 +199,6 @@ export class AssistantService {
       autochecks: this.autochecks,
       incidentSettings: this.incidentSettings,
       assistant: { level },
-      autoAnalysis: () => this.analysis.autoStatus(),
       lastBackup: () => this.backups.lastBackup(),
       permissions,
       progress: (a) =>
@@ -266,6 +206,10 @@ export class AssistantService {
       upstreamTarget: (server, all) =>
         resolveUpstreamTarget(server, all, this.remnawave, this.links).catch(() => null),
       // Ноды — уже с их серверами в панели (связь по адресу, IP или выбору в профиле).
+      nodeMetrics: async (minutes, uuid) => {
+        const data = await this.nodeMetrics.localHistory(minutes);
+        return { ...data, history: data.history.filter((n) => !uuid || n.uuid === uuid) };
+      },
       remnawave: {
         status: async () => {
           const st = await this.remnawave.status();
@@ -307,7 +251,7 @@ export class AssistantService {
         model,
         system,
         messages,
-        tools: toolsFor(ASSISTANT_TOOLS, permissions),
+        tools: PASSIVE_ASSISTANT_TOOLS,
       });
       const text = textOf(res.blocks);
       const uses = res.blocks.filter(
@@ -372,8 +316,6 @@ export class AssistantService {
     let finalText = answer || 'Не удалось получить ответ. Повторите вопрос.';
     // Модель заявила «сохранил», а инструменты так и не вызвала: честно говорим, что записи нет.
     if (toolCalls === 0 && CLAIM_RE.test(finalText)) finalText = `${finalText}\n\n${CLAIM_WARNING}`;
-    if (glossaryLine) finalText = `${finalText}\n\n${glossaryLine}`;
-    if (glossaryCitation) citations.push(glossaryCitation);
     // Ответ можно разбить на несколько сообщений строкой «===»: вывод, затем инструкция, затем команды.
     const parts = finalText
       .split(/\n[ \t]*={3,}[ \t]*\n/)

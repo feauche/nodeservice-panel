@@ -31,7 +31,7 @@ export class KnowledgeRepository {
       .limit(200);
   }
 
-  /** Топ-K статей для контекста Джарвиса (RAG-lite по FTS). */
+  /** Топ-K статей для контекста Ассистента (RAG-lite по FTS). */
   async searchForContext(q: string, limit = 4): Promise<KbDocumentRow[]> {
     return this.db
       .select()

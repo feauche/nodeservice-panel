@@ -5,8 +5,8 @@ import { ACTION_LEVELS } from './incidents.js';
 import { reachabilityResultSchema } from './reachability.js';
 
 /**
- * Джарвис (этап 9): чат со знанием состояния парка и базы знаний.
- * Джарвис НИКОГДА не выполняет действия сам — только предлагает (proposal),
+ * Ассистент (этап 9): чат со знанием состояния парка и базы знаний.
+ * Ассистент НИКОГДА не выполняет действия сам — только предлагает (proposal),
  * а выполняет — администратор через тот же step-up/подтверждение, что и вручную.
  */
 
@@ -21,13 +21,13 @@ export const ASSISTANT_PROVIDER_LABELS: Record<AssistantProvider, string> = {
 export const ASSISTANT_MODEL_MAX = 80;
 
 /**
- * Верхний предел сообщения Джарвису. Режима «Анализ» больше нет: Джарвис сам понимает, что ему прислали
+ * Верхний предел сообщения Ассистенту. Режима «Анализ» больше нет: Ассистент сам понимает, что ему прислали
  * (вопрос, статью, словарь терминов, вывод команды), поэтому в чат можно вставить целый мануал.
  */
 export const ASSISTANT_MESSAGE_MAX = 100_000;
 
 /**
- * Подробность ответов Джарвиса. Ключи остались прежними (novice, intermediate, pro), поэтому старые
+ * Подробность ответов Ассистента. Ключи остались прежними (novice, intermediate, pro), поэтому старые
  * настройки читаются; для человека это «Подробно», «Обычно» и «Кратко». Подробнее значит длиннее ответы
  * и больше токенов у провайдера нейросети.
  */
@@ -51,7 +51,7 @@ export const ASSISTANT_LEVEL_TOKENS: Record<AssistantLevel, string> = {
 };
 export const ASSISTANT_LEVEL_DEFAULT: AssistantLevel = 'intermediate';
 
-/** Разрешения Джарвиса: что ему можно в вашей системе. Настройки он только читает, действия только предлагает. */
+/** Разрешения Ассистента: что ему можно в вашей системе. Настройки он только читает, действия только предлагает. */
 export const ASSISTANT_PERMISSION_KEYS = [
   'kbWrite',
   'kbReview',
@@ -86,7 +86,7 @@ export const ASSISTANT_PERMISSION_LABELS: Record<AssistantPermission, string> = 
   changes: 'Изменения по подтверждению',
 };
 export const ASSISTANT_PERMISSION_HINTS: Record<AssistantPermission, string> = {
-  kbWrite: 'Джарвис может сам писать статьи в базу знаний, с меткой «AI».',
+  kbWrite: 'Ассистент может сам писать статьи в базу знаний, с меткой «AI».',
   kbReview: 'Раз в неделю наводит порядок: чистит артефакты, дополняет, предлагает правки.',
   reach: 'С двух-трёх других серверов парка проверяет порт и DNS вашего сервера.',
   processes: 'Имена и проценты CPU и памяти, без командных строк.',
@@ -252,7 +252,7 @@ const assistantPermissionsSchema = z.object(
 );
 
 export const assistantStatusSchema = z.object({
-  /** Ключ и модель заданы — Джарвис работает. */
+  /** Ключ и модель заданы — Ассистент работает. */
   enabled: z.boolean(),
   provider: z.enum(ASSISTANT_PROVIDERS),
   /** Название модели вводит администратор (например «anthropic/claude-sonnet-4-5»). */
@@ -262,11 +262,11 @@ export const assistantStatusSchema = z.object({
 });
 export type AssistantStatus = z.infer<typeof assistantStatusSchema>;
 
-/** Настройки Джарвиса (Настройки → Джарвис): ключ приходит только на запись. */
+/** Настройки Ассистента (Настройки → Ассистент): ключ приходит только на запись. */
 export const assistantSettingsUpdateSchema = z.object({
   provider: z.enum(ASSISTANT_PROVIDERS).optional(),
   apiKey: z.string().trim().min(8).max(400).optional(),
-  /** true — стереть ключ (выключить Джарвиса). */
+  /** true — стереть ключ (выключить Ассистента). */
   clearKey: z.boolean().optional(),
   model: z.string().trim().max(ASSISTANT_MODEL_MAX).optional(),
   level: z.enum(ASSISTANT_LEVELS).optional(),
@@ -291,7 +291,7 @@ export const assistantAutofixProposalSchema = z.object({
   description: z.string(),
   /** Уровень действия из реестра. Старые предложения без него: интерфейс берёт уровень из реестра сам. */
   level: z.enum(ACTION_LEVELS).optional(),
-  /** Почему Джарвис предлагает именно этот шаг (его слова, без последствий из реестра). */
+  /** Почему Ассистент предлагает именно этот шаг (его слова, без последствий из реестра). */
   reason: z.string().optional(),
 });
 export type AssistantAutofixProposal = z.infer<typeof assistantAutofixProposalSchema>;
@@ -313,7 +313,7 @@ export const assistantProposalSchema = z.discriminatedUnion('kind', [
 export type AssistantProposal = z.infer<typeof assistantProposalSchema>;
 
 /**
- * Что Джарвис делал, пока готовил ответ, и что заметно по времени (сейчас — запуск проверки сервера).
+ * Что Ассистент делал, пока готовил ответ, и что заметно по времени (сейчас — запуск проверки сервера).
  * Пока идёт — строка со счётчиком в чате (живое событие), по готовности та же строка — «✓ готова за 1:12».
  */
 export const assistantActivitySchema = z.object({

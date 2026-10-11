@@ -45,9 +45,9 @@ export const changesApi = {
 
 /** Выбранная беседа помнится между заходами на страницу. */
 export const LAST_CONV_KEY = 'ns.assistant.conversation';
-/** Черновик, с которым другой раздел открывает Джарвиса (например, разбор конфигов Remnawave). */
+/** Черновик, с которым другой раздел открывает Ассистента (например, разбор конфигов Remnawave). */
 export const ASSISTANT_DRAFT_KEY = 'ns.assistant.draft';
-/** Ключ запроса чата: по нему любая страница видит, что Джарвис ещё думает, даже если запрос отправили с другой. */
+/** Ключ запроса чата: по нему любая страница видит, что Ассистент ещё думает, даже если запрос отправили с другой. */
 export const CHAT_MUTATION_KEY = ['assistant', 'chat'] as const;
 export interface ChatVars {
   message: string;
@@ -87,7 +87,7 @@ export function useConversationHistory(id: string | null) {
 
 /**
  * Запросы чата, которые сейчас в работе. Запрос живёт в кэше запросов, а не в странице, поэтому после ухода
- * в другой раздел и возврата «Джарвис думает» остаётся ровно столько, сколько идёт запрос.
+ * в другой раздел и возврата «Ассистент думает» остаётся ровно столько, сколько идёт запрос.
  */
 export function usePendingChats(): ChatVars[] {
   return useMutationState({
@@ -102,7 +102,7 @@ export function useSendMessage() {
     mutationKey: CHAT_MUTATION_KEY,
     mutationFn: ({ message, conversationId }: ChatVars) => assistantApi.chat(message, conversationId),
     onSuccess: (res, vars) => {
-      // Новый чат закончился, пока страницы Джарвиса не было на экране: запоминаем беседу, чтобы вернуться в неё.
+      // Новый чат закончился, пока страницы Ассистента не было на экране: запоминаем беседу, чтобы вернуться в неё.
       if (!vars.conversationId) {
         try {
           if (!localStorage.getItem(LAST_CONV_KEY)) localStorage.setItem(LAST_CONV_KEY, res.conversationId);
@@ -118,7 +118,7 @@ export function useSendMessage() {
   });
 }
 
-/** Состояние изменения по предложению Джарвиса: карточка берёт его отсюда, поэтому переживает перезагрузку страницы. */
+/** Состояние изменения по предложению Ассистента: карточка берёт его отсюда, поэтому переживает перезагрузку страницы. */
 export function useChange(id: string) {
   return useQuery({
     queryKey: assistantKeys.change(id),

@@ -899,7 +899,7 @@ export class IncidentRunnerService implements OnModuleInit {
     levelOverride?: ActionLevel,
     /** Шаг отложен паузой между автопочинками: после неё панель запустит его сама (см. `decide`). */
     autoAfterPause = false,
-    /** Первое сообщение нового дела ждёт автоматического разбора Джарвиса. */
+    /** Первое сообщение нового дела ждёт автоматического разбора Ассистента. */
     awaitAnalysis = false,
   ): Promise<void> {
     const action = actionByKey(key);

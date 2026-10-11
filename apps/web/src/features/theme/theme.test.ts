@@ -11,13 +11,24 @@ describe('theme', () => {
     document.head.append(meta);
   });
 
-  it('по умолчанию — графит', () => {
+  it('по умолчанию — Графит', () => {
     initTheme();
     expect(getTheme()).toBe('dark');
     expect(document.documentElement.getAttribute('data-ns-theme')).toBe('dark');
   });
 
+  it('сохранённая удалённая тема Remna возвращается к Графиту', () => {
+    localStorage.setItem('ns-theme', 'remna');
+    initTheme();
+    expect(getTheme()).toBe('dark');
+    expect(THEMES).toHaveLength(3);
+  });
+
   it('сохраняет выбор и восстанавливает его', () => {
+    setTheme('dark');
+    document.documentElement.removeAttribute('data-ns-theme');
+    initTheme();
+    expect(getTheme()).toBe('dark');
     setTheme('black');
     expect(localStorage.getItem('ns-theme')).toBe('black');
     document.documentElement.removeAttribute('data-ns-theme');
@@ -37,6 +48,8 @@ describe('theme', () => {
 
   it('согласует системную верхнюю область телефона с выбранной темой', () => {
     const meta = document.head.querySelector('meta[name="theme-color"]');
+    setTheme('dark');
+    expect(meta).toHaveAttribute('content', '#10141b');
     setTheme('light');
     expect(meta).toHaveAttribute('content', '#eef1f6');
     setTheme('black');

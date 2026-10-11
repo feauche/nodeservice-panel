@@ -32,19 +32,21 @@ export function ProviderSelect({
   const items = justAdded && !loaded.some((p) => p.id === justAdded.id) ? [...loaded, justAdded] : loaded;
   const options = useMemo(
     () =>
-      items.map((p) => ({
-        value: p.id,
-        label: p.name,
-        keywords: p.siteHost,
-        node: (
-          <span className="flex min-w-0 items-center gap-2">
-            <ProviderIcon provider={p} size="sm" />
-            <span className="truncate">{p.name}</span>
-            <span className="truncate text-[11.5px] text-text-3">{p.siteHost}</span>
-          </span>
-        ),
-      })),
-    [items],
+      items
+        .filter((p) => p.selectable !== false || p.id === value)
+        .map((p) => ({
+          value: p.id,
+          label: p.name,
+          keywords: p.siteHost,
+          node: (
+            <span className="flex min-w-0 items-center gap-2">
+              <ProviderIcon provider={p} size="sm" />
+              <span className="truncate">{p.name}</span>
+              <span className="truncate text-[11.5px] text-text-3">{p.siteHost}</span>
+            </span>
+          ),
+        })),
+    [items, value],
   );
   return (
     <>

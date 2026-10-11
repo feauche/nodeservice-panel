@@ -857,7 +857,7 @@ describe('ChangesService: база знаний (J6)', () => {
     ctx = make();
   });
 
-  it('по решённому инциденту: карточка, применение создаёт статью с тегом runbook и меткой Джарвиса', async () => {
+  it('по решённому инциденту: карточка, применение создаёт статью с тегом runbook и меткой Ассистента', async () => {
     ctx.world.incident.status = 'resolved';
     const c = await propose(ctx.svc, 'kb.runbook', {
       incidentId: INC,

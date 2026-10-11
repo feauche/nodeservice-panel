@@ -171,7 +171,7 @@ export class RemnawaveService {
     }
   }
 
-  /** Каталог или безопасное содержимое профиля для Джарвиса. Никаких изменений в Remnawave. */
+  /** Каталог или безопасное содержимое профиля для Ассистента. Никаких изменений в Remnawave. */
   async profilesForAssistant(input: { kind?: unknown; profile?: unknown }): Promise<Record<string, unknown>> {
     const creds = await this.store.credentials();
     if (!creds)
@@ -245,7 +245,7 @@ export class RemnawaveService {
         tags: profileTags(full),
         config: content,
         safety:
-          'Только чтение. UUID пользователей, email, ключи, пароли, токены, сертификаты и списки клиентов скрыты до передачи Джарвису.',
+          'Только чтение. UUID пользователей, email, ключи, пароли, токены, сертификаты и списки клиентов скрыты до передачи Ассистенту.',
       };
     } catch (err) {
       if (err instanceof RemnawaveApiError && err.kind === 'unauthorized')

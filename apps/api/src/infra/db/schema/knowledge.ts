@@ -74,7 +74,7 @@ export const assistantMessages = pgTable(
 );
 export type AssistantMessageRow = typeof assistantMessages.$inferSelect;
 
-/** Изменение по предложению Джарвиса (миграция 0035): args и plan хранятся, чтобы применить и откатить ровно то, что показали. */
+/** Изменение по предложению Ассистента (миграция 0035): args и plan хранятся, чтобы применить и откатить ровно то, что показали. */
 export const assistantChanges = pgTable(
   'assistant_changes',
   {

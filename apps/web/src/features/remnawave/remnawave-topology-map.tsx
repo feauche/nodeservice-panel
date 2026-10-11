@@ -822,7 +822,7 @@ function FocusedFlow({
         `Проверь маршрут Remnawave «${host?.name ?? primaryRoute?.profileName ?? 'выбранный путь'}». Прочитай карту Remnawave, историю настоящих VPN-проб и последние изменения конфигурации. Объясни простыми словами, где проблема и что проверить. Не делай вывод о ТСПУ без двух независимых домашних или мобильных сетей РФ.`,
       );
     } catch {
-      // Переход к Джарвису остаётся доступен, даже если браузер запретил localStorage.
+      // Переход к Ассистенту остаётся доступен, даже если браузер запретил localStorage.
     }
   };
   const copySupportReport = async () => {
@@ -884,7 +884,7 @@ function FocusedFlow({
         <div className="flex-1" />
         <Button asChild type="button" variant="outline" className="h-10 gap-2" onClick={askJarvis}>
           <a href="/assistant">
-            <BotIcon className="size-4" /> Спросить Джарвиса
+            <BotIcon className="size-4" /> Спросить Ассистента
           </a>
         </Button>
         <Button type="button" className="h-10 gap-2" onClick={() => void copySupportReport()}>

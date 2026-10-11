@@ -2,7 +2,7 @@ import type { Provider } from '@nodeservice/shared';
 import { useState } from 'react';
 
 import { cn } from '@/lib/utils';
-import { providerIconUrl } from './providers-api';
+import { providerIconUrl, useProviderApiBase } from './providers-api';
 
 const SIZE = {
   sm: 'size-[18px] rounded-[5px] text-[10px]',
@@ -34,9 +34,10 @@ export function ProviderIcon({
   /** Явный источник (превью в форме) вместо адреса из API. */
   src?: string | null;
 }) {
-  const [broken, setBroken] = useState(false);
-  const url = src ?? (provider.hasIcon ? providerIconUrl(provider) : null);
-  if (url && !broken) {
+  const base = useProviderApiBase();
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
+  const url = src ?? (provider.hasIcon ? providerIconUrl(provider, base) : null);
+  if (url && brokenUrl !== url) {
     return (
       <img
         src={url}
@@ -45,7 +46,7 @@ export function ProviderIcon({
         height={24}
         loading="lazy"
         decoding="async"
-        onError={() => setBroken(true)}
+        onError={() => setBrokenUrl(url)}
         className={cn('flex-none object-contain', SIZE[size], className)}
         data-testid="provider-icon"
       />

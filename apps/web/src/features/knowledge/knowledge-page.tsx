@@ -39,7 +39,7 @@ const VERSION_REASON: Record<string, string> = {
   edit: 'Правка',
   revert: 'Откат',
   review: 'Ревизия',
-  glossary: 'Термины от Джарвиса',
+  glossary: 'Термины от Ассистента',
 };
 /** Длинный список терминов в одной строке истории версий не читается — показываем часть и остаток числом. */
 const joinCapped = (list: string[], max = 20): string =>
@@ -89,17 +89,17 @@ function SourceBadge({ source }: { source: KbSource }) {
   );
 }
 
-/** Закреплённая статья, которую пишет владелец, а Джарвис только читает (J3). */
+/** Закреплённая статья, которую пишет владелец, а Ассистент только читает (J3). */
 const FLEET_RULES_TITLE = 'Правила парка';
 const isFleetRules = (d: { pinned: boolean; title: string }): boolean =>
   d.pinned && d.title === FLEET_RULES_TITLE;
 
-/** Пометка «Читает Джарвис»: показывает, что текст статьи попадает в его инструкции. */
+/** Пометка «Читает Ассистент»: показывает, что текст статьи попадает в его инструкции. */
 function JarvisReadsPill() {
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-ai-soft px-[9px] py-[3px] text-[11.5px] leading-none font-semibold whitespace-nowrap text-ai">
       <JarvisIcon className="size-3" aria-hidden="true" />
-      Читает Джарвис
+      Читает Ассистент
     </span>
   );
 }
@@ -110,7 +110,7 @@ function JarvisReadsBanner() {
       data-testid="fleet-rules-banner"
       className="mb-4 rounded-[10px] bg-brand-soft px-3 py-2 text-[12.5px] leading-snug font-medium text-brand"
     >
-      Джарвис читает эту статью в начале каждой беседы и разбора инцидента, но сам не меняет. Пустые разделы
+      Ассистент читает эту статью в начале каждой беседы и разбора инцидента, но сам не меняет. Пустые разделы
       он не видит.
     </p>
   );
@@ -176,7 +176,7 @@ export function KnowledgePage({
   openId,
   onOpen,
 }: {
-  /** Открыть конкретную статью по ссылке (?open=<id>) — из цитаты Джарвиса. */
+  /** Открыть конкретную статью по ссылке (?open=<id>) — из цитаты Ассистента. */
   openId?: string | undefined;
   onOpen?: ((id: string | undefined) => void) | undefined;
 }) {
@@ -192,7 +192,7 @@ export function KnowledgePage({
   const editing = selection?.mode === 'new' || selection?.mode === 'edit';
   const listUnavailable = list.isError && !list.data;
 
-  // Ссылка ?open=<id> — открываем именно эту статью (например, клик по чипу-цитате в Джарвисе).
+  // Ссылка ?open=<id> — открываем именно эту статью (например, клик по чипу-цитате в Ассистенте).
   useEffect(() => {
     if (openId) setSelection({ mode: 'view', id: openId });
   }, [openId]);
@@ -222,7 +222,7 @@ export function KnowledgePage({
         <p className="mt-[5px] text-[13.5px] text-text-2">
           {editing
             ? 'Слева — текст с разметкой, справа — готовый вид статьи'
-            : 'Инструкции и решения — их знает и применяет Джарвис'}
+            : 'Инструкции и решения — их знает и применяет Ассистент'}
         </p>
       </div>
 
@@ -342,7 +342,7 @@ export function KnowledgePage({
                   </span>
                   <p className="text-[14px] font-semibold">База знаний пуста</p>
                   <p className="max-w-[320px] text-[12.5px] text-text-3">
-                    Собирайте здесь инструкции и решения: Джарвис будет их использовать.
+                    Собирайте здесь инструкции и решения: Ассистент будет их использовать.
                   </p>
                   <Button
                     type="button"
@@ -497,7 +497,7 @@ function Viewer({ id, onEdit, onDeleted }: { id: string; onEdit: () => void; onD
               <ArchiveRestoreIcon className="size-4" aria-hidden="true" />
             </Button>
           )}
-          {/* Служебную закреплённую статью удалить нельзя: её ведёт Джарвис */}
+          {/* Служебную закреплённую статью удалить нельзя: её ведёт Ассистент */}
           {!d.pinned && (
             <Button
               type="button"

@@ -67,6 +67,7 @@ function fromUpsert(b: BillingItemUpsert, base?: BillingItem): BillingItem {
     title: b.title,
     providerId: b.providerId,
     serverIds: b.serverIds,
+    nodeRefs: b.nodeRefs ?? base?.nodeRefs ?? [],
     domain: b.domain || null,
     amountMinor: Math.round(b.amount * 100),
     currency: b.currency,

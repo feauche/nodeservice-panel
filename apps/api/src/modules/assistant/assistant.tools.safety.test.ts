@@ -42,7 +42,7 @@ const deps = (inc: Incident | Error = incident(), perms: Partial<AssistantPermis
 const propose = (arg: Record<string, unknown>, d = deps()) =>
   runTool('propose_action', { incidentId: INC_ID, reason: 'Потому что.', ...arg }, d);
 
-describe('набор инструментов Джарвиса', () => {
+describe('набор инструментов Ассистента', () => {
   it('исполняющих инструментов нет: любое новое имя требует осознанного решения', () => {
     // Если добавляете инструмент, добавьте его сюда только после проверки, что он не меняет серверы сам (T2/T3).
     expect(ASSISTANT_TOOLS.map((t) => t.name).sort()).toEqual(
@@ -59,6 +59,7 @@ describe('набор инструментов Джарвиса', () => {
         'get_server_checks',
         'run_server_check',
         'get_metrics_history',
+        'get_node_metrics',
         'get_panel_status',
         'get_playbook',
         'get_remnawave_profiles',
@@ -445,7 +446,7 @@ describe('search_kb: свежесть и происхождение', () => {
     } as unknown as ToolDeps;
     const r = await runTool('search_kb', { query: 'conntrack' }, d);
     const items = JSON.parse(r.content);
-    expect(items[0]).toMatchObject({ id: 'k1', origin: 'Джарвис', tags: ['conntrack'] });
+    expect(items[0]).toMatchObject({ id: 'k1', origin: 'Ассистент', tags: ['conntrack'] });
     expect(items[0].ageDays).toBeGreaterThanOrEqual(399);
     // Полная отметка: в разборе её переводят в пояс панели; обрезанная до дня по UTC дата могла отличаться на день.
     expect(items[0].updated).toBe(old.toISOString());
@@ -645,7 +646,7 @@ describe('get_panel_status', () => {
 });
 
 describe('служебные статьи', () => {
-  it('статью с названием «Правила парка» или «Пояснения» Джарвис не создаёт', async () => {
+  it('статью с названием «Правила парка» или «Пояснения» Ассистент не создаёт', async () => {
     let saved = 0;
     const d = {
       ...deps(),

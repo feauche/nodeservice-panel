@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ENTITY_DOCS, renderEntities, typeLabel } from './assistant.entities.js';
 
-describe('сущности панели для Джарвиса', () => {
+describe('сущности панели для Ассистента', () => {
   for (const e of ENTITY_DOCS) {
     it(`«${e.title}»: у каждого поля схемы есть описание, лишних описаний нет`, () => {
       const keys = Object.keys(e.schema.shape).sort();

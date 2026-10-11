@@ -374,7 +374,7 @@ export class CapacityService {
     };
   }
 
-  /** Для Джарвиса: коротко по каждой ноде. */
+  /** Для Ассистента: коротко по каждой ноде. */
   async forAssistant(): Promise<unknown> {
     const c = await this.get();
     return {

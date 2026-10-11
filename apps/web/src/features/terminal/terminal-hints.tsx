@@ -10,11 +10,11 @@ import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useTerminalHint } from './terminal-api';
 
-/** Сколько последних строк терминала видит Джарвис по кнопке. */
+/** Сколько последних строк терминала видит Ассистент по кнопке. */
 export const HINT_LINES = 60;
 
 /**
- * Подсказки к терминалу (C1): справа от экрана. Джарвис видит только то, что вы ему показали
+ * Подсказки к терминалу (C1): справа от экрана. Ассистент видит только то, что вы ему показали
  * кнопкой, объясняет вывод и предлагает команды. Команды только вставляются в строку ввода, без Enter.
  */
 export function TerminalHints({
@@ -60,7 +60,7 @@ export function TerminalHints({
 
   return (
     <aside
-      aria-label="Подсказки Джарвиса"
+      aria-label="Подсказки Ассистента"
       className={cn('flex min-h-0 flex-col gap-2.5 overflow-hidden bg-surface p-3 text-[13px]', className)}
     >
       <div className="flex items-center gap-2 font-semibold text-ai">
@@ -85,22 +85,22 @@ export function TerminalHints({
           <Skeleton className="h-9 rounded-[10px]" />
         ) : !status.data?.enabled ? (
           <div className="flex flex-col items-start gap-2 text-[12.5px] leading-snug text-text-2">
-            <p className="m-0">Чтобы получать подсказки, задайте провайдера, модель и ключ Джарвиса.</p>
+            <p className="m-0">Чтобы получать подсказки, задайте провайдера, модель и ключ Ассистента.</p>
             <Link
               to="/settings/assistant"
               className="inline-flex h-8 items-center rounded-[9px] border border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:text-foreground"
             >
-              Открыть «Настройки → Джарвис»
+              Открыть «Настройки → Ассистент»
             </Link>
           </div>
         ) : !status.data.permissions.terminalHints ? (
           <div className="flex flex-col items-start gap-2 text-[12.5px] leading-snug text-text-2">
-            <p className="m-0">Подсказки в терминале выключены в разрешениях Джарвиса.</p>
+            <p className="m-0">Подсказки в терминале выключены в разрешениях Ассистента.</p>
             <Link
               to="/settings/assistant"
               className="inline-flex h-8 items-center rounded-[9px] border border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:text-foreground"
             >
-              Открыть «Настройки → Джарвис»
+              Открыть «Настройки → Ассистент»
             </Link>
           </div>
         ) : (

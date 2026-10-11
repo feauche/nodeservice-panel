@@ -7,29 +7,7 @@ import { cn } from '@/lib/utils';
 /** Встроенный логотип: градиентный квадрат с «узлом». */
 export function DefaultLogoMark({ className }: { className?: string }) {
   return (
-    <div
-      aria-hidden="true"
-      className={cn(
-        'grid size-[30px] flex-none place-items-center rounded-[10px] bg-[linear-gradient(150deg,var(--ns-accent),var(--ns-teal))] shadow-[0_4px_14px_-4px_var(--ns-accent-soft)] [&_svg]:size-[17px]',
-        className,
-      )}
-    >
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        role="img"
-        aria-label="NodeService"
-        stroke="#0c0e12"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <circle cx="12" cy="5" r="2.3" />
-        <circle cx="5" cy="18" r="2.3" />
-        <circle cx="19" cy="18" r="2.3" />
-        <path d="M12 7.3v3.4M10.4 12.4 6.6 16M13.6 12.4 17.4 16" />
-      </svg>
-    </div>
+    <img aria-hidden="true" src="/icon-512.png" alt="" className={cn('size-[30px] flex-none', className)} />
   );
 }
 

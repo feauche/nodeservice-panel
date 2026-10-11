@@ -5,7 +5,6 @@ import { useEffect } from 'react';
 import { useActivityStore } from '@/features/assistant/activity';
 
 import { incidentsKeys } from '@/features/incidents/incidents-api';
-import { notificationsKeys } from '@/features/notifications/notifications-api';
 import { API_BASE } from '@/lib/api';
 
 /** События одного типа, пришедшие подряд, схлопываются в одно перечитывание. */
@@ -43,7 +42,6 @@ export function useEventsStream(enabled = true): void {
       void qc.invalidateQueries({ queryKey: ['servers'] });
       void qc.invalidateQueries({ queryKey: ['metrics', 'overview'] });
       void qc.invalidateQueries({ queryKey: incidentsKeys.all });
-      void qc.invalidateQueries({ queryKey: notificationsKeys.list });
     };
     const connect = () => {
       if (stopped) return;
@@ -62,9 +60,6 @@ export function useEventsStream(enabled = true): void {
         reconnectAttempt += 1;
         reconnectTimer = setTimeout(connect, delay);
       };
-      stream.addEventListener('notification', () =>
-        later('notification', () => void qc.invalidateQueries({ queryKey: notificationsKeys.list })),
-      );
       stream.addEventListener('server', () =>
         later('server', () => {
           void qc.invalidateQueries({ queryKey: ['servers'] });
@@ -73,7 +68,7 @@ export function useEventsStream(enabled = true): void {
       );
       // Переименовали сервер: новое имя нужно и в списках инцидентов, и в уведомлениях.
       stream.addEventListener('rename', () => later('rename', refreshAfterReconnect));
-      // Джарвис делает что-то долгое (проверка сервера): живая строка в чате, без перечитывания.
+      // Ассистент делает что-то долгое (проверка сервера): живая строка в чате, без перечитывания.
       stream.addEventListener('assistant', (ev) => {
         try {
           const d = JSON.parse((ev as MessageEvent).data) as {

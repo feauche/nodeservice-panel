@@ -104,7 +104,7 @@ export class RemnawaveTopologyService {
     };
   }
 
-  /** Та же безопасная проекция для Джарвиса: конфиги и секреты в неё не входят изначально. */
+  /** Та же безопасная проекция для Ассистента: конфиги и секреты в неё не входят изначально. */
   async forAssistant(): Promise<Record<string, unknown>> {
     try {
       const topology = await this.get();

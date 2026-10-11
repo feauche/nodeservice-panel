@@ -179,6 +179,17 @@ export function BillingCard({
 
       <div className="flex min-h-7 items-center gap-2">
         <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+          {(item.nodeRefs ?? []).map((n) => (
+            <a
+              key={`${n.panel}:${n.uuid}`}
+              href="/nodes"
+              title={n.panel}
+              className="inline-flex h-[22px] max-w-full items-center gap-1 rounded-[6px] bg-surface-3 px-2 text-[11.5px] text-text-2"
+            >
+              <ServerIcon className="size-3" />
+              <span className="truncate">{n.name}</span>
+            </a>
+          ))}
           {linked.map((s) => (
             <button
               key={s.id}

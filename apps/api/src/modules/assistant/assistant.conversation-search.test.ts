@@ -52,7 +52,7 @@ describe('searchPastMessages', () => {
   });
   it('роли называются по-человечески, лимит и пустой запрос работают', () => {
     const hits = searchPastMessages(rows, 'упал', 8);
-    expect(hits.map((h) => h.who)).toEqual(['администратор', 'Джарвис']);
+    expect(hits.map((h) => h.who)).toEqual(['администратор', 'Ассистент']);
     expect(searchPastMessages(rows, 'упал', 1)).toHaveLength(1);
     expect(searchPastMessages(rows, 'а', 8)).toEqual([]);
   });

@@ -28,6 +28,7 @@ import { FleetStatsModule } from './modules/fleet-stats/fleet-stats.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { HousekeepingModule } from './modules/housekeeping/housekeeping.module.js';
 import { IncidentsModule } from './modules/incidents/incidents.module.js';
+import { IntegrationsModule } from './modules/integrations/integrations.module.js';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module.js';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module.js';
 import { MetricsModule } from './modules/metrics/metrics.module.js';
@@ -97,6 +98,7 @@ import { TerminalModule } from './modules/terminal/terminal.module.js';
     ServersModule,
     ProvidersModule,
     RemnawaveModule,
+    IntegrationsModule,
     AgentModule,
     MetricsModule,
     TerminalModule,

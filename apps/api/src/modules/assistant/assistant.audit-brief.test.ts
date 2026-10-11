@@ -42,7 +42,7 @@ describe('auditBrief', () => {
     expect(JSON.stringify(b)).not.toMatch(/203\.0\.113|Safari|r1/);
     expect(b.what).not.toBe('assistant.chat');
   });
-  it('запрос к Джарвису даёт вопрос и ответ в деталях, системные события подписаны «панель»', () => {
+  it('запрос к Ассистенту даёт вопрос и ответ в деталях, системные события подписаны «панель»', () => {
     const b = auditBrief(
       entry({
         actorType: 'system',

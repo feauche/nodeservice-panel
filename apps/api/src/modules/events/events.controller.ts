@@ -27,7 +27,7 @@ export class EventsController {
     const live$ = new Observable<PanelEvent>((subscriber) => this.events.on((e) => subscriber.next(e)));
     const ping$ = interval(SSE_PING_MS).pipe(map((): MessageEvent => ({ type: 'ping', data: '' })));
     return merge(live$.pipe(map((e): MessageEvent => ({ type: e.type, data: e.data }))), ping$).pipe(
-      takeUntil(this.channels.revoked(session.id)),
+      takeUntil(merge(this.channels.revoked(session.id), this.events.shutdown$)),
     );
   }
 }

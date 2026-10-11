@@ -238,7 +238,7 @@ describe('ChangeCard (J5, A1)', () => {
     await within(c).findByText('Состояние изменилось');
     expect(c).toHaveAttribute('data-status', 'stale');
     expect(within(c).getByText(/Сейчас: Заметка: Проверка связи\./)).toBeInTheDocument();
-    expect(within(c).getByText(/Попросите Джарвиса предложить заново/)).toBeInTheDocument();
+    expect(within(c).getByText(/Попросите Ассистента предложить заново/)).toBeInTheDocument();
     expect(within(c).queryByRole('button')).not.toBeInTheDocument();
     expect(await screen.findByText('Изменение не применено: подробности в карточке.')).toBeInTheDocument();
     expect(mockAudit.entries[0]).toMatchObject({ action: 'assistant.change.failed', result: 'failed' });
@@ -258,7 +258,7 @@ describe('ChangeCard (J5, A1)', () => {
     open(
       seed({
         status: 'expired',
-        note: 'Предложение не применили за 24 ч: состояние могло измениться. Попросите Джарвиса предложить заново.',
+        note: 'Предложение не применили за 24 ч: состояние могло измениться. Попросите Ассистента предложить заново.',
       }),
     );
     const c = await card();

@@ -325,13 +325,8 @@ describe('billing e2e', () => {
       /^Сервер «DE-1 Falkenstein» у Hetzner: .+, оплачено до \d{1,2} [а-я]+( \d{4})?, \d{2}:\d{2} \((МСК|UTC[+-]\d+)\)$/,
     );
     expect(win.overdue[0]?.text).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
-    // Ссылка из напоминания ведёт на страницу биллинга с окном этой оплаты (раньше — на несуществующую).
-    const bell = (await agent.get('/api/notifications').expect(200)).body as {
-      items: Array<{ title: string; link: { to: string } | null }>;
-    };
-    expect(bell.items.find((n) => n.title.startsWith('Оплата просрочена'))?.link?.to).toBe(
-      `/servers/billing?item=${itemId}`,
-    );
+    // Центр удалён; доставка Telegram проверена выше и остаётся единственным каналом.
+    await agent.get('/api/notifications').expect(404);
     // У сервера без оплат в «Биллинге» окно пустое, и панель это знает: total = 0.
     expect(await svc.paymentWindowForServer('00000000-0000-7000-8000-000000000000')).toEqual({
       overdue: [],

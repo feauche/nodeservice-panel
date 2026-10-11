@@ -10,9 +10,9 @@ import { blockCheckResultSchema } from './block-check.js';
  *
  * Чужие скрипты закреплены на проверенной версии (коммит и сумма — в server-checks.scripts.ts у api): новая
  * версия у автора сама на серверы не попадёт. Сама по расписанию панель запускает только свои команды
- * (SERVER_CHECK_AUTO_KEYS); сторонние лёгкие — по кнопке (или Джарвисом по просьбе администратора, но не в
+ * (SERVER_CHECK_AUTO_KEYS); сторонние лёгкие — по кнопке (или Ассистентом по просьбе администратора, но не в
  * автоматическом разборе), тяжёлые — только по кнопке, с предупреждением.
- * Вывод хранится сырым текстом: его читает и объясняет Джарвис, отдельных разборщиков под каждый скрипт нет.
+ * Вывод хранится сырым текстом: его читает и объясняет Ассистент, отдельных разборщиков под каждый скрипт нет.
  */
 export const SERVER_CHECK_KEYS = [
   'russia_access',
@@ -136,7 +136,7 @@ export const serverCheckRunSchema = z.object({
    * на сервере он не запускался. Это не ошибка сервера и не ошибка проверки.
    */
   status: z.enum(['running', 'ok', 'failed', 'cancelled']),
-  /** auto — суточный запуск панели (только свои команды), manual — по кнопке или Джарвисом. */
+  /** auto — суточный запуск панели (только свои команды), manual — по кнопке или Ассистентом. */
   trigger: z.enum(['auto', 'manual']),
   actorDisplay: z.string().nullable(),
   startedAt: z.string(),
@@ -146,7 +146,7 @@ export const serverCheckRunSchema = z.object({
   /** Структурированный итог собственной проверки доступности; у остальных проверок null. */
   blockResult: blockCheckResultSchema.nullable().optional(),
   error: z.string().nullable(),
-  /** Пересказ Джарвиса по кнопке «Объяснить»; null — ещё не просили. Привязан к этому запуску. */
+  /** Пересказ Ассистента по кнопке «Объяснить»; null — ещё не просили. Привязан к этому запуску. */
   explanation: z.string().nullable(),
 });
 export type ServerCheckRun = z.infer<typeof serverCheckRunSchema>;

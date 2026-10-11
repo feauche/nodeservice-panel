@@ -2,9 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { requireAuth } from '@/features/auth/guards';
-import { CapacityView } from '@/features/overview/capacity-view';
-import { FleetStatsView } from '@/features/overview/fleet-stats-view';
-import { OverviewPage } from '@/features/overview/overview-page';
+import { RemnaOverview } from '@/features/overview/remna-overview';
 import { Segmented } from '@/features/settings/settings-ui';
 import { requireSectionOpen } from '@/lib/stages';
 
@@ -35,8 +33,8 @@ function Overview() {
         view === 'stats'
           ? 'Трафик, нагрузка, доступность и деньги по всему парку за период'
           : view === 'capacity'
-            ? 'Сколько ещё людей выдержат ноды и во что упрёмся первым'
-            : 'Состояние парка серверов одним взглядом'
+            ? 'Ресурсы, нагрузка и доступные лимиты нод'
+            : 'Состояние нод и метрики Remnawave'
       }
       aside={
         <Segmented
@@ -51,7 +49,7 @@ function Overview() {
         />
       }
     >
-      {view === 'stats' ? <FleetStatsView /> : view === 'capacity' ? <CapacityView /> : <OverviewPage />}
+      <RemnaOverview view={view} />
     </AppShell>
   );
 }

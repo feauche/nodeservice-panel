@@ -367,7 +367,7 @@ describe('providers e2e', () => {
     const audit = (await agent.get('/api/audit?category=server').expect(200)).body as {
       items: Array<{ action: string; metadata: Record<string, unknown> }>;
     };
-    expect(audit.items.find((e) => e.action === 'provider.deleted')?.metadata).toMatchObject({
+    expect(audit.items.find((e) => e.action === 'provider.archived')?.metadata).toMatchObject({
       serversDetached: 1,
     });
   });

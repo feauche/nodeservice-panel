@@ -166,6 +166,13 @@ export const formatRub = (minor: number): string => formatMoney(Math.round(minor
 export const BILLING_DUE_STATES = ['overdue', 'today', 'soon', 'ok', 'archived'] as const;
 export type BillingDueState = (typeof BILLING_DUE_STATES)[number];
 
+export const billingNodeRefSchema = z.object({
+  panel: z.string().min(1).max(253),
+  uuid: z.uuid(),
+  name: z.string().min(1).max(200),
+});
+export type BillingNodeRef = z.infer<typeof billingNodeRefSchema>;
+
 export const billingItemSchema = z.object({
   id: z.string().uuid(),
   kind: billingKindSchema,
@@ -173,6 +180,7 @@ export const billingItemSchema = z.object({
   providerId: z.string().uuid().nullable(),
   /** Сервер (для «Сервер») или серверы, где развёрнут сертификат; у аренды — необязательно. */
   serverIds: z.array(z.string().uuid()),
+  nodeRefs: z.array(billingNodeRefSchema).max(20).optional(),
   domain: z.string().nullable(),
   amountMinor: z.number().int().min(0),
   currency: billingCurrencySchema,
@@ -206,6 +214,7 @@ export const billingItemUpsertSchema = z.object({
   title: z.string().trim().min(1, 'Укажите название').max(120),
   providerId: z.string().uuid().nullable(),
   serverIds: z.array(z.string().uuid()).max(20),
+  nodeRefs: z.array(billingNodeRefSchema).max(20).optional(),
   domain: z.string().trim().max(253).nullable(),
   amount: amountSchema,
   currency: billingCurrencySchema,
@@ -348,7 +357,7 @@ export const billingStatsQuerySchema = z.object({
 
 const BILLING_DAY_MS = 86_400_000;
 
-/** «через 2 дня», «сегодня в 12:00», «просрочено на 3 дня». Для текстов Джарвиса и Telegram. */
+/** «через 2 дня», «сегодня в 12:00», «просрочено на 3 дня». Для текстов Ассистента и Telegram. */
 export function billingDueInWords(paidUntil: Date, now: Date): string {
   const ms = paidUntil.getTime() - now.getTime();
   const days = Math.floor(Math.abs(ms) / BILLING_DAY_MS);

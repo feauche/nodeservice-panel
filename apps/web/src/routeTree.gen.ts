@@ -12,20 +12,22 @@ import { Route as rootRouteImport } from './routes/__root';
 import { Route as IndexRouteImport } from './routes/index';
 import { Route as AssistantRouteImport } from './routes/assistant';
 import { Route as AuditRouteImport } from './routes/audit';
+import { Route as BillingRouteImport } from './routes/billing';
 import { Route as IncidentsRouteImport } from './routes/incidents';
 import { Route as KnowledgeRouteImport } from './routes/knowledge';
 import { Route as LockRouteImport } from './routes/lock';
 import { Route as LoginRouteImport } from './routes/login';
-import { Route as NotificationsRouteImport } from './routes/notifications';
+import { Route as NodesRouteImport } from './routes/nodes';
 import { Route as ServersRouteImport } from './routes/servers';
 import { Route as SettingsRouteImport } from './routes/settings';
 import { Route as SetupRouteImport } from './routes/setup';
+import { Route as BillingProvidersRouteImport } from './routes/billing_.providers';
 import { Route as IncidentsIdRouteImport } from './routes/incidents_.$id';
 import { Route as IncidentsAutofixRouteImport } from './routes/incidents_.autofix';
+import { Route as IntegrationsDnsRouteImport } from './routes/integrations_.dns';
+import { Route as IntegrationsDpiRouteImport } from './routes/integrations_.dpi';
 import { Route as Login2faRouteImport } from './routes/login_.2fa';
 import { Route as LoginRecoveryRouteImport } from './routes/login_.recovery';
-import { Route as ServersBillingRouteImport } from './routes/servers_.billing';
-import { Route as ServersProvidersRouteImport } from './routes/servers_.providers';
 import { Route as ServersRemnawaveRouteImport } from './routes/servers_.remnawave';
 import { Route as SettingsIndexRouteImport } from './routes/settings.index';
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance';
@@ -51,6 +53,11 @@ const AuditRoute = AuditRouteImport.update({
   path: '/audit',
   getParentRoute: () => rootRouteImport,
 } as any);
+const BillingRoute = BillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => rootRouteImport,
+} as any);
 const IncidentsRoute = IncidentsRouteImport.update({
   id: '/incidents',
   path: '/incidents',
@@ -71,9 +78,9 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any);
-const NotificationsRoute = NotificationsRouteImport.update({
-  id: '/notifications',
-  path: '/notifications',
+const NodesRoute = NodesRouteImport.update({
+  id: '/nodes',
+  path: '/nodes',
   getParentRoute: () => rootRouteImport,
 } as any);
 const ServersRoute = ServersRouteImport.update({
@@ -91,6 +98,11 @@ const SetupRoute = SetupRouteImport.update({
   path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any);
+const BillingProvidersRoute = BillingProvidersRouteImport.update({
+  id: '/billing_/providers',
+  path: '/billing/providers',
+  getParentRoute: () => rootRouteImport,
+} as any);
 const IncidentsIdRoute = IncidentsIdRouteImport.update({
   id: '/incidents_/$id',
   path: '/incidents/$id',
@@ -101,6 +113,16 @@ const IncidentsAutofixRoute = IncidentsAutofixRouteImport.update({
   path: '/incidents/autofix',
   getParentRoute: () => rootRouteImport,
 } as any);
+const IntegrationsDnsRoute = IntegrationsDnsRouteImport.update({
+  id: '/integrations_/dns',
+  path: '/integrations/dns',
+  getParentRoute: () => rootRouteImport,
+} as any);
+const IntegrationsDpiRoute = IntegrationsDpiRouteImport.update({
+  id: '/integrations_/dpi',
+  path: '/integrations/dpi',
+  getParentRoute: () => rootRouteImport,
+} as any);
 const Login2faRoute = Login2faRouteImport.update({
   id: '/login_/2fa',
   path: '/login/2fa',
@@ -109,16 +131,6 @@ const Login2faRoute = Login2faRouteImport.update({
 const LoginRecoveryRoute = LoginRecoveryRouteImport.update({
   id: '/login_/recovery',
   path: '/login/recovery',
-  getParentRoute: () => rootRouteImport,
-} as any);
-const ServersBillingRoute = ServersBillingRouteImport.update({
-  id: '/servers_/billing',
-  path: '/servers/billing',
-  getParentRoute: () => rootRouteImport,
-} as any);
-const ServersProvidersRoute = ServersProvidersRouteImport.update({
-  id: '/servers_/providers',
-  path: '/servers/providers',
   getParentRoute: () => rootRouteImport,
 } as any);
 const ServersRemnawaveRoute = ServersRemnawaveRouteImport.update({
@@ -171,20 +183,22 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute;
   '/assistant': typeof AssistantRoute;
   '/audit': typeof AuditRoute;
+  '/billing': typeof BillingRoute;
   '/incidents': typeof IncidentsRoute;
   '/knowledge': typeof KnowledgeRoute;
   '/lock': typeof LockRoute;
   '/login': typeof LoginRoute;
-  '/notifications': typeof NotificationsRoute;
+  '/nodes': typeof NodesRoute;
   '/servers': typeof ServersRoute;
   '/settings': typeof SettingsRouteWithChildren;
   '/setup': typeof SetupRoute;
+  '/billing/providers': typeof BillingProvidersRoute;
   '/incidents/$id': typeof IncidentsIdRoute;
   '/incidents/autofix': typeof IncidentsAutofixRoute;
+  '/integrations/dns': typeof IntegrationsDnsRoute;
+  '/integrations/dpi': typeof IntegrationsDpiRoute;
   '/login/2fa': typeof Login2faRoute;
   '/login/recovery': typeof LoginRecoveryRoute;
-  '/servers/billing': typeof ServersBillingRoute;
-  '/servers/providers': typeof ServersProvidersRoute;
   '/servers/remnawave': typeof ServersRemnawaveRoute;
   '/settings/appearance': typeof SettingsAppearanceRoute;
   '/settings/assistant': typeof SettingsAssistantRoute;
@@ -199,19 +213,21 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute;
   '/assistant': typeof AssistantRoute;
   '/audit': typeof AuditRoute;
+  '/billing': typeof BillingRoute;
   '/incidents': typeof IncidentsRoute;
   '/knowledge': typeof KnowledgeRoute;
   '/lock': typeof LockRoute;
   '/login': typeof LoginRoute;
-  '/notifications': typeof NotificationsRoute;
+  '/nodes': typeof NodesRoute;
   '/servers': typeof ServersRoute;
   '/setup': typeof SetupRoute;
+  '/billing/providers': typeof BillingProvidersRoute;
   '/incidents/$id': typeof IncidentsIdRoute;
   '/incidents/autofix': typeof IncidentsAutofixRoute;
+  '/integrations/dns': typeof IntegrationsDnsRoute;
+  '/integrations/dpi': typeof IntegrationsDpiRoute;
   '/login/2fa': typeof Login2faRoute;
   '/login/recovery': typeof LoginRecoveryRoute;
-  '/servers/billing': typeof ServersBillingRoute;
-  '/servers/providers': typeof ServersProvidersRoute;
   '/servers/remnawave': typeof ServersRemnawaveRoute;
   '/settings/appearance': typeof SettingsAppearanceRoute;
   '/settings/assistant': typeof SettingsAssistantRoute;
@@ -227,20 +243,22 @@ export interface FileRoutesById {
   '/': typeof IndexRoute;
   '/assistant': typeof AssistantRoute;
   '/audit': typeof AuditRoute;
+  '/billing': typeof BillingRoute;
   '/incidents': typeof IncidentsRoute;
   '/knowledge': typeof KnowledgeRoute;
   '/lock': typeof LockRoute;
   '/login': typeof LoginRoute;
-  '/notifications': typeof NotificationsRoute;
+  '/nodes': typeof NodesRoute;
   '/servers': typeof ServersRoute;
   '/settings': typeof SettingsRouteWithChildren;
   '/setup': typeof SetupRoute;
+  '/billing_/providers': typeof BillingProvidersRoute;
   '/incidents_/$id': typeof IncidentsIdRoute;
   '/incidents_/autofix': typeof IncidentsAutofixRoute;
+  '/integrations_/dns': typeof IntegrationsDnsRoute;
+  '/integrations_/dpi': typeof IntegrationsDpiRoute;
   '/login_/2fa': typeof Login2faRoute;
   '/login_/recovery': typeof LoginRecoveryRoute;
-  '/servers_/billing': typeof ServersBillingRoute;
-  '/servers_/providers': typeof ServersProvidersRoute;
   '/servers_/remnawave': typeof ServersRemnawaveRoute;
   '/settings/appearance': typeof SettingsAppearanceRoute;
   '/settings/assistant': typeof SettingsAssistantRoute;
@@ -257,20 +275,22 @@ export interface FileRouteTypes {
     | '/'
     | '/assistant'
     | '/audit'
+    | '/billing'
     | '/incidents'
     | '/knowledge'
     | '/lock'
     | '/login'
-    | '/notifications'
+    | '/nodes'
     | '/servers'
     | '/settings'
     | '/setup'
+    | '/billing/providers'
     | '/incidents/$id'
     | '/incidents/autofix'
+    | '/integrations/dns'
+    | '/integrations/dpi'
     | '/login/2fa'
     | '/login/recovery'
-    | '/servers/billing'
-    | '/servers/providers'
     | '/servers/remnawave'
     | '/settings/appearance'
     | '/settings/assistant'
@@ -285,19 +305,21 @@ export interface FileRouteTypes {
     | '/'
     | '/assistant'
     | '/audit'
+    | '/billing'
     | '/incidents'
     | '/knowledge'
     | '/lock'
     | '/login'
-    | '/notifications'
+    | '/nodes'
     | '/servers'
     | '/setup'
+    | '/billing/providers'
     | '/incidents/$id'
     | '/incidents/autofix'
+    | '/integrations/dns'
+    | '/integrations/dpi'
     | '/login/2fa'
     | '/login/recovery'
-    | '/servers/billing'
-    | '/servers/providers'
     | '/servers/remnawave'
     | '/settings/appearance'
     | '/settings/assistant'
@@ -312,20 +334,22 @@ export interface FileRouteTypes {
     | '/'
     | '/assistant'
     | '/audit'
+    | '/billing'
     | '/incidents'
     | '/knowledge'
     | '/lock'
     | '/login'
-    | '/notifications'
+    | '/nodes'
     | '/servers'
     | '/settings'
     | '/setup'
+    | '/billing_/providers'
     | '/incidents_/$id'
     | '/incidents_/autofix'
+    | '/integrations_/dns'
+    | '/integrations_/dpi'
     | '/login_/2fa'
     | '/login_/recovery'
-    | '/servers_/billing'
-    | '/servers_/providers'
     | '/servers_/remnawave'
     | '/settings/appearance'
     | '/settings/assistant'
@@ -341,20 +365,22 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute;
   AssistantRoute: typeof AssistantRoute;
   AuditRoute: typeof AuditRoute;
+  BillingRoute: typeof BillingRoute;
   IncidentsRoute: typeof IncidentsRoute;
   KnowledgeRoute: typeof KnowledgeRoute;
   LockRoute: typeof LockRoute;
   LoginRoute: typeof LoginRoute;
-  NotificationsRoute: typeof NotificationsRoute;
+  NodesRoute: typeof NodesRoute;
   ServersRoute: typeof ServersRoute;
   SettingsRoute: typeof SettingsRouteWithChildren;
   SetupRoute: typeof SetupRoute;
+  BillingProvidersRoute: typeof BillingProvidersRoute;
   IncidentsIdRoute: typeof IncidentsIdRoute;
   IncidentsAutofixRoute: typeof IncidentsAutofixRoute;
+  IntegrationsDnsRoute: typeof IntegrationsDnsRoute;
+  IntegrationsDpiRoute: typeof IntegrationsDpiRoute;
   Login2faRoute: typeof Login2faRoute;
   LoginRecoveryRoute: typeof LoginRecoveryRoute;
-  ServersBillingRoute: typeof ServersBillingRoute;
-  ServersProvidersRoute: typeof ServersProvidersRoute;
   ServersRemnawaveRoute: typeof ServersRemnawaveRoute;
 }
 
@@ -379,6 +405,13 @@ declare module '@tanstack/react-router' {
       path: '/audit';
       fullPath: '/audit';
       preLoaderRoute: typeof AuditRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    '/billing': {
+      id: '/billing';
+      path: '/billing';
+      fullPath: '/billing';
+      preLoaderRoute: typeof BillingRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     '/incidents': {
@@ -409,11 +442,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport;
       parentRoute: typeof rootRouteImport;
     };
-    '/notifications': {
-      id: '/notifications';
-      path: '/notifications';
-      fullPath: '/notifications';
-      preLoaderRoute: typeof NotificationsRouteImport;
+    '/nodes': {
+      id: '/nodes';
+      path: '/nodes';
+      fullPath: '/nodes';
+      preLoaderRoute: typeof NodesRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     '/servers': {
@@ -437,6 +470,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SetupRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    '/billing_/providers': {
+      id: '/billing_/providers';
+      path: '/billing/providers';
+      fullPath: '/billing/providers';
+      preLoaderRoute: typeof BillingProvidersRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     '/incidents_/$id': {
       id: '/incidents_/$id';
       path: '/incidents/$id';
@@ -451,6 +491,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IncidentsAutofixRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    '/integrations_/dns': {
+      id: '/integrations_/dns';
+      path: '/integrations/dns';
+      fullPath: '/integrations/dns';
+      preLoaderRoute: typeof IntegrationsDnsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    '/integrations_/dpi': {
+      id: '/integrations_/dpi';
+      path: '/integrations/dpi';
+      fullPath: '/integrations/dpi';
+      preLoaderRoute: typeof IntegrationsDpiRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     '/login_/2fa': {
       id: '/login_/2fa';
       path: '/login/2fa';
@@ -463,20 +517,6 @@ declare module '@tanstack/react-router' {
       path: '/login/recovery';
       fullPath: '/login/recovery';
       preLoaderRoute: typeof LoginRecoveryRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    '/servers_/billing': {
-      id: '/servers_/billing';
-      path: '/servers/billing';
-      fullPath: '/servers/billing';
-      preLoaderRoute: typeof ServersBillingRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    '/servers_/providers': {
-      id: '/servers_/providers';
-      path: '/servers/providers';
-      fullPath: '/servers/providers';
-      preLoaderRoute: typeof ServersProvidersRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     '/servers_/remnawave': {
@@ -575,20 +615,22 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AssistantRoute: AssistantRoute,
   AuditRoute: AuditRoute,
+  BillingRoute: BillingRoute,
   IncidentsRoute: IncidentsRoute,
   KnowledgeRoute: KnowledgeRoute,
   LockRoute: LockRoute,
   LoginRoute: LoginRoute,
-  NotificationsRoute: NotificationsRoute,
+  NodesRoute: NodesRoute,
   ServersRoute: ServersRoute,
   SettingsRoute: SettingsRouteWithChildren,
   SetupRoute: SetupRoute,
+  BillingProvidersRoute: BillingProvidersRoute,
   IncidentsIdRoute: IncidentsIdRoute,
   IncidentsAutofixRoute: IncidentsAutofixRoute,
+  IntegrationsDnsRoute: IntegrationsDnsRoute,
+  IntegrationsDpiRoute: IntegrationsDpiRoute,
   Login2faRoute: Login2faRoute,
   LoginRecoveryRoute: LoginRecoveryRoute,
-  ServersBillingRoute: ServersBillingRoute,
-  ServersProvidersRoute: ServersProvidersRoute,
   ServersRemnawaveRoute: ServersRemnawaveRoute,
 };
 export const routeTree = rootRouteImport

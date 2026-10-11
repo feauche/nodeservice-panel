@@ -63,7 +63,7 @@ export interface RemnawaveClient {
   findNodeInbound(domain: string, apiKey: string, nodeUuid: string): Promise<RemnawaveNodeInbound | null>;
   /** Профили конфигурации нод и клиентские Xray JSON-шаблоны. Только чтение. */
   listProfiles(domain: string, apiKey: string): Promise<RemnawaveProfileCatalog>;
-  /** Полное содержимое одного профиля; сервис обязан скрыть секреты до передачи Джарвису. */
+  /** Полное содержимое одного профиля; сервис обязан скрыть секреты до передачи Ассистенту. */
   getProfile(
     domain: string,
     apiKey: string,
@@ -93,11 +93,21 @@ function realitySni(rawInbound: unknown): string | null {
   return null;
 }
 
-async function getJson(url: string, apiKey: string): Promise<Record<string, unknown>> {
+export async function getJson(
+  url: string,
+  apiKey: string,
+  init?: { method: string; body: string },
+): Promise<Record<string, unknown>> {
   let res: Response;
   try {
     res = await fetch(url, {
-      headers: { accept: 'application/json', authorization: `Bearer ${apiKey}` },
+      ...init,
+      redirect: 'error',
+      headers: {
+        accept: 'application/json',
+        authorization: `Bearer ${apiKey}`,
+        ...(init ? { 'content-type': 'application/json' } : {}),
+      },
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch (err) {
@@ -109,6 +119,7 @@ async function getJson(url: string, apiKey: string): Promise<Record<string, unkn
       'unauthorized',
     );
   if (!res.ok) throw new RemnawaveApiError(`Remnawave ответила ошибкой HTTP ${res.status}.`, 'unreachable');
+  if (res.status === 204) return {};
   try {
     return (await res.json()) as Record<string, unknown>;
   } catch {
@@ -144,6 +155,42 @@ export function connectionErrorText(err: unknown): string {
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+const object = (v: unknown): Record<string, unknown> =>
+  v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+export function remnawaveBytes(v: unknown): number | null {
+  if (typeof v === 'number') return Number.isFinite(v) && v >= 0 ? v : null;
+  if (typeof v !== 'string' || !v.trim()) return null;
+  const match = v.trim().match(/^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB|PB|KiB|MiB|GiB|TiB|PiB)?$/i);
+  if (!match) return null;
+  const unit = (match[2] ?? 'B').toUpperCase().replace('I', '');
+  const result = Number(match[1]) * 1024 ** ['B', 'KB', 'MB', 'GB', 'TB', 'PB'].indexOf(unit);
+  return Number.isFinite(result) ? result : null;
+}
+export function nodeTelemetry(n: Record<string, unknown>) {
+  const system = object(n.system ?? n.systemInfo);
+  const info = object(system.info),
+    stats = object(system.stats),
+    net = object(stats.interface);
+  const versions = object(n.versions),
+    provider = object(n.provider);
+  const number = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  return {
+    port: typeof n.port === 'number' ? n.port : null,
+    providerUuid: str(n.providerUuid ?? provider.uuid) || null,
+    providerName: str(provider.name) || str(n.providerName) || null,
+    cpuCount: number(info.cpus ?? n.cpuCount),
+    cpuModel: str(info.cpuModel ?? n.cpuModel) || null,
+    cpuPercent: number(stats.cpuPercent ?? stats.cpuUsage ?? system.cpuPercent),
+    memoryUsedBytes: remnawaveBytes(stats.memoryUsed),
+    memoryTotalBytes: remnawaveBytes(info.memoryTotal ?? n.totalRam),
+    loadAverage: Array.isArray(stats.loadAvg) ? stats.loadAvg.slice(0, 3).map(number) : [],
+    rxBytesPerSec: number(net.rxBytesPerSec),
+    txBytesPerSec: number(net.txBytesPerSec),
+    uptime: n.xrayUptime == null ? null : String(n.xrayUptime),
+    nodeVersion: str(versions.node ?? n.nodeVersion) || null,
+    xrayVersion: str(versions.xray ?? n.xrayVersion) || null,
+  };
+}
 
 @Injectable()
 export class HttpRemnawaveClient implements RemnawaveClient {
@@ -199,6 +246,7 @@ export class HttpRemnawaveClient implements RemnawaveClient {
       const uuid = str(n.uuid);
       return {
         uuid,
+        ...nodeTelemetry(n),
         name: str(n.name),
         address: str(n.address),
         countryCode: typeof n.countryCode === 'string' && n.countryCode ? n.countryCode : null,
@@ -210,8 +258,8 @@ export class HttpRemnawaveClient implements RemnawaveClient {
         // «сейчас никто не подключён» (0), а не «нет данных» — иначе панель у активной ноды вообще
         // ничего не показывала бы вместо честного нуля.
         usersOnline: metricsByUuid.has(uuid) ? (metricsByUuid.get(uuid) ?? 0) : n.isDisabled ? null : 0,
-        trafficUsedBytes: typeof n.trafficUsedBytes === 'number' ? n.trafficUsedBytes : null,
-        trafficLimitBytes: typeof n.trafficLimitBytes === 'number' ? n.trafficLimitBytes : null,
+        trafficUsedBytes: remnawaveBytes(n.trafficUsedBytes),
+        trafficLimitBytes: remnawaveBytes(n.trafficLimitBytes),
       };
     });
     return { stats, nodes };

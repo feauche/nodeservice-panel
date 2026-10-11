@@ -107,17 +107,17 @@ const KEY_LABELS: Record<string, string> = {
   note: 'Итог',
 };
 
-/** Записи о решениях по изменениям, которые предложил Джарвис (J5): показываются своей строкой. */
+/** Записи о решениях по изменениям, которые предложил Ассистент (J5): показываются своей строкой. */
 const CHANGE_LEAD: Record<string, string> = {
-  'assistant.change.applied': 'Джарвис предложил, вы применили',
-  'assistant.change.reverted': 'Вы отменили изменение Джарвиса',
-  'assistant.change.rejected': 'Вы отклонили предложение Джарвиса',
-  'assistant.change.failed': 'Изменение по предложению Джарвиса не применено',
+  'assistant.change.applied': 'Ассистент предложил, вы применили',
+  'assistant.change.reverted': 'Вы отменили изменение Ассистента',
+  'assistant.change.rejected': 'Вы отклонили предложение Ассистента',
+  'assistant.change.failed': 'Изменение по предложению Ассистента не применено',
 };
 
 export const isChangeEntry = (entry: Pick<AuditEntry, 'action'>): boolean => entry.action in CHANGE_LEAD;
 
-/** «Джарвис предложил, вы применили: Сменить провайдера»; для остальных записей null. */
+/** «Ассистент предложил, вы применили: Сменить провайдера»; для остальных записей null. */
 export function changeHeadline(entry: AuditEntry): string | null {
   const lead = CHANGE_LEAD[entry.action];
   if (!lead) return null;

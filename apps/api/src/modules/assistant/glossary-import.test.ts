@@ -273,7 +273,7 @@ describe('вывод команд, «проблема: решение» и во�
       expect(autoGlossary(text), text.slice(0, 40)).toBeNull();
     }
     expect(asksQuestion(LSCPU_QUESTION)).toBe(true);
-    // «Не нашли термин? Напишите в чат…» в конце словаря владельца — подпись страницы, а не вопрос Джарвису.
+    // «Не нашли термин? Напишите в чат…» в конце словаря владельца — подпись страницы, а не вопрос Ассистенту.
     expect(asksQuestion(GLOSSARY_TEXT)).toBe(false);
     expect(asksQuestion(`Добавь термины в глоссарий:\n${UNMARKED_GLOSSARY}`)).toBe(false);
     expect(asksQuestion('```bash\ngrep "?" /etc/hosts\n```')).toBe(false);
@@ -355,7 +355,7 @@ describe('пометка словаря, строки, которые серве
     expect(autoGlossary(`Термины\n${eight}\n${FAQ_ITEMS}`)).toBeNull();
     expect(autoGlossary(`Термины\n${FAQ_ITEMS}`)).toBeNull();
   });
-  it('подпись страницы «Остались вопросы?» отдельной строкой — не вопрос Джарвису', () => {
+  it('подпись страницы «Остались вопросы?» отдельной строкой — не вопрос Ассистенту', () => {
     for (const footer of [
       'Остались вопросы?',
       'Не нашли термин?',

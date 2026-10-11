@@ -61,7 +61,7 @@ describe('вкладка «Профиль» (J3, A5 + R2 + C3)', () => {
   it('пояснения: зачем профиль, «Необязательно» у четырёх блоков, подсказки к функциям и важности', async () => {
     const { dialog } = await openProfile();
     expect(
-      within(dialog).getByText(/Джарвис по этим данным понимает, что сломается при сбое/),
+      within(dialog).getByText(/Ассистент по этим данным понимает, что сломается при сбое/),
     ).toBeInTheDocument();
     expect(
       within(dialog).getByText(/Заполнять необязательно: без профиля он работает как раньше/),
@@ -107,7 +107,9 @@ describe('вкладка «Профиль» (J3, A5 + R2 + C3)', () => {
     const importance = within(dialog).getByRole('radiogroup', { name: 'Важность сервера' });
     await user.click(within(importance).getByRole('radio', { name: 'Критичный' }));
     expect(items.map((i) => i.dataset.selected)).toEqual(['true', 'false', 'false']);
-    expect(within(dialog).getByText('Сейчас важность влияет только на советы Джарвиса.')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Сейчас важность влияет только на советы Ассистента.'),
+    ).toBeInTheDocument();
   });
 
   it('нода Remnawave стоит первым блоком: режимы, состояние, отмена возвращает сохранённое', async () => {

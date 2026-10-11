@@ -5,7 +5,6 @@ import {
   INCIDENT_KIND_META,
   type Incident,
   type IncidentStatus,
-  isAnalysisStale,
 } from '@nodeservice/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeftIcon, CheckIcon, ServerIcon, Trash2Icon } from 'lucide-react';
@@ -22,7 +21,6 @@ import { toast } from '@/lib/notify';
 import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
 import { DetailText } from './detail-text';
-import { IncidentAnalysis } from './incident-analysis';
 import { AttemptsAccordion, ProposalBlock, Timeline } from './incident-blocks';
 import { durationText, outcomeSentence } from './incident-format';
 import {
@@ -48,7 +46,7 @@ const BTN =
 
 /**
  * Инцидент как страница-кейс (витрина v3, B1): шапка с действиями, слева хронология и попытки,
- * справа сигналы в момент сбоя, правило и похожие случаи. Сверху разбор Джарвиса (R4.2).
+ * справа сигналы в момент сбоя, правило и похожие случаи.
  */
 export function IncidentCasePage({ id }: { id: string }) {
   const q = useIncident(id);
@@ -104,14 +102,6 @@ export function IncidentCasePage({ id }: { id: string }) {
   const lastSimilarHelped = lastSimilar
     ? [...lastSimilar.attempts].reverse().find((a) => a.status === 'helped')
     : undefined;
-
-  // Шаг из разбора и предложение панели совпали — показываем один блок, в разборе.
-  const proposalInAnalysis =
-    inc.proposal !== null &&
-    inc.proposal.level !== 'T3' &&
-    inc.analysis?.status === 'done' &&
-    inc.analysis.nextAction === inc.proposal.action &&
-    !isAnalysisStale(inc.analysis, { attempts: inc.attempts.length, resolved: inc.status === 'resolved' });
 
   const doRun = async (raw: string) => {
     const parsed = actionKeySchema.safeParse(raw);
@@ -202,13 +192,6 @@ export function IncidentCasePage({ id }: { id: string }) {
         <div className="grid grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,1fr)_300px]">
           {/* Основная колонка */}
           <div className="flex flex-col gap-4 px-5 py-4 md:border-r md:border-border">
-            <IncidentAnalysis
-              incident={inc}
-              canAct={canAct}
-              attemptRunning={Boolean(running)}
-              runBusy={run.isPending}
-              onRun={(action) => void doRun(action)}
-            />
             {/* Текст бывает блоками по строкам (падение онлайна: откуда проверяли, вывод) — строки сохраняем. */}
             <p className="text-[13.5px] leading-normal whitespace-pre-line">
               <DetailText text={inc.detail} />
@@ -229,7 +212,7 @@ export function IncidentCasePage({ id }: { id: string }) {
                 <AttemptsAccordion attempts={inc.attempts} />
               </section>
             )}
-            {canAct && inc.proposal && !running && !proposalInAnalysis && (
+            {canAct && inc.proposal && !running && (
               <ProposalBlock
                 incident={inc}
                 onRun={() => void doRun(inc.proposal?.action ?? '')}

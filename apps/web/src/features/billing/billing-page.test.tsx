@@ -1,10 +1,11 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { HttpResponse, http } from 'msw';
 import { useState } from 'react';
 import { beforeEach, describe, expect, it } from 'vitest';
-
 import { mockBilling } from '@/test/msw/billing-mock';
 import { resetMockState } from '@/test/msw/handlers';
+import { server } from '@/test/msw/server';
 import { renderPage } from '@/test/render';
 import { BillingPage, type BillingView } from './billing-page';
 
@@ -21,7 +22,7 @@ describe('BillingPage', () => {
   });
 
   it('итоги за периоды и карточки по ближайшему сроку с маячком', async () => {
-    renderPage(Page, '/servers/billing', ['/servers']);
+    renderPage(Page, '/billing', ['/servers']);
     await waitFor(() => expect(cards().length).toBe(6));
     // Просроченная аренда — первой, с маячком «Просрочено».
     const first = cards()[0];
@@ -40,7 +41,7 @@ describe('BillingPage', () => {
   });
 
   it('«Продлить»: быстрая кнопка продлевает сразу, галочка снимается, отмена возвращает дату', async () => {
-    renderPage(Page, '/servers/billing', ['/servers']);
+    renderPage(Page, '/billing', ['/servers']);
     await waitFor(() => expect(cards().length).toBe(6));
     const user = userEvent.setup();
     const card = cards().find((c) => within(c).queryByText('de-fra-01 · VPS 2 ГБ'));
@@ -69,7 +70,7 @@ describe('BillingPage', () => {
   });
 
   it('двойной клик по сроку записывает только одно продление', async () => {
-    renderPage(Page, '/servers/billing', ['/servers']);
+    renderPage(Page, '/billing', ['/servers']);
     await waitFor(() => expect(cards().length).toBe(6));
     const user = userEvent.setup();
     const card = cards().find((c) => within(c).queryByText('de-fra-01 · VPS 2 ГБ'));
@@ -81,8 +82,33 @@ describe('BillingPage', () => {
     await waitFor(() => expect(mockBilling.payments).toHaveLength(before + 1));
   });
 
-  it('новая оплата: сервер — список с поиском и необязателен; сертификат на двух серверах сохраняется', async () => {
-    renderPage(Page, '/servers/billing', ['/servers']);
+  it('новая оплата: нода — список с поиском и необязателен; сертификат на двух нодах сохраняется', async () => {
+    server.use(
+      http.get('/api/nodes/status', () =>
+        HttpResponse.json({
+          connected: true,
+          domain: 'panel.example',
+          checkedAt: null,
+          error: null,
+          stats: null,
+          cert: null,
+          nodes: ['de-fra-01', 'nl-ams-02'].map((name, i) => ({
+            uuid: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa${i}`,
+            name,
+            address: 'example.com',
+            countryCode: null,
+            isConnected: true,
+            isDisabled: false,
+            isConnecting: false,
+            lastStatusMessage: null,
+            usersOnline: 0,
+            trafficUsedBytes: 0,
+            trafficLimitBytes: null,
+          })),
+        }),
+      ),
+    );
+    renderPage(Page, '/billing', ['/servers']);
     await waitFor(() => expect(cards().length).toBe(6));
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Добавить оплату' }));
@@ -90,7 +116,7 @@ describe('BillingPage', () => {
     await user.type(within(dialog).getByLabelText(/Название/), 'Без сервера');
     await user.type(within(dialog).getByLabelText(/Сумма/), '5');
     // «Сервер» — выпадающий список, по умолчанию «Без сервера», сохранить можно и так.
-    expect(within(dialog).getByRole('combobox', { name: 'Сервер' })).toHaveTextContent('Без сервера');
+    expect(within(dialog).getByRole('combobox', { name: 'Нода' })).toHaveTextContent('Без ноды');
     await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(mockBilling.items.find((i) => i.title === 'Без сервера')?.serverIds).toEqual([]);
@@ -113,11 +139,13 @@ describe('BillingPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     const saved = mockBilling.items.find((i) => i.title === 'Новый VPS');
     expect(saved).toMatchObject({ kind: 'cert', currency: 'USD', periodUnit: 'year', amountMinor: 500 });
-    expect(saved?.serverIds).toHaveLength(2);
+    expect(saved?.serverIds).toEqual([]);
+    expect(saved?.nodeRefs).toHaveLength(2);
+    expect(saved?.nodeRefs?.every((n) => n.panel === 'panel.example')).toBe(true);
   });
 
   it('статистика: столбцы по месяцам и разбивка по провайдерам; архив', async () => {
-    renderPage(Page, '/servers/billing', ['/servers']);
+    renderPage(Page, '/billing', ['/servers']);
     await waitFor(() => expect(cards().length).toBe(6));
     const user = userEvent.setup();
     await user.click(screen.getByRole('radio', { name: 'Статистика' }));
@@ -149,7 +177,7 @@ describe('BillingPage', () => {
     const today = new Date();
     today.setHours(14, 0, 0, 0);
     mockBilling.rates.fetchedAt = today.toISOString();
-    renderPage(Page, '/servers/billing', ['/servers']);
+    renderPage(Page, '/billing', ['/servers']);
     const rates = await screen.findByTestId('billing-rates');
     expect(rates).toHaveTextContent('ЦБ: $ 81,5 ₽ · € 95,2 ₽ · Обновлено 14:00');
     // Подсказка называет дату курса, а не «сегодня»: дата курса считается по Москве.
@@ -164,7 +192,7 @@ describe('BillingPage', () => {
   it('курс ЦБ устарел (ЦБ не ответил панели): дата обновления выделена, в подсказке — почему', async () => {
     mockBilling.rates.date = '2026-09-20';
     mockBilling.rates.fetchedAt = new Date(2026, 8, 20, 9, 7).toISOString();
-    renderPage(Page, '/servers/billing', ['/servers']);
+    renderPage(Page, '/billing', ['/servers']);
     const rates = await screen.findByTestId('billing-rates');
     // Устаревание написано словами, а не только цветом.
     const updated = within(rates).getByText(/^Обновлено 20 сентября.* · ЦБ не отвечает$/);
@@ -183,7 +211,7 @@ describe('BillingPage', () => {
 
   it('курса нет совсем: вместо пустоты — «курс не получен» с объяснением', async () => {
     mockBilling.rates = { USD: null, EUR: null, date: null, fetchedAt: null };
-    renderPage(Page, '/servers/billing', ['/servers']);
+    renderPage(Page, '/billing', ['/servers']);
     const rates = await screen.findByTestId('billing-rates');
     expect(rates).toHaveTextContent('ЦБ: курс не получен');
     expect(rates).toHaveAttribute('title', expect.stringMatching(/Оплаты в \$ и € пока не входят в итоги/));

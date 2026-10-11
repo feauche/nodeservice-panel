@@ -12,7 +12,7 @@ import { ServerChecksService } from './server-checks.service.js';
 
 /**
  * R5/J9: реестр проверок сервера — свои команды раз в сутки, сторонние скрипты и тяжёлые по кнопке;
- * вывод читает Джарвис.
+ * вывод читает Ассистент.
  */
 @Module({
   imports: [ServersModule, SettingsModule, IncidentsModule, RemnawaveModule],

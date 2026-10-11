@@ -101,7 +101,7 @@ describe('строка в списке инцидентов', () => {
     );
   });
 
-  it('готовый разбор Джарвиса — вместо «Автопочинки нет»; ждущий подтверждения шаг важнее', () => {
+  it('готовый разбор Ассистента — вместо «Автопочинки нет»; ждущий подтверждения шаг важнее', () => {
     const analysis = {
       status: 'done',
       startedAt: iso(5),
@@ -119,7 +119,7 @@ describe('строка в списке инцидентов', () => {
     } as unknown as Incident['analysis'];
     const inc = base({ kind: 'server_down', status: 'open', resolvedAt: null, resolvedBy: null, analysis });
     expect(listSubtitle(inc, NOW)).toBe(
-      'Джарвис: Оплата аренды просрочена на 15 часов — вероятно, отключили за неоплату.',
+      'Ассистент: Оплата аренды просрочена на 15 часов — вероятно, отключили за неоплату.',
     );
     const waiting = base({
       kind: 'agent_offline',

@@ -451,7 +451,7 @@ const profile: ChangeOp = {
     }
     const consequences = [
       patch.importance === 'critical' && cur.importance !== 'critical'
-        ? 'Для критичного сервера Джарвис будет называть последствия и окно обслуживания.'
+        ? 'Для критичного сервера Ассистент будет называть последствия и окно обслуживания.'
         : null,
       changed.includes('expectedContainers') || changed.includes('expectedPorts')
         ? 'Панель начнёт сверять ожидаемое со снимком состояния и показывать расхождения.'
@@ -637,7 +637,7 @@ const kbRunbook: ChangeOp = {
         target: { type: 'incident', id: inc.id, label: inc.title },
         rows: [{ label: 'Новая статья', before: 'Нет', after: title }],
         consequence:
-          'Появится статья с меткой «Джарвис» и тегом runbook, её можно будет открыть, поправить или удалить как обычную статью в базе знаний.',
+          'Появится статья с меткой «Ассистент» и тегом runbook, её можно будет открыть, поправить или удалить как обычную статью в базе знаний.',
         reversible: false,
         before: { created: false },
         after: { created: true },
@@ -775,7 +775,7 @@ const autofixPolicy: ChangeOp = {
   },
 };
 
-/** Какое обслуживание Джарвис может предложить. Обновление системы (apt upgrade) сознательно не входит: только вручную. */
+/** Какое обслуживание Ассистент может предложить. Обновление системы (apt upgrade) сознательно не входит: только вручную. */
 const MAINT_KINDS = ['check', 'agent_update', 'cleanup', 'unattended_enable'] as const;
 
 const MAINT_TITLES: Record<(typeof MAINT_KINDS)[number], string> = {
@@ -928,7 +928,7 @@ const maintenanceRun: ChangeOp = {
 
 const HEAVY_CHECKS = ['iperf3_ru', 'yabs'] as const;
 
-/** Тяжёлая проверка сервера (T2): только карточкой, запускает человек. Лёгкие Джарвис запускает сам. */
+/** Тяжёлая проверка сервера (T2): только карточкой, запускает человек. Лёгкие Ассистент запускает сам. */
 const serverCheck: ChangeOp = {
   level: 'T2',
   schema: z.object({ server: serverRef, check: z.enum(HEAVY_CHECKS) }),

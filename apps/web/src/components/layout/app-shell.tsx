@@ -1,35 +1,37 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
   AlertTriangleIcon,
-  BellIcon,
   BookOpenIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   LayoutGridIcon,
-  ListIcon,
   LockIcon,
   MenuIcon,
+  PlugIcon,
   SearchIcon,
-  ServerIcon,
-  SettingsIcon,
+  WalletIcon,
   XIcon,
 } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { type ComponentType, type ReactNode, useCallback, useEffect, useState } from 'react';
+import { type ComponentType, type ReactNode, useEffect, useState } from 'react';
 import { BrandLogo, BrandName } from '@/components/brand-logo';
 import { JarvisIcon } from '@/components/jarvis-icon';
+import {
+  DnsIntegrationsIcon,
+  DpiCheckerIcon,
+  ReferenceJournalIcon,
+  ReferenceNodesIcon,
+  ReferenceSettingsIcon,
+} from '@/components/reference-icons';
 import { ThemeMenu } from '@/components/theme-menu';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useEventsStream } from '@/features/events/use-events-stream';
 import { useOpenIncidentsCount } from '@/features/incidents/incidents-api';
-import { useNotifications } from '@/features/notifications/notifications-api';
 import { useSecurityOverview } from '@/features/security/security-api';
 import { useIdleLock } from '@/features/security/use-idle-lock';
 import { CustomSitesNav, CustomSitesTopMenu } from '@/features/settings/custom-sites-nav';
@@ -52,37 +54,33 @@ function readRail(): boolean {
 /* ---------- навигация ---------- */
 const NAV = [
   { to: '/', label: 'Обзор', icon: LayoutGridIcon },
-  { to: '/servers', label: 'Серверы', icon: ServerIcon },
+  { to: '/nodes', label: 'Ноды', icon: ReferenceNodesIcon },
+  { to: '/billing', label: 'Биллинг', icon: WalletIcon },
   { to: '/incidents', label: 'Инциденты', icon: AlertTriangleIcon },
-  { to: '/notifications', label: 'Уведомления', icon: BellIcon },
-  { to: '/settings', label: 'Настройки', icon: SettingsIcon },
+  { to: '/settings', label: 'Настройки', icon: ReferenceSettingsIcon },
 ] as const;
-/** «Серверы» раскрываются в подпункты: список серверов, провайдеры, Remnawave и биллинг. */
-const SERVERS_GROUP = {
-  to: '/servers',
-  label: 'Серверы',
-  icon: ServerIcon,
-  items: [
-    { to: '/servers', label: 'Все серверы' },
-    { to: '/servers/providers', label: 'Провайдеры' },
-    { to: '/servers/remnawave', label: 'Remnawave' },
-    { to: '/servers/billing', label: 'Биллинг' },
-  ],
-} as const;
-/** Раздел «Автоматизация» — Джарвис и база знаний. */
-const NAV_AUTOMATION = [
-  { to: '/assistant', label: 'Джарвис', icon: JarvisIcon },
+/** Раздел «Помощь» — Ассистент и база знаний. */
+const NAV_HELP = [
+  { to: '/assistant', label: 'Ассистент', icon: JarvisIcon },
   { to: '/knowledge', label: 'База знаний', icon: BookOpenIcon },
 ] as const;
-/** Версия панели из сборки; в тестах и dev без define — «dev». */
-const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
-const APP_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : undefined;
-const APP_BUILT_AT = typeof __APP_BUILT_AT__ === 'string' ? __APP_BUILT_AT__ : undefined;
+const NAV_INTEGRATIONS = [
+  { to: '/integrations/dpi', label: 'DPI Checker', icon: DpiCheckerIcon },
+  { to: '/integrations/dns', label: 'DNS интеграции', icon: DnsIntegrationsIcon },
+] as const;
+/** Версия панели из сборки; в тестах без Vite — «dev». */
+const APP_VERSION = import.meta.env.VITE_APP_VERSION ?? 'dev';
+const APP_COMMIT = import.meta.env.VITE_APP_COMMIT;
+const APP_BUILT_AT = import.meta.env.VITE_APP_BUILT_AT;
 
 /** Нижняя группа меню — служебное: Журнал внизу, рядом с «Свернуть меню». */
-const NAV_BOTTOM = [{ to: '/audit', label: 'Журнал', icon: ListIcon }] as const;
+const NAV_BOTTOM = [{ to: '/audit', label: 'Журнал', icon: ReferenceJournalIcon }] as const;
 
-type NavEntry = (typeof NAV)[number] | (typeof NAV_AUTOMATION)[number] | (typeof NAV_BOTTOM)[number];
+type NavEntry =
+  | (typeof NAV)[number]
+  | (typeof NAV_HELP)[number]
+  | (typeof NAV_BOTTOM)[number]
+  | (typeof NAV_INTEGRATIONS)[number];
 
 interface NavItemProps {
   collapsed: boolean;
@@ -116,7 +114,9 @@ function NavItem({
           iconOnly && 'justify-center px-0',
         )}
       >
-        <Icon className="size-[17px] flex-none opacity-55" aria-hidden="true" />
+        <span className="grid size-6 flex-none place-items-center">
+          <Icon className="size-[17px] opacity-55" aria-hidden="true" />
+        </span>
         <span className={cn('flex-1 opacity-55', railOnPhone && 'max-md:sr-only', iconOnly && 'sr-only')}>
           {label}
         </span>
@@ -146,7 +146,9 @@ function NavItem({
       )}
       activeOptions={{ exact: to === '/' }}
     >
-      <Icon className="size-[17px] flex-none" aria-hidden="true" />
+      <span className="grid size-6 flex-none place-items-center">
+        <Icon className="size-[17px]" aria-hidden="true" />
+      </span>
       <span className={cn('flex-1', railOnPhone && 'max-md:sr-only', iconOnly && 'sr-only')}>{label}</span>
       {badge !== undefined && badge > 0 && (
         <span
@@ -178,255 +180,16 @@ function GroupLabel({ children, hidden }: { children: ReactNode; hidden?: boolea
   );
 }
 
-/* ---------- состояние группы «Серверы» ---------- */
-
-const NAV_OPEN_KEY = 'ns-nav-servers-open';
-
-/**
- * Каждый раздел рисует свой AppShell, поэтому при переходе меню создаётся заново. Состояние группы
- * поэтому живёт здесь, вне компонента: `shown` — что меню показывало в последний раз, `want` — что
- * хочет пользователь (раскрыл руками или пришёл в раздел). Новое меню рисуется в прежнем виде и
- * догоняет желаемое на следующем кадре — так раскрытие идёт плавно, а уход в другой раздел группу не
- * схлопывает.
- */
-const navGroup = {
-  shown: null as boolean | null,
-  want: false,
-  wasInSection: false,
-  mounted: false,
-};
-
-function readStoredOpen(): boolean {
-  try {
-    return localStorage.getItem(NAV_OPEN_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function storeOpen(v: boolean): void {
-  navGroup.want = v;
-  try {
-    localStorage.setItem(NAV_OPEN_KEY, v ? '1' : '0');
-  } catch {
-    /* нет хранилища — живём без запоминания */
-  }
-}
-
-/** Только для тестов: сбросить запомненное состояние группы. */
-export function resetNavGroupState(): void {
-  navGroup.shown = null;
-  navGroup.want = false;
-  navGroup.wasInSection = false;
-  navGroup.mounted = false;
-  try {
-    localStorage.removeItem(NAV_OPEN_KEY);
-  } catch {
-    /* ignore */
-  }
-}
-
-function useGroupOpen(
-  inSection: boolean,
-  pathname: string,
-): { open: boolean; setOpen: (v: boolean) => void } {
-  const [open, setOpenState] = useState(() => {
-    if (navGroup.shown === null) navGroup.want = readStoredOpen();
-    // Самый первый показ за сессию — без анимации: сразу в нужном виде.
-    if (!navGroup.mounted) return navGroup.want || inSection;
-    return navGroup.shown ?? navGroup.want;
-  });
-  const setOpen = useCallback((v: boolean) => {
-    storeOpen(v);
-    setOpenState(v);
-  }, []);
-
-  // Что на экране — запоминаем, чтобы следующее меню (после перехода) стартовало с того же.
-  useEffect(() => {
-    navGroup.shown = open;
-  }, [open]);
-
-  // Сменился адрес (меню создано заново или осталось на месте): догоняем желаемое состояние на
-  // следующем кадре, чтобы сработал плавный переход. Пришли в раздел — раскрываем и запоминаем.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: реагируем только на смену адреса
-  useEffect(() => {
-    const entering = inSection && !navGroup.wasInSection;
-    navGroup.wasInSection = inSection;
-    const first = !navGroup.mounted;
-    navGroup.mounted = true;
-    if (entering || (first && inSection)) storeOpen(true);
-    const want = navGroup.want;
-    if (want === open) return;
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => setOpenState(want));
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-    };
-  }, [pathname]);
-
-  return { open, setOpen };
-}
-
-/**
- * Группа «Серверы» с подпунктами. Подпункты раскрываются плавно (grid-rows 0fr→1fr + прозрачность),
- * без прыжков высоты; при `prefers-reduced-motion` — мгновенно. В свёрнутом рейле группа
- * становится всплывающим меню справа от иконки.
- */
-function NavGroup({
-  collapsed,
-  mode = 'rail',
-  onNavigate,
-}: {
-  collapsed: boolean;
-  mode?: 'rail' | 'drawer';
-  onNavigate?: () => void;
-}) {
-  const { to, label, icon: Icon, items } = SERVERS_GROUP;
-  const pathname = useRouterState({ select: (st) => st.location.pathname });
-  const inSection = pathname === to || pathname.startsWith(`${to}/`);
-  const { open, setOpen } = useGroupOpen(inSection, pathname);
-  const iconOnly = mode === 'rail' && collapsed;
-  const isItemActive = (item: (typeof items)[number]) =>
-    item.to === to ? pathname === to : pathname === item.to || pathname.startsWith(`${item.to}/`);
-
-  if (iconOnly) {
-    return (
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          title={label}
-          aria-label={label}
-          className={cn(
-            'relative flex w-full cursor-pointer items-center justify-center rounded-[10px] px-0 py-[9px] text-text-2 transition-colors outline-none hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand data-open:bg-surface-2 data-open:text-foreground',
-            inSection &&
-              'bg-brand-soft text-brand before:absolute before:top-[9px] before:bottom-[9px] before:-left-2.5 before:w-[3px] before:rounded-r-[3px] before:bg-brand before:content-[""]',
-          )}
-        >
-          <Icon className="size-[17px] flex-none" aria-hidden="true" />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="right" align="start" sideOffset={10} className="w-auto min-w-[176px]">
-          <DropdownMenuLabel className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
-            {label}
-          </DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          {items.map((item) => (
-            <DropdownMenuItem key={item.to} asChild>
-              <Link
-                to={item.to}
-                onClick={onNavigate}
-                className={cn('cursor-pointer text-[13px]', isItemActive(item) && 'font-semibold text-brand')}
-              >
-                {item.label}
-              </Link>
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
-  }
-
-  const railOnPhone = mode === 'rail';
-  // Когда подпункты раскрыты, подсветка живёт на подпункте, а не на родителе.
-  const parentActive = inSection && !open;
-  return (
-    <div className="flex flex-col">
-      <div
-        className={cn(
-          'relative flex items-center rounded-[10px] text-[13.5px] font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground',
-          inSection && 'text-foreground',
-          parentActive && 'bg-brand-soft text-brand',
-          parentActive &&
-            mode !== 'drawer' &&
-            'before:absolute before:top-[9px] before:bottom-[9px] before:-left-3 before:w-[3px] before:rounded-r-[3px] before:bg-brand before:content-[""]',
-          railOnPhone && 'max-md:justify-center',
-        )}
-      >
-        <Link
-          to={to}
-          onClick={() => {
-            // Переход создаёт меню заново — оно раскроет группу плавно само; стоим на месте — раскрываем здесь.
-            if (pathname === to) setOpen(true);
-            else storeOpen(true);
-            onNavigate?.();
-          }}
-          className={cn(
-            'flex min-w-0 flex-1 items-center gap-[11px] rounded-[10px] px-3 py-[9px] outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
-            railOnPhone && 'max-md:flex-none max-md:justify-center max-md:px-0',
-          )}
-        >
-          <Icon className="size-[17px] flex-none" aria-hidden="true" />
-          <span className={cn('flex-1 truncate', railOnPhone && 'max-md:sr-only')}>{label}</span>
-        </Link>
-        <button
-          type="button"
-          aria-label={open ? 'Скрыть подпункты «Серверы»' : 'Показать подпункты «Серверы»'}
-          aria-expanded={open}
-          aria-controls="nav-servers-items"
-          onClick={() => setOpen(!open)}
-          className={cn(
-            'mr-1 grid size-7 flex-none cursor-pointer place-items-center rounded-[8px] text-text-3 transition-colors outline-none hover:bg-surface-3 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
-            railOnPhone && 'max-md:hidden',
-          )}
-        >
-          <ChevronDownIcon
-            className={cn(
-              'size-4 transition-transform duration-200 ease-out motion-reduce:transition-none',
-              !open && '-rotate-90',
-            )}
-            aria-hidden="true"
-          />
-        </button>
-      </div>
-      <div
-        id="nav-servers-items"
-        className={cn(
-          'grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none',
-          open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
-          railOnPhone && 'max-md:hidden',
-        )}
-      >
-        <ul className="flex min-h-0 flex-col gap-[2px] overflow-hidden" inert={!open}>
-          {items.map((item) => {
-            const active = isItemActive(item);
-            return (
-              <li
-                key={item.to}
-                className="relative ml-[21px] border-l border-border pl-[9px] first:mt-[3px] last:mb-[2px]"
-              >
-                <Link
-                  to={item.to}
-                  onClick={onNavigate}
-                  aria-current={active ? 'page' : undefined}
-                  className={cn(
-                    'flex items-center rounded-[8px] px-2.5 py-[7px] text-[13px] font-medium text-text-2 transition-colors outline-none hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
-                    active && 'bg-brand-soft text-brand hover:bg-brand-soft hover:text-brand',
-                  )}
-                >
-                  {item.label}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-    </div>
-  );
-}
-
 /** Список разделов — один и тот же в боковой колонке и в выезжающем меню на телефоне. */
 function NavList({
   collapsed,
   mode,
   openIncidents,
-  unreadNotifications,
   onNavigate,
 }: {
   collapsed: boolean;
   mode: 'rail' | 'drawer';
   openIncidents: number | undefined;
-  unreadNotifications: number | undefined;
   onNavigate?: () => void;
 }) {
   const hideLabels = mode === 'rail' && collapsed;
@@ -436,30 +199,26 @@ function NavList({
       <GroupLabel hidden={hideLabels}>
         <span className={labelClass}>Управление</span>
       </GroupLabel>
-      {NAV.map((n) =>
-        n.to === SERVERS_GROUP.to ? (
-          <NavGroup key={n.to} collapsed={collapsed} mode={mode} onNavigate={onNavigate} />
-        ) : (
-          <NavItem
-            key={n.to}
-            {...n}
-            collapsed={collapsed}
-            mode={mode}
-            onNavigate={onNavigate}
-            badge={
-              n.to === '/incidents'
-                ? openIncidents
-                : n.to === '/notifications'
-                  ? unreadNotifications
-                  : undefined
-            }
-          />
-        ),
-      )}
+      {NAV.map((n) => (
+        <NavItem
+          key={n.to}
+          {...n}
+          collapsed={collapsed}
+          mode={mode}
+          onNavigate={onNavigate}
+          badge={n.to === '/incidents' ? openIncidents : undefined}
+        />
+      ))}
       <GroupLabel hidden={hideLabels}>
-        <span className={labelClass}>Автоматизация</span>
+        <span className={labelClass}>Помощь</span>
       </GroupLabel>
-      {NAV_AUTOMATION.map((n) => (
+      {NAV_HELP.map((n) => (
+        <NavItem key={n.to} {...n} collapsed={collapsed} mode={mode} onNavigate={onNavigate} />
+      ))}
+      <GroupLabel hidden={hideLabels}>
+        <span className={labelClass}>Интеграции</span>
+      </GroupLabel>
+      {NAV_INTEGRATIONS.map((n) => (
         <NavItem key={n.to} {...n} collapsed={collapsed} mode={mode} onNavigate={onNavigate} />
       ))}
       <CustomSitesNav collapsed={collapsed} mode={mode} onNavigate={onNavigate} />
@@ -525,40 +284,18 @@ function TopNavGroup({
 }
 
 /** Полная настольная навигация выбранного варианта B. */
-function TopNavigation({
-  openIncidents,
-  unreadNotifications,
-}: {
-  openIncidents: number | undefined;
-  unreadNotifications: number | undefined;
-}) {
+function TopNavigation({ openIncidents }: { openIncidents: number | undefined }) {
   const pathname = useRouterState({ select: (st) => st.location.pathname });
-  const inServers = pathname === '/servers' || pathname.startsWith('/servers/');
   const inAutomation = pathname === '/assistant' || pathname === '/knowledge';
 
   return (
     <nav data-testid="top-navigation" aria-label="Верхнее меню" className="flex min-w-0 items-center gap-0.5">
       <TopNavLink {...NAV[0]} />
-      <TopNavGroup label="Серверы" icon={ServerIcon} active={inServers}>
-        {SERVERS_GROUP.items.map((item) => (
-          <DropdownMenuItem key={item.to} asChild>
-            <Link
-              to={item.to}
-              className={cn(
-                'cursor-pointer text-[13px]',
-                (item.to === '/servers' ? pathname === item.to : pathname.startsWith(item.to)) &&
-                  'font-semibold text-brand',
-              )}
-            >
-              {item.label}
-            </Link>
-          </DropdownMenuItem>
-        ))}
-      </TopNavGroup>
-      <TopNavLink {...NAV[2]} badge={openIncidents} />
-      <TopNavLink {...NAV[3]} badge={unreadNotifications} />
-      <TopNavGroup label="Автоматизация" icon={JarvisIcon} active={inAutomation}>
-        {NAV_AUTOMATION.map((item) => {
+      <TopNavLink {...NAV[1]} />
+      <TopNavLink {...NAV[2]} />
+      <TopNavLink {...NAV[3]} badge={openIncidents} />
+      <TopNavGroup label="Помощь" icon={JarvisIcon} active={inAutomation}>
+        {NAV_HELP.map((item) => {
           const Icon = item.icon;
           return (
             <DropdownMenuItem key={item.to} asChild>
@@ -576,6 +313,19 @@ function TopNavigation({
           );
         })}
       </TopNavGroup>
+      <TopNavGroup label="Интеграции" icon={PlugIcon} active={pathname.startsWith('/integrations/')}>
+        {NAV_INTEGRATIONS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <DropdownMenuItem key={item.to} asChild>
+              <Link to={item.to}>
+                <Icon className="size-5" aria-hidden="true" />
+                {item.label}
+              </Link>
+            </DropdownMenuItem>
+          );
+        })}
+      </TopNavGroup>
       <CustomSitesTopMenu />
       <TopNavLink {...NAV[4]} />
       <TopNavLink {...NAV_BOTTOM[0]} />
@@ -586,11 +336,9 @@ function TopNavigation({
 /** Телефон: гамбургер в шапке открывает выезжающее слева меню — полную копию боковой колонки. */
 function MobileNav({
   openIncidents,
-  unreadNotifications,
   hideAt = 'md',
 }: {
   openIncidents: number | undefined;
-  unreadNotifications: number | undefined;
   hideAt?: 'md' | 'xl';
 }) {
   const [open, setOpen] = useState(false);
@@ -627,7 +375,6 @@ function MobileNav({
               collapsed={false}
               mode="drawer"
               openIncidents={openIncidents}
-              unreadNotifications={unreadNotifications}
               onNavigate={() => setOpen(false)}
             />
           </nav>
@@ -639,7 +386,7 @@ function MobileNav({
 
 /* ---------- каркас ---------- */
 interface AppShellProps {
-  /** Заголовок раздела; если не задан — шапка не рисуется (напр. чат Джарвиса на весь экран). */
+  /** Заголовок раздела; если не задан — шапка не рисуется (напр. чат Ассистента на весь экран). */
   title?: string;
   subtitle?: string;
   /** Маленькие сервисные кнопки справа от заголовка (например, ссылки на документацию API). */
@@ -656,8 +403,6 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
   const security = useSecurityOverview();
   useIdleLock(security.data?.policy.lockAfterMinutes ?? 0);
   const openIncidents = useOpenIncidentsCount();
-  const notifications = useNotifications();
-  const unreadNotifications = notifications.data?.unread;
   const navigationLayout = useNavigationLayout();
   const topLayout = navigationLayout === 'top';
   const [collapsed, setCollapsed] = useState(readRail);
@@ -700,12 +445,7 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
               collapsed && 'px-0',
             )}
           >
-            <NavList
-              collapsed={collapsed}
-              mode="rail"
-              openIncidents={openIncidents}
-              unreadNotifications={unreadNotifications}
-            />
+            <NavList collapsed={collapsed} mode="rail" openIncidents={openIncidents} />
             <button
               type="button"
               onClick={() => setCollapsed((v) => !v)}
@@ -740,7 +480,7 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
         >
           {topLayout ? (
             <>
-              <div className="hidden min-w-0 items-center gap-3 xl:flex">
+              <div className="hidden min-w-0 items-center xl:flex">
                 <Link
                   to="/"
                   aria-label="NodeService — на обзор"
@@ -749,21 +489,19 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
                   <BrandLogo />
                   <BrandName className="text-[14.5px]" />
                 </Link>
-                <TopNavigation openIncidents={openIncidents} unreadNotifications={unreadNotifications} />
+              </div>
+              <div className="absolute left-1/2 hidden -translate-x-1/2 xl:block">
+                <TopNavigation openIncidents={openIncidents} />
               </div>
               <div className="flex min-w-0 items-center gap-2 xl:hidden">
-                <MobileNav
-                  hideAt="xl"
-                  openIncidents={openIncidents}
-                  unreadNotifications={unreadNotifications}
-                />
+                <MobileNav hideAt="xl" openIncidents={openIncidents} />
                 <BrandLogo />
                 <BrandName className="truncate text-[14.5px] max-sm:hidden" />
               </div>
             </>
           ) : (
             <>
-              <MobileNav openIncidents={openIncidents} unreadNotifications={unreadNotifications} />
+              <MobileNav openIncidents={openIncidents} />
               <button
                 type="button"
                 disabled
@@ -780,6 +518,19 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
           )}
           <div className="flex-1" />
           <PanelVersion version={APP_VERSION} commit={APP_COMMIT} builtAt={APP_BUILT_AT} />
+          <a
+            href="https://github.com/feauche/nodeservice-panel"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="NodeService на GitHub"
+            title="NodeService на GitHub"
+            className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-border bg-surface text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" className="size-4" aria-hidden="true">
+              <path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.13.68-3.79-1.33-3.79-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.68.08-.68 1.13.08 1.73 1.16 1.73 1.16 1 .1.01 2.22 3.28 1.59.1-.73.4-1.23.71-1.51-2.5-.28-5.13-1.25-5.13-5.56 0-1.23.44-2.23 1.16-3.02-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.16a10.8 10.8 0 0 1 5.64 0c2.15-1.46 3.09-1.16 3.09-1.16.61 1.55.23 2.7.11 2.98.72.79 1.16 1.79 1.16 3.02 0 4.32-2.64 5.27-5.15 5.55.41.35.77 1.04.77 2.1v3.03c0 .3.2.65.78.54A11.25 11.25 0 0 0 12 .75Z" />
+            </svg>
+            <span className="sr-only">Репозиторий NodeService</span>
+          </a>
           <ThemeMenu />
           <UserMenu />
         </header>

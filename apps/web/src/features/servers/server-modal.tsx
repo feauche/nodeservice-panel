@@ -691,7 +691,7 @@ function SaveBar({ edit, tab }: { edit: ServerEdit; tab: ServerModalTab }) {
       ? 'Новые доступы проверяются настоящим подключением. Пароль не сохраняется.'
       : tab === 'connection'
         ? 'Название, теги и заметка на связь не влияют.'
-        : 'Профиль читает Джарвис, на работу сервера он не влияет.';
+        : 'Профиль читает Ассистент, на работу сервера он не влияет.';
   return (
     <div className="flex flex-none items-center gap-3 border-t border-border bg-surface px-4 py-3.5 max-sm:flex-col max-sm:items-stretch md:px-5">
       <div className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">

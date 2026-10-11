@@ -8,7 +8,7 @@ import { DUE_TEXT, dueWords, formatDue, money } from './billing-format';
 
 /** Ближайшая оплата сервера (тип «Сервер» или «Аренда») из итогов биллинга. */
 export function useServerBilling(serverId: string) {
-  const summary = useBillingSummary(isSectionOpen('/servers/billing'));
+  const summary = useBillingSummary(isSectionOpen('/billing'));
   return summary.data?.byServer.find((b) => b.serverId === serverId) ?? null;
 }
 
@@ -36,7 +36,7 @@ export function ServerBillingFact({ serverId }: { serverId: string }) {
   if (!b) return null;
   return (
     <Link
-      to="/servers/billing"
+      to="/billing"
       search={{ item: b.itemId }}
       className="block whitespace-normal hover:underline"
       title={`«${b.title}» · ${money(b.amountMinor, b.currency)} — открыть в биллинге`}

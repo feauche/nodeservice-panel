@@ -1,4 +1,4 @@
-import type { BillingCurrency, BillingKind, BillingPeriodUnit } from '@nodeservice/shared';
+import type { BillingCurrency, BillingKind, BillingNodeRef, BillingPeriodUnit } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import {
   bigint,
@@ -27,6 +27,7 @@ export const billingItems = pgTable(
     title: text('title').notNull(),
     providerId: uuid('provider_id').references(() => providers.id, { onDelete: 'set null' }),
     serverIds: jsonb('server_ids').$type<string[]>().notNull().default([]),
+    nodeRefs: jsonb('node_refs').$type<BillingNodeRef[]>().notNull().default([]),
     domain: text('domain'),
     amountMinor: bigint('amount_minor', { mode: 'number' }).notNull(),
     currency: text('currency').$type<BillingCurrency>().notNull(),

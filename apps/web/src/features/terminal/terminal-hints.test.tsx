@@ -25,11 +25,11 @@ function open(read: () => string = () => OUT) {
 describe('TerminalHints (C1)', () => {
   beforeEach(() => resetMockState({ authenticated: true }));
 
-  it('Джарвис не подключён: подсказка со ссылкой в настройки, кнопки объяснения нет', async () => {
+  it('Ассистент не подключён: подсказка со ссылкой в настройки, кнопки объяснения нет', async () => {
     mockAssistant.enabled = false;
     open();
-    expect(await screen.findByText(/задайте провайдера, модель и ключ Джарвиса/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Настройки → Джарвис/ })).toHaveAttribute(
+    expect(await screen.findByText(/задайте провайдера, модель и ключ Ассистента/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Настройки → Ассистент/ })).toHaveAttribute(
       'href',
       '/settings/assistant',
     );
@@ -40,8 +40,8 @@ describe('TerminalHints (C1)', () => {
     mockAssistant.enabled = true;
     mockAssistant.permissions = { ...mockAssistant.permissions, terminalHints: false };
     open();
-    expect(await screen.findByText(/выключены в разрешениях Джарвиса/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Настройки → Джарвис/ })).toHaveAttribute(
+    expect(await screen.findByText(/выключены в разрешениях Ассистента/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Настройки → Ассистент/ })).toHaveAttribute(
       'href',
       '/settings/assistant',
     );

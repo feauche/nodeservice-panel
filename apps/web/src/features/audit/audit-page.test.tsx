@@ -117,7 +117,7 @@ describe('AuditPage', () => {
     expect(within(login).getByText('Пароль + код 2FA')).toBeInTheDocument();
   });
 
-  describe('изменения по предложению Джарвиса (J5, C1)', () => {
+  describe('изменения по предложению Ассистента (J5, C1)', () => {
     const change = (kind: 'applied' | 'reverted' | 'rejected' | 'failed', over = {}) =>
       pushAuditEntry({
         action: `assistant.change.${kind}`,
@@ -137,10 +137,10 @@ describe('AuditPage', () => {
         ...over,
       });
 
-    it('строка с заголовком «Джарвис предложил, вы применили: …», значком Джарвиса и целью', async () => {
+    it('строка с заголовком «Ассистент предложил, вы применили: …», значком Ассистента и целью', async () => {
       change('applied');
       renderPage(Harness, '/audit');
-      const headline = await screen.findByText('Джарвис предложил, вы применили: Сменить провайдера');
+      const headline = await screen.findByText('Ассистент предложил, вы применили: Сменить провайдера');
       const row = headline.closest('tr') as HTMLElement;
       expect(row.querySelector('svg.text-ai')).not.toBeNull();
       expect(within(row).getByText('· de-fra-01')).toBeInTheDocument();
@@ -152,11 +152,11 @@ describe('AuditPage', () => {
       change('reverted');
       renderPage(Harness, '/audit');
       expect(
-        await screen.findByText('Вы отменили изменение Джарвиса: Сменить провайдера'),
+        await screen.findByText('Вы отменили изменение Ассистента: Сменить провайдера'),
       ).toBeInTheDocument();
-      expect(screen.getByText('Вы отклонили предложение Джарвиса: Сменить провайдера')).toBeInTheDocument();
+      expect(screen.getByText('Вы отклонили предложение Ассистента: Сменить провайдера')).toBeInTheDocument();
       expect(
-        screen.getByText('Изменение по предложению Джарвиса не применено: Сменить провайдера'),
+        screen.getByText('Изменение по предложению Ассистента не применено: Сменить провайдера'),
       ).toBeInTheDocument();
     });
 
@@ -164,7 +164,7 @@ describe('AuditPage', () => {
       change('applied');
       renderPage(Harness, '/audit');
       const user = userEvent.setup();
-      const headline = await screen.findByText('Джарвис предложил, вы применили: Сменить провайдера');
+      const headline = await screen.findByText('Ассистент предложил, вы применили: Сменить провайдера');
       await user.click(headline.closest('tr') as HTMLElement);
       const details = await screen.findByTestId('audit-details');
       expect(within(details).getByText('Изменения')).toBeInTheDocument();
@@ -182,10 +182,10 @@ describe('AuditPage', () => {
       expect(within(details).queryByRole('button', { name: /Отменить/ })).not.toBeInTheDocument();
     });
 
-    it('фильтр по разделу «Джарвис» оставляет такие записи', async () => {
+    it('фильтр по разделу «Ассистент» оставляет такие записи', async () => {
       change('applied');
       renderPage(() => <Harness initial={{ category: ['assistant'] }} />, '/audit');
-      await screen.findByText('Джарвис предложил, вы применили: Сменить провайдера');
+      await screen.findByText('Ассистент предложил, вы применили: Сменить провайдера');
       expect(rows()).toHaveLength(1);
     });
 

@@ -125,7 +125,7 @@ export class ChangesService {
     if (row.status === 'proposed' && row.expiresAt.getTime() < Date.now()) {
       const updated = await this.repo.update(id, {
         status: 'expired',
-        note: `Предложение не применили за ${CHANGE_TTL_HOURS} ч: состояние могло измениться. Попросите Джарвиса предложить заново.`,
+        note: `Предложение не применили за ${CHANGE_TTL_HOURS} ч: состояние могло измениться. Попросите Ассистента предложить заново.`,
       });
       return updated ?? row;
     }
@@ -136,7 +136,7 @@ export class ChangesService {
     return this.present(await this.load(id));
   }
 
-  /** Джарвис предлагает изменение: проверяем допустимость, считаем превью по живому состоянию, сохраняем. Ничего не меняем. */
+  /** Ассистент предлагает изменение: проверяем допустимость, считаем превью по живому состоянию, сохраняем. Ничего не меняем. */
   async propose(input: {
     operation: string;
     args: unknown;
@@ -172,13 +172,13 @@ export class ChangesService {
       status: 'proposed',
       expiresAt: new Date(Date.now() + CHANGE_TTL_HOURS * 3_600_000),
     });
-    // Только в Telegram (тумблер «Карточка Джарвиса», по умолчанию выключен): в колокольчик не пишем —
+    // Только в Telegram (тумблер «Карточка Ассистента», по умолчанию выключен): в колокольчик не пишем —
     // карточка и так в чате.
     await this.notifications.push({
       severity: 'info',
-      title: `Джарвис предлагает: ${built.plan.title}`,
+      title: `Ассистент предлагает: ${built.plan.title}`,
       body: input.reason?.trim() ? input.reason.trim().slice(0, 300) : null,
-      link: { to: '/assistant', label: 'Открыть Джарвиса' },
+      link: { to: '/assistant', label: 'Открыть Ассистента' },
       telegram: { event: 'jarvis_card' },
     });
     return { change: await this.present(row), reused: false };
@@ -252,7 +252,7 @@ export class ChangesService {
         return this.finish(
           row,
           'stale',
-          `Состояние изменилось после предложения, ничего не применено.${now} Попросите Джарвиса предложить заново.`,
+          `Состояние изменилось после предложения, ничего не применено.${now} Попросите Ассистента предложить заново.`,
           { audit: 'failed' },
         );
       }

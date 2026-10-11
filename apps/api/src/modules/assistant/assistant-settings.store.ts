@@ -85,7 +85,7 @@ export class AssistantSettingsStore {
 
   async status(): Promise<AssistantStatus> {
     const s = await this.load();
-    // Джарвис работает, только когда есть и ключ, и название модели.
+    // Ассистент работает, только когда есть и ключ, и название модели.
     return {
       enabled: Boolean(s.apiKeyEnc) && s.model.trim().length > 0,
       provider: s.provider,

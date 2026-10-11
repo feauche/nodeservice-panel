@@ -75,16 +75,16 @@ function AssistantDisabled() {
         <span className="grid size-12 place-items-center rounded-2xl bg-brand-soft text-brand">
           <JarvisIcon className="size-6" aria-hidden="true" />
         </span>
-        <h2 className="font-heading text-[17px] font-bold">Джарвис выключен</h2>
+        <h2 className="font-heading text-[17px] font-bold">Ассистент выключен</h2>
         <p className="text-[13px] text-text-2">
-          Добавьте ключ модели в Настройках, чтобы задавать вопросы о парке — Джарвис видит метрики, Журнал и
-          базу знаний.
+          Добавьте ключ модели в Настройках, чтобы задавать вопросы о парке — Ассистент видит метрики, Журнал
+          и базу знаний.
         </p>
         <Link
           to="/settings/assistant"
           className="mt-1 inline-flex h-9 items-center gap-1.5 rounded-[10px] bg-cta px-4 text-[13px] font-semibold text-cta-foreground hover:bg-(--ns-cta-hover)"
         >
-          Настройки → Джарвис
+          Настройки → Ассистент
         </Link>
       </div>
     </div>
@@ -426,7 +426,7 @@ function AssistantChat() {
           </ServerHealthContext.Provider>
         </div>
 
-        {/* Композер: одно поле ввода, Джарвис сам понимает, что прислали: вопрос, статью, термины, вывод команды */}
+        {/* Композер: одно поле ввода, Ассистент сам понимает, что прислали: вопрос, статью, термины, вывод команды */}
         <div className="flex-none border-t border-border p-3 sm:p-3.5">
           {isNewChat && messages.length === 0 && !shownPending && (
             <div className="mb-2.5 flex flex-wrap gap-1.5 max-sm:[&>button:nth-child(n+4)]:hidden">
@@ -452,7 +452,7 @@ function AssistantChat() {
               onKeyDown={onKeyDown}
               disabled={busy}
               rows={1}
-              aria-label="Сообщение Джарвису"
+              aria-label="Сообщение Ассистенту"
               placeholder="Спросите или вставьте текст…"
               className="max-h-[200px] w-full resize-none bg-transparent px-2 py-1 text-[13.5px] leading-relaxed outline-none placeholder:text-text-3"
             />
@@ -487,7 +487,7 @@ function AssistantChat() {
           <p className={cn('mt-1.5 px-1 text-[11px]', overLimit ? 'text-destructive' : 'text-text-3')}>
             {overLimit
               ? 'Текст длиннее предела: разбейте его на части и отправьте по очереди.'
-              : 'Enter — отправить, Shift+Enter — перенос строки. Статью Джарвис сохранит в базу знаний, термины добавит в «Пояснения».'}
+              : 'Enter — отправить, Shift+Enter — перенос строки. Статью Ассистент сохранит в базу знаний, термины добавит в «Пояснения».'}
           </p>
         </div>
       </div>
@@ -596,7 +596,7 @@ function ConversationsPanel({ items, current, onSelect, close }: ConversationsPr
   return (
     <>
       <div className="flex items-center justify-between gap-2">
-        <span className="min-w-0 flex-1 truncate text-[13px] font-bold">Джарвис</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-bold">Ассистент</span>
         <span className="inline-flex flex-none items-center gap-1.5 rounded-full bg-ok-soft px-2 py-0.5 text-[10px] font-semibold text-ok">
           <span className="size-1.5 rounded-full bg-ok" aria-hidden="true" />
           Включён
@@ -684,7 +684,7 @@ function EmptyChat() {
           Спросите об инцидентах, серверах или о том, как что-то починить
         </p>
         <p className="max-w-[380px] text-[12.5px] text-text-3">
-          Джарвис смотрит метрики, Журнал и базу знаний. Действия он только предлагает, запускаете их вы.
+          Ассистент смотрит метрики, Журнал и базу знаний. Действия он только предлагает, запускаете их вы.
         </p>
       </div>
     </div>
@@ -695,7 +695,7 @@ function TypingRow() {
   return (
     <div
       role="status"
-      aria-label="Джарвис думает"
+      aria-label="Ассистент думает"
       className="flex max-w-[84%] gap-3 animate-in fade-in-0 duration-200"
     >
       <Avatar />
@@ -731,7 +731,7 @@ function MessageRow({
   searchActive = false,
 }: {
   message: AssistantMessage;
-  /** Сообщение идёт следом за другим ответом Джарвиса: значка нет, вместо него пустое место. */
+  /** Сообщение идёт следом за другим ответом Ассистента: значка нет, вместо него пустое место. */
   grouped?: boolean;
   /** За ним идёт ещё ответ: это «сейчас посмотрю», приглушаем и не выделяем. */
   interim?: boolean;

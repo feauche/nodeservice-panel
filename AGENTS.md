@@ -11,3 +11,10 @@
 
 - Every completed product change must update the panel version, `packages/shared/src/changelog.ts`, and the local audit report together.
 - Do not create a release tag unless the user explicitly asks to release.
+
+## Owner design preferences
+
+- Preserve symmetry: equal input heights, aligned labels, consistent gaps and full available page width.
+- Node dialogs keep a fixed outer size across tabs; scroll inside. Verify dropdowns and folder menus at desktop/mobile sizes without clipping or layout shifts.
+
+- Reuse the existing panel components and original GitHub design across sections; do not introduce a separate visual system. DNS automation belongs in each record row. Multi-selection offers select all/clear. Interactive rows/cards show hover/focus and dialogs open immediately with loading placeholders.

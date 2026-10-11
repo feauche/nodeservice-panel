@@ -46,11 +46,14 @@ type GetResult = { ok: true; data: Buffer; type: string; finalUrl: URL } | { ok:
 /** Литеральные адреса внутренних сетей: панель не должна ходить туда по чужой ссылке. */
 export function isPrivateHost(host: string): boolean {
   let h = host.toLowerCase().replace(/^\[|\]$/g, '');
+  if (isIP(h) === 6) h = new URL(`http://[${h}]/`).hostname.slice(1, -1);
   if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal'))
     return true;
   // IPv4 внутри IPv6 (::ffff:10.0.0.1) проверяем как IPv4.
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(h);
   if (mapped?.[1]) h = mapped[1];
+  // WHATWG URL normalises dotted mapped IPv4 to hexadecimal (::ffff:7f00:1).
+  if (h.startsWith('::ffff:')) return true;
   const v = isIP(h);
   if (v === 4) {
     const [a, b] = h.split('.').map(Number) as [number, number];

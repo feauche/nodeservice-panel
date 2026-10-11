@@ -18,18 +18,18 @@ describe('AssistantPage', () => {
   it('без ключа: блок «выключен» со ссылкой на настройки', async () => {
     mockAssistant.enabled = false;
     renderPage(AssistantPage, '/assistant');
-    expect(await screen.findByText('Джарвис выключен')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Настройки → Джарвис/ })).toBeInTheDocument();
+    expect(await screen.findByText('Ассистент выключен')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Настройки → Ассистент/ })).toBeInTheDocument();
   });
 
   it('с ключом: сообщение получает ответ с цитатой и предложением', async () => {
     mockAssistant.enabled = true;
     renderPage(AssistantPage, '/assistant');
     const user = userEvent.setup();
-    const input = await screen.findByLabelText('Сообщение Джарвису');
+    const input = await screen.findByLabelText('Сообщение Ассистенту');
     await user.type(input, 'Что с CPU?');
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
-    // ответ Джарвиса с предложением автопочинки
+    // ответ Ассистента с предложением автопочинки
     expect(await screen.findByText('Перезапустить контейнер ноды')).toBeInTheDocument();
     const card = screen.getByTestId('proposal-card');
     expect(within(card).getByText('T2')).toBeInTheDocument();
@@ -41,11 +41,11 @@ describe('AssistantPage', () => {
     expect(kbLink.getAttribute('href')).toContain('open=');
   });
 
-  it('изменения по подтверждению: Джарвис присылает карточки, применение делается кнопкой в самой карточке', async () => {
+  it('изменения по подтверждению: Ассистент присылает карточки, применение делается кнопкой в самой карточке', async () => {
     mockAssistant.enabled = true;
     renderPage(AssistantPage, '/assistant');
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Сообщение Джарвису'), 'предложи изменения');
+    await user.type(await screen.findByLabelText('Сообщение Ассистенту'), 'предложи изменения');
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
     const cards = await screen.findAllByTestId('change-card');
     expect(cards).toHaveLength(3);
@@ -64,12 +64,12 @@ describe('AssistantPage', () => {
     expect(screen.queryByRole('button', { name: /Применить всё/ })).not.toBeInTheDocument();
   });
 
-  it('без разрешения на изменения Джарвис карточек изменений не присылает', async () => {
+  it('без разрешения на изменения Ассистент карточек изменений не присылает', async () => {
     mockAssistant.enabled = true;
     mockAssistant.permissions = { ...mockAssistant.permissions, changes: false };
     renderPage(AssistantPage, '/assistant');
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Сообщение Джарвису'), 'предложи изменения');
+    await user.type(await screen.findByLabelText('Сообщение Ассистенту'), 'предложи изменения');
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
     await screen.findByTestId('proposal-card');
     expect(screen.queryByTestId('change-card')).not.toBeInTheDocument();
@@ -80,7 +80,7 @@ describe('AssistantPage', () => {
     useServerModalStore.getState().close();
     renderPage(AssistantPage, '/assistant');
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Сообщение Джарвису'), 'Что с CPU?');
+    await user.type(await screen.findByLabelText('Сообщение Ассистенту'), 'Что с CPU?');
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
     const link = await within(await screen.findByTestId('assistant-messages')).findByRole('button', {
       name: 'de-fra-01',
@@ -97,7 +97,7 @@ describe('AssistantPage', () => {
       useServerModalStore.getState().close();
       renderPage(AssistantPage, '/assistant');
       const user = userEvent.setup();
-      await user.type(await screen.findByLabelText('Сообщение Джарвису'), text);
+      await user.type(await screen.findByLabelText('Сообщение Ассистенту'), text);
       await user.click(screen.getByRole('button', { name: 'Отправить' }));
       const list = await screen.findByTestId('assistant-messages');
       await within(list).findByText(/Инциденты по серверам за всё время/);
@@ -145,7 +145,7 @@ describe('AssistantPage', () => {
       expect(useServerModalStore.getState().serverId).toBe(idOf('nl-ams-02'));
     });
 
-    it('два ответа подряд: значок Джарвиса только у первого, «сейчас посмотрю» приглушено', async () => {
+    it('два ответа подряд: значок Ассистента только у первого, «сейчас посмотрю» приглушено', async () => {
       const { list } = await ask('а по каким серверам больше инцидентов');
       expect(within(list).getAllByTestId('assistant-avatar')).toHaveLength(1);
       const interim = within(list).getByText('Смотрю историю инцидентов за всё время.');
@@ -161,7 +161,7 @@ describe('AssistantPage', () => {
       mockAssistant.enabled = true;
       renderPage(AssistantPage, '/assistant');
       const user = userEvent.setup();
-      await user.type(await screen.findByLabelText('Сообщение Джарвису'), 'Сервер доступен снаружи?');
+      await user.type(await screen.findByLabelText('Сообщение Ассистенту'), 'Сервер доступен снаружи?');
       await user.click(screen.getByRole('button', { name: 'Отправить' }));
       await screen.findByTestId('reachability-card');
       expect(screen.queryByText('Основано на:')).not.toBeInTheDocument();
@@ -179,7 +179,7 @@ describe('AssistantPage', () => {
     mockAssistant.enabled = true;
     renderPage(AssistantPage, '/assistant');
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Сообщение Джарвису'), 'Сервер доступен снаружи?');
+    await user.type(await screen.findByLabelText('Сообщение Ассистенту'), 'Сервер доступен снаружи?');
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
     const card = await screen.findByTestId('reachability-card');
     expect(within(card).getByText(/Доступность de-fra-01 снаружи/)).toBeInTheDocument();
@@ -201,13 +201,13 @@ describe('AssistantPage', () => {
   it('режима «Анализ» нет: одно поле для всего, кнопка «Отправить», подсказка про статьи и термины', async () => {
     mockAssistant.enabled = true;
     renderPage(AssistantPage, '/assistant');
-    const input = await screen.findByLabelText('Сообщение Джарвису');
+    const input = await screen.findByLabelText('Сообщение Ассистенту');
     expect(screen.queryByRole('button', { name: 'Анализ' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Собрать статью' })).not.toBeInTheDocument();
     expect(input).toHaveAttribute('placeholder', 'Спросите или вставьте текст…');
     expect(screen.getByRole('button', { name: 'Отправить' })).toBeInTheDocument();
     expect(
-      screen.getByText(/Статью Джарвис сохранит в базу знаний, термины добавит в «Пояснения»/),
+      screen.getByText(/Статью Ассистент сохранит в базу знаний, термины добавит в «Пояснения»/),
     ).toBeInTheDocument();
   });
 
@@ -225,7 +225,7 @@ describe('AssistantPage', () => {
       mockAssistant.enabled = true;
       renderPage(AssistantPage, '/assistant');
       const user = userEvent.setup();
-      const input = await screen.findByLabelText('Сообщение Джарвису');
+      const input = await screen.findByLabelText('Сообщение Ассистенту');
       expect(input.style.height).toBe('30px');
       expect(input).toHaveAttribute('placeholder', 'Спросите или вставьте текст…');
       await user.type(input, 'п');
@@ -235,8 +235,8 @@ describe('AssistantPage', () => {
     }
   });
 
-  describe('«Джарвис думает» и переходы между разделами', () => {
-    const typing = () => screen.queryByRole('status', { name: 'Джарвис думает' });
+  describe('«Ассистент думает» и переходы между разделами', () => {
+    const typing = () => screen.queryByRole('status', { name: 'Ассистент думает' });
     // Тестовый роутер не знает про «/other» в типах приложения.
     const go = async (router: unknown, to: string) => {
       await act(async () => {
@@ -256,7 +256,7 @@ describe('AssistantPage', () => {
     };
     const ask = async (text: string) => {
       const user = userEvent.setup();
-      await user.type(await screen.findByLabelText('Сообщение Джарвису'), text);
+      await user.type(await screen.findByLabelText('Сообщение Ассистенту'), text);
       await user.keyboard('{Enter}');
     };
 
@@ -266,7 +266,7 @@ describe('AssistantPage', () => {
       await waitFor(() => expect(Object.values(mockAssistant.messages)[0]?.length).toBeGreaterThanOrEqual(2));
       mockAssistant.chatDelayMs = 900;
       await ask('Второй вопрос');
-      expect(await screen.findByRole('status', { name: 'Джарвис думает' })).toBeInTheDocument();
+      expect(await screen.findByRole('status', { name: 'Ассистент думает' })).toBeInTheDocument();
 
       await go(router, '/other');
       await screen.findByTestId('other-page');
@@ -274,13 +274,13 @@ describe('AssistantPage', () => {
       await go(router, '/assistant');
 
       // Запрос ещё идёт: индикатор на месте сразу, поле ввода занято, вопрос показан один раз.
-      expect(await screen.findByRole('status', { name: 'Джарвис думает' })).toBeInTheDocument();
-      expect(await screen.findByLabelText('Сообщение Джарвису')).toBeDisabled();
+      expect(await screen.findByRole('status', { name: 'Ассистент думает' })).toBeInTheDocument();
+      expect(await screen.findByLabelText('Сообщение Ассистенту')).toBeDisabled();
       await waitFor(() => expect(screen.getAllByText('Второй вопрос')).toHaveLength(1));
 
       // Ответ пришёл: индикатора нет, поле свободно.
       await waitFor(() => expect(typing()).toBeNull(), { timeout: 4000 });
-      await waitFor(() => expect(screen.getByLabelText('Сообщение Джарвису')).not.toBeDisabled());
+      await waitFor(() => expect(screen.getByLabelText('Сообщение Ассистенту')).not.toBeDisabled());
       expect(screen.getAllByText('Второй вопрос')).toHaveLength(1);
       expect(Object.values(mockAssistant.messages)[0]?.length).toBe(4);
     });
@@ -289,13 +289,13 @@ describe('AssistantPage', () => {
       const { router } = setup();
       mockAssistant.chatDelayMs = 900;
       await ask('Вопрос в новом чате');
-      expect(await screen.findByRole('status', { name: 'Джарвис думает' })).toBeInTheDocument();
+      expect(await screen.findByRole('status', { name: 'Ассистент думает' })).toBeInTheDocument();
 
       await go(router, '/other');
       await screen.findByTestId('other-page');
       await go(router, '/assistant');
 
-      expect(await screen.findByRole('status', { name: 'Джарвис думает' })).toBeInTheDocument();
+      expect(await screen.findByRole('status', { name: 'Ассистент думает' })).toBeInTheDocument();
       await waitFor(() =>
         expect(
           within(screen.getByTestId('assistant-messages')).getAllByText('Вопрос в новом чате'),
@@ -315,22 +315,22 @@ describe('AssistantPage', () => {
         ).toHaveLength(1),
       );
       await waitFor(() => expect(Object.values(mockAssistant.messages)[0]?.length).toBe(2));
-      await waitFor(() => expect(screen.getByLabelText('Сообщение Джарвису')).not.toBeDisabled());
+      await waitFor(() => expect(screen.getByLabelText('Сообщение Ассистенту')).not.toBeDisabled());
     });
 
     it('индикатор есть только у той беседы, где идёт запрос', async () => {
       const { router } = setup();
       await ask('Вопрос про первую беседу');
       await waitFor(() => expect(Object.values(mockAssistant.messages)[0]?.length).toBeGreaterThanOrEqual(2));
-      await waitFor(() => expect(screen.getByLabelText('Сообщение Джарвису')).not.toBeDisabled());
+      await waitFor(() => expect(screen.getByLabelText('Сообщение Ассистенту')).not.toBeDisabled());
       mockAssistant.chatDelayMs = 900;
       await ask('Ещё вопрос');
-      expect(await screen.findByRole('status', { name: 'Джарвис думает' })).toBeInTheDocument();
+      expect(await screen.findByRole('status', { name: 'Ассистент думает' })).toBeInTheDocument();
       // Новый чат рядом не думает и принимает вопросы.
       const user = userEvent.setup();
       await user.click(screen.getByRole('button', { name: 'Новый чат' }));
       expect(typing()).toBeNull();
-      expect(screen.getByLabelText('Сообщение Джарвису')).not.toBeDisabled();
+      expect(screen.getByLabelText('Сообщение Ассистенту')).not.toBeDisabled();
       await go(router, '/other');
       await waitFor(
         () => expect(mockAssistant.messages[mockAssistant.conversations[0]?.id ?? '']?.length).toBe(4),
@@ -395,7 +395,7 @@ describe('AssistantPage', () => {
     it('обе кнопки на виду, а боковой колонки со списком бесед нет', async () => {
       seed();
       renderPage(AssistantPage, '/assistant');
-      await screen.findByLabelText('Сообщение Джарвису');
+      await screen.findByLabelText('Сообщение Ассистенту');
       const newChat = screen.getByRole('button', { name: 'Новый чат' });
       expect(hiddenOnPhone(newChat)).toBe(false);
       const history = screen.getByRole('button', { name: 'История' });
@@ -499,7 +499,7 @@ describe('AssistantPage', () => {
     mockAssistant.enabled = true;
     renderPage(AssistantPage, '/assistant');
     const user = userEvent.setup();
-    const input = await screen.findByLabelText('Сообщение Джарвису');
+    const input = await screen.findByLabelText('Сообщение Ассистенту');
     await user.click(input);
     await user.paste('а'.repeat(ASSISTANT_MESSAGE_MAX + 1));
     expect(screen.getByRole('button', { name: 'Отправить' })).toBeDisabled();
@@ -517,7 +517,7 @@ describe('AssistantPage', () => {
     mockAssistant.enabled = true;
     renderPage(AssistantPage, '/assistant');
     const user = userEvent.setup();
-    await user.click(await screen.findByLabelText('Сообщение Джарвису'));
+    await user.click(await screen.findByLabelText('Сообщение Ассистенту'));
     await user.paste(`Что с CPU? ${'б'.repeat(30_000)}`);
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
     expect(await screen.findByText('Перезапустить контейнер ноды')).toBeInTheDocument();
@@ -528,7 +528,7 @@ describe('AssistantPage', () => {
     renderPage(AssistantPage, '/assistant');
     const user = userEvent.setup();
     const message = 'Проверь два пункта:\n\n  1. Первый сервер\n  2. Второй сервер\n\nНе объединяй строки.';
-    await user.click(await screen.findByLabelText('Сообщение Джарвису'));
+    await user.click(await screen.findByLabelText('Сообщение Ассистенту'));
     await user.paste(message);
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
 
@@ -622,7 +622,7 @@ describe('AssistantPage', () => {
     await waitFor(() => expect(bubbles()).toHaveLength(1));
 
     // Отправляем ровно тот же текст — во время генерации пузырь должен остаться (итого два).
-    await user.type(screen.getByLabelText('Сообщение Джарвису'), question);
+    await user.type(screen.getByLabelText('Сообщение Ассистенту'), question);
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
     await waitFor(() => expect(bubbles()).toHaveLength(2));
 

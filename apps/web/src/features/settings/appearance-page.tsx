@@ -72,8 +72,8 @@ export function AppearancePage() {
           })}
         </div>
       </SettingsCard>
-      <SettingsCard title="Тема" hint="Три варианта, переключаются мгновенно.">
-        <div className="grid gap-2.5 py-3 sm:grid-cols-3">
+      <SettingsCard title="Тема" hint="Четыре варианта, переключаются мгновенно.">
+        <div className="grid gap-2.5 py-3 sm:grid-cols-2 xl:grid-cols-3">
           {THEMES.map((t) => {
             const on = t.key === theme;
             return (

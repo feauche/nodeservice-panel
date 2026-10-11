@@ -199,7 +199,7 @@ export class ProvidersService implements OnModuleInit {
           severity: 'warn',
           title: `Провайдер «${row.name}»: иконку не нашли`,
           body: reason ?? null,
-          link: { to: '/servers/providers', label: 'Открыть провайдеров' },
+          link: { to: '/billing/providers', label: 'Открыть провайдеров' },
         });
     } finally {
       await this.repo.setIcon(

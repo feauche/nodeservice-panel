@@ -76,7 +76,7 @@ const BILLING_DOWN_KINDS = new Set(['server_down', 'agent_offline', 'ssh_down', 
 const MAX_ROUNDS = 6;
 const ASK_ROUNDS = 4;
 /** Весь разбор не дольше этого: зависший провайдер не должен держать «идёт разбор» бесконечно. */
-// Плюс до 4 минут на лёгкую проверку сервера, если Джарвис решит её дозапустить (run_server_check).
+// Плюс до 4 минут на лёгкую проверку сервера, если Ассистент решит её дозапустить (run_server_check).
 const TOTAL_MS = 150_000 + 240_000;
 const ANSWER_MAX = 1_800;
 
@@ -93,14 +93,15 @@ function explain(err: unknown): string {
   if (err instanceof AnalysisError) return err.message;
   const m = err instanceof Error ? `${err.name} ${err.message}` : String(err);
   if (/Timeout|Abort/i.test(m)) return 'Провайдер не ответил за 60 секунд. Повторите разбор.';
-  if (/ответил (401|403)/.test(m)) return 'Провайдер отклонил ключ. Проверьте ключ в «Настройки → Джарвис».';
+  if (/ответил (401|403)/.test(m))
+    return 'Провайдер отклонил ключ. Проверьте ключ в «Настройки → Ассистент».';
   if (/ответил 429/.test(m)) return 'Провайдер ограничил число запросов. Повторите позже.';
-  return 'Не удалось получить ответ Джарвиса. Повторите разбор.';
+  return 'Не удалось получить ответ Ассистента. Повторите разбор.';
 }
 
 /**
- * Разбор инцидента Джарвисом (R4.2). Работает в фоне: вывод, доказательства и шаг пишутся прямо в
- * инцидент, ход работы виден по мере выполнения. Джарвис только читает; шаг из цепочки правил
+ * Разбор инцидента Ассистентом (R4.2). Работает в фоне: вывод, доказательства и шаг пишутся прямо в
+ * инцидент, ход работы виден по мере выполнения. Ассистент только читает; шаг из цепочки правил
  * запускает администратор.
  */
 @Injectable()
@@ -153,7 +154,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     return AUTO_ANALYSIS_PER_HOUR - this.autoStarts.filter((t) => nowMs - t <= 3_600_000).length;
   }
 
-  /** Состояние автоматического разбора для настроек и Джарвиса; данные с момента запуска панели. */
+  /** Состояние автоматического разбора для настроек и Ассистента; данные с момента запуска панели. */
   autoStatus(): { lastRunAt: string | null; startedLastHour: number; limitPerHour: number } {
     const nowMs = Date.now();
     return {
@@ -223,7 +224,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     const cfg = await this.settings.config();
     if (!cfg)
       throw problem(HttpStatus.CONFLICT, {
-        detail: 'Джарвис выключен: задайте провайдера, ключ и модель в «Настройки → Джарвис».',
+        detail: 'Ассистент выключен: задайте провайдера, ключ и модель в «Настройки → Ассистент».',
       });
     return cfg;
   }
@@ -234,7 +235,7 @@ export class IncidentAnalysisService implements OnModuleInit {
     if (!cfg.permissions.analysis)
       throw problem(HttpStatus.CONFLICT, {
         detail:
-          'Разбор инцидентов выключен: включите «Разбор по кнопке» в «Настройки → Джарвис → Разрешения».',
+          'Разбор инцидентов выключен: включите «Разбор по кнопке» в «Настройки → Ассистент → Разрешения».',
       });
     const inc = await this.incidents.get(id);
     if (this.running.has(id)) throw problem(HttpStatus.CONFLICT, { detail: 'Разбор уже идёт.' });
@@ -412,7 +413,7 @@ export class IncidentAnalysisService implements OnModuleInit {
         }
         messages.push({ role: 'user', content: results });
       }
-      if (!submission) throw new AnalysisError('Джарвис не сформулировал вывод. Повторите разбор.');
+      if (!submission) throw new AnalysisError('Ассистент не сформулировал вывод. Повторите разбор.');
       await save({
         ...cur,
         ...submission,
@@ -422,7 +423,7 @@ export class IncidentAnalysisService implements OnModuleInit {
         error: null,
         steps: [...steps],
       });
-      // Сообщение в Telegram ждало разбора — теперь уходит с выводом Джарвиса.
+      // Сообщение в Telegram ждало разбора — теперь уходит с выводом Ассистента.
       await this.notifications.releaseAfterAnalysis(id, submission.verdict, submission.confidence ?? null);
     } catch (err) {
       // Писать некуда: дело удалили (и ждать отправки нечему), разбор отменили (сообщение отпустила отмена)
@@ -469,7 +470,7 @@ export class IncidentAnalysisService implements OnModuleInit {
       const node =
         st && links ? nodeOfIncident(inc, st.nodes, me ? links.nodeOf(me.id) : undefined) : undefined;
       nowText = st ? nodeNowText(st, node, timeZone) : null;
-      // Свежая проверка порта: при «Разобрать заново» Джарвис должен видеть, что сейчас, а не только
+      // Свежая проверка порта: при «Разобрать заново» Ассистент должен видеть, что сейчас, а не только
       // то, что было при открытии. Нода может и не быть сервером NodeService — адрес берём из Remnawave.
       if (node) nodeRef = { uuid: node.uuid, name: node.name };
       if (node && links) {
@@ -593,7 +594,7 @@ export class IncidentAnalysisService implements OnModuleInit {
 
     if (me) {
       await step('Проверяю порт SSH из разных стран');
-      // Та же проверка, что у Джарвиса в чате (по серверу на страну, время ответа, пинг): разбор и чат не
+      // Та же проверка, что у Ассистента в чате (по серверу на страну, время ответа, пинг): разбор и чат не
       // должны видеть разное. Результат ещё и карточкой под выводом — с флагами и миллисекундами.
       const [result, panelOpen] = await Promise.all([
         soft(deps.probe.reachability(me, all, [me.port])),
@@ -706,13 +707,13 @@ export class IncidentAnalysisService implements OnModuleInit {
     if (!cfg.permissions.analysis)
       throw problem(HttpStatus.CONFLICT, {
         detail:
-          'Разбор инцидентов выключен: включите «Разбор по кнопке» в «Настройки → Джарвис → Разрешения».',
+          'Разбор инцидентов выключен: включите «Разбор по кнопке» в «Настройки → Ассистент → Разрешения».',
       });
     const inc = await this.incidents.get(id);
     const analysis = inc.analysis?.status === 'done' ? inc.analysis : null;
     if (!analysis) throw problem(HttpStatus.CONFLICT, { detail: 'Сначала запустите разбор инцидента.' });
     if (this.running.has(id))
-      throw problem(HttpStatus.CONFLICT, { detail: 'Джарвис ещё отвечает. Подождите.' });
+      throw problem(HttpStatus.CONFLICT, { detail: 'Ассистент ещё отвечает. Подождите.' });
     this.running.add(id);
     try {
       const deps = this.readDeps(cfg);
@@ -772,7 +773,7 @@ export class IncidentAnalysisService implements OnModuleInit {
         }
         messages.push({ role: 'user', content: results });
       }
-      if (!answer) throw new AnalysisError('Джарвис не ответил. Повторите вопрос.');
+      if (!answer) throw new AnalysisError('Ассистент не ответил. Повторите вопрос.');
       const thread = [...past, { question, answer: answer.slice(0, ANSWER_MAX), at: now() }].slice(
         -ANALYSIS_THREAD_MAX,
       );

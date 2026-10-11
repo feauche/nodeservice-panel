@@ -172,6 +172,28 @@ const QR_SVG =
   );
 
 export const handlers = [
+  http.get('/api/nodes/status', () =>
+    HttpResponse.json({
+      connected: false,
+      domain: null,
+      checkedAt: null,
+      error: null,
+      stats: null,
+      nodes: [],
+      cert: null,
+    }),
+  ),
+  http.get('/api/integrations', () =>
+    HttpResponse.json({
+      items: ['dpi', 'regru', 'cloudflare'].map((provider) => ({
+        provider,
+        connected: false,
+        checkedAt: null,
+        domains: [],
+        balance: null,
+      })),
+    }),
+  ),
   ...auditHandlers,
   ...autochecksHandlers,
   ...securityHandlers,

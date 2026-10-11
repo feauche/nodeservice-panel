@@ -57,7 +57,7 @@ export function seedNotifications(): void {
       'warn',
       'Провайдер «Rawi»: иконку не нашли',
       'сайт перенаправляет по кругу — похоже, защита от ботов',
-      { to: '/servers/providers', label: 'Открыть провайдеров' },
+      { to: '/billing/providers', label: 'Открыть провайдеров' },
     ),
     make(
       900,

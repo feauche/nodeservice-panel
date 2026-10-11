@@ -386,6 +386,20 @@
       "when": 1791266400000,
       "tag": "0057_remnawave_config_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1791704768745,
+      "tag": "0058_provider_remote_projection",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1791705857784,
+      "tag": "0059_node_metrics_billing_refs",
+      "breakpoints": true
     }
   ]
 }

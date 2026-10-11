@@ -11,7 +11,7 @@ export type KbSource = (typeof KB_SOURCES)[number];
 /** Откуда взята информация в статье — для бейджа источника в базе знаний. */
 export const KB_SOURCE_LABELS: Record<KbSource, string> = {
   self: 'Вручную',
-  ai: 'Джарвис',
+  ai: 'Ассистент',
   web: 'Веб',
   telegram: 'Telegram',
 };
@@ -82,7 +82,7 @@ export const kbVersionSummarySchema = z.object({
 export type KbVersionSummary = z.infer<typeof kbVersionSummarySchema>;
 
 /** Версия статьи в истории (для отката). Причина: edit — правка, revert — откат, review — ревизия,
- * glossary — пополнение глоссария Джарвисом (единственная причина, для которой заполнен summary). */
+ * glossary — пополнение глоссария Ассистентом (единственная причина, для которой заполнен summary). */
 export const kbVersionSchema = z.object({
   id: z.uuid(),
   title: z.string(),

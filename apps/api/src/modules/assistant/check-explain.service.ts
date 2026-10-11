@@ -21,7 +21,7 @@ function outcome(row: { status: string; error: string | null }): string {
 }
 
 export const checkExplainSystem = (level: string): string =>
-  `Ты — Джарвис, помощник в панели NodeService (парк VPN-серверов). Тебе дают вывод одной проверки сервера — чужого скрипта (sysbench, ipregion, censorcheck, IP.Check.Place, iPerf3, YABS).
+  `Ты — Ассистент, помощник в панели NodeService (парк VPN-серверов). Тебе дают вывод одной проверки сервера — чужого скрипта (sysbench, ipregion, censorcheck, IP.Check.Place, iPerf3, YABS).
 ЗАДАЧА: пересказать итог владельцу простыми словами — что проверка показала и что это значит для VPN-сервера.
 ПРАВИЛА:
 - По-русски, на «вы», 2–4 коротких предложения. Без таблиц, списков, markdown и английских слов, где есть русские.
@@ -50,7 +50,7 @@ export class CheckExplainService {
     const cfg = await this.settings.config();
     if (!cfg)
       throw problem(HttpStatus.CONFLICT, {
-        detail: 'Джарвис выключен: задайте провайдера, ключ и модель в «Настройки → Джарвис».',
+        detail: 'Ассистент выключен: задайте провайдера, ключ и модель в «Настройки → Ассистент».',
       });
     const server = await this.servers.get(serverId);
     const row = await this.repo.findById(runId);
@@ -92,7 +92,7 @@ export class CheckExplainService {
       this.log.warn(`Объяснение проверки: ${err instanceof Error ? err.message : err}`);
       throw problem(HttpStatus.FAILED_DEPENDENCY, { detail: describeLlmError(err, 60) });
     }
-    if (!text) throw problem(HttpStatus.FAILED_DEPENDENCY, { detail: 'Джарвис не дал ответа. Повторите.' });
+    if (!text) throw problem(HttpStatus.FAILED_DEPENDENCY, { detail: 'Ассистент не дал ответа. Повторите.' });
     const explanation = text.slice(0, 1500);
     await this.repo.setExplanation(row.id, explanation);
     await this.audit.record({

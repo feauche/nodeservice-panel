@@ -165,7 +165,7 @@ describe('KnowledgePage', () => {
     expect(within(header).getByRole('button', { name: 'История версий' })).toBeInTheDocument();
   });
 
-  it('история версий: подписи причин, в том числе «Термины от Джарвиса» для пополнения глоссария', async () => {
+  it('история версий: подписи причин, в том числе «Термины от Ассистента» для пополнения глоссария', async () => {
     const first = mockKnowledge.items.find((d) => d.title === 'Лимит conntrack');
     if (!first) throw new Error('нет статьи в моке');
     const snap = (
@@ -194,23 +194,23 @@ describe('KnowledgePage', () => {
     await screen.findByRole('heading', { name: 'Лимит conntrack' });
     await user.click(await screen.findByRole('button', { name: 'История версий' }));
     const dialog = await screen.findByRole('dialog', { name: 'История версий' });
-    expect(await within(dialog).findByText(/^Термины от Джарвиса · /)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/^Термины от Ассистента · /)).toBeInTheDocument();
     expect(within(dialog).getByText(/^Правка · /)).toBeInTheDocument();
     expect(within(dialog).getByText(/^Ревизия · /)).toBeInTheDocument();
-    // Пополнение глоссария показывает, какие термины добавлены и уточнены, а не просто «Термины от Джарвиса».
+    // Пополнение глоссария показывает, какие термины добавлены и уточнены, а не просто «Термины от Ассистента».
     expect(within(dialog).getByText('Добавлено: SNI')).toBeInTheDocument();
     expect(within(dialog).getByText('Уточнено: ТСПУ')).toBeInTheDocument();
   });
 
-  describe('«Правила парка» — пометка «Читает Джарвис»', () => {
+  describe('«Правила парка» — пометка «Читает Ассистент»', () => {
     const BANNER =
-      'Джарвис читает эту статью в начале каждой беседы и разбора инцидента, но сам не меняет. Пустые разделы он не видит.';
+      'Ассистент читает эту статью в начале каждой беседы и разбора инцидента, но сам не меняет. Пустые разделы он не видит.';
 
     it('у «Правил парка» есть пометка в шапке и плашка над текстом', async () => {
       renderPage(KnowledgePage, '/knowledge');
       const title = await screen.findByRole('heading', { name: 'Правила парка' });
       const header = title.closest('header') as HTMLElement;
-      expect(within(header).getByText('Читает Джарвис')).toBeInTheDocument();
+      expect(within(header).getByText('Читает Ассистент')).toBeInTheDocument();
       expect(within(header).getByText('Вручную')).toBeInTheDocument();
       expect(screen.getByTestId('fleet-rules-banner')).toHaveTextContent(BANNER);
     });
@@ -222,7 +222,7 @@ describe('KnowledgePage', () => {
       for (const title of ['Пояснения', 'Лимит conntrack']) {
         await user.click(screen.getByRole('button', { name: new RegExp(title) }));
         await screen.findByRole('heading', { name: title });
-        expect(screen.queryByText('Читает Джарвис')).not.toBeInTheDocument();
+        expect(screen.queryByText('Читает Ассистент')).not.toBeInTheDocument();
         expect(screen.queryByTestId('fleet-rules-banner')).not.toBeInTheDocument();
       }
     });
@@ -230,7 +230,7 @@ describe('KnowledgePage', () => {
     it('в списке пометки нет, она только в открытой статье', async () => {
       renderPage(KnowledgePage, '/knowledge');
       const item = await screen.findByRole('button', { name: /Правила парка/ });
-      expect(within(item).queryByText('Читает Джарвис')).not.toBeInTheDocument();
+      expect(within(item).queryByText('Читает Ассистент')).not.toBeInTheDocument();
     });
 
     it('в редакторе плашки и пометки нет', async () => {
@@ -240,7 +240,7 @@ describe('KnowledgePage', () => {
       await user.click(screen.getByRole('button', { name: 'Изменить' }));
       await screen.findByLabelText('Содержимое');
       expect(screen.queryByTestId('fleet-rules-banner')).not.toBeInTheDocument();
-      expect(screen.queryByText('Читает Джарвис')).not.toBeInTheDocument();
+      expect(screen.queryByText('Читает Ассистент')).not.toBeInTheDocument();
     });
   });
 

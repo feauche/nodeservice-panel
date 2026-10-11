@@ -64,7 +64,7 @@ export function titleOnly(inc: Pick<Incident, 'title'>): string {
 }
 
 /**
- * Вторая строка в списке: готовый разбор Джарвиса важнее «Автопочинки нет» — он называет причину. Шаг,
+ * Вторая строка в списке: готовый разбор Ассистента важнее «Автопочинки нет» — он называет причину. Шаг,
  * который ждёт подтверждения, и ход починки остаются главными.
  */
 export function listSubtitle(inc: Incident, now: number): string {
@@ -72,7 +72,7 @@ export function listSubtitle(inc: Incident, now: number): string {
   const waitingStep = inc.status !== 'resolved' && (inc.proposal || graceLeftS(inc, now) !== null);
   if (!waitingStep && a?.status === 'done' && a.verdict) {
     const first = a.verdict.split(/(?<=[.!?])\s/)[0] ?? a.verdict;
-    return `Джарвис: ${first.length > 160 ? `${first.slice(0, 159)}…` : first}`;
+    return `Ассистент: ${first.length > 160 ? `${first.slice(0, 159)}…` : first}`;
   }
   return outcomeSentence(inc, now);
 }
