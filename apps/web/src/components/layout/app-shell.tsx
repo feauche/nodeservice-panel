@@ -1,9 +1,11 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
+  ActivityIcon,
   AlertTriangleIcon,
   BookOpenIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
+  GitBranchIcon,
   LayoutGridIcon,
   LockIcon,
   MenuIcon,
@@ -30,6 +32,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { NavGroupLabel as GroupLabel } from '@/components/ui/nav-group-label';
 import { useEventsStream } from '@/features/events/use-events-stream';
 import { useOpenIncidentsCount } from '@/features/incidents/incidents-api';
 import { useSecurityOverview } from '@/features/security/security-api';
@@ -56,7 +59,9 @@ const NAV = [
   { to: '/', label: 'Обзор', icon: LayoutGridIcon },
   { to: '/nodes', label: 'Ноды', icon: ReferenceNodesIcon },
   { to: '/billing', label: 'Биллинг', icon: WalletIcon },
-  { to: '/incidents', label: 'Инциденты', icon: AlertTriangleIcon },
+  { to: '/metrics', label: 'Метрики', icon: ActivityIcon },
+  { to: '/incidents', label: 'События', icon: AlertTriangleIcon },
+  { to: '/scenarios', label: 'Сценарии', icon: GitBranchIcon },
   { to: '/settings', label: 'Настройки', icon: ReferenceSettingsIcon },
 ] as const;
 /** Раздел «Помощь» — Ассистент и база знаний. */
@@ -168,19 +173,6 @@ function NavItem({
         </span>
       )}
     </Link>
-  );
-}
-
-function GroupLabel({ children, hidden }: { children: ReactNode; hidden?: boolean }) {
-  return (
-    <div
-      className={cn(
-        'px-3 pt-3 pb-1.5 text-[10.5px] font-semibold tracking-[0.13em] text-text-3 uppercase first:pt-1',
-        hidden && 'sr-only',
-      )}
-    >
-      {children}
-    </div>
   );
 }
 
@@ -402,7 +394,7 @@ interface AppShellProps {
 }
 
 export function AppShell({ title, subtitle, actions, aside, children }: AppShellProps) {
-  // Живой поток: серверы, инциденты и уведомления обновляются в момент изменения, без опроса.
+  // Живой поток: серверы, события и уведомления обновляются в момент изменения, без опроса.
   useEventsStream();
   // Автоблокировка экрана при бездействии — по политике безопасности.
   const security = useSecurityOverview();

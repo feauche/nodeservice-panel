@@ -123,7 +123,7 @@ function Panel({
 }
 
 /**
- * Строка «Требует внимания». Инцидент ведёт на свою страницу; сервер открывается карточкой поверх
+ * Строка «Требует внимания». Событие ведёт на свою страницу; сервер открывается карточкой поверх
  * обзора, без перехода в раздел «Серверы».
  */
 function AttentionRow({
@@ -173,7 +173,7 @@ function AttentionRow({
   ) : null;
 }
 
-/** Баннер инцидентов: ссылка в раздел, пока он закрыт — просто заметная строка без ссылки. */
+/** Баннер событий: ссылка в раздел, пока он закрыт — просто заметная строка без ссылки. */
 function IncidentsBanner({ open, crit }: { open: number; crit: number }) {
   const cls =
     'flex items-center gap-3 rounded-[12px] border border-crit/30 bg-crit-soft/60 px-4 py-3 transition-colors';
@@ -181,7 +181,7 @@ function IncidentsBanner({ open, crit }: { open: number; crit: number }) {
     <>
       <AlertTriangleIcon className="size-5 flex-none text-crit" aria-hidden="true" />
       <span className="min-w-0 flex-1 text-[13px]">
-        <b className="font-semibold text-crit">{open}</b> активных {open === 1 ? 'инцидент' : 'инцидентов'}
+        <b className="font-semibold text-crit">{open}</b> активных {open === 1 ? 'событие' : 'событий'}
         {crit > 0 && <span className="text-text-2"> · {crit} критично</span>}
       </span>
     </>
@@ -270,7 +270,7 @@ export function OverviewPage() {
   const critCount = judged.filter((j) => j.health === 'crit').length;
   const healthPct = items.length ? Math.round((okCount / items.length) * 100) : 100;
   const openItems = openIncidents.data?.items ?? [];
-  // «Требует внимания» = проблемы по здоровью серверов + открытые инциденты. Одно и то же дважды не
+  // «Требует внимания» = проблемы по здоровью серверов + открытые события. Одно и то же дважды не
   // показываем: о связи говорит строка сервера, о ноде — дело (у него починка и «ждёт подтверждения»);
   // строка сервера о ноде остаётся, только пока дела о ней нет.
   const healthRows = judged
@@ -307,7 +307,7 @@ export function OverviewPage() {
       name: inc.serverName,
       reason: `${INCIDENT_KIND_META[inc.kind].label}${inc.proposal ? ' · ждёт подтверждения' : ''}`,
       tone: (inc.severity === 'crit' ? 'crit' : 'warn') as 'warn' | 'crit',
-      pill: 'Инцидент',
+      pill: 'Событие',
       serverId: null as string | null,
       link: { to: '/incidents/$id', params: { id: inc.id } } as LinkProps | null,
     }));
@@ -449,7 +449,7 @@ export function OverviewPage() {
           ) : openIncidents.isError ? (
             <div className="grid h-[190px] place-items-center text-center text-[12.5px] text-crit">
               <p>
-                Не удалось загрузить инциденты.{' '}
+                Не удалось загрузить события.{' '}
                 <button
                   type="button"
                   className="cursor-pointer underline"
@@ -530,7 +530,7 @@ export function OverviewPage() {
         </Panel>
       </div>
 
-      {/* Последние события (вместо панели инцидентов демо — они появятся на этапе 8) */}
+      {/* Последние события (вместо панели событий демо — они появятся на этапе 8) */}
       <Panel
         title="Последние события"
         right={

@@ -7,7 +7,7 @@ const series = (over: Partial<ServerMetricsResponse['series']>): ServerMetricsRe
   ({ ...over }) as ServerMetricsResponse['series'];
 
 describe('chartRange', () => {
-  it('свежий инцидент — час, старый — сутки', () => {
+  it('свежий событие — час, старый — сутки', () => {
     const now = Date.parse('2026-09-25T12:00:00Z');
     expect(chartRange('2026-09-25T11:30:00Z', now)).toBe('1h');
     expect(chartRange('2026-09-25T10:00:00Z', now)).toBe('24h');

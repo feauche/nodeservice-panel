@@ -1,17 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { domainToASCII } from 'node:url';
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
 import { type BsProbeInput, type BsRun, bsAccountSchema, bsUnitSchema } from '@nodeservice/shared';
 import { desc, eq, like } from 'drizzle-orm';
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { appMeta } from '../../infra/db/schema/index.js';
 import { publicIp } from '../incidents/check-host.service.js';
+import { NodeEventsStore } from '../node-events/node-events.store.js';
+import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { type IntegrationSession, IntegrationsService } from './integrations.service.js';
 
 type Stored = {
   createdAt?: string;
+  node?: { panel: string; uuid: string; name: string };
   identity: string;
   body: Record<string, unknown>;
   cost: number;
@@ -34,6 +37,8 @@ export class BsCheckerService {
   constructor(
     @Inject(DB) private db: Db,
     private integrations: IntegrationsService,
+    @Optional() private remna?: RemnawaveService,
+    @Optional() private timeline?: NodeEventsStore,
   ) {}
   private async read(id: string): Promise<Stored | null> {
     const row = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, 'bschecker.run.' + id) });
@@ -148,6 +153,14 @@ export class BsCheckerService {
       !/\.(?:localhost|local|internal)$/.test(host);
     if (isIP(host) ? !publicIp(host) : !domain)
       throw new BadRequestException('Введите публичный IP или домен без протокола и пути.');
+    let nodeRef: Stored['node'];
+    if (input.nodeUuid) {
+      const status = await this.remna?.status();
+      const node = status?.nodes.find((n) => n.uuid === input.nodeUuid);
+      if (!status?.domain || !node || node.address.toLowerCase() !== host.toLowerCase())
+        throw new BadRequestException('Нода или её адрес изменились. Выберите ноду повторно.');
+      nodeRef = { panel: status.domain, uuid: node.uuid, name: node.name };
+    }
     const session = await this.integrations.session('bschecker');
     const catalog = await this.request(session, '/operators?dpi=any&probeable=true');
     const units = Array.isArray(catalog.units) ? catalog.units.map((x) => bsUnitSchema.parse(x)) : [];
@@ -177,6 +190,7 @@ export class BsCheckerService {
       rows: [],
     };
     await this.write(id, {
+      ...(nodeRef ? { node: nodeRef } : {}),
       createdAt: new Date().toISOString(),
       identity: session.identity,
       body,
@@ -293,6 +307,30 @@ export class BsCheckerService {
       };
     }
     await this.write(id, saved);
+    await this.recordEvent(saved);
     return saved.run;
+  }
+  private async recordEvent(saved: Stored) {
+    if (!this.timeline || !saved.node || saved.run.status === 'ready') return;
+    const run = saved.run,
+      known = run.rows.filter((r) => r.tcp !== null),
+      accessible = known.filter((r) => r.tcp === true).length;
+    const status = {
+      ready: 'Готова',
+      running: 'Запущена',
+      done: 'Завершена',
+      uncertain: 'Результат уточняется',
+      failed: 'Не выполнена',
+    }[run.status];
+    await this.timeline.append(saved.node.panel, {
+      id: `bs:${run.id}:${run.status}`,
+      t: Date.now(),
+      nodeUuid: saved.node.uuid,
+      nodeName: saved.node.name,
+      type: 'bs_check',
+      title: `BS Checker · ${status}`,
+      summary: `${saved.body.target} · TCP: ${known.length ? `${accessible}/${known.length} доступно` : 'нет данных'} · ${run.costCredits ?? saved.cost} Cred`,
+      link: '/integrations/bschecker',
+    });
   }
 }

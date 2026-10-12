@@ -12,6 +12,7 @@ import { INCIDENT_KINDS, type IncidentKind } from './incidents.js';
 export const TELEGRAM_EVENTS = [
   'incident_crit',
   'incident_warn',
+  'scenario',
   'needs_confirm',
   'resolved',
   'autofix_started',
@@ -31,6 +32,7 @@ export type TelegramEvent = z.infer<typeof telegramEventSchema>;
 export const TELEGRAM_EVENT_LABELS: Record<TelegramEvent, string> = {
   incident_crit: 'Критичный инцидент',
   incident_warn: 'Предупреждение',
+  scenario: 'Сценарий',
   needs_confirm: 'Нужно ваше «Да»',
   resolved: 'Починилось',
   autofix_started: 'Автопочинка начала чинить',
@@ -46,6 +48,8 @@ export const TELEGRAM_EVENT_LABELS: Record<TelegramEvent, string> = {
 };
 export const TELEGRAM_EVENT_HINTS: Record<TelegramEvent, string> = {
   incident_crit: 'Потеря связи с нодой, резкое падение онлайна или недоступность TCP-порта.',
+  scenario:
+    'Сработал сценарий: нода, условия, выполненные действия и результаты. Независимо от уведомлений о событиях.',
   incident_warn: 'Устойчивая перегрузка CPU или памяти по данным Remnawave.',
   needs_confirm:
     'Автопочинка предлагает шаг и ждёт подтверждения — или нужно вмешаться вручную. Первое сообщение о новом инциденте приходит, даже если этот тумблер выключен: за него отвечают «Критичный инцидент» и «Предупреждение».',
@@ -69,6 +73,7 @@ export const TELEGRAM_EVENT_HINTS: Record<TelegramEvent, string> = {
 export const TELEGRAM_EVENT_TONE: Record<TelegramEvent, 'crit' | 'warn' | 'ok' | null> = {
   incident_crit: 'crit',
   incident_warn: 'warn',
+  scenario: 'warn',
   needs_confirm: null,
   resolved: 'ok',
   autofix_started: null,
@@ -83,6 +88,7 @@ export const TELEGRAM_EVENT_TONE: Record<TelegramEvent, 'crit' | 'warn' | 'ok' |
   panel_health: 'warn',
 };
 export const TELEGRAM_EVENT_GROUPS: ReadonlyArray<{ title: string; keys: readonly TelegramEvent[] }> = [
+  { title: 'Сценарии', keys: ['scenario'] },
   { title: 'Биллинг', keys: ['billing_soon', 'billing_overdue'] },
   { title: 'Панель', keys: ['login', 'panel_health'] },
 ];
@@ -91,6 +97,7 @@ export type TelegramEvents = Record<TelegramEvent, boolean>;
 export const TELEGRAM_EVENTS_DEFAULT: TelegramEvents = {
   incident_crit: true,
   incident_warn: true,
+  scenario: false,
   needs_confirm: false,
   resolved: true,
   autofix_started: false,

@@ -110,7 +110,7 @@ function JarvisReadsBanner() {
       data-testid="fleet-rules-banner"
       className="mb-4 rounded-[10px] bg-brand-soft px-3 py-2 text-[12.5px] leading-snug font-medium text-brand"
     >
-      Ассистент читает эту статью в начале каждой беседы и разбора инцидента, но сам не меняет. Пустые разделы
+      Ассистент читает эту статью в начале каждой беседы и разбора события, но сам не меняет. Пустые разделы
       он не видит.
     </p>
   );

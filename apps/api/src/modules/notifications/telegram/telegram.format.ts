@@ -7,6 +7,7 @@ export const esc = (s: string): string =>
 export const TELEGRAM_EVENT_ICON: Record<TelegramEvent, string> = {
   incident_crit: '🔴',
   incident_warn: '🟡',
+  scenario: '🟡',
   needs_confirm: '🟠',
   resolved: '✅',
   autofix_started: '🔧',

@@ -34,7 +34,7 @@ describe('IncidentsPage', () => {
 
   it('решённые: недавно закрытый сверху, а не недавно открытый', async () => {
     const [base] = mockIncidents.items;
-    if (!base) throw new Error('нет мок-инцидента');
+    if (!base) throw new Error('нет мок-события');
     const mk = (id: string, kind: 'cpu_high' | 'mem_high', openedMinAgo: number, closedMinAgo: number) => ({
       ...base,
       id,
@@ -58,13 +58,13 @@ describe('IncidentsPage', () => {
     expect(rows[1]).toHaveTextContent('Память на пределе');
   });
 
-  it('фильтры «Открытые» и «Решённые»', async () => {
+  it('фильтры «Активные» и «Завершённые»', async () => {
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     const user = userEvent.setup();
     await screen.findAllByTestId('incident-row');
-    await user.click(screen.getByRole('button', { name: /^Открытые/ }));
+    await user.click(screen.getByRole('button', { name: /^Активные/ }));
     await waitFor(() => expect(screen.queryByText('Диск заполняется')).not.toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: /^Решённые/ }));
+    await user.click(screen.getByRole('button', { name: /^Завершённые/ }));
     await waitFor(() => expect(screen.queryByText('SSH недоступен')).not.toBeInTheDocument());
     expect(screen.getAllByText('Диск заполняется').length).toBeGreaterThan(0);
   });
@@ -81,16 +81,16 @@ describe('IncidentsPage', () => {
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     const user = userEvent.setup();
     await screen.findAllByTestId('incident-row');
-    await user.click(screen.getByRole('button', { name: /^Решённые/ }));
+    await user.click(screen.getByRole('button', { name: /^Завершённые/ }));
     await user.click(await screen.findByRole('button', { name: /Удалить решённые/ }));
     await user.click(await screen.findByRole('button', { name: 'Удалить' }));
     await waitFor(() => expect(mockIncidents.items.some((i) => i.status === 'resolved')).toBe(false));
     expect(await screen.findByText('Пока спокойно')).toBeInTheDocument();
   });
 
-  it('свежий инцидент: «Ждём ещё N с — возможно, поднимется само»', async () => {
+  it('свежий событие: «Ждём ещё N с — возможно, поднимется само»', async () => {
     const [base] = mockIncidents.items;
-    if (!base) throw new Error('нет мок-инцидента');
+    if (!base) throw new Error('нет мок-события');
     mockIncidents.items = [
       {
         ...base,
@@ -111,7 +111,7 @@ describe('IncidentsPage', () => {
 
   it('решённые режутся постранично; «Сейчас» с открытым видно на любой странице', async () => {
     const [base] = mockIncidents.items;
-    if (!base) throw new Error('нет мок-инцидента');
+    if (!base) throw new Error('нет мок-события');
     const resolved = Array.from({ length: 45 }, (_, i) => ({
       ...base,
       id: `7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3c${String(i).padStart(2, '0')}`,
@@ -149,14 +149,14 @@ describe('IncidentsPage', () => {
     expect(screen.getByRole('region', { name: 'Сейчас' })).toBeInTheDocument();
 
     // Смена вкладки сбрасывает номер страницы решённых.
-    await user.click(screen.getByRole('button', { name: /^Открытые/ }));
+    await user.click(screen.getByRole('button', { name: /^Активные/ }));
     expect(screen.getAllByTestId('incident-row')).toHaveLength(1);
-    await user.click(screen.getByRole('button', { name: /^Решённые/ }));
+    await user.click(screen.getByRole('button', { name: /^Завершённые/ }));
     await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(10));
     expect(screen.getByText(/1–10 из 45/)).toBeInTheDocument();
   });
 
-  it('пустое состояние, когда инцидентов нет', async () => {
+  it('пустое состояние, когда событий нет', async () => {
     mockIncidents.items = [];
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     expect(await screen.findByText('Пока спокойно')).toBeInTheDocument();
@@ -165,7 +165,7 @@ describe('IncidentsPage', () => {
   /** Сорок пять решённых, по одному в час: четыре полные страницы по десять и пятая из пяти. */
   const seedResolved = () => {
     const [base] = mockIncidents.items;
-    if (!base) throw new Error('нет мок-инцидента');
+    if (!base) throw new Error('нет мок-события');
     mockIncidents.items = Array.from({ length: 45 }, (_, i) => ({
       ...base,
       id: `7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3c${String(i).padStart(2, '0')}`,
@@ -179,16 +179,16 @@ describe('IncidentsPage', () => {
     }));
   };
   /**
-   * Решённые по дням: perDay[d] — сколько сбоев закрыто d дней назад; внутри дня — с шагом в секунду от 00:10,
+   * Завершённые по дням: perDay[d] — сколько сбоев закрыто d дней назад; внутри дня — с шагом в секунду от 00:10,
    * поэтому граница дня от времени прогона не зависит. Номер строки в списке — в названии: «Сбой N».
-   * `long` — строка номер `at` (с нуля) становится долгим инцидентом с заданными временами.
+   * `long` — строка номер `at` (с нуля) становится долгим событиеом с заданными временами.
    */
   const seedDays = (
     perDay: number[],
     opts: { long?: { at: number; openedAt: number; resolvedAt: number } } = {},
   ) => {
     const [base] = mockIncidents.items;
-    if (!base) throw new Error('нет мок-инцидента');
+    if (!base) throw new Error('нет мок-события');
     const now = new Date();
     const rows = perDay.flatMap((count, d) =>
       Array.from({ length: count }, (_, j) => {
@@ -244,7 +244,7 @@ describe('IncidentsPage', () => {
     snap();
     return { states, stop: () => obs.disconnect() };
   };
-  /** Ответ списка инцидентов приходит с задержкой; сам ответ — обычный (запрос идёт дальше по обработчикам). */
+  /** Ответ списка событий приходит с задержкой; сам ответ — обычный (запрос идёт дальше по обработчикам). */
   const slowList = (ms: number) =>
     server.use(
       http.get('/api/incidents', async () => {
@@ -275,7 +275,7 @@ describe('IncidentsPage', () => {
     seedResolved();
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: /^Решённые/ }));
+    await user.click(await screen.findByRole('button', { name: /^Завершённые/ }));
     await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(10));
     await user.click(screen.getByRole('button', { name: 'Следующая' }));
     await user.click(screen.getByRole('button', { name: 'Следующая' }));
@@ -303,7 +303,7 @@ describe('IncidentsPage', () => {
     );
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: /^Решённые/ }));
+    await user.click(await screen.findByRole('button', { name: /^Завершённые/ }));
     await waitFor(() => expect(screen.getAllByTestId('incident-row')).toHaveLength(10));
     await user.click(screen.getByRole('button', { name: 'Следующая' }));
     await user.click(screen.getByRole('button', { name: 'Следующая' }));
@@ -321,7 +321,7 @@ describe('IncidentsPage', () => {
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     const user = userEvent.setup();
     await screen.findByText(/1–10 из 45/);
-    const nav = screen.getByRole('navigation', { name: 'Страницы решённых инцидентов' });
+    const nav = screen.getByRole('navigation', { name: 'Страницы решённых событий' });
     const buttons = within(nav).getAllByRole('button');
     // Страницы разной длины номером не адресуются: номеров нет, только стрелки с подписями.
     expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual([
@@ -357,7 +357,7 @@ describe('IncidentsPage', () => {
     seedResolved();
     const { queryClient } = renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: /^Решённые/ }));
+    await user.click(await screen.findByRole('button', { name: /^Завершённые/ }));
     await screen.findByText(/1–10 из 45/);
     await user.click(screen.getByRole('button', { name: 'Следующая' }));
     await user.click(screen.getByRole('button', { name: 'Следующая' }));
@@ -383,7 +383,7 @@ describe('IncidentsPage', () => {
     seedResolved();
     const { queryClient } = renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: /^Решённые/ }));
+    await user.click(await screen.findByRole('button', { name: /^Завершённые/ }));
     await screen.findByText(/1–10 из 45/);
     await user.click(screen.getByRole('button', { name: 'Следующая' }));
     await user.click(screen.getByRole('button', { name: 'Следующая' }));
@@ -392,7 +392,7 @@ describe('IncidentsPage', () => {
     await user.click(screen.getByRole('button', { name: /Удалить решённые/ }));
     await user.click(await screen.findByRole('button', { name: 'Удалить' }));
     await screen.findByText('Пока спокойно');
-    // Решённые появились снова — столько же, границы страниц те же.
+    // Завершённые появились снова — столько же, границы страниц те же.
     mockIncidents.items = again;
     await act(async () => queryClient.invalidateQueries({ queryKey: ['incidents'] }));
     await screen.findByText(/1–10 из 45/);
@@ -412,7 +412,7 @@ describe('IncidentsPage', () => {
     seedDays(Array.from({ length: 25 }, () => 1));
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: /^Решённые/ }));
+    await user.click(await screen.findByRole('button', { name: /^Завершённые/ }));
     await screen.findByText(/1–10 из 25/);
     await user.click(screen.getByRole('button', { name: 'Следующая' }));
     await screen.findByText(/11–20 из 25/);
@@ -423,7 +423,7 @@ describe('IncidentsPage', () => {
     // По три в день: граница страницы режет день — только он подписан «на этой странице».
     seedDays(Array.from({ length: 10 }, () => 3));
     await user.click(screen.getByRole('button', { name: /^Все/ }));
-    await user.click(screen.getByRole('button', { name: /^Решённые/ }));
+    await user.click(screen.getByRole('button', { name: /^Завершённые/ }));
     await screen.findByText(/1–10 из 30/);
     await waitFor(() => expect(rowNumbers()).toEqual(range(1, 10)));
     expect(dayNotes()).toEqual(['3 сбоя', '3 сбоя', '3 сбоя', '1 сбой на этой странице']);
@@ -432,7 +432,7 @@ describe('IncidentsPage', () => {
     expect(dayNotes()).toEqual(['2 сбоя на этой странице', '3 сбоя', '3 сбоя', '2 сбоя на этой странице']);
   });
 
-  it('долгий инцидент (открыт три дня назад, закрыт сегодня): разрезанный день в середине страницы целым не называется', async () => {
+  it('долгий событие (открыт три дня назад, закрыт сегодня): разрезанный день в середине страницы целым не называется', async () => {
     const now = new Date();
     const day = (d: number, min: number) =>
       new Date(now.getFullYear(), now.getMonth(), now.getDate() - d).getTime() + min * 60_000;
@@ -443,7 +443,7 @@ describe('IncidentsPage', () => {
     });
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: /^Решённые/ }));
+    await user.click(await screen.findByRole('button', { name: /^Завершённые/ }));
     await screen.findByText(/1–10 из 30/);
     await user.click(screen.getByRole('button', { name: 'Следующая' }));
     // Строки идут по дням закрытия: долгий (восемнадцатый) — сверху, в «Сегодня».
@@ -477,7 +477,7 @@ describe('IncidentsPage', () => {
       'закрыты вручную',
     ])
       expect(placeholder).toHaveTextContent(label);
-    // Открытые сейчас есть — и в заглушке есть их ячейка: от неё зависит, переносится ли полоса.
+    // Активные сейчас есть — и в заглушке есть их ячейка: от неё зависит, переносится ли полоса.
     expect(placeholder).toHaveTextContent('открыто сейчас');
     expect(await screen.findByTestId('incidents-stats')).toHaveTextContent('сбоев за 7 дней');
     expect(screen.queryByTestId('incidents-stats-placeholder')).not.toBeInTheDocument();
@@ -487,10 +487,10 @@ describe('IncidentsPage', () => {
 describe('IncidentCasePage', () => {
   beforeEach(() => resetMockState({ authenticated: true }));
 
-  it('похожие инциденты нод не смешиваются при пустом serverId', async () => {
+  it('похожие события нод не смешиваются при пустом serverId', async () => {
     const { IncidentCasePage } = await import('./incident-case-page');
     const base = mockIncidents.items[0];
-    if (!base) throw new Error('нет мок-инцидента');
+    if (!base) throw new Error('нет мок-события');
     const current = {
       ...base,
       serverId: null,
@@ -530,7 +530,7 @@ describe('IncidentCasePage', () => {
       `/incidents/${id}`,
     );
     expect(await screen.findByText('Высокая нагрузка на CPU · de-fra-01')).toBeInTheDocument();
-    // B2: кнопка «Сервер» открывает карточку сервера этого инцидента поверх страницы, без перехода
+    // B2: кнопка «Сервер» открывает карточку сервера этого события поверх страницы, без перехода
     const user0 = userEvent.setup();
     await user0.click(screen.getByRole('button', { name: 'Сервер' }));
     const serverDialog = await screen.findByRole('dialog', { name: 'de-fra-01' });
@@ -548,7 +548,7 @@ describe('IncidentCasePage', () => {
     const { IncidentCasePage } = await import('./incident-case-page');
     const { mockServers } = await import('@/test/msw/servers-mock');
     const [base] = mockIncidents.items;
-    if (!base) throw new Error('нет мок-инцидента');
+    if (!base) throw new Error('нет мок-события');
     const inc = {
       ...base,
       id: '7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3c4e',

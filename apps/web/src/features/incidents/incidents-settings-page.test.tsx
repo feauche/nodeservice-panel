@@ -5,9 +5,32 @@ import { mockMonitoring, resetMockState } from '@/test/msw/handlers';
 import { mockTelegram } from '@/test/msw/telegram-mock';
 import { renderPage } from '@/test/render';
 import { IncidentsSettingsPage } from './incidents-settings-page';
-describe('Условия инцидентов Remnawave',()=>{
- beforeEach(()=>resetMockState({authenticated:true}));
- it('содержит падение онлайна, ресурсы и выбор Telegram без автопочинки',async()=>{renderPage(IncidentsSettingsPage,'/settings/incidents');expect(await screen.findByLabelText('Падение онлайна')).toHaveValue('80');expect(screen.getByLabelText('Порог CPU')).toHaveValue('90');expect(await screen.findByText('Инциденты в Telegram')).toBeInTheDocument();expect(screen.queryByText('Автопочинка')).not.toBeInTheDocument();expect(screen.queryByText('Порог диска')).not.toBeInTheDocument();});
- it('меняет порог без сброса интервала проверок',async()=>{renderPage(IncidentsSettingsPage,'/settings/incidents');const user=userEvent.setup();const f=await screen.findByLabelText('Порог CPU');await user.clear(f);await user.type(f,'85');await user.click(screen.getByRole('button',{name:'Сохранить'}));await waitFor(()=>expect(mockMonitoring.value.cpuPercent).toBe(85));expect(mockMonitoring.value.checkHostHours).toBe(24);});
- it('отдельно сохраняет виды уведомлений',async()=>{renderPage(IncidentsSettingsPage,'/settings/incidents');const user=userEvent.setup();await user.click(await screen.findByRole('switch',{name:'Память на пределе'}));await user.click(screen.getByRole('button',{name:'Сохранить уведомления'}));await waitFor(()=>expect(mockTelegram.settings.kinds.mem_high).toBe(false));});
+
+describe('Условия событий Remnawave', () => {
+  beforeEach(() => resetMockState({ authenticated: true }));
+  it('содержит падение онлайна, ресурсы и выбор Telegram без автопочинки', async () => {
+    renderPage(IncidentsSettingsPage, '/settings/incidents');
+    expect(await screen.findByLabelText('Падение онлайна')).toHaveValue('80');
+    expect(screen.getByLabelText('Порог CPU')).toHaveValue('90');
+    expect(await screen.findByText('События в Telegram')).toBeInTheDocument();
+    expect(screen.queryByText('Автопочинка')).not.toBeInTheDocument();
+    expect(screen.queryByText('Порог диска')).not.toBeInTheDocument();
+  });
+  it('меняет порог без сброса интервала проверок', async () => {
+    renderPage(IncidentsSettingsPage, '/settings/incidents');
+    const user = userEvent.setup();
+    const f = await screen.findByLabelText('Порог CPU');
+    await user.clear(f);
+    await user.type(f, '85');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(mockMonitoring.value.cpuPercent).toBe(85));
+    expect(mockMonitoring.value.checkHostHours).toBe(24);
+  });
+  it('отдельно сохраняет виды уведомлений', async () => {
+    renderPage(IncidentsSettingsPage, '/settings/incidents');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('switch', { name: 'Память на пределе' }));
+    await user.click(screen.getByRole('button', { name: 'Сохранить уведомления' }));
+    await waitFor(() => expect(mockTelegram.settings.kinds.mem_high).toBe(false));
+  });
 });

@@ -304,13 +304,13 @@ export class IncidentsService {
 
   async get(id: string): Promise<Incident> {
     const row = await this.repo.findById(id);
-    if (!row) throw problem(HttpStatus.NOT_FOUND, { detail: 'Инцидент не найден.' });
+    if (!row) throw problem(HttpStatus.NOT_FOUND, { detail: 'Событие не найдено.' });
     return this.toDto(row);
   }
 
   async acknowledge(id: string): Promise<Incident> {
     const row = await this.repo.findById(id);
-    if (!row) throw problem(HttpStatus.NOT_FOUND, { detail: 'Инцидент не найден.' });
+    if (!row) throw problem(HttpStatus.NOT_FOUND, { detail: 'Событие не найдено.' });
     if (row.status !== 'open') return this.toDto(row);
     const updated = await this.repo.update(id, {
       status: 'acknowledged',
@@ -326,7 +326,7 @@ export class IncidentsService {
   /** Ручное закрытие администратором. */
   async resolveManual(id: string, opts: ResolveIncidentRequest = {}): Promise<Incident> {
     const row0 = await this.repo.findById(id);
-    if (!row0) throw problem(HttpStatus.NOT_FOUND, { detail: 'Инцидент не найден.' });
+    if (!row0) throw problem(HttpStatus.NOT_FOUND, { detail: 'Событие не найдено.' });
     if (row0.status === 'resolved') return this.toDto(row0);
     // Идущую попытку обрываем (она дописывает хронологию) и перечитываем, чтобы не затереть.
     await this.runner.cancelRunning(id, 'Прервано: инцидент закрыт администратором');
@@ -362,7 +362,7 @@ export class IncidentsService {
    */
   async delete(id: string): Promise<void> {
     const row = await this.repo.findById(id);
-    if (!row) throw problem(HttpStatus.NOT_FOUND, { detail: 'Инцидент не найден.' });
+    if (!row) throw problem(HttpStatus.NOT_FOUND, { detail: 'Событие не найдено.' });
     await this.runner.cancelRunning(id, 'Прервано: инцидент удалён');
     await this.repo.delete(id);
     if (row.serverId) this.exceededSince.delete(`${row.serverId}:${row.kind}`);
@@ -1135,7 +1135,7 @@ export class IncidentsService {
         awaitAnalysis: await this.analysisWillFollow(),
       },
       body: `Уточнено: ${detail}`,
-      link: { to: `/incidents/${updated.id}`, label: 'Открыть инцидент' },
+      link: { to: `/incidents/${updated.id}`, label: 'Открыть событие' },
     });
     await this.audit.record({
       action: 'incident.opened',
@@ -1256,7 +1256,7 @@ export class IncidentsService {
           decision === 'waiting'
             ? `${detail} Ждём ${AUTOFIX_GRACE_SECONDS} с — возможно, поднимется само, иначе починим автоматически.`
             : detail,
-        link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
+        link: { to: `/incidents/${row.id}`, label: 'Открыть событие' },
       });
     await this.audit.record({
       action: 'incident.opened',
@@ -1292,7 +1292,7 @@ export class IncidentsService {
       title: `${row.serverId ? incidentTitleToken(label) : label} — ${reason ? 'закрыт' : 'проблема исчезла'}`,
       ...(row.serverId ? { server: { id: row.serverId, name: row.serverName } } : {}),
       body: reason ?? 'Инцидент закрыт автоматически.',
-      link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
+      link: { to: `/incidents/${row.id}`, label: 'Открыть событие' },
       telegram: {
         event: 'resolved',
         incidentId: row.id,

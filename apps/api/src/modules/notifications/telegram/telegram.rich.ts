@@ -160,7 +160,7 @@ export function digestBlocks(rows: Array<{ time: string; title: string }>, more:
       ],
     },
     ...(more > 0 ? [{ type: 'paragraph' as const, text: `…и ещё ${more}` }] : []),
-    { type: 'footer', text: 'Подробности — в «Инцидентах» панели.' },
+    { type: 'footer', text: 'Подробности — в «Событиях» панели.' },
   ];
 }
 

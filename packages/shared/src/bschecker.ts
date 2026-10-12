@@ -1,6 +1,7 @@
 import { z } from 'zod';
 export const bsProbeInputSchema = z
   .object({
+    nodeUuid: z.uuid().optional(),
     ip: z.string().trim().min(3).max(253),
     port: z.number().int().min(1).max(65535),
     operators: z.array(z.string().min(1).max(160)).min(1, 'Выберите хотя бы одну единицу проверки').max(100),

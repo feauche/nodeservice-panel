@@ -73,7 +73,7 @@ describe('weekStats', () => {
     );
     expect(s).toMatchObject({ total: 5, auto: 1, waited: 1, self: 1, manual: 1, open: 1 });
   });
-  it('время починки — медиана: один долгий инцидент не портит картину', () => {
+  it('время починки — медиана: один долгий событие не портит картину', () => {
     const fast = (m: number) =>
       base({ openedAt: iso(m + 1), resolvedAt: iso(m), attempts: [attempt('helped', 'auto')] });
     const slow = base({ openedAt: iso(60 * 30), resolvedAt: iso(0), attempts: [attempt('helped', 'auto')] });
@@ -94,7 +94,7 @@ describe('closedAtMs и humanSeconds', () => {
   });
 });
 
-describe('строка в списке инцидентов', () => {
+describe('строка в списке событий', () => {
   it('заголовок без имени сервера — настоящий, а не подпись вида', () => {
     expect(titleOnly({ title: 'Сервер недоступен — просрочена оплата · guardora (Аренда)' })).toBe(
       'Сервер недоступен — просрочена оплата',

@@ -520,7 +520,7 @@ function RestoreBody({
                   Всё, что изменилось после{' '}
                   {info.createdAt ? formatWhen(info.createdAt, tz).toLowerCase() : 'копии'}, пропадёт:
                 </b>{' '}
-                новые серверы, инциденты, оплаты, записи Журнала, беседы с Ассистентом.
+                новые серверы, события, оплаты, записи Журнала, беседы с Ассистентом.
               </WarnBox>
               <ul className="m-0 flex list-disc flex-col gap-1 pl-5 text-[12.5px] text-text-2">
                 <li>

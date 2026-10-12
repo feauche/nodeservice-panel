@@ -4,9 +4,40 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { mockMonitoring, resetMockState } from '@/test/msw/handlers';
 import { renderPage } from '@/test/render';
 import { AutochecksPage } from './autochecks-page';
-describe('Мониторинг вместо SSH и агентов',()=>{
- beforeEach(()=>resetMockState({authenticated:true}));
- it('показывает Remnawave и Check-Host с ежедневным интервалом и fallback',async()=>{renderPage(AutochecksPage,'/settings/autochecks');expect(await screen.findByLabelText('Частота опроса')).toHaveValue('60');expect(screen.getByLabelText('Период проверки каждого IP')).toHaveValue('24');expect(screen.getByLabelText('TCP-порт')).toHaveValue('5492');expect(screen.getByText(/если недоступен — проверяем 22/)).toBeInTheDocument();expect(screen.queryByText('Метрики агента')).not.toBeInTheDocument();});
- it('сохраняет только поля проверок, сохраняя пороги инцидентов',async()=>{renderPage(AutochecksPage,'/settings/autochecks');mockMonitoring.value.cpuPercent=88;const user=userEvent.setup();const f=await screen.findByLabelText('Частота опроса');await user.clear(f);await user.type(f,'90');await user.click(screen.getByRole('button',{name:'Сохранить'}));await waitFor(()=>expect(mockMonitoring.value.pollSeconds).toBe(90));expect(mockMonitoring.value.cpuPercent).toBe(88);});
- it('после ошибки диапазона можно исправить поле и сохранить',async()=>{renderPage(AutochecksPage,'/settings/autochecks');const user=userEvent.setup();const f=await screen.findByLabelText('Частота опроса');await user.clear(f);await user.type(f,'1');await user.click(screen.getByRole('button',{name:'Сохранить'}));expect(await screen.findByRole('alert')).toBeInTheDocument();expect(mockMonitoring.value.pollSeconds).toBe(60);await user.clear(f);await user.type(f,'120');await user.click(screen.getByRole('button',{name:'Сохранить'}));await waitFor(()=>expect(mockMonitoring.value.pollSeconds).toBe(120));});
+
+describe('Мониторинг вместо SSH и агентов', () => {
+  beforeEach(() => resetMockState({ authenticated: true }));
+  it('показывает Remnawave и Check-Host с ежедневным интервалом и fallback', async () => {
+    renderPage(AutochecksPage, '/settings/autochecks');
+    expect(await screen.findByLabelText('Частота опроса')).toHaveValue('60');
+    expect(screen.getByLabelText('Период проверки каждого IP')).toHaveValue('24');
+    expect(screen.getByLabelText('TCP-порт')).toHaveValue('5492');
+    expect(screen.getByText(/если недоступен — проверяем 22/)).toBeInTheDocument();
+    expect(screen.queryByText('Метрики агента')).not.toBeInTheDocument();
+  });
+  it('сохраняет только поля проверок, сохраняя пороги событий', async () => {
+    renderPage(AutochecksPage, '/settings/autochecks');
+    mockMonitoring.value.cpuPercent = 88;
+    const user = userEvent.setup();
+    const f = await screen.findByLabelText('Частота опроса');
+    await user.clear(f);
+    await user.type(f, '90');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(mockMonitoring.value.pollSeconds).toBe(90));
+    expect(mockMonitoring.value.cpuPercent).toBe(88);
+  });
+  it('после ошибки диапазона можно исправить поле и сохранить', async () => {
+    renderPage(AutochecksPage, '/settings/autochecks');
+    const user = userEvent.setup();
+    const f = await screen.findByLabelText('Частота опроса');
+    await user.clear(f);
+    await user.type(f, '1');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(mockMonitoring.value.pollSeconds).toBe(60);
+    await user.clear(f);
+    await user.type(f, '120');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(mockMonitoring.value.pollSeconds).toBe(120));
+  });
 });

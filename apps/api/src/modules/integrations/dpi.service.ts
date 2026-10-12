@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { eq, sql } from 'drizzle-orm';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { appMeta } from '../../infra/db/schema/index.js';
+import { NodeEventsStore } from '../node-events/node-events.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { type IntegrationSession, IntegrationsService } from './integrations.service.js';
 export const obj = (v: unknown): Record<string, unknown> =>
@@ -42,6 +43,7 @@ export class DpiService {
     @Inject(DB) private db: Db,
     private integrations: IntegrationsService,
     private remna: RemnawaveService,
+    @Optional() private timeline?: NodeEventsStore,
   ) {}
   private async read(key: string) {
     const row = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, key) });
@@ -148,6 +150,11 @@ export class DpiService {
           items[i + index] = { ...c, ...full };
         }),
       );
+    for (const c of items) {
+      const normalized = this.normalize(c),
+        ref = refs[normalized.id];
+      if (ref) await this.recordEvent(normalized, ref, session.identity);
+    }
     if (this.completed.size > 500) this.completed.clear();
     return {
       checks: items.map((c) => ({
@@ -181,8 +188,19 @@ export class DpiService {
   }
   async detail(id: string) {
     if (!/^\d+$/.test(id)) throw new BadRequestException('Неверный номер проверки.');
-    const raw = await this.integrations.providerRequest('dpi', '/checks/' + id);
-    return this.normalize(obj(raw.data ?? raw));
+    const session = await this.integrations.session('dpi');
+    const raw = await this.integrations.providerRequest(
+      'dpi',
+      '/checks/' + id,
+      'GET',
+      undefined,
+      undefined,
+      session,
+    );
+    const result = this.normalize(obj(raw.data ?? raw));
+    const refs = await this.read('dpi.node-checks.' + session.identity);
+    if (refs?.[id]) await this.recordEvent(result, refs[id], session.identity);
+    return result;
   }
   async start(
     body: {
@@ -240,6 +258,7 @@ export class DpiService {
       sql`INSERT INTO app_meta(key,value) VALUES(${refKey},${value}) ON CONFLICT(key) DO UPDATE SET value=(app_meta.value::jsonb || excluded.value::jsonb)::text`,
     );
     await this.write('dpi.request.' + identity + '.' + body.requestId, result);
+    await this.recordEvent(result, { uuid: node.uuid, name: node.name, panel: status.domain }, identity);
     this.cache = null;
     return result;
   }
@@ -288,5 +307,25 @@ export class DpiService {
     } finally {
       this.busy = false;
     }
+  }
+  private async recordEvent(
+    result: ReturnType<DpiService['normalize']>,
+    ref: { uuid: string; name: string; panel: string | null },
+    identity: string,
+  ) {
+    if (!this.timeline || !ref.panel || !ref.uuid) return;
+    const finished = ['completed', 'failed', 'cancelled'].includes(result.status);
+    const stage = finished ? result.status : 'started';
+    const created = Date.parse(result.createdAt);
+    await this.timeline.append(ref.panel, {
+      id: `dpi:${identity}:${result.id}:${stage}`,
+      t: finished || !Number.isFinite(created) ? Date.now() : created,
+      nodeUuid: ref.uuid,
+      nodeName: ref.name,
+      type: 'dpi_check',
+      title: `DPI Checker · ${finished ? 'Получен результат' : 'Проверка запущена'}`,
+      summary: `Режим ${result.kind.toUpperCase()} · ${result.success === null ? 'Доступность ещё неизвестна' : `${result.success}/${result.total} точек доступно`}${result.cost === null ? '' : ` · ${result.cost} USD`}`,
+      link: '/integrations/dpi',
+    });
   }
 }

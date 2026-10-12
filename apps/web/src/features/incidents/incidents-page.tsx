@@ -53,15 +53,15 @@ import { LevelChip } from './level-chip';
 
 const FILTERS: ReadonlyArray<{ key: IncidentsFilter; label: string }> = [
   { key: 'all', label: 'Все' },
-  { key: 'open', label: 'Открытые' },
-  { key: 'resolved', label: 'Решённые' },
+  { key: 'open', label: 'Активные' },
+  { key: 'resolved', label: 'Завершённые' },
 ];
 const STATUS_PILL: Record<IncidentStatus, { tone: 'ok' | 'warn' | 'crit' | 'muted'; label: string }> = {
-  open: { tone: 'crit', label: 'Открыт' },
+  open: { tone: 'crit', label: 'Активно' },
   acknowledged: { tone: 'warn', label: 'В работе' },
-  resolved: { tone: 'ok', label: 'Решён' },
+  resolved: { tone: 'ok', label: 'Завершено' },
 };
-/** День закрытия инцидента — по нему решённые собираются в группы. */
+/** День закрытия события — по нему решённые собираются в группы. */
 const dayOf = (inc: Incident, now: number): string => dayLabel(inc.resolvedAt ?? inc.openedAt, now);
 /** Начало календарного дня (местное время) — по нему дни сравниваются. */
 const dayStart = (iso: string): number => {
@@ -74,7 +74,7 @@ const closeDay = (inc: Incident): number => dayStart(inc.resolvedAt ?? inc.opene
  * Какие дни продолжаются за краями страницы — число сбоев у них относится только к этой странице. Сервер
  * отдаёт строки по времени открытия (от новых к старым), а группы — по дню закрытия. `before` — день, не
  * раньше которого открыты строки до страницы: закрыты они не раньше, поэтому день закрытия не раньше него
- * может продолжаться на прежних страницах — и у долгого инцидента (открыт три дня назад, закрыт сегодня),
+ * может продолжаться на прежних страницах — и у долгого события (открыт три дня назад, закрыт сегодня),
  * даже если его группа стоит не с краю. `after` — день закрытия строки сразу после страницы: он продолжается
  * на следующей. null — с этой стороны строк нет.
  */
@@ -116,7 +116,7 @@ const dayGroups = (
   });
 };
 
-/** Цвет полоски слева: итог инцидента одним взглядом. */
+/** Цвет полоски слева: итог события одним взглядом. */
 function barTone(inc: Incident): string {
   if (inc.status !== 'resolved') return inc.severity === 'crit' ? 'bg-crit' : 'bg-warn';
   const helped = inc.attempts.some((a) => a.status === 'helped');
@@ -137,7 +137,7 @@ interface ShownPage {
 }
 
 /**
- * «Инциденты» (витрина v3, A1): полоса итога за 7 дней и реестр по дням — время, сервер, что случилось
+ * «События» (витрина v3, A1): полоса итога за 7 дней и реестр по дням — время, сервер, что случилось
  * и чем кончилось одним предложением, статус, длительность. Строка ведёт на страницу-кейс.
  * На широком экране реестр занимает высоту окна: решённых на странице столько, сколько помещается, а поле
  * под ним — как боковые (см. incidents-fit.ts).
@@ -147,7 +147,7 @@ export function IncidentsPage() {
   // Что показано из решённых: с какой строки страница начинается (или перед какой кончается — когда листаем
   // назад) и с каких страниц сюда пришли «Следующей». Хранится строка, а не номер страницы: страницы разной
   // длины (сколько помещается по высоте), и при изменении окна или числа открытых на экране должны остаться
-  // те же инциденты.
+  // те же события.
   const [nav, setNav] = useState<ListNav>(LIST_START);
   const { view } = nav;
   // Вкладка и страница меняются одним действием: сброс эффектом успевал отправить запрос по старой странице.
@@ -313,7 +313,7 @@ export function IncidentsPage() {
     <div className="flex flex-col gap-4 md:-mb-[34px]">
       <div className="flex flex-wrap items-center gap-2">
         <fieldset className="m-0 flex h-9 w-fit items-center rounded-[10px] border border-border bg-surface p-[3px]">
-          <legend className="sr-only">Фильтр инцидентов</legend>
+          <legend className="sr-only">Фильтр событий</legend>
           {FILTERS.map((f) => (
             <button
               key={f.key}
@@ -374,7 +374,7 @@ export function IncidentsPage() {
             <div className="text-[14px] font-semibold">Пока спокойно</div>
             <div className="mt-1 text-[12.5px] text-text-3">
               {filter === 'resolved'
-                ? 'Решённых инцидентов нет.'
+                ? 'Решённых событий нет.'
                 : 'Сбоев не зафиксировано. Как только что-то случится, оно появится здесь.'}
             </div>
           </div>
@@ -423,7 +423,7 @@ export function IncidentsPage() {
               onPrev={() => setNav(toPrev(nav, span))}
               onNext={() => setNav(toNext(nav, span, !loading))}
               onLast={() => setNav(toLast(total))}
-              label="Страницы решённых инцидентов"
+              label="Страницы решённых событий"
             />
           </div>
         </div>
@@ -433,8 +433,8 @@ export function IncidentsPage() {
         open={confirmClear}
         onOpenChange={setConfirmClear}
         kind="crit"
-        title="Удалить все решённые инциденты?"
-        description="История починок по ним пропадёт, статистика «помогло N из M» пересчитается. Открытые инциденты останутся. Записи Журнала не трогаем."
+        title="Удалить все решённые события?"
+        description="История починок по ним пропадёт, статистика «помогло N из M» пересчитается. Открытые события останутся. Записи Журнала не трогаем."
         yesLabel="Удалить"
         loading={deleteResolved.isPending}
         onConfirm={async () => {
@@ -445,7 +445,7 @@ export function IncidentsPage() {
             setNav(LIST_START);
             setCleared((n) => n + 1);
             setConfirmClear(false);
-            toast.success(deleted > 0 ? `Удалено инцидентов: ${deleted}.` : 'Решённых инцидентов не было.');
+            toast.success(deleted > 0 ? `Удалено событий: ${deleted}.` : 'Решённых событий не было.');
           } catch (err) {
             setConfirmClear(false);
             toast.error(apiErrorMessage(err));

@@ -10,6 +10,7 @@ import { MetricsHistoryPage } from './metrics-history-page';
 const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
 const names = ['Первая нода', 'Вторая нода'];
 let requests: URL[];
+let eventCount = 1;
 function lastRequest() {
   const url = requests.at(-1);
   if (!url) throw new Error('Запрос истории не выполнен');
@@ -24,6 +25,7 @@ const values = (online: number | null) => ({ online, cpu: null, ram: null, load:
 beforeEach(() => {
   resetMockState({ authenticated: true });
   requests = [];
+  eventCount = 1;
   server.use(
     http.get('*/api/nodes/status', () =>
       HttpResponse.json({
@@ -81,29 +83,46 @@ beforeEach(() => {
             max: values(n),
           })),
         })),
-        events: [
-          {
-            id: 'event1',
-            t: (from + to) / 2,
-            nodeUuid: ids[0],
-            nodeName: names[0],
-            type: 'tcp_check',
-            title: 'Проверка TCP: результат неполный',
-            summary: 'Недостаточно точек проверки; доступность не подтверждена.',
-            link: 'https://check-host.net/check-report/example',
-          },
-        ],
+        events: Array.from({ length: eventCount }, (_, i) => ({
+          id: `event${i + 1}`,
+          t: (from + to) / 2 - i * 60000,
+          nodeUuid: ids[0],
+          nodeName: names[0],
+          type: 'tcp_check',
+          title: 'Проверка TCP: результат неполный',
+          summary: 'Недостаточно точек проверки; доступность не подтверждена.',
+          link: 'https://check-host.net/check-report/example',
+        })),
       });
     }),
   );
 });
 
 describe('Общая история метрик', () => {
+  it('листает 10/25/50 событий и сохраняет страницу списка после выбора момента', async () => {
+    eventCount = 51;
+    const user = userEvent.setup();
+    renderPage(MetricsHistoryPage, '/metrics');
+    const region = await screen.findByRole('region', { name: 'События метрик' });
+    await within(region).findByText('1–10 из 51');
+    await user.click(within(region).getByRole('button', { name: 'Следующая страница событий' }));
+    expect(within(region).getByText('11–20 из 51')).toBeVisible();
+    await user.click(within(region).getAllByRole('button', { name: /Проверка TCP: результат неполный/ })[0]);
+    await waitFor(() => expect(within(region).getByText('11–20 из 51')).toBeVisible());
+    await user.click(within(region).getByRole('combobox', { name: 'Событий на странице' }));
+    await user.click(screen.getByRole('option', { name: '25' }));
+    expect(within(region).getByText('1–25 из 51')).toBeVisible();
+    await user.click(within(region).getByRole('combobox', { name: 'Событий на странице' }));
+    await user.click(screen.getByRole('option', { name: '50' }));
+    expect(within(region).getByText('1–50 из 51')).toBeVisible();
+  });
   it('меняет ISO-границы масштаба и восстанавливает исходный период', async () => {
     renderPage(MetricsHistoryPage, '/metrics');
     await screen.findByText('Проверка TCP: результат неполный');
     expect(within(screen.getByTestId('online-period-summary')).getByText('35')).toBeInTheDocument();
-    expect(within(screen.getByTestId('online-period-summary')).getByText('Минимальный онлайн')).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('online-period-summary')).getByText('Минимальный онлайн'),
+    ).toBeInTheDocument();
     const initial = lastRequest();
     const span = Date.parse(param(initial, 'to')) - Date.parse(param(initial, 'from'));
     const user = userEvent.setup();
@@ -167,12 +186,11 @@ describe('Общая история метрик', () => {
       expect(path?.getAttribute('d')?.match(/M/g)).toHaveLength(2);
     });
     await userEvent.setup().click(title);
-    expect(screen.getByText('Недостаточно точек проверки; доступность не подтверждена.')).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Открыть подробности' })).toHaveAttribute(
+    expect(screen.getByText(/Недостаточно точек проверки; доступность не подтверждена/)).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Подробнее' })).toHaveAttribute(
       'href',
       'https://check-host.net/check-report/example',
     );
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Показать момент' }));
     await waitFor(() => expect(requests).toHaveLength(2));
     const url = lastRequest();
     expect(Date.parse(param(url, 'to')) - Date.parse(param(url, 'from'))).toBe(30 * 60000);

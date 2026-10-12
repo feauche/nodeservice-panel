@@ -185,7 +185,7 @@ export function seedIncidents(): void {
         ev(180, 'auto', 'Обнаружено: диск 94 % дольше 5 мин', 'detect', 'T0'),
         ev(179, 'auto', 'Выполнено: Освободить диск', 'applied', 'T1'),
         ev(177, 'auto', 'Пост-проверка: диск 71 % < 80 % — помогло', 'helped', 'T1'),
-        ev(176, 'auto', 'Проблема устранена — инцидент закрыт', 'resolved'),
+        ev(176, 'auto', 'Проблема устранена — событие закрыт', 'resolved'),
       ],
       attempts: [
         finishedAttempt(
@@ -227,7 +227,7 @@ export function seedIncidents(): void {
         ev(368, 'auto', 'Найти, что занимает диск: список получен', 'notify', 'T0'),
         ev(16, 'manual', 'Выполнено: Очистить временные файлы', 'applied', 'T2'),
         ev(15, 'manual', 'Пост-проверка: диск 41 % < 80 % — помогло', 'helped', 'T2'),
-        ev(15, 'manual', 'Проблема устранена — инцидент закрыт', 'resolved'),
+        ev(15, 'manual', 'Проблема устранена — событие закрыт', 'resolved'),
       ],
       attempts: [
         finishedAttempt(
@@ -406,7 +406,7 @@ function runAttempt(inc: Incident, action: ActionKey, by: 'auto' | 'manual'): vo
       inc.timeline = [
         ...inc.timeline,
         ev(0, by, 'Пост-проверка: метрика ниже порога — помогло', 'helped', a.level),
-        ev(0, by, 'Проблема устранена — инцидент закрыт', 'resolved'),
+        ev(0, by, 'Проблема устранена — событие закрыт', 'resolved'),
       ];
       inc.status = 'resolved';
       inc.resolvedAt = iso(0);
@@ -555,17 +555,17 @@ export const incidentsHandlers = [
   }),
   http.delete('/api/incidents/:id', ({ params }) => {
     const idx = mockIncidents.items.findIndex((i) => i.id === params.id);
-    if (idx < 0) return problem(404, 'Инцидент не найден.');
+    if (idx < 0) return problem(404, 'Событие не найден.');
     mockIncidents.items.splice(idx, 1);
     return new HttpResponse(null, { status: 204 });
   }),
   http.get('/api/incidents/:id', ({ params }) => {
     const inc = mockIncidents.items.find((i) => i.id === params.id);
-    return inc ? HttpResponse.json(inc) : problem(404, 'Инцидент не найден.');
+    return inc ? HttpResponse.json(inc) : problem(404, 'Событие не найден.');
   }),
   http.post('/api/incidents/:id/acknowledge', ({ params }) => {
     const inc = mockIncidents.items.find((i) => i.id === params.id);
-    if (!inc) return problem(404, 'Инцидент не найден.');
+    if (!inc) return problem(404, 'Событие не найден.');
     if (inc.status === 'open') {
       inc.status = 'acknowledged';
       inc.timeline = [...inc.timeline, ev(0, 'manual', 'Взято в работу администратором', 'notify')];
@@ -574,7 +574,7 @@ export const incidentsHandlers = [
   }),
   http.post('/api/incidents/:id/resolve', async ({ params, request }) => {
     const inc = mockIncidents.items.find((i) => i.id === params.id);
-    if (!inc) return problem(404, 'Инцидент не найден.');
+    if (!inc) return problem(404, 'Событие не найден.');
     const body = resolveIncidentRequestSchema.safeParse(await request.json().catch(() => ({})));
     const stopWatch = body.success && body.data.stopNodeWatch === true && inc.kind === 'node_down';
     if (stopWatch) {
@@ -597,15 +597,15 @@ export const incidentsHandlers = [
   }),
   http.post('/api/incidents/:id/actions/:action/run', ({ params }) => {
     const inc = mockIncidents.items.find((i) => i.id === params.id);
-    if (!inc) return problem(404, 'Инцидент не найден.');
-    if (inc.status === 'resolved') return problem(409, 'Инцидент уже закрыт.');
+    if (!inc) return problem(404, 'Событие не найден.');
+    if (inc.status === 'resolved') return problem(409, 'Событие уже закрыт.');
     const key = String(params.action) as ActionKey;
     const a = INCIDENT_ACTIONS.find((x) => x.key === key);
-    if (!a?.kinds.includes(inc.kind)) return problem(400, 'Это действие не подходит к инциденту.');
+    if (!a?.kinds.includes(inc.kind)) return problem(400, 'Это действие не подходит к событию.');
     if (a.terminal)
       return problem(400, 'Действие уровня T3 панель не выполняет — только вручную в терминале.');
     if (inc.attempts.some((x) => x.status === 'running'))
-      return problem(409, 'По инциденту уже идёт действие — дождись его конца.');
+      return problem(409, 'По событию уже идёт действие — дождись его конца.');
     runAttempt(inc, key, 'manual');
     return HttpResponse.json(inc, { status: 202 });
   }),

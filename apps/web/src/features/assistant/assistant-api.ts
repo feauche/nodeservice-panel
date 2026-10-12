@@ -135,7 +135,7 @@ export function useChangeAction() {
     mutationFn: ({ id, action }: { id: string; action: ChangeAction }) => changesApi.act(id, action),
     onSuccess: (change) => {
       qc.setQueryData(assistantKeys.change(change.id), change);
-      // Применение и откат меняют серверы, инциденты и автопочинку и добавляют запись в Журнал.
+      // Применение и откат меняют серверы, события и автопочинку и добавляют запись в Журнал.
       void qc.invalidateQueries({ queryKey: serversKeys.all });
       void qc.invalidateQueries({ queryKey: incidentsKeys.all });
       void qc.invalidateQueries({ queryKey: ['audit'] });

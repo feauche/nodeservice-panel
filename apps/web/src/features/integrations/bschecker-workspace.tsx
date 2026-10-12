@@ -93,6 +93,7 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
       query.state.data?.runs.some((r) => r.run.status === 'running') ? 5000 : false,
   });
   const nodes = useNodes();
+  const [nodeUuid, setNodeUuid] = useState<string | undefined>();
   const [ip, setIp] = useState(''),
     [port, setPort] = useState('443'),
     [operators, setOperators] = useState<string[]>([]),
@@ -108,7 +109,7 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
     mutationFn: () =>
       api.post(
         '/integrations/bschecker/preview',
-        { ip, port: Number(port), operators, icmp, tcp },
+        { ip, port: Number(port), operators, icmp, tcp, ...(nodeUuid ? { nodeUuid } : {}) },
         bsPreviewSchema,
       ),
   });
@@ -224,9 +225,10 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
           <div className="flex-none space-y-3 px-[18px] py-4">
             <Select
               disabled={locked}
-              value={nodes.data?.nodes.find((n) => n.address === ip)?.uuid ?? 'manual'}
+              value={nodeUuid ?? 'manual'}
               onValueChange={(v) => {
                 const n = nodes.data?.nodes.find((n) => n.uuid === v);
+                setNodeUuid(n?.uuid);
                 setIp(n?.address ?? '');
                 change();
               }}
@@ -252,6 +254,7 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
                   disabled={locked}
                   value={ip}
                   onChange={(e) => {
+                    setNodeUuid(undefined);
                     setIp(e.target.value);
                     change();
                   }}

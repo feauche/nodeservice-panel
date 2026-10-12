@@ -49,7 +49,7 @@ describe('AppShell · меню пользователя', () => {
     expect(await screen.findByRole('link', { name: 'Ноды' })).toHaveAttribute('href', '/nodes');
     expect(screen.getByRole('link', { name: 'Обзор' })).toHaveAttribute('href', '/');
     expect(screen.getByRole('link', { name: 'Журнал' })).toHaveAttribute('href', '/audit');
-    expect(screen.getByRole('link', { name: /Инциденты/ })).toHaveAttribute('href', '/incidents');
+    expect(screen.getByRole('link', { name: /События/ })).toHaveAttribute('href', '/incidents');
     expect(screen.queryByRole('link', { name: /Уведомления/ })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Настройки' })).toHaveAttribute('href', '/settings');
     expect(screen.getByRole('link', { name: 'Ассистент' })).toHaveAttribute('href', '/assistant');

@@ -408,7 +408,7 @@ export function ProfileTab({ server, edit }: { server: Server; edit: ServerEdit[
           <NodeStatePill server={{ node: server.node, nodeWatch }} />
         </div>
         <p className="m-0 text-[12px] leading-normal text-text-3">
-          Первый вопрос: от него зависят инциденты. Панель следит за контейнером ноды и сообщает, если он
+          Первый вопрос: от него зависят события. Панель следит за контейнером ноды и сообщает, если он
           остановился.
         </p>
         <NodeWatchSegments value={nodeWatch} onChange={setNodeWatch} />

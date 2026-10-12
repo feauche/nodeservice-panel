@@ -141,16 +141,18 @@ describe('NotificationsPage', () => {
     expect(mockTelegram.settings.quiet.enabled).toBe(true);
   });
 
-  it('инциденты перенесены; доставка без склейки и напоминания раз в 4 ч', async () => {
+  it('события перенесены; доставка без склейки и напоминания раз в 4 ч', async () => {
     renderPage(NotificationsPage, '/settings/notifications');
     const user = userEvent.setup();
     await screen.findByText('Что присылать');
-    expect(screen.queryByText('Какие инциденты')).not.toBeInTheDocument();
+    expect(screen.queryByText('Какие события')).not.toBeInTheDocument();
     expect(document.getElementById('tg-kind-ssh_down')).toBeNull();
     await user.click(document.getElementById('tg-group') as HTMLElement);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Как часто напоминать' }), '4');
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
-    await waitFor(() => expect(mockTelegram.settings.delivery).toMatchObject({ groupPerServer: false, remindHours: 4 }));
+    await waitFor(() =>
+      expect(mockTelegram.settings.delivery).toMatchObject({ groupPerServer: false, remindHours: 4 }),
+    );
   });
 
   it('расширенное оформление: выключено по умолчанию; образец можно прислать до сохранения, потом включить', async () => {

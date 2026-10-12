@@ -21,7 +21,7 @@ export const Route = createFileRoute('/incidents')({
 
 function IncidentsRoute() {
   return (
-    <AppShell title="Инциденты" subtitle="История сбоев парка и чем их чинили">
+    <AppShell title="События" subtitle="История сбоев парка и чем их чинили">
       <IncidentsPage />
     </AppShell>
   );

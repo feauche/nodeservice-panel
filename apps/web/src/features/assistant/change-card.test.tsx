@@ -111,11 +111,11 @@ describe('ChangeCard (J5, A1)', () => {
     open(
       seed({
         operation: 'incident.resolve',
-        title: 'Закрыть инцидент',
+        title: 'Закрыть событие',
         level: 'T2',
         target: { type: 'incident', id: null, label: 'Нода остановлена: nl-exit-2' },
         rows: [{ label: 'Статус', before: 'Открыт', after: 'Закрыт вручную' }],
-        consequence: 'Если проблема осталась, панель заведёт новый инцидент. Закрытие кнопкой не отменяется.',
+        consequence: 'Если проблема осталась, панель заведёт новое событие. Закрытие кнопкой не отменяется.',
         reversible: false,
       }),
     );
@@ -211,11 +211,11 @@ describe('ChangeCard (J5, A1)', () => {
     expect(await screen.findByText('Предложение отклонено.')).toBeInTheDocument();
   });
 
-  it('необратимое изменение (закрытие инцидента) после применения без кнопки отмены', async () => {
+  it('необратимое изменение (закрытие события) после применения без кнопки отмены', async () => {
     open(
       seed({
         operation: 'incident.resolve',
-        title: 'Закрыть инцидент',
+        title: 'Закрыть событие',
         level: 'T2',
         target: { type: 'incident', id: null, label: 'Нода остановлена' },
         rows: [{ label: 'Статус', before: 'Открыт', after: 'Закрыт вручную' }],

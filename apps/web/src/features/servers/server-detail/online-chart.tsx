@@ -128,7 +128,7 @@ export function NodeOnlineChart({
                   x={Date.parse(incidentAt)}
                   stroke="var(--ns-crit)"
                   strokeDasharray="4 4"
-                  label={{ value: 'инцидент', fill: 'var(--ns-crit)', fontSize: 10 }}
+                  label={{ value: 'событие', fill: 'var(--ns-crit)', fontSize: 10 }}
                 />
               )}
               <Area

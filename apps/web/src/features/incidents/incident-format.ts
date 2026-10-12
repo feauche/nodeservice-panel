@@ -14,7 +14,7 @@ const attemptOrdinal = (n: number): string =>
 
 const lower = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1);
 
-/** Сколько секунд автопочинка ещё выжидает по свежему инциденту; null — пауза не идёт. */
+/** Сколько секунд автопочинка ещё выжидает по свежему событию; null — пауза не идёт. */
 export function graceLeftS(inc: Incident, now: number): number | null {
   if (inc.status === 'resolved' || inc.attempts.length > 0 || inc.proposal) return null;
   if (INCIDENT_CHAINS[inc.kind].length === 0) return null;

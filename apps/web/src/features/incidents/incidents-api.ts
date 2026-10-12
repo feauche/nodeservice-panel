@@ -51,7 +51,7 @@ export const incidentsApi = {
   remove: (id: string): Promise<void> => request(`/incidents/${id}`, { method: 'DELETE' }),
   removeResolved: (): Promise<{ deleted: number }> =>
     request('/incidents/resolved', { method: 'DELETE', schema: z.object({ deleted: z.number().int() }) }),
-  /** Запуск действия реестра (T1/T2): попытка идёт в фоне, инцидент перечитывается, пока она идёт. */
+  /** Запуск действия реестра (T1/T2): попытка идёт в фоне, событие перечитывается, пока она идёт. */
   run: (id: string, action: ActionKey): Promise<Incident> =>
     api.post(`/incidents/${id}/actions/${action}/run`, {}, incidentSchema),
   policy: (signal?: AbortSignal): Promise<IncidentPolicyResponse> =>
@@ -71,7 +71,7 @@ export const incidentsKeys = {
   weekStats: ['incidents', 'week-stats'] as const,
 };
 
-/** Идёт ли по какому-то инциденту попытка или разбор Ассистента — тогда данные перечитываются часто. */
+/** Идёт ли по какому-то событию попытка или разбор Ассистента — тогда данные перечитываются часто. */
 export const hasRunningAttempt = (items: Incident[] | undefined): boolean =>
   Boolean(
     items?.some((i) => i.analysis?.status === 'running' || i.attempts.some((a) => a.status === 'running')),
@@ -92,7 +92,7 @@ export function useIncidents(status: IncidentsFilter, params?: IncidentsListPara
   });
 }
 
-/** Полоса «за 7 дней»: сервер отдаёт готовые цифры — без выгрузки самих инцидентов, поэтому быстро. */
+/** Полоса «за 7 дней»: сервер отдаёт готовые цифры — без выгрузки самих событий, поэтому быстро. */
 export function useIncidentWeekStats() {
   return useQuery({
     queryKey: incidentsKeys.weekStats,
@@ -101,7 +101,7 @@ export function useIncidentWeekStats() {
   });
 }
 
-/** Один инцидент для страницы-кейса. */
+/** Один событие для страницы-кейса. */
 export function useIncident(id: string) {
   return useQuery({
     queryKey: incidentsKeys.item(id),
@@ -110,7 +110,7 @@ export function useIncident(id: string) {
   });
 }
 
-/** Лёгкий счётчик открытых инцидентов для навигации и баннера. */
+/** Лёгкий счётчик открытых событий для навигации и баннера. */
 export function useOpenIncidentsCount(): number {
   const q = useQuery({
     queryKey: incidentsKeys.list('open'),
@@ -120,7 +120,7 @@ export function useOpenIncidentsCount(): number {
   return q.data?.counts.open ?? 0;
 }
 
-/** Удаление одного инцидента: убираем из кэша списков сразу, потом перечитываем. */
+/** Удаление одного события: убираем из кэша списков сразу, потом перечитываем. */
 export function useDeleteIncident() {
   const qc = useQueryClient();
   return useMutation({
@@ -135,7 +135,7 @@ export function useDeleteIncident() {
 }
 /**
  * Удаление всех решённых: из кэша списков они убираются сразу. Иначе, пока идёт перечитывание, страница из
- * кэша показывала бы удалённые инциденты как существующие — со ссылками на то, чего уже нет.
+ * кэша показывала бы удалённые события как существующие — со ссылками на то, чего уже нет.
  */
 export function useDeleteResolvedIncidents() {
   const qc = useQueryClient();

@@ -6,7 +6,7 @@ export interface ChartPoint {
   v: number;
 }
 
-/** Окно графика: у свежего инцидента час, у старого сутки, чтобы момент открытия был в кадре. */
+/** Окно графика: у свежего события час, у старого сутки, чтобы момент открытия был в кадре. */
 export function chartRange(openedAt: string, now: number): MetricRange {
   return now - Date.parse(openedAt) < 40 * 60_000 ? '1h' : '24h';
 }
@@ -112,7 +112,7 @@ export function chartMarkers(
 ): ChartMarker[] {
   const list: Array<Omit<ChartMarker, 'shown'>> = [];
   const open = xOf(Date.parse(inc.openedAt) / 1000);
-  if (open !== null) list.push({ key: 'open', label: '!', title: 'Инцидент открыт', kind: 'open', x: open });
+  if (open !== null) list.push({ key: 'open', label: '!', title: 'Событие открыт', kind: 'open', x: open });
   inc.attempts.forEach((a, i) => {
     const x = xOf(Date.parse(a.startedAt) / 1000);
     if (x !== null)

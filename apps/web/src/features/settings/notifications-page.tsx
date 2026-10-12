@@ -237,7 +237,7 @@ export function NotificationsPage() {
       <SectionHeader
         icon={BellIcon}
         title="Уведомления"
-        description="Куда и что присылать в Telegram. Колокольчик в панели получает всё, как и раньше."
+        description="Куда и что присылать в Telegram. События и сценарии настраиваются независимо."
         aside={
           <span
             className={cn(
@@ -477,7 +477,7 @@ export function NotificationsPage() {
       <NotificationGroupHeader
         number={2}
         title="Какие сообщения отправлять"
-        hint="Общие события панели. Виды инцидентов выбираются в настройках инцидентов."
+        hint="Общие события панели. Виды событий выбираются в настройках событий."
       />
       <SettingsCard title="Что присылать" hint="Одинаково для всех чатов.">
         {TELEGRAM_EVENT_GROUPS.map((g) => (
@@ -494,7 +494,7 @@ export function NotificationsPage() {
                     htmlFor={`tg-ev-${k}`}
                     label={
                       <>
-                        {TELEGRAM_EVENT_LABELS[k]}
+                        {k === 'scenario' ? 'Уведомления из сценариев' : TELEGRAM_EVENT_LABELS[k]}
                         {tone && (
                           <span
                             className={cn(
@@ -543,7 +543,7 @@ export function NotificationsPage() {
           label="Предупреждения без звука"
           htmlFor="tg-silent"
           hint={
-            'Звук только у критичных инцидентов, входа в панель и напоминаний; предупреждения приходят тихо.'
+            'Звук только у критичных событий, входа в панель и напоминаний; предупреждения приходят тихо.'
           }
         >
           <Toggle
@@ -566,7 +566,7 @@ export function NotificationsPage() {
         <SettingsRow
           label="Напоминать о нерешённом критичном"
           htmlFor="tg-remind"
-          hint="Если критичный инцидент всё ещё открыт — напоминание ответом на исходное сообщение."
+          hint="Если критичное событие всё ещё открыт — напоминание ответом на исходное сообщение."
         >
           <select
             aria-label="Как часто напоминать"
@@ -596,7 +596,7 @@ export function NotificationsPage() {
 
       <SettingsCard
         title="Тихие часы"
-        hint="Ночью сразу приходят только критичные инциденты и события входа в панель, остальное — утренней сводкой одним сообщением."
+        hint="Ночью сразу приходят только критичные события и события входа в панель, остальное — утренней сводкой одним сообщением."
       >
         <SettingsRow
           label="Тихие часы"

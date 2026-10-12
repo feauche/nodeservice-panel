@@ -129,7 +129,7 @@ describe('serverHealth', () => {
     });
     // «Определять автоматически»: контейнера нет — значит, ноды на сервере и не должно быть.
     expect(serverHealth({ ...base, node: 'none', nodeWatch: 'auto' })).toBe('ok');
-    // Слежение выключено — остановленный контейнер не судим (так же, как детекция инцидентов).
+    // Слежение выключено — остановленный контейнер не судим (так же, как детекция событий).
     expect(serverHealth({ ...base, node: 'stopped', nodeWatch: 'off' })).toBe('ok');
     expect(serverHealth({ ...base, node: 'running' })).toBe('ok');
   });

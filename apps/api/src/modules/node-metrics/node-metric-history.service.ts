@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/commo
 import { type NodeMetricHistory, tcpCheckReportSchema } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import { DB, type Db } from '../../infra/db/db.module.js';
+import { NodeEventsStore } from '../node-events/node-events.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
@@ -24,7 +25,7 @@ export function parseMetricHistoryRange(from: string, to: string, nodes = '', ma
     end - start > 30 * 86400000 ||
     !Number.isInteger(limit) ||
     limit < 60 ||
-    limit > 600 ||
+    limit > 1500 ||
     ids.length > 100 ||
     ids.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
   )
@@ -47,6 +48,7 @@ export class NodeMetricHistoryService {
     private readonly store: RemnawaveSettingsStore,
     private readonly remna: RemnawaveService,
     @Optional() private readonly monitoring?: MonitoringStore,
+    @Optional() private readonly timeline?: NodeEventsStore,
   ) {}
   async get(range: MetricHistoryRange): Promise<NodeMetricHistory> {
     const pollSeconds = this.monitoring ? (await this.monitoring.get()).pollSeconds : 60;
@@ -190,9 +192,21 @@ export class NodeMetricHistoryService {
       } catch {
         /* Older malformed records must not break the complete metric history. */
       }
+    const external = this.timeline
+      ? await this.timeline.list(
+          domain,
+          selected.map((n) => n.uuid),
+          range.start,
+          range.end,
+        )
+      : { events: [], truncated: false };
+    result.events.push(...external.events);
     result.events.sort((a, b) => a.t - b.t || a.id.localeCompare(b.id));
     result.eventsTruncated =
-      incidents.rows.length > 1000 || checks.rows.length > 1000 || result.events.length > 1000;
+      external.truncated ||
+      incidents.rows.length > 1000 ||
+      checks.rows.length > 1000 ||
+      result.events.length > 1000;
     result.events = result.events.slice(0, 1000);
     if ((await this.store.domain()) !== domain)
       throw new BadRequestException('Подключение изменилось. Обновите историю.');

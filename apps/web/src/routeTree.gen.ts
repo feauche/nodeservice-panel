@@ -19,6 +19,7 @@ import { Route as LockRouteImport } from './routes/lock';
 import { Route as LoginRouteImport } from './routes/login';
 import { Route as MetricsRouteImport } from './routes/metrics';
 import { Route as NodesRouteImport } from './routes/nodes';
+import { Route as ScenariosRouteImport } from './routes/scenarios';
 import { Route as ServersRouteImport } from './routes/servers';
 import { Route as SettingsRouteImport } from './routes/settings';
 import { Route as SetupRouteImport } from './routes/setup';
@@ -88,6 +89,11 @@ const MetricsRoute = MetricsRouteImport.update({
 const NodesRoute = NodesRouteImport.update({
   id: '/nodes',
   path: '/nodes',
+  getParentRoute: () => rootRouteImport,
+} as any);
+const ScenariosRoute = ScenariosRouteImport.update({
+  id: '/scenarios',
+  path: '/scenarios',
   getParentRoute: () => rootRouteImport,
 } as any);
 const ServersRoute = ServersRouteImport.update({
@@ -202,6 +208,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute;
   '/metrics': typeof MetricsRoute;
   '/nodes': typeof NodesRoute;
+  '/scenarios': typeof ScenariosRoute;
   '/servers': typeof ServersRoute;
   '/settings': typeof SettingsRouteWithChildren;
   '/setup': typeof SetupRoute;
@@ -234,6 +241,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute;
   '/metrics': typeof MetricsRoute;
   '/nodes': typeof NodesRoute;
+  '/scenarios': typeof ScenariosRoute;
   '/servers': typeof ServersRoute;
   '/setup': typeof SetupRoute;
   '/billing/providers': typeof BillingProvidersRoute;
@@ -266,6 +274,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute;
   '/metrics': typeof MetricsRoute;
   '/nodes': typeof NodesRoute;
+  '/scenarios': typeof ScenariosRoute;
   '/servers': typeof ServersRoute;
   '/settings': typeof SettingsRouteWithChildren;
   '/setup': typeof SetupRoute;
@@ -300,6 +309,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/metrics'
     | '/nodes'
+    | '/scenarios'
     | '/servers'
     | '/settings'
     | '/setup'
@@ -332,6 +342,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/metrics'
     | '/nodes'
+    | '/scenarios'
     | '/servers'
     | '/setup'
     | '/billing/providers'
@@ -363,6 +374,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/metrics'
     | '/nodes'
+    | '/scenarios'
     | '/servers'
     | '/settings'
     | '/setup'
@@ -396,6 +408,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute;
   MetricsRoute: typeof MetricsRoute;
   NodesRoute: typeof NodesRoute;
+  ScenariosRoute: typeof ScenariosRoute;
   ServersRoute: typeof ServersRoute;
   SettingsRoute: typeof SettingsRouteWithChildren;
   SetupRoute: typeof SetupRoute;
@@ -480,6 +493,13 @@ declare module '@tanstack/react-router' {
       path: '/nodes';
       fullPath: '/nodes';
       preLoaderRoute: typeof NodesRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    '/scenarios': {
+      id: '/scenarios';
+      path: '/scenarios';
+      fullPath: '/scenarios';
+      preLoaderRoute: typeof ScenariosRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     '/servers': {
@@ -662,6 +682,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   MetricsRoute: MetricsRoute,
   NodesRoute: NodesRoute,
+  ScenariosRoute: ScenariosRoute,
   ServersRoute: ServersRoute,
   SettingsRoute: SettingsRouteWithChildren,
   SetupRoute: SetupRoute,

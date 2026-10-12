@@ -24,7 +24,7 @@ describe('ReachabilityCard (B1)', () => {
     expect(screen.getByText('443: открыт с 2 из 3')).toBeInTheDocument();
   });
 
-  it('в разборе инцидента явно отделяет SSH и ICMP от пользовательского порта ноды', () => {
+  it('в разборе события явно отделяет SSH и ICMP от пользовательского порта ноды', () => {
     const result = sampleReach('Финляндия - 1', 'open');
     result.purpose = 'ssh';
     result.probes[0] = { ...(result.probes[0] as (typeof result.probes)[number]), ping: 23 };

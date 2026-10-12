@@ -128,9 +128,7 @@ describe('вкладка «Профиль» (J3, A5 + R2 + C3)', () => {
 
     await user.click(within(dialog).getByRole('button', { name: /Нет, не следить/ }));
     expect(within(dialog).getByText('Слежение выключено')).toBeInTheDocument();
-    expect(
-      within(dialog).getByText(/инцидент об остановленной ноде заводиться не будет/),
-    ).toBeInTheDocument();
+    expect(within(dialog).getByText(/событие об остановленной ноде заводиться не будет/)).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Сохранить' })).toBeEnabled();
     await user.click(within(dialog).getByRole('button', { name: 'Отменить' }));
     expect(within(dialog).getByRole('button', { name: /Определять автоматически/ })).toHaveAttribute(

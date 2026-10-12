@@ -10,7 +10,7 @@ import { renderPage } from '@/test/render';
 import { RemnaOverview } from './remna-overview';
 
 const Page = () => <RemnaOverview view="now" />;
-describe('Обзор Remnawave: открытые инциденты', () => {
+describe('Обзор Remnawave: открытые события', () => {
   beforeEach(() => {
     resetMockState({ authenticated: true });
     Object.assign(mockRemnawave, {
@@ -47,10 +47,10 @@ describe('Обзор Remnawave: открытые инциденты', () => {
     );
   });
   it.each(['open', 'acknowledged'] as const)(
-    'показывает %s инцидент даже при доступной ноде; ссылка ведёт в кейс',
+    'показывает %s событие даже при доступной ноде; ссылка ведёт в кейс',
     async (status) => {
       const base = mockIncidents.items[0];
-      if (!base) throw new Error('Нет тестового инцидента');
+      if (!base) throw new Error('Нет тестового события');
       mockIncidents.items = [
         {
           ...base,
@@ -62,7 +62,7 @@ describe('Обзор Remnawave: открытые инциденты', () => {
       ];
       const { router } = renderPage(Page, '/', ['/incidents/$id']);
       const link = await screen.findByRole('link', { name: /CDNVideo-SW.*Падение онлайна/ });
-      expect(screen.queryByText('Нет открытых инцидентов')).not.toBeInTheDocument();
+      expect(screen.queryByText('Нет открытых событий')).not.toBeInTheDocument();
       expect(screen.getByRole('heading', { name: 'Требует внимания 1' })).toBeInTheDocument();
       await userEvent.setup().click(link);
       expect(router.state.location.pathname).toBe(`/incidents/${base.id}`);
@@ -71,16 +71,16 @@ describe('Обзор Remnawave: открытые инциденты', () => {
   it('ошибка загрузки не выдаётся за отсутствие проблем', async () => {
     server.use(http.get('/api/incidents', () => HttpResponse.json({ message: 'Ошибка' }, { status: 500 })));
     renderPage(Page, '/');
-    expect(await screen.findByText(/Не удалось проверить открытые инциденты/)).toBeInTheDocument();
-    expect(screen.queryByText('Нет открытых инцидентов')).not.toBeInTheDocument();
+    expect(await screen.findByText(/Не удалось проверить открытые события/)).toBeInTheDocument();
+    expect(screen.queryByText('Нет открытых событий')).not.toBeInTheDocument();
   });
-  it('решённый инцидент не включается в список внимания', async () => {
+  it('решённое событие не включается в список внимания', async () => {
     mockIncidents.items = mockIncidents.items.map((i) => ({ ...i, status: 'resolved' }));
     renderPage(Page, '/');
     expect(await screen.findByRole('heading', { name: 'Требует внимания 0' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Падение онлайна/ })).not.toBeInTheDocument();
   });
-  it('потеря связи и инцидент одной ноды не дублируются', async () => {
+  it('потеря связи и событие одной ноды не дублируются', async () => {
     const base = mockIncidents.items[0];
     const node = mockRemnawave.nodes[0];
     if (!base || !node) throw new Error('Нет фикстуры');
@@ -93,7 +93,7 @@ describe('Обзор Remnawave: открытые инциденты', () => {
     expect(screen.getByRole('heading', { name: 'Требует внимания 1' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Нет связи/ })).not.toBeInTheDocument();
   });
-  it('потеря связи отображается и до создания инцидента', async () => {
+  it('потеря связи отображается и до создания события', async () => {
     const node = mockRemnawave.nodes[0];
     if (!node) throw new Error('Нет ноды');
     node.isConnected = false;

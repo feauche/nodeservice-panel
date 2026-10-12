@@ -89,7 +89,7 @@ export function AutofixPage() {
           className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground"
         >
           <ArrowLeftIcon className="size-3.5" aria-hidden="true" />
-          Инциденты
+          События
         </Link>
         <span className="flex-1" />
         {paused ? (
@@ -115,7 +115,7 @@ export function AutofixPage() {
               { pauseMinutes: paused ? 0 : 60 },
               paused
                 ? 'Пауза снята.'
-                : 'Автопочинка на паузе на час: инциденты заводятся, шаги не выполняются.',
+                : 'Автопочинка на паузе на час: события заводятся, шаги не выполняются.',
             )
           }
           className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-default disabled:opacity-50"

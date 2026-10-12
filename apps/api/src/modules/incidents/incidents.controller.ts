@@ -1,19 +1,6 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  HttpCode,
-  Param,
-  ParseUUIDPipe,
-  Patch,
-  Post,
-  Query,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
-  type ActionKey,
-  actionKeySchema,
   incidentPolicyResponseSchema,
   incidentPolicyUpdateSchema,
   incidentSchema,
@@ -24,7 +11,6 @@ import {
 } from '@nodeservice/shared';
 import { createZodDto } from 'nestjs-zod';
 
-import { Audit } from '../audit/audit.decorator.js';
 import { IncidentsService } from './incidents.service.js';
 
 export class IncidentsListQueryDto extends createZodDto(incidentsListQuerySchema) {}
@@ -41,7 +27,7 @@ export class IncidentsController {
   constructor(private readonly incidents: IncidentsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Список инцидентов (all/open/resolved) со счётчиками' })
+  @ApiOperation({ summary: 'Список событий (all/open/resolved) со счётчиками' })
   @ApiOkResponse({ type: IncidentsListResponseDto })
   list(@Query() query: IncidentsListQueryDto): Promise<IncidentsListResponseDto> {
     return this.incidents.list(query.status, {
@@ -61,13 +47,13 @@ export class IncidentsController {
 
   @Delete('resolved')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Удалить все решённые инциденты' })
+  @ApiOperation({ summary: 'Удалить все завершённые события' })
   deleteResolved(): Promise<{ deleted: number }> {
     return this.incidents.deleteResolved();
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Один инцидент с хронологией и попытками' })
+  @ApiOperation({ summary: 'Одно событие с хронологией и попытками' })
   @ApiOkResponse({ type: IncidentDto })
   get(@Param('id', ParseUUIDPipe) id: string): Promise<IncidentDto> {
     return this.incidents.get(id);
@@ -75,14 +61,14 @@ export class IncidentsController {
 
   @Delete(':id')
   @HttpCode(204)
-  @ApiOperation({ summary: 'Удалить инцидент из истории' })
+  @ApiOperation({ summary: 'Удалить событие из истории' })
   remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.incidents.delete(id);
   }
 
   @Post(':id/acknowledge')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Взять инцидент в работу' })
+  @ApiOperation({ summary: 'Взять событие в работу' })
   @ApiOkResponse({ type: IncidentDto })
   acknowledge(@Param('id', ParseUUIDPipe) id: string): Promise<IncidentDto> {
     return this.incidents.acknowledge(id);
@@ -90,11 +76,10 @@ export class IncidentsController {
 
   @Post(':id/resolve')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Закрыть инцидент вручную' })
+  @ApiOperation({ summary: 'Завершить событие вручную' })
   @ApiOkResponse({ type: IncidentDto })
   resolve(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown): Promise<IncidentDto> {
     // Тело необязательно: без него — обычное закрытие.
     return this.incidents.resolveManual(id, resolveIncidentRequestSchema.parse(body ?? {}));
   }
-
 }

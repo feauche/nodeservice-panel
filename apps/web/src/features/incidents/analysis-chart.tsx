@@ -11,13 +11,13 @@ import { useIncidentsSettings } from './incidents-settings-api';
 const THRESHOLD_KEY = { cpuPct: 'cpuPct', memPct: 'memPct', diskPct: 'diskPct' } as const;
 const RANGE_LABEL = { '1h': 'последний час', '24h': 'последние сутки', '7d': 'последние 7 дней' } as const;
 
-/** Не у каждого инцидента есть что нарисовать: только нагрузка и место. */
+/** Не у каждого события есть что нарисовать: только нагрузка и место. */
 export const hasAnalysisChart = (inc: Pick<Incident, 'kind' | 'serverId' | 'detail'>): boolean =>
   inc.serverId !== null &&
   (INCIDENT_CHART_METRIC[inc.kind] !== undefined || /Онлайн:\s*\d+\s*→\s*\d+/.test(inc.detail));
 
 /**
- * График-доказательство: метрика за окно вокруг инцидента, порог, момент открытия и попытки починки.
+ * График-доказательство: метрика за окно вокруг события, порог, момент открытия и попытки починки.
  * Текста внутри SVG нет: он растягивается по ширине, а подписи должны оставаться читаемыми на телефоне.
  */
 export function AnalysisChart({ incident }: { incident: Incident }) {

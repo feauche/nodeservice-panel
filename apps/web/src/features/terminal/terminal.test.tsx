@@ -286,7 +286,7 @@ describe('терминал поверх разделов (настоящие м�
     const { win, ws, name } = await openLiveTerminal();
 
     await act(() => router.navigate({ to: '/incidents' }));
-    await screen.findByRole('heading', { level: 1, name: 'Инциденты' });
+    await screen.findByRole('heading', { level: 1, name: 'События' });
     await act(() => router.navigate({ to: '/billing' }));
     await screen.findByRole('heading', { level: 1, name: 'Биллинг' });
 
@@ -459,7 +459,7 @@ describe('терминал поверх разделов (настоящие м�
 
   it('жест «назад» не пересоздаёт окно сервера: несохранённые правки остаются', async () => {
     const router = renderApp('/incidents');
-    await screen.findByRole('heading', { level: 1, name: 'Инциденты' });
+    await screen.findByRole('heading', { level: 1, name: 'События' });
     await act(() => router.navigate({ to: '/nodes' }));
     await screen.findByRole('heading', { level: 1, name: 'Ноды' });
     const first = mockServers.items[0];
@@ -472,7 +472,7 @@ describe('терминал поверх разделов (настоящие м�
 
     act(() => router.history.back());
     await waitFor(() => expect(router.state.location.pathname).toBe('/incidents'));
-    await screen.findByRole('heading', { level: 1, name: 'Инциденты' });
+    await screen.findByRole('heading', { level: 1, name: 'События' });
     expect(screen.getByRole('dialog', { name: first.name })).toBe(modal);
     expect(within(modal).getByLabelText('Название')).toHaveValue('de-fra-01-new');
   });

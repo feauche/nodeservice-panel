@@ -1,13 +1,12 @@
-import { TcpResults } from '@/features/nodes/tcp-results';
 import { actionMeta, INCIDENT_KIND_META, type Incident, type IncidentStatus } from '@nodeservice/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeftIcon, CheckIcon, ServerIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
-
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatWhen } from '@/features/audit/audit-format';
+import { TcpResults } from '@/features/nodes/tcp-results';
 import { openServer } from '@/features/servers/server-modal-store';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
@@ -26,9 +25,9 @@ import {
 } from './incidents-api';
 
 const STATUS_PILL: Record<IncidentStatus, { tone: 'ok' | 'warn' | 'crit' | 'muted'; label: string }> = {
-  open: { tone: 'crit', label: 'Открыт' },
+  open: { tone: 'crit', label: 'Активно' },
   acknowledged: { tone: 'warn', label: 'В работе' },
-  resolved: { tone: 'ok', label: 'Решён' },
+  resolved: { tone: 'ok', label: 'Завершено' },
 };
 const SEV_LABEL: Record<Incident['severity'], string> = { crit: 'Критично', warn: 'Внимание', info: 'Инфо' };
 /** Кнопки шапки: одна высота, одна рамка, одинаковые отступы — ряд читается как один блок. */
@@ -36,7 +35,7 @@ const BTN =
   'inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3.5 text-[12.5px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-default disabled:opacity-50';
 
 /**
- * Инцидент как страница-кейс (витрина v3, B1): шапка с действиями, слева хронология и попытки,
+ * Событие как страница-кейс (витрина v3, B1): шапка с действиями, слева хронология и попытки,
  * справа сигналы в момент сбоя, правило и похожие случаи.
  */
 export function IncidentCasePage({ id }: { id: string }) {
@@ -68,10 +67,10 @@ export function IncidentCasePage({ id }: { id: string }) {
           role="alert"
           className="rounded-[12px] border border-crit/30 bg-crit-soft px-4 py-3 text-[13px] text-crit"
         >
-          {q.error ? apiErrorMessage(q.error) : 'Инцидент не найден.'}
+          {q.error ? apiErrorMessage(q.error) : 'Событие не найден.'}
         </p>
         <Link to="/incidents" className={BTN}>
-          <ArrowLeftIcon className="size-3.5" aria-hidden="true" />К инцидентам
+          <ArrowLeftIcon className="size-3.5" aria-hidden="true" />К событиям
         </Link>
       </div>
     );
@@ -99,7 +98,7 @@ export function IncidentCasePage({ id }: { id: string }) {
         className="inline-flex w-fit items-center gap-1.5 text-[12.5px] text-text-3 hover:text-foreground"
       >
         <ArrowLeftIcon className="size-3.5" aria-hidden="true" />
-        Все инциденты
+        Все события
       </Link>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-surface">
@@ -119,7 +118,7 @@ export function IncidentCasePage({ id }: { id: string }) {
             <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[12.5px] text-text-3">
               <Pill tone={status.tone}>{status.label}</Pill>
               <span>
-                Открыт {formatWhen(inc.openedAt)} · {inc.status === 'resolved' ? 'длился' : 'длится'}{' '}
+                Обнаружено {formatWhen(inc.openedAt)} · {inc.status === 'resolved' ? 'длилось' : 'длится'}{' '}
                 {durationText(inc, now).replace('…', '')} · {meta.component} · {SEV_LABEL[inc.severity]}
               </span>
             </p>
@@ -242,10 +241,10 @@ export function IncidentCasePage({ id }: { id: string }) {
           setConfirmResolve(o);
           if (!o) setStopNodeWatch(false);
         }}
-        title="Закрыть инцидент?"
+        title="Закрыть событие?"
         description={
           <>
-            Инцидент будет отмечен как решённый вручную. Если проблема вернётся — панель заведёт новый.
+            Событие будет завершено вручную. Если проблема вернётся — панель создаст новое.
             {canStopNodeWatch && (
               <label
                 htmlFor="inc-stop-node-watch"
@@ -278,8 +277,8 @@ export function IncidentCasePage({ id }: { id: string }) {
             setStopNodeWatch(false);
             toast.success(
               stopNodeWatch
-                ? 'Инцидент закрыт, за нодой на этом сервере больше не следим.'
-                : 'Инцидент закрыт.',
+                ? 'Событие завершено, за нодой на этом сервере больше не следим.'
+                : 'Событие закрыт.',
             );
           } catch (err) {
             setConfirmResolve(false);
@@ -291,11 +290,11 @@ export function IncidentCasePage({ id }: { id: string }) {
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         kind="crit"
-        title="Удалить инцидент?"
+        title="Удалить событие?"
         description={
           inc.status === 'resolved'
             ? 'Хронология и попытки починки по нему пропадут, статистика «помогло N из M» пересчитается. Записи Журнала остаются.'
-            : 'Идущая попытка будет прервана, хронология пропадёт. Если проблема не ушла, панель заведёт новый инцидент.'
+            : 'Идущая попытка будет прервана, хронология пропадёт. Если проблема не ушла, панель заведёт новое событие.'
         }
         yesLabel="Удалить"
         loading={remove.isPending}
@@ -303,7 +302,7 @@ export function IncidentCasePage({ id }: { id: string }) {
           try {
             await remove.mutateAsync(inc.id);
             setConfirmDelete(false);
-            toast.success('Инцидент удалён.');
+            toast.success('Событие удалён.');
             void navigate({ to: '/incidents' });
           } catch (err) {
             setConfirmDelete(false);

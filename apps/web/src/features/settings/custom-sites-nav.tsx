@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { RowsSkeleton } from '@/components/ui/loading-state';
+import { NavGroupLabel } from '@/components/ui/nav-group-label';
 import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useCustomSites, useUpdateCustomSites } from './settings-api';
@@ -298,13 +299,10 @@ export function CustomSitesNav({
 
   return (
     <>
-      <div
-        className={cn(
-          'mt-1 border-t border-border px-3 pt-3 pb-1.5 text-[10.5px] font-semibold tracking-[0.13em] text-text-3 uppercase',
-          hideLabel && 'mx-2 px-0 text-center text-[0px]',
-        )}
-      >
-        <span className={cn(railOnPhone && 'max-md:sr-only', hideLabel && 'sr-only')}>Свои сайты</span>
+      <div className="mt-1 border-t border-border pt-2">
+        <NavGroupLabel hidden={hideLabel}>
+          <span className={cn(railOnPhone && 'max-md:sr-only')}>Свои сайты</span>
+        </NavGroupLabel>
       </div>
 
       {items.map((site) => (

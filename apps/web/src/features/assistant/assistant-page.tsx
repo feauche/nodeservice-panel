@@ -705,7 +705,7 @@ function EmptyChat() {
         <span className="grid size-11 place-items-center rounded-2xl bg-brand-soft text-brand">
           <JarvisIcon className="size-5" aria-hidden="true" />
         </span>
-        <p className="text-[14px] font-semibold">Спросите о нодах, метриках или сохранённых инцидентах</p>
+        <p className="text-[14px] font-semibold">Спросите о нодах, метриках или сохранённых событиях</p>
         <p className="max-w-[380px] text-[12.5px] text-text-3">
           Ассистент смотрит метрики, Журнал и базу знаний. Действия он только предлагает, запускаете их вы.
         </p>
@@ -834,7 +834,7 @@ const CITE_META: Record<
   { label: string; icon: ComponentType<SVGProps<SVGSVGElement>> }
 > = {
   kb: { label: 'База знаний', icon: BookOpenIcon },
-  incident: { label: 'Инцидент', icon: AlertTriangleIcon },
+  incident: { label: 'Событие', icon: AlertTriangleIcon },
   audit: { label: 'Журнал', icon: FileClockIcon },
   server: { label: 'Исторический сервер', icon: ServerIcon },
   node: { label: 'Нода', icon: ServerIcon },

@@ -36,7 +36,7 @@ describe('AssistantPage', () => {
     expect(within(card).getByText('T2')).toBeInTheDocument();
     expect(within(card).getByText(/Почему:/)).toBeInTheDocument();
     expect(within(card).getByRole('button', { name: 'Выполнить' })).toBeInTheDocument();
-    expect(within(card).getByRole('link', { name: 'Открыть инцидент' })).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: 'Открыть событие' })).toBeInTheDocument();
     // цитата на базу знаний ведёт на конкретную статью (?open=<id>), а не просто в раздел
     const kbLink = screen.getByRole('link', { name: /Лимит conntrack/ });
     expect(kbLink.getAttribute('href')).toContain('open=');
@@ -145,26 +145,26 @@ describe('AssistantPage', () => {
       await user.type(await screen.findByLabelText('Сообщение Ассистенту'), text);
       await user.click(screen.getByRole('button', { name: 'Отправить' }));
       const list = await screen.findByTestId('assistant-messages');
-      await within(list).findByText(/Инциденты по серверам за всё время/);
+      await within(list).findByText(/События по серверам за всё время/);
       return { user, list };
     };
 
     it('исторические серверные упоминания не получают состояние текущих нод', async () => {
-      const { list } = await ask('а по каким серверам больше инцидентов');
+      const { list } = await ask('а по каким серверам больше событий');
       expect(within(list).queryByRole('button', { name: 'nl-ams-02' })).not.toBeInTheDocument();
       const historical = within(list).getByTitle('Исторический сервер: de-fra-01');
       expect(historical.querySelector('[data-health]')).toBeNull();
     });
 
     it('два ответа подряд: значок Ассистента только у первого, «сейчас посмотрю» приглушено', async () => {
-      const { list } = await ask('а по каким серверам больше инцидентов');
+      const { list } = await ask('а по каким серверам больше событий');
       expect(within(list).getAllByTestId('assistant-avatar')).toHaveLength(1);
-      const interim = within(list).getByText('Смотрю историю инцидентов за всё время.');
+      const interim = within(list).getByText('Смотрю историю событий за всё время.');
       expect(interim.closest('div')?.className).toContain('[&_p]:text-text-3');
     });
 
     it('«Основано на:» — одна строка на ответ и только если есть источники', async () => {
-      const { list } = await ask('а по каким серверам больше инцидентов');
+      const { list } = await ask('а по каким серверам больше событий');
       expect(within(list).getAllByText('Основано на:')).toHaveLength(1);
     });
 
@@ -179,7 +179,7 @@ describe('AssistantPage', () => {
     });
 
     it('чип сервера в источниках открывает карточку', async () => {
-      const { user, list } = await ask('а по каким серверам больше инцидентов');
+      const { user, list } = await ask('а по каким серверам больше событий');
       const sources = await within(list).findByTestId('assistant-sources');
       await user.click(within(sources).getByRole('button', { name: 'de-fra-01' }));
       expect(useServerModalStore.getState().serverId).toBe(
@@ -315,7 +315,7 @@ describe('AssistantPage', () => {
         ).toHaveLength(1),
       );
       await waitFor(() =>
-        expect(screen.queryByText('Спросите о нодах, метриках или сохранённых инцидентах')).toBeNull(),
+        expect(screen.queryByText('Спросите о нодах, метриках или сохранённых событиях')).toBeNull(),
       );
 
       await waitFor(() => expect(typing()).toBeNull(), { timeout: 4000 });
@@ -450,7 +450,7 @@ describe('AssistantPage', () => {
       expect(hiddenOnPhone(newChat)).toBe(false);
       await user.click(newChat);
       expect(
-        await screen.findByText('Спросите о нодах, метриках или сохранённых инцидентах'),
+        await screen.findByText('Спросите о нодах, метриках или сохранённых событиях'),
       ).toBeInTheDocument();
       expect(within(list).queryByText('Под нагрузкой один сервер из трёх.')).toBeNull();
       expect(screen.queryByTestId('assistant-conversation-title')).toBeNull();

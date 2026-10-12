@@ -173,12 +173,12 @@ function makeChange(kind: ChangeKind): AssistantChangeProposal {
       reason: 'Вы просили привести названия к единому виду.',
       rows: [{ label: 'Название', before: server, after: 'ru-entry-9' }],
       consequence:
-        'Новое название появится в списке серверов и в инцидентах; в прежних записях Журнала останется старое.',
+        'Новое название появится в списке серверов и в событиях; в прежних записях Журнала останется старое.',
       reversible: true,
     },
     close: {
       operation: 'incident.resolve',
-      title: 'Закрыть инцидент',
+      title: 'Закрыть событие',
       level: 'T2',
       target: {
         type: 'incident',
@@ -187,7 +187,7 @@ function makeChange(kind: ChangeKind): AssistantChangeProposal {
       },
       reason: 'Нода снова работает: контейнер remnanode запущен, порт 443 слушается.',
       rows: [{ label: 'Статус', before: 'Открыт', after: 'Закрыт вручную' }],
-      consequence: 'Если проблема осталась, панель заведёт новый инцидент. Закрытие кнопкой не отменяется.',
+      consequence: 'Если проблема осталась, панель заведёт новый событие. Закрытие кнопкой не отменяется.',
       reversible: false,
     },
     pause: {
@@ -197,7 +197,7 @@ function makeChange(kind: ChangeKind): AssistantChangeProposal {
       target: { type: 'settings', id: 'incidents', label: 'Автопочинка' },
       reason: `Вы собираетесь обновлять ${server} и не хотите, чтобы панель сама перезапускала службы.`,
       rows: [{ label: 'Автопочинка', before: 'Работает', after: 'На паузе на 1 ч' }],
-      consequence: 'Пока пауза, панель сама ничего не чинит; инциденты по-прежнему заводятся и видны.',
+      consequence: 'Пока пауза, панель сама ничего не чинит; события по-прежнему заводятся и видны.',
       reversible: true,
     },
     cleanup: {
@@ -236,7 +236,7 @@ function makeChange(kind: ChangeKind): AssistantChangeProposal {
       reason: 'Очистка диска помогала в трёх случаях из трёх.',
       rows: [{ label: 'Режим для «Диск заполняется»', before: 'Спросить', after: 'Само' }],
       consequence:
-        'Панель сама выполнит безопасные шаги (T1) при этом виде инцидента, без вашего нажатия. Шаги с подтверждением (T2) по-прежнему только по вашему решению.',
+        'Панель сама выполнит безопасные шаги (T1) при этом виде события, без вашего нажатия. Шаги с подтверждением (T2) по-прежнему только по вашему решению.',
       reversible: true,
     },
     expired: {
@@ -298,7 +298,7 @@ const CHANGE_TRIGGERS: Array<[RegExp, ChangeKind[]]> = [
   [/профил/i, ['profile']],
   [/заметк/i, ['notes']],
   [/переименуй/i, ['rename']],
-  [/закр[ойы]\S* инцидент/i, ['close']],
+  [/закр[ойы]\S* событие/i, ['close']],
   [/пауз/i, ['pause']],
   [/очист/i, ['cleanup']],
   [/режим автопочинки/i, ['policy']],
@@ -306,7 +306,7 @@ const CHANGE_TRIGGERS: Array<[RegExp, ChangeKind[]]> = [
   [/просроч/i, ['expired']],
 ];
 
-/** Демо-ответ Ассистента: цитаты (база знаний + инцидент) и предложение автопочинки. */
+/** Демо-ответ Ассистента: цитаты (база знаний + событие) и предложение автопочинки. */
 function buildReply(text = ''): AssistantMessage {
   const kinds = CHANGE_TRIGGERS.find(([re]) => re.test(text))?.[1];
   if (kinds && mockAssistant.permissions.changes)
@@ -372,7 +372,7 @@ function buildFleetReplies(): AssistantMessage[] {
     {
       id: uid(),
       role: 'assistant',
-      content: 'Смотрю историю инцидентов за всё время.',
+      content: 'Смотрю историю событий за всё время.',
       citations: [],
       proposals: [],
       reachability: [],
@@ -383,7 +383,7 @@ function buildFleetReplies(): AssistantMessage[] {
       id: uid(),
       role: 'assistant',
       content:
-        '**Инциденты по серверам за всё время:**\n\n- de-fra-01 — 4 инцидента, все закрыты\n- nl-ams-02 — 2 инцидента, все закрыты\n\nБольше всего сбоев на первом.',
+        '**События по серверам за всё время:**\n\n- de-fra-01 — 4 события, все закрыты\n- nl-ams-02 — 2 события, все закрыты\n\nБольше всего сбоев на первом.',
       citations: fra ? [{ type: 'server', id: fra.id, label: fra.name }] : [],
       proposals: [],
       reachability: [],

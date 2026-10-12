@@ -11,7 +11,7 @@ import {
   ZoomInIcon,
   ZoomOutIcon,
 } from 'lucide-react';
-import { type ComponentProps, useMemo, useState } from 'react';
+import { type ComponentProps, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CartesianGrid,
   Line,
@@ -30,7 +30,7 @@ import { ChartSkeleton, RowsSkeleton } from '@/components/ui/loading-state';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useNodes } from '@/features/nodes/nodes-api';
-import { BarButton as BaseBarButton, CardButton, Pill } from '@/features/settings/settings-ui';
+import { BarButton as BaseBarButton, CardButton } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -74,11 +74,33 @@ export function MetricsHistoryPage({ overview = false }: { overview?: boolean })
     [to, setTo] = useState(''),
     [dateError, setDateError] = useState('');
   const [drag, setDrag] = useState<{ start: number; end: number } | null>(null);
+  const [eventPage, setEventPage] = useState(1),
+    [eventSize, setEventSize] = useState('10');
+  const [focusedEvent, setFocusedEvent] = useState<
+    import('@nodeservice/shared').NodeMetricHistory['events'][number] | null
+  >(null);
+  const chartRef = useRef<HTMLElement>(null);
+  const selectedKey = selected.join(',');
+  const eventsQuery = useQuery({
+    queryKey: ['metrics-history', full.from, full.to, selected.join(',')],
+    queryFn: ({ signal }) =>
+      api.get(
+        `/nodes/metrics/history?${new URLSearchParams({ from: new Date(full.from).toISOString(), to: new Date(full.to).toISOString(), nodes: selected.join(','), maxPoints: '1500' })}`,
+        nodeMetricHistorySchema,
+        signal,
+      ),
+    staleTime: 60000,
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset selection and pagination when the user's full range or nodes change.
+  useEffect(() => {
+    setEventPage(1);
+    setFocusedEvent(null);
+  }, [full.from, full.to, selectedKey]);
   const query = useQuery({
     queryKey: ['metrics-history', range.from, range.to, selected.join(',')],
     queryFn: ({ signal }) =>
       api.get(
-        `/nodes/metrics/history?${new URLSearchParams({ from: new Date(range.from).toISOString(), to: new Date(range.to).toISOString(), nodes: selected.join(','), maxPoints: '400' })}`,
+        `/nodes/metrics/history?${new URLSearchParams({ from: new Date(range.from).toISOString(), to: new Date(range.to).toISOString(), nodes: selected.join(','), maxPoints: '1500' })}`,
         nodeMetricHistorySchema,
         signal,
       ),
@@ -110,7 +132,16 @@ export function MetricsHistoryPage({ overview = false }: { overview?: boolean })
       }
     return [...map.values()].sort((a, b) => Number(a.t) - Number(b.t));
   }, [nodes, kind]);
-  const events = (query.data?.events ?? []).filter((e) => e.t >= range.from && e.t < range.to);
+  const events = [...(eventsQuery.data?.events ?? [])].sort((a, b) => b.t - a.t || a.id.localeCompare(b.id));
+  const pages = Math.max(1, Math.ceil(events.length / Number(eventSize)));
+  const currentPage = Math.min(eventPage, pages);
+  const eventRows = events.slice((currentPage - 1) * Number(eventSize), currentPage * Number(eventSize));
+  const focusEvent = (e: NonNullable<typeof focusedEvent>) => {
+    setFocusedEvent(e);
+    setShowEvents(true);
+    setRange({ from: Math.max(full.from, e.t - 15 * 60000), to: Math.min(full.to, e.t + 15 * 60000) });
+    chartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   const visibleInventory = (inventory.data?.nodes ?? []).filter((n) =>
     `${n.name} ${n.address}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
   );
@@ -138,7 +169,7 @@ export function MetricsHistoryPage({ overview = false }: { overview?: boolean })
   const hasData = data.some((p) => nodes.some((n) => p[n.uuid] !== null && p[n.uuid] !== undefined));
   const onlineSummary = query.data?.onlineSummary;
   return (
-    <div className="flex min-h-0 flex-col gap-4 xl:h-[calc(100dvh-206px)] xl:min-h-[480px] xl:-mb-11 [@media(min-width:1280px)_and_(max-height:850px)]:h-auto [@media(min-width:1280px)_and_(max-height:850px)]:min-h-0 [@media(min-width:1280px)_and_(max-height:850px)]:mb-0">
+    <div className="flex min-w-0 flex-col gap-4 pb-2">
       <section className="flex flex-none flex-col gap-4 rounded-[14px] border border-border bg-surface p-[18px]">
         <div className="flex items-center gap-3">
           <span className="grid size-9 place-items-center rounded-[10px] bg-brand-soft text-brand">
@@ -216,14 +247,23 @@ export function MetricsHistoryPage({ overview = false }: { overview?: boolean })
           >
             Выбрать даты
           </BarButton>
-          <BarButton disabled={query.isFetching} onClick={() => void query.refetch()}>
+          <BarButton
+            disabled={query.isFetching || eventsQuery.isFetching}
+            onClick={() => {
+              void query.refetch();
+              void eventsQuery.refetch();
+            }}
+          >
             <RefreshCwIcon className={query.isFetching ? 'animate-spin' : ''} />
             Обновить
           </BarButton>
         </div>
       </section>
-      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <section className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-[14px] border border-border bg-surface">
+      <div className="grid gap-4 grid-cols-1">
+        <section
+          ref={chartRef}
+          className="scroll-mt-4 flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-[14px] border border-border bg-surface"
+        >
           <div
             className="grid flex-none grid-cols-3 gap-px border-b border-border bg-border"
             data-testid="online-period-summary"
@@ -259,6 +299,27 @@ export function MetricsHistoryPage({ overview = false }: { overview?: boolean })
               Неполные снимки исключены из сводки онлайна.
             </p>
           )}
+          {focusedEvent && (
+            <div
+              role="status"
+              className="flex flex-wrap items-center justify-between gap-3 border-b border-brand/30 bg-brand-soft px-4 py-3"
+            >
+              <div>
+                <strong className="text-sm">{focusedEvent.title}</strong>
+                <p className="mt-1 text-xs text-text-2">
+                  {focusedEvent.nodeName} · {dateLabel(focusedEvent.t)} · {focusedEvent.summary}
+                </p>
+              </div>
+              <BarButton
+                onClick={() => {
+                  setFocusedEvent(null);
+                  chooseRange(full);
+                }}
+              >
+                Сбросить выбор
+              </BarButton>
+            </div>
+          )}
           <header className="flex flex-none flex-wrap items-center justify-between gap-3 border-b border-border px-[18px] py-3.5">
             <div>
               <h3 className="text-[14px] font-semibold">{metrics[kind]}</h3>
@@ -286,14 +347,14 @@ export function MetricsHistoryPage({ overview = false }: { overview?: boolean })
               ))}
             </div>
           </header>
-          <div className="min-h-[180px] flex-1 p-4 [@media(min-width:1280px)_and_(max-height:850px)]:h-[240px] [@media(min-width:1280px)_and_(max-height:850px)]:flex-none">
+          <div className="h-[460px] min-h-[320px] p-4 max-md:h-[340px]">
             {query.isPending ? (
               <ChartSkeleton />
             ) : query.isError ? (
               <p role="alert" className="text-crit">
                 {apiErrorMessage(query.error)}
               </p>
-            ) : !hasData ? (
+            ) : !hasData && !focusedEvent ? (
               <p className="grid h-full place-items-center text-[13px] text-text-3">
                 За этот период ещё нет замеров
               </p>
@@ -398,6 +459,19 @@ export function MetricsHistoryPage({ overview = false }: { overview?: boolean })
                           strokeDasharray="3 3"
                         />
                       ))}
+                  {focusedEvent && (
+                    <ReferenceLine
+                      x={focusedEvent.t}
+                      stroke="var(--ns-crit)"
+                      strokeWidth={3}
+                      ifOverflow="extendDomain"
+                      label={{
+                        value: 'Выбранное событие',
+                        position: 'insideTopRight',
+                        fill: 'var(--ns-crit)',
+                      }}
+                    />
+                  )}
                   {drag && (
                     <ReferenceArea
                       x1={Math.min(drag.start, drag.end)}
@@ -452,64 +526,121 @@ export function MetricsHistoryPage({ overview = false }: { overview?: boolean })
             </span>
           </footer>
         </section>
-        <section className="flex min-h-0 flex-col overflow-hidden rounded-[14px] border border-border bg-surface">
-          <header className="flex items-center justify-between border-b border-border px-[18px] py-3.5">
-            <h3 className="text-[14px] font-semibold">События за промежуток</h3>
-            <Pill>{query.isPending || query.isError ? '—' : events.length}</Pill>
-          </header>
-          <div className="min-h-0 flex-1 overflow-y-auto p-3 max-xl:max-h-[300px]">
-            {query.isPending && <RowsSkeleton rows={3} label="Загрузка событий метрик" />}
-            {query.isError && (
-              <p className="px-2 py-3 text-[12px] text-warn">События не удалось загрузить.</p>
-            )}
-            {!query.isPending && !query.isError && events.length === 0 && (
-              <p className="px-2 py-3 text-[12px] text-text-3">Событий за выбранный промежуток нет</p>
-            )}
-            {events.map((e) => (
-              <details
-                key={e.id}
-                className="mb-2 overflow-hidden rounded-[10px] border border-border bg-surface-2"
+        <section
+          className="overflow-hidden rounded-[14px] border border-border bg-surface"
+          aria-label="События метрик"
+        >
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4">
+            <h3 className="text-[14px] font-semibold">
+              События за промежуток{' '}
+              <span className="ml-2 text-text-3">{eventsQuery.isPending ? '—' : events.length}</span>
+            </h3>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-3">Показывать</span>
+              <Select
+                value={eventSize}
+                onValueChange={(v) => {
+                  setEventSize(v);
+                  setEventPage(1);
+                }}
               >
-                <summary className="cursor-pointer list-none p-3">
-                  <span className="block text-[11px] text-text-3">{dateLabel(e.t)}</span>
-                  <span className="mt-1 block text-[13px] font-semibold">{e.title}</span>
-                  <span className="mt-1 block truncate text-[12px] text-text-3">{e.nodeName}</span>
-                </summary>
-                <div className="border-t border-border p-3 text-[12px] leading-5 text-text-2">
-                  <p className="whitespace-pre-wrap break-words">{e.summary}</p>
+                <SelectTrigger aria-label="Событий на странице" className="h-10 w-24 rounded-[10px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {['10', '25', '50'].map((n) => (
+                    <SelectItem key={n} value={n}>
+                      {n}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </header>
+          {eventsQuery.isPending ? (
+            <div className="p-4">
+              <RowsSkeleton />
+            </div>
+          ) : eventsQuery.isError ? (
+            <p role="alert" className="p-4 text-crit">
+              {apiErrorMessage(eventsQuery.error)}
+            </p>
+          ) : !events.length ? (
+            <p className="p-4 text-sm text-text-3">Событий за выбранный промежуток нет</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {eventRows.map((e) => (
+                <div
+                  key={e.id}
+                  className={cn('flex items-center gap-3 px-4', focusedEvent?.id === e.id && 'bg-brand-soft')}
+                >
+                  <button
+                    type="button"
+                    onClick={() => focusEvent(e)}
+                    aria-pressed={focusedEvent?.id === e.id}
+                    className="flex min-h-16 min-w-0 flex-1 items-center gap-3 py-3 text-left hover:text-brand"
+                  >
+                    <span
+                      className={cn(
+                        'size-2 shrink-0 rounded-full',
+                        e.type === 'incident_opened'
+                          ? 'bg-crit'
+                          : e.type === 'incident_resolved'
+                            ? 'bg-ok'
+                            : 'bg-brand',
+                      )}
+                    />
+                    <span className="w-32 shrink-0 text-xs text-text-3 max-md:w-20">{dateLabel(e.t)}</span>
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-medium">{e.title}</span>
+                      <span className="block text-xs text-text-3">{e.nodeName}</span>
+                    </span>
+                  </button>
                   {e.link && (
                     <a
-                      className="mt-2 inline-block text-brand"
                       href={e.link}
                       target={e.link.startsWith('https:') ? '_blank' : undefined}
                       rel="noreferrer"
+                      className="shrink-0 text-xs text-brand"
                     >
-                      Открыть подробности
+                      Подробнее
                     </a>
                   )}
-                  <CardButton
-                    className="mt-3 h-10 w-full"
-                    onClick={() =>
-                      chooseRange({
-                        from: Math.max(full.from, e.t - 15 * 60000),
-                        to: Math.min(full.to, e.t + 15 * 60000),
-                      })
-                    }
-                  >
-                    Показать момент
-                  </CardButton>
                 </div>
-              </details>
-            ))}
-          </div>
-          {query.data?.eventsTruncated && (
-            <p className="border-t border-border p-3 text-[11px] text-warn">
-              Показана часть событий. Уменьшите промежуток.
-            </p>
+              ))}
+            </div>
           )}
-          {showEvents && events.length > 80 && (
-            <p className="border-t border-border p-3 text-[11px] text-text-3">
-              На графике первые 80 отметок; полный список здесь.
+          <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-bg-2 px-4 py-2">
+            <span className="text-xs text-text-3">
+              {events.length
+                ? `${(currentPage - 1) * Number(eventSize) + 1}–${Math.min(currentPage * Number(eventSize), events.length)} из ${events.length}`
+                : '0 событий'}
+            </span>
+            <div className="flex items-center gap-2">
+              <BarButton
+                className="size-9 min-w-0 p-0"
+                aria-label="Предыдущая страница событий"
+                disabled={currentPage === 1}
+                onClick={() => setEventPage(currentPage - 1)}
+              >
+                <ChevronLeftIcon className="size-4" />
+              </BarButton>
+              <span className="min-w-16 text-center text-xs tabular-nums">
+                {currentPage} / {pages}
+              </span>
+              <BarButton
+                className="size-9 min-w-0 p-0"
+                aria-label="Следующая страница событий"
+                disabled={currentPage === pages}
+                onClick={() => setEventPage(currentPage + 1)}
+              >
+                <ChevronRightIcon className="size-4" />
+              </BarButton>
+            </div>
+          </footer>
+          {eventsQuery.data?.eventsTruncated && (
+            <p className="px-4 pb-3 text-xs text-warn">
+              Показаны первые 1000 событий. Уменьшите период для остальных.
             </p>
           )}
         </section>

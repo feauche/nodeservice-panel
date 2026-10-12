@@ -343,7 +343,7 @@ export class FleetMonitorJob {
         severity: row.severity as 'crit' | 'warn',
         title,
         body: detail,
-        link: { to: '/incidents/' + row.id, label: 'Открыть инцидент' },
+        link: { to: '/incidents/' + row.id, label: 'Открыть событие' },
         telegram: {
           event: row.severity === 'crit' ? 'incident_crit' : 'incident_warn',
           incidentId: row.id,

@@ -112,9 +112,9 @@ export function ProposalCard({
   const blocked = mine
     ? null
     : incident.isError
-      ? 'Инцидента больше нет.'
+      ? 'События больше нет.'
       : inc?.status === 'resolved'
-        ? 'Инцидент уже закрыт.'
+        ? 'Событие уже закрыт.'
         : otherRunning
           ? 'На сервере уже идёт другая попытка, дождитесь её.'
           : null;
@@ -183,16 +183,16 @@ export function ProposalCard({
         )}
         {!incident.isError && (
           <Link to="/incidents/$id" params={{ id: proposal.incidentId }} className={BTN}>
-            Открыть инцидент
+            Открыть событие
           </Link>
         )}
         {mine && (
           <span className="text-[12px] text-text-3">
             {mine.status === 'running'
-              ? 'Ход обновляется здесь, инцидент закроется сам, если помогло.'
+              ? 'Ход обновляется здесь, событие закроется сам, если помогло.'
               : mine.status === 'helped'
-                ? 'Инцидент закрыт.'
-                : 'Следующий шаг предложен в инциденте.'}
+                ? 'Событие закрыт.'
+                : 'Следующий шаг предложен в событии.'}
           </span>
         )}
       </div>

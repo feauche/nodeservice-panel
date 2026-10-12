@@ -187,7 +187,7 @@ describe('OverviewPage (по демо)', () => {
     expect(screen.queryByTestId('areaspark')).not.toBeInTheDocument();
   });
 
-  it('баннер активных инцидентов ведёт в раздел «Инциденты» (R3 открыт)', async () => {
+  it('баннер активных событий ведёт в раздел «События» (R3 открыт)', async () => {
     renderPage(OverviewPage, '/', ['/incidents']);
     const banner = await screen.findByText(/активных/);
     expect(banner).toBeInTheDocument();

@@ -5,9 +5,9 @@ import { api } from '@/lib/api';
 import { incidentsKeys } from './incidents-api';
 
 export const analysisApi = {
-  /** Запуск разбора: сервер отвечает сразу, работа идёт в фоне, ход виден в самом инциденте. */
+  /** Запуск разбора: сервер отвечает сразу, работа идёт в фоне, ход виден в самом событии. */
   run: (id: string): Promise<Incident> => api.post(`/incidents/${id}/analysis`, {}, incidentSchema),
-  /** Остановить идущий разбор: в инциденте остаётся «отменён», сам он заново не начнётся. */
+  /** Остановить идущий разбор: в событии остаётся «отменён», сам он заново не начнётся. */
   cancel: (id: string): Promise<Incident> => api.post(`/incidents/${id}/analysis/cancel`, {}, incidentSchema),
   ask: (id: string, question: string): Promise<Incident> =>
     api.post(`/incidents/${id}/analysis/ask`, { question }, incidentSchema),

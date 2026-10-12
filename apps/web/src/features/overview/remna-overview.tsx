@@ -151,13 +151,6 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
       )}
       {view === 'stats' && (
         <div className="flex flex-wrap items-center justify-between gap-3 [&>div[role=radiogroup]]:h-10">
-          <Link
-            to="/"
-            search={{ view: 'stats', detail: 'metrics' }}
-            className="inline-flex h-10 items-center justify-center rounded-[10px] border border-border bg-surface-2 px-3 text-[13px] font-medium text-text-2 hover:bg-surface-3"
-          >
-            Разобрать график и события →
-          </Link>
           <Segmented
             label="Период статистики"
             value={days}
@@ -208,18 +201,18 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
               <div className="p-4">
                 {incidents.isError && incidents.data && (
                   <p role="alert" className="mb-3 text-xs text-warn">
-                    Инциденты не обновились: показан последний список.
+                    События не обновились: показан последний список.
                   </p>
                 )}
                 {incidents.isPending ? (
-                  <div role="status" aria-label="Загрузка инцидентов" className="space-y-3">
+                  <div role="status" aria-label="Загрузка событий" className="space-y-3">
                     {[1, 2, 3].map((i) => (
                       <Skeleton key={i} className="h-14 w-full rounded-xl" />
                     ))}
                   </div>
                 ) : incidents.isError && !incidents.data ? (
                   <p role="alert" className="text-sm text-crit">
-                    Не удалось проверить открытые инциденты. {apiErrorMessage(incidents.error)}
+                    Не удалось проверить открытые события. {apiErrorMessage(incidents.error)}
                   </p>
                 ) : attentionCount ? (
                   <>
@@ -235,7 +228,7 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
                           <span className="block text-text-2">{i.title}</span>
                         </span>
                         <span className={i.severity === 'crit' ? 'shrink-0 text-crit' : 'shrink-0 text-warn'}>
-                          {i.status === 'acknowledged' ? 'В работе' : 'Открыт'}
+                          {i.status === 'acknowledged' ? 'В работе' : 'Активно'}
                         </span>
                       </Link>
                     ))}
@@ -258,9 +251,9 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
                 ) : (
                   <div className="flex h-48 flex-col items-center justify-center gap-2">
                     <span className="size-2 rounded-full bg-ok" />
-                    <strong>Нет открытых инцидентов</strong>
+                    <strong>Нет открытых событий</strong>
                     <span className="text-xs text-text-3">
-                      Ноды на связи · инциденты обновляются автоматически
+                      Ноды на связи · события обновляются автоматически
                     </span>
                   </div>
                 )}

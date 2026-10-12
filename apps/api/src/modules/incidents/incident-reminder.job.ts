@@ -40,7 +40,7 @@ export class IncidentReminderJob {
         incidentId: row.id,
         title: `Всё ещё не решено: ${row.title}`,
         body: `Открыт ${openH} ч назад.`,
-        link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
+        link: { to: `/incidents/${row.id}`, label: 'Открыть событие' },
       });
       await this.telegram.markReminded(row.id);
     }

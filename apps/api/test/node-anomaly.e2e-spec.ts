@@ -1,7 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
-import { CSRF_HEADER, incidentsListResponseSchema } from '@nodeservice/shared';
+import { CSRF_HEADER, incidentsListResponseSchema, scenarioSchema } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import type { Redis } from 'ioredis';
 import { generate } from 'otplib';
@@ -20,8 +20,11 @@ import {
   type TcpVerdict,
 } from '../src/modules/incidents/check-host.service.js';
 import { FleetMonitorJob } from '../src/modules/incidents/fleet-monitor.job.js';
+import { NodeEventsStore } from '../src/modules/node-events/node-events.store.js';
 import { NotificationsService } from '../src/modules/notifications/notifications.service.js';
 import { RemnawaveService } from '../src/modules/remnawave/remnawave.service.js';
+import { ScenariosJob } from '../src/modules/scenarios/scenarios.job.js';
+import { ScenariosStore } from '../src/modules/scenarios/scenarios.store.js';
 import { MonitoringStore } from '../src/modules/settings/monitoring.store.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -143,6 +146,99 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
     });
     tcp.checkNode.mockReset().mockImplementation(async () => report('russia_unreachable'));
     notifications.push.mockClear();
+  });
+
+  it('сценарий сохраняет И/ИЛИ и выключенное состояние через настоящий HTTP/БД', async () => {
+    const csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token;
+    const rule = scenarioSchema.parse({
+      id: '11111111-1111-4111-8111-111111111111',
+      name: 'Два условия',
+      scope: 'selected',
+      nodes: [uuid],
+      trigger: 'offline',
+      conditions: ['offline', 'tcp_unreachable'],
+      conditionMode: 'all',
+      actions: ['check_tcp', 'record_event'],
+    });
+    const saved = await agent
+      .put('/api/scenarios')
+      .set(CSRF_HEADER, csrf)
+      .send({ items: [rule] })
+      .expect(200);
+    expect(saved.body.items[0]).toMatchObject({
+      enabled: false,
+      conditionMode: 'all',
+      conditions: ['offline', 'tcp_unreachable'],
+    });
+    expect((await agent.get('/api/scenarios').expect(200)).body.items[0]).toEqual(saved.body.items[0]);
+    await agent
+      .put('/api/scenarios')
+      .set(CSRF_HEADER, csrf)
+      .send({ items: [{ ...rule, holdMinutes: 0 }] })
+      .expect(400);
+    await agent
+      .put('/api/scenarios')
+      .set(CSRF_HEADER, csrf)
+      .send({ items: [{ ...rule, nodes: ['22222222-2222-4222-8222-222222222222'] }] })
+      .expect(400);
+    await agent.put('/api/scenarios').set(CSRF_HEADER, csrf).send({ items: [] }).expect(200);
+  });
+  it('условие И: offline+TCP работает без инцидента через реальные хранилища', async () => {
+    node.isConnected = false;
+    status.checkedAt = new Date().toISOString();
+    tcp.checkNode.mockImplementation(async () => report('port_unreachable'));
+    const store = app.get(ScenariosStore),
+      scope = store.scope(status.domain),
+      rule = scenarioSchema.parse({
+        id: '33333333-3333-4333-8333-333333333333',
+        name: 'Связь и TCP',
+        enabled: true,
+        trigger: 'offline',
+        conditions: ['offline', 'tcp_unreachable'],
+        conditionMode: 'all',
+        holdMinutes: 1,
+        actions: ['check_tcp', 'record_event'],
+      });
+    await store.set(status.domain, [rule]);
+    await store.write(`scenarios.state.${scope}.${rule.id}.${uuid}`, {
+      since: Date.now() - 61000,
+      stamp: Date.now() - 61000,
+      latched: false,
+      lastRun: 0,
+    });
+    await app.get(ScenariosJob).run();
+    expect(tcp.checkNode).toHaveBeenCalledTimes(1);
+    const events = await app
+      .get(NodeEventsStore)
+      .list(status.domain, [uuid], Date.now() - 120000, Date.now() + 1000);
+    expect(events.events.some((e) => e.type === 'automation' && e.title.includes('Связь и TCP'))).toBe(true);
+    expect(events.events.some((e) => e.type === 'tcp_check')).toBe(true);
+    expect(await list()).toHaveLength(0);
+    await store.set(status.domain, []);
+    await db.execute(sql`delete from app_meta where key like 'scenarios.%' or key like 'node.events.%'`);
+  });
+  it('общая история сохраняет факты проверок, не дублирует опрос и разделяет панели/ноды', async () => {
+    const events = app.get(NodeEventsStore),
+      t = Date.now();
+    const event = {
+      id: 'e2e:bs:result',
+      t,
+      nodeUuid: uuid,
+      nodeName: node.name,
+      type: 'bs_check' as const,
+      title: 'BS завершена',
+      summary: 'TCP: 2/3 доступно',
+      link: '/integrations/bschecker',
+    };
+    await events.append(status.domain, event);
+    await events.append(status.domain, event);
+    await events.append('other.panel', event);
+    await events.append(status.domain, { ...event, id: 'other-node', nodeUuid: 'different-node' });
+    const result = await events.list(status.domain, [uuid], t - 1, t + 1);
+    expect(result.events).toEqual([event]);
+    expect(result.truncated).toBe(false);
+    expect((await events.list(status.domain, [uuid], t + 1, t + 2)).events).toEqual([]);
+    await db.execute(sql`delete from app_meta where key like 'node.events.%'`);
   });
 
   it('не делает вывод по первому снимку или краткой просадке', async () => {

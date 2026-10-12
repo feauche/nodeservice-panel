@@ -52,7 +52,7 @@ describe('combined persisted metric history', () => {
       ['2026-10-12', '2026-10-13', '', '400'],
       [to, from, '', '400'],
       [from, to, "' OR true", '400'],
-      [from, to, uuid, '601'],
+      [from, to, uuid, '1501'],
       [from, '2026-12-12T03:00:00Z', '', '400'],
     ])
       expect(() => parseMetricHistoryRange(a, b, n, p)).toThrow();

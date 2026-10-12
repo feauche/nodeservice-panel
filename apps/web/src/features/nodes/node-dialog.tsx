@@ -1,5 +1,5 @@
 import type { NodePreferences, RemnawaveNode } from '@nodeservice/shared';
-import { ActivityIcon, CableIcon, CopyIcon, Settings2Icon } from 'lucide-react';
+import { ActivityIcon, CableIcon, CopyIcon, GitBranchIcon, Settings2Icon } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { CountryFlag } from '@/components/country-flag';
 import { DialogPrimaryButton } from '@/components/dialog-actions';
@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { FormSkeleton } from '@/components/ui/loading-state';
 import { ProviderSelect } from '@/features/providers/provider-select';
 import { ProvidersSourceContext } from '@/features/providers/providers-api';
+import { NodeScenarios } from '@/features/scenarios/node-scenarios';
 import { Pill, Segmented } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -67,6 +68,7 @@ export function NodeDialog({
     ['metrics', 'Метрики', ActivityIcon],
     ['connection', 'Подключение', CableIcon],
     ['settings', 'Настройки', Settings2Icon],
+    ['scenarios', 'Сценарии', GitBranchIcon],
   ] as const;
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -306,6 +308,8 @@ export function NodeDialog({
                   нод. Ключи и пароли самой ноды Remnawave в этом ответе не передаёт.
                 </p>
               </div>
+            ) : tab === 'scenarios' ? (
+              <NodeScenarios uuid={node.uuid} />
             ) : (
               <div className="space-y-5">
                 <div>
@@ -360,8 +364,8 @@ export function NodeDialog({
                             Предупреждения о нагрузке
                           </h3>
                           <p className="mb-4 mt-1 text-[12px] leading-5 text-text-3">
-                            Пустое поле использует общий порог из настроек инцидентов. При устойчивом
-                            превышении мониторинг создаст инцидент, если предупреждения включены.
+                            Пустое поле использует общий порог из настроек событий. При устойчивом превышении
+                            мониторинг создаст событие, если предупреждения включены.
                           </p>
                           <div className="grid gap-4 sm:grid-cols-2">
                             {[

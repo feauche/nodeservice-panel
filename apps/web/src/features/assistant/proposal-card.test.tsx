@@ -10,7 +10,7 @@ import { ProposalCard } from './proposal-card';
 
 const cpu = () => {
   const inc = mockIncidents.items.find((i) => i.kind === 'cpu_high');
-  if (!inc) throw new Error('нет мок-инцидента CPU');
+  if (!inc) throw new Error('нет мок-события CPU');
   return inc;
 };
 
@@ -66,13 +66,13 @@ describe('ProposalCard (A3)', () => {
     await waitFor(() => expect(screen.getByText('Помогло')).toBeInTheDocument(), { timeout: 8000 });
     // кнопки запуска больше нет, чтобы не запустить второй раз
     expect(screen.queryByRole('button', { name: 'Выполнить' })).not.toBeInTheDocument();
-    expect(screen.getByText('Инцидент закрыт.')).toBeInTheDocument();
+    expect(screen.getByText('Событие закрыт.')).toBeInTheDocument();
   });
 
-  it('закрытый инцидент: запуска нет, сказано почему', async () => {
+  it('закрытый событие: запуска нет, сказано почему', async () => {
     cpu().status = 'resolved';
     open(proposal());
-    expect(await screen.findByText('Инцидент уже закрыт.')).toBeInTheDocument();
+    expect(await screen.findByText('Событие уже закрыт.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Выполнить' })).not.toBeInTheDocument();
   });
 
@@ -96,10 +96,10 @@ describe('ProposalCard (A3)', () => {
     expect(screen.queryByRole('button', { name: 'Выполнить' })).not.toBeInTheDocument();
   });
 
-  it('инцидента нет: карточка не ссылается на него', async () => {
+  it('события нет: карточка не ссылается на него', async () => {
     open(proposal({ incidentId: '0192c000-0000-7000-8000-0000000000ff' }));
-    expect(await screen.findByText('Инцидента больше нет.')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Открыть инцидент' })).not.toBeInTheDocument();
+    expect(await screen.findByText('События больше нет.')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Открыть событие' })).not.toBeInTheDocument();
   });
 
   it('попытка, сделанная до этого сообщения, к карточке не относится', async () => {

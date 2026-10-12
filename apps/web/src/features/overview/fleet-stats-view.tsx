@@ -230,7 +230,7 @@ const TD = 'border-t border-border px-2.5 py-2 text-[12.5px]';
 
 /**
  * «Обзор» → «Статистика» (витрины `fleet-stats-variants.html`, A1, и `stats-switch-variants.html`, вариант 1):
- * период — маленькой строкой над итогами, дальше трафик, нагрузка, инциденты, онлайн нод и таблица серверов.
+ * период — маленькой строкой над итогами, дальше трафик, нагрузка, события, онлайн нод и таблица серверов.
  */
 export function FleetStatsView() {
   const [period, setPeriodRaw] = useState<FleetStatsPeriod>(readPeriod);
@@ -272,7 +272,7 @@ export function FleetStatsView() {
       {explainOpen && (
         <p className="-mt-2 rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-[12px] text-text-2">
           Сравнение — с прошлым таким же периодом. Метрики хранятся 90 дней; трафик и нагрузка идут от
-          агентов, доступность — от инцидентов.
+          агентов, доступность — от событий.
         </p>
       )}
 
@@ -324,7 +324,7 @@ function Stats({ s, forLabel }: { s: FleetStats; forLabel: string }) {
     <>
       {noVm && (
         <p className="m-0 rounded-[12px] border border-warn/40 bg-warn-soft px-4 py-2.5 text-[12.5px] text-warn">
-          Хранилище метрик не ответило — трафик и нагрузка сейчас неизвестны. Доступность, инциденты и деньги
+          Хранилище метрик не ответило — трафик и нагрузка сейчас неизвестны. Доступность, события и деньги
           посчитаны.
         </p>
       )}
@@ -368,8 +368,8 @@ function Stats({ s, forLabel }: { s: FleetStats; forLabel: string }) {
           unit={s.availability.pct === null ? undefined : '%'}
           sub={
             s.availability.incidents === 0
-              ? 'Инцидентов не было'
-              : `Инцидентов: ${s.availability.incidents}${s.availability.avgFixMin !== null ? ` · в среднем ${nf(s.availability.avgFixMin, 0)} мин до починки` : ''}`
+              ? 'Событий не было'
+              : `Событий: ${s.availability.incidents}${s.availability.avgFixMin !== null ? ` · в среднем ${nf(s.availability.avgFixMin, 0)} мин до починки` : ''}`
           }
         />
         <Kpi
@@ -469,9 +469,9 @@ function Stats({ s, forLabel }: { s: FleetStats; forLabel: string }) {
             </tbody>
           </table>
         </Panel>
-        <Panel title="Инциденты" right={forLabel}>
+        <Panel title="События" right={forLabel}>
           {s.incidentsByKind.length === 0 ? (
-            <Empty>Инцидентов за период не было.</Empty>
+            <Empty>Событий за период не было.</Empty>
           ) : (
             <table className="w-full border-collapse" data-testid="fs-incidents">
               <thead>

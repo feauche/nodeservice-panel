@@ -123,7 +123,7 @@ function steps(inc: Incident): string[] {
 export const analysisHandlers = [
   http.post('/api/incidents/:id/analysis', ({ params }) => {
     const inc = find(params.id);
-    if (!inc) return problem(404, 'Инцидент не найден.');
+    if (!inc) return problem(404, 'Событие не найден.');
     if (!mockAssistant.enabled)
       return problem(409, 'Ассистент выключен: задайте провайдера, ключ и модель в «Настройки → Ассистент».');
     if (inc.analysis?.status === 'running') return problem(409, 'Разбор уже идёт.');
@@ -177,17 +177,17 @@ export const analysisHandlers = [
   }),
   http.post('/api/incidents/:id/analysis/cancel', ({ params }) => {
     const inc = find(params.id);
-    if (!inc) return problem(404, 'Инцидент не найден.');
+    if (!inc) return problem(404, 'Событие не найден.');
     if (inc.analysis?.status !== 'running') return problem(409, 'Разбор сейчас не идёт.');
     inc.analysis = { ...inc.analysis, status: 'cancelled', finishedAt: iso(), error: null };
     return HttpResponse.json(inc);
   }),
   http.post('/api/incidents/:id/analysis/ask', async ({ params, request }) => {
     const inc = find(params.id);
-    if (!inc) return problem(404, 'Инцидент не найден.');
+    if (!inc) return problem(404, 'Событие не найден.');
     const parsed = analysisAskRequestSchema.safeParse(await request.json());
     if (!parsed.success) return problem(400, 'Введите вопрос');
-    if (inc.analysis?.status !== 'done') return problem(409, 'Сначала запустите разбор инцидента.');
+    if (inc.analysis?.status !== 'done') return problem(409, 'Сначала запустите разбор события.');
     const q = parsed.data.question;
     inc.analysis = {
       ...inc.analysis,
@@ -195,7 +195,7 @@ export const analysisHandlers = [
         ...inc.analysis.thread,
         {
           question: q,
-          answer: `По этому инциденту: ${inc.analysis.verdict?.split('.')[0]}. Подробнее в доказательствах выше.`,
+          answer: `По этому событию: ${inc.analysis.verdict?.split('.')[0]}. Подробнее в доказательствах выше.`,
           at: iso(),
         },
       ].slice(-8),

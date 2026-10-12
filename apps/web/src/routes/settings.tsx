@@ -40,7 +40,7 @@ const GROUPS = [
     title: 'Мониторинг',
     items: [
       { to: '/settings/autochecks', label: 'Автопроверки нод', icon: ActivityIcon },
-      { to: '/settings/incidents', label: 'Инциденты', icon: TriangleAlertIcon },
+      { to: '/settings/incidents', label: 'События', icon: TriangleAlertIcon },
     ],
   },
   { title: 'Помощник', items: [{ to: '/settings/assistant', label: 'Ассистент', icon: JarvisIcon }] },

@@ -1,8 +1,7 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { requireAuth } from '@/features/auth/guards';
-import { MetricsHistoryPage } from '@/features/metrics/metrics-history-page';
 import { RemnaOverview } from '@/features/overview/remna-overview';
 import { Segmented } from '@/features/settings/settings-ui';
 import { requireSectionOpen } from '@/lib/stages';
@@ -10,15 +9,20 @@ import { requireSectionOpen } from '@/lib/stages';
 type OverviewView = 'now' | 'stats' | 'capacity';
 
 export const Route = createFileRoute('/')({
-  validateSearch: (raw: Record<string, unknown>): { view?: 'stats' | 'capacity'; detail?: 'metrics' } =>
-    raw.view === 'stats'
-      ? { view: 'stats', ...(raw.detail === 'metrics' ? { detail: 'metrics' as const } : {}) }
-      : raw.view === 'capacity'
-        ? { view: 'capacity' }
-        : {},
-  beforeLoad: async ({ context }) => {
+  validateSearch: (
+    raw: Record<string, unknown>,
+  ): { view?: 'stats' | 'capacity' | 'metrics'; detail?: 'metrics' } =>
+    raw.view === 'metrics'
+      ? { view: 'metrics' }
+      : raw.view === 'stats'
+        ? { view: 'stats', ...(raw.detail === 'metrics' ? { detail: 'metrics' as const } : {}) }
+        : raw.view === 'capacity'
+          ? { view: 'capacity' }
+          : {},
+  beforeLoad: async ({ context, search }) => {
     await requireAuth(context);
     requireSectionOpen('/');
+    if (search.view === 'metrics' || search.detail === 'metrics') throw redirect({ to: '/metrics' });
   },
   component: Overview,
 });
@@ -30,7 +34,7 @@ export const Route = createFileRoute('/')({
 function Overview() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: '/' });
-  const view: OverviewView = search.view ?? 'now';
+  const view: OverviewView = search.view === 'metrics' ? 'stats' : (search.view ?? 'now');
   return (
     <AppShell
       title="Обзор"
@@ -56,11 +60,7 @@ function Overview() {
         />
       }
     >
-      {view === 'stats' && search.detail === 'metrics' ? (
-        <MetricsHistoryPage overview />
-      ) : (
-        <RemnaOverview view={view} />
-      )}
+      <RemnaOverview view={view} />
     </AppShell>
   );
 }

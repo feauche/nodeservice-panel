@@ -416,7 +416,7 @@ export class NodeAnomalyJob {
       severity,
       title,
       body: detail,
-      link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
+      link: { to: `/incidents/${row.id}`, label: 'Открыть событие' },
       telegram: {
         event: severity === 'crit' ? 'incident_crit' : 'incident_warn',
         incidentId: row.id,
@@ -585,7 +585,7 @@ export class NodeAnomalyJob {
         body: detail,
         // Сервер привязываем, только если нода есть в NodeService: у уведомления ссылка на запись сервера.
         server: matched ? { id: matched.id, name: matched.name, host: node.address } : null,
-        link: { to: `/incidents/${row.id}`, label: 'Открыть инцидент' },
+        link: { to: `/incidents/${row.id}`, label: 'Открыть событие' },
         telegram: {
           event: severity === 'crit' ? 'incident_crit' : 'incident_warn',
           incidentId: row.id,

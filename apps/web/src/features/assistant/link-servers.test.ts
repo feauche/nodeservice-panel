@@ -11,8 +11,8 @@ const link = (name: string, id: string) => `[${name}](server:${id})`;
 
 describe('linkifyServers', () => {
   it('имя с пробелами и скобками становится ссылкой, в том числе внутри жирного', () => {
-    const r = linkifyServers('**ru-bridge (Аренда VK)** — 4 инцидента', S);
-    expect(r).toBe(`**${link('ru-bridge (Аренда VK)', S[0]?.id ?? '')}** — 4 инцидента`);
+    const r = linkifyServers('**ru-bridge (Аренда VK)** — 4 события', S);
+    expect(r).toBe(`**${link('ru-bridge (Аренда VK)', S[0]?.id ?? '')}** — 4 события`);
   });
   it('длинное имя берётся раньше короткого, а часть слова ссылкой не становится', () => {
     const r = linkifyServers('nl-2 и nl, но не nlx и не anl', S);

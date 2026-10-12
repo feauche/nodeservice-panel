@@ -1,7 +1,14 @@
 import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
-import { CSRF_HEADER, serverSchema, TELEGRAM_EVENTS, telegramSettingsSchema } from '@nodeservice/shared';
+import {
+  CSRF_HEADER,
+  serverSchema,
+  TELEGRAM_DELIVERY_DEFAULT,
+  TELEGRAM_EVENTS,
+  TELEGRAM_QUIET_DEFAULT,
+  telegramSettingsSchema,
+} from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import type { Redis } from 'ioredis';
 import { generate } from 'otplib';
@@ -261,6 +268,29 @@ describe('telegram e2e', () => {
       message_id: openedId,
       allow_sending_without_reply: true,
     });
+  });
+
+  it('категория сценариев независима от событий и приходит расширенным сообщением', async () => {
+    await put({
+      events: { incident_crit: false, incident_warn: false, scenario: true },
+      quiet: { ...TELEGRAM_QUIET_DEFAULT, enabled: false },
+      delivery: { ...TELEGRAM_DELIVERY_DEFAULT, rich: false, groupPerServer: false },
+    });
+    const service = app.get(TelegramService),
+      before = tg.rich().length;
+    await service.dispatch({
+      event: 'scenario',
+      title: 'Сценарий: Резерв',
+      body: 'Нода: Германия\nУсловие: Нода потеряла связь И TCP недоступен\nРезультат: TCP недоступен; скрыто Host: 1',
+      link: { to: '/scenarios', label: 'Открыть сценарии' },
+    });
+    expect(tg.rich().length).toBe(before + 1);
+    expect(JSON.stringify(tg.rich().at(-1)?.body)).toContain('Сценарий: Резерв');
+    expect(JSON.stringify(tg.rich().at(-1)?.body)).toContain('Сценарий ·');
+    await put({ events: { incident_warn: true, scenario: false } });
+    await service.dispatch({ event: 'scenario', title: 'Сценарий: не отправлять' });
+    expect(tg.rich().length).toBe(before + 1);
+    await put({ delivery: { ...TELEGRAM_DELIVERY_DEFAULT, rich: false } });
   });
 
   it('тумблер выключен и удалённый чат подавляют текущие инциденты', async () => {

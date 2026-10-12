@@ -610,8 +610,18 @@ export class TelegramService {
       if (m.incidentId && this.cancelledIncidents.has(m.incidentId)) return;
       const s = await this.store.load();
       if (s.destinations.length === 0) return;
-      if (['needs_confirm','autofix_started','fix_failed','maintenance','check_failed','jarvis_card'].includes(m.event)) return;
-      if (m.kind && ['agent_offline','ssh_down','disk_high'].includes(m.kind)) return;
+      if (
+        [
+          'needs_confirm',
+          'autofix_started',
+          'fix_failed',
+          'maintenance',
+          'check_failed',
+          'jarvis_card',
+        ].includes(m.event)
+      )
+        return;
+      if (m.kind && ['agent_offline', 'ssh_down', 'disk_high'].includes(m.kind)) return;
       if (m.kind && !s.kinds[m.kind]) return;
       const previousMessageAt = m.incidentId ? await this.lastMessageAt(m.incidentId) : null;
       // Первое сообщение о деле — его открытие, каким бы событием оно ни пришло. Панель сразу предложила
@@ -677,18 +687,20 @@ export class TelegramService {
           footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, zone)}`,
         });
       // Специальное сообщение может передать готовую таблицу; для остальных блоки строятся из title/body.
-      const rich = s.delivery.rich
-        ? (m.rich ??
-          (!m.html
-            ? richMessageBlocks({
-                event: m.event,
-                title: m.title,
-                body: m.body ?? null,
-                server: m.server ?? null,
-                footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, zone)}`,
-              })
-            : null))
-        : null;
+      // Scenario results always use the approved rich presentation; the existing fallback still handles old Bot API servers.
+      const rich =
+        s.delivery.rich || m.event === 'scenario'
+          ? (m.rich ??
+            (!m.html
+              ? richMessageBlocks({
+                  event: m.event,
+                  title: m.title,
+                  body: m.body ?? null,
+                  server: m.server ?? null,
+                  footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, zone)}`,
+                })
+              : null))
+          : null;
       const buttons = this.buttons(m.link, m.incidentId ?? null);
       let anyFirst = false;
       const undelivered: DeliveryTrouble[] = [];
@@ -1048,14 +1060,14 @@ export class TelegramService {
     const lines = shown.map((i) => `• ${localTime(new Date(i.at), timeZone)} — ${esc(i.title)}`);
     const text = `🌅 <b>Пока были тихие часы</b>\n\n${lines.join('\n')}${
       items.length > 20 ? `\n…и ещё ${items.length - 20}` : ''
-    }\n\n<i>Подробности — в «Инцидентах» и колокольчике панели.</i>`;
+    }\n\n<i>Подробности — в «Событиях» панели.</i>`;
     const rich = s.delivery.rich
       ? digestBlocks(
           shown.map((i) => ({ time: localTime(new Date(i.at), timeZone), title: i.title })),
           Math.max(0, items.length - 20),
         )
       : null;
-    const buttons = this.buttons({ to: '/incidents', label: 'Открыть инциденты' });
+    const buttons = this.buttons({ to: '/incidents', label: 'Открыть события' });
     const undelivered: DeliveryTrouble[] = [];
     let kept = false;
     for (const d of this.store.live(s)) {

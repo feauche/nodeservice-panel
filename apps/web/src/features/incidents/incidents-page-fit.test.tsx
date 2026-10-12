@@ -36,7 +36,7 @@ const setRoom = (available: number) =>
  */
 const seedDays = (perDay: number[]) => {
   const [base] = mockIncidents.items;
-  if (!base) throw new Error('нет мок-инцидента');
+  if (!base) throw new Error('нет мок-события');
   const now = new Date();
   let n = 0;
   mockIncidents.items = perDay.flatMap((count, d) =>
@@ -65,7 +65,7 @@ const rowNumbers = () =>
   screen.getAllByTestId('incident-row').map((r) => Number(/Сбой (\d+)/.exec(r.textContent ?? '')?.[1]));
 const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
 const label = () => screen.getByTestId('incidents-footer').querySelector('p')?.textContent ?? '';
-const pager = () => within(screen.getByRole('navigation', { name: 'Страницы решённых инцидентов' }));
+const pager = () => within(screen.getByRole('navigation', { name: 'Страницы решённых событий' }));
 /** Дождаться, пока страница придёт и реестр перестанет быть приглушённым. */
 const settled = () =>
   waitFor(() => expect(screen.getByTestId('incidents-list')).toHaveAttribute('aria-busy', 'false'));

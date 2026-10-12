@@ -33,7 +33,7 @@ const STEP_ICON: Record<IncidentAttempt['steps'][number]['status'], { cls: strin
   skipped: { cls: 'bg-surface-3 text-text-3', mark: '–' },
 };
 
-/** Хронология инцидента: время, точка по итогу события с линией, текст, уровень и кто. */
+/** Хронология события: время, точка по итогу события с линией, текст, уровень и кто. */
 export function Timeline({ events }: { events: IncidentEvent[] }) {
   return (
     <ol className="flex flex-col" aria-label="Хронология">
