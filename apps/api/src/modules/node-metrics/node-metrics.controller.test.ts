@@ -98,7 +98,10 @@ describe('node metric history', () => {
       {} as never,
     );
     vi.spyOn(service, 'collect').mockResolvedValue();
-    vi.spyOn(service as never, 'onlineTypical').mockResolvedValue(null as never);
+    vi.spyOn(service as never, 'onlineTypical').mockResolvedValue({
+      onlineTypical: null,
+      onlineTypicalByNode: {},
+    } as never);
     const result = await service.get(60);
     const a = result.history.find((n) => n.uuid === 'a');
     expect(a?.points.map((p) => p.rx)).toEqual([0, 5, 10, null, null, 20]);

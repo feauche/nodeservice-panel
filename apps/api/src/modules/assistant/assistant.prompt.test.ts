@@ -77,7 +77,7 @@ describe('подсказка Ассистента: режим только чт�
   it('правила рекомендаций проверок: только советом, с путём по интерфейсу', () => {
     expect(text).toContain(CHECK_RULES);
     expect(text).toContain('ПРОВЕРКИ — ТОЛЬКО РЕКОМЕНДАЦИЕЙ');
-    expect(text).toContain('«Ноды» → окно ноды → «Подключение» → «Проверить порты»');
+    expect(text).toContain('«Ноды» → окно ноды → «Подключение» → «Проверить порт»');
     expect(text).toContain('«DPI Checker» → «Новая проверка»');
     expect(text).toContain('«BS Checker» → «Нода для проверки» → «Выбрать точки и проверить»');
     expect(text).toContain(`«${FLEET_RULES_WHITELIST_SECTION}»`);

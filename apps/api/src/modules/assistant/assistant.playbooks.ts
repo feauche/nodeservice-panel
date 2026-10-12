@@ -65,7 +65,7 @@ export const NODE_EVENT_KINDS: ReadonlyArray<{ kind: IncidentKind; titles: strin
  */
 export const LEGACY_EVENT_KINDS: readonly string[] = ['agent_offline', 'ssh_down', 'disk_high'];
 
-const TCP_CHECK = '«Ноды» → окно ноды → «Подключение» → «Проверить порты»';
+const TCP_CHECK = '«Ноды» → окно ноды → «Подключение» → «Проверить порт»';
 
 export const PLAYBOOKS: Playbook[] = [
   {

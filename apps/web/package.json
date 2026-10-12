@@ -1,7 +1,7 @@
 {
   "name": "web",
   "private": true,
-  "version": "0.91.0",
+  "version": "0.92.0",
   "type": "module",
   "scripts": {
     "dev": "NODE_ENV=production tsr generate && vite",
@@ -33,7 +33,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "country-flag-icons": "^1.6.20",
-    "dnd-kit-sortable-tree": "0.1.73",
     "highlight.js": "^11.12.0",
     "input-otp": "^1.5.0",
     "lucide-react": "^1.35.0",

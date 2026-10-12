@@ -544,3 +544,41 @@
   color: var(--ns-teal);
   background: color-mix(in oklab, var(--ns-teal) 15%, var(--ns-surface));
 }
+
+/* «Ноды»: строки папки появляются и уходят за 0,17 с — по высоте и прозрачности, без рывка соседей. */
+@keyframes ns-row-in {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+@keyframes ns-row-out {
+  from {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+.ns-row-in,
+.ns-row-out {
+  display: grid;
+}
+.ns-row-in {
+  animation: ns-row-in 170ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+.ns-row-out {
+  animation: ns-row-out 170ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ns-row-in,
+  .ns-row-out {
+    animation: none;
+  }
+}

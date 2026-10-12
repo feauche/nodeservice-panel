@@ -40,6 +40,8 @@ export const nodeMetricsSchema = z.object({
   fleet: z.array(fleetMetricPointSchema),
   /** Обычный онлайн парка в этот час: 10-й и 90-й процентили за 7 дней; null — истории меньше трёх дней. */
   onlineTypical: z.object({ low: z.number(), high: z.number() }).nullable(),
+  /** То же для каждой ноды; ноды с историей меньше трёх дней здесь нет. */
+  onlineTypicalByNode: z.record(z.string(), z.object({ low: z.number(), high: z.number() })).default({}),
   collectedSince: z.string().nullable(),
 });
 export type NodeMetricPoint = z.infer<typeof nodeMetricPointSchema>;

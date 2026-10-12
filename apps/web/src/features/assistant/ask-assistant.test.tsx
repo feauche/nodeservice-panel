@@ -218,7 +218,8 @@ describe('окно ноды: отметка «Сервер белого спис
     const user = userEvent.setup();
     await user.click(box);
     expect(box).toBeChecked();
-    expect(screen.getByTitle('Сервер белого списка')).toHaveTextContent('БС');
+    // Метка есть в паспорте окна и в его шапке для телефона.
+    expect(screen.getAllByTitle('Сервер белого списка')[0]).toHaveTextContent('БС');
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
     await waitFor(() => expect(saved).toMatchObject({ whitelist: true }));
   });

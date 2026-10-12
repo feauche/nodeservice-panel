@@ -42,9 +42,9 @@ describe('TCP проверки ноды', () => {
       }),
     );
     renderPage(Page, '/tcp');
-    await screen.findByText('Ручных проверок пока нет');
+    await screen.findByText('Проверок этой ноды ещё не было.');
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Проверить порты' }));
+    await user.click(screen.getByRole('button', { name: 'Проверить порт' }));
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText('Доступность пока не подтверждена')).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: 'Закрыть окно' }));

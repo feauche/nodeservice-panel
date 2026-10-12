@@ -107,7 +107,7 @@ describe('справочник Ассистента', () => {
   it('проверки: три проверки с путями, стоимость, вердикты, правила рекомендаций и их формулировка', () => {
     const text = topic('checks');
     expect(text).toContain(CHECK_RULES);
-    expect(text).toContain('«Ноды» → окно ноды → «Подключение» → «Проверить порты»');
+    expect(text).toContain('«Ноды» → окно ноды → «Подключение» → «Проверить порт»');
     expect(text).toContain('«DPI Checker» → «Новая проверка»');
     expect(text).toContain('«BS Checker» → «Нода для проверки»');
     for (const verdict of ['«Доступен»', '«Недоступен из РФ»', '«Порты не отвечают»', '«Неполный результат»'])

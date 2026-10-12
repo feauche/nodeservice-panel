@@ -145,7 +145,7 @@ describe('плейбуки по нодам', () => {
   });
 
   it('проверки — рекомендацией с путём по интерфейсу; DPI и BS не советуются при закрытом порте', () => {
-    expect(textOf('node_offline')).toContain('«Ноды» → окно ноды → «Подключение» → «Проверить порты»');
+    expect(textOf('node_offline')).toContain('«Ноды» → окно ноды → «Подключение» → «Проверить порт»');
     const drop = textOf('online_drop');
     expect(drop).toContain('«DPI Checker» → «Новая проверка»');
     expect(drop).toContain('«IP — доступность адреса»');

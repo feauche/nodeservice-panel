@@ -1,27 +1,34 @@
 import { nodeTcpHistorySchema, type TcpCheckReport, tcpCheckReportSchema } from '@nodeservice/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ChevronRightIcon, NetworkIcon } from 'lucide-react';
-import { useState } from 'react';
+import { ChevronRightIcon, ExternalLinkIcon, Loader2Icon, RadarIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import { RowsSkeleton } from '@/components/ui/loading-state';
-import { CardButton, Pill } from '@/features/settings/settings-ui';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Pill } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
 import { TcpResults } from './tcp-results';
 
 const formatTime = (value: string) =>
   new Intl.DateTimeFormat('ru-RU', {
-    day: '2-digit',
+    day: 'numeric',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value));
 const names = {
   reachable: 'Доступен',
-  russia_unreachable: 'Недоступен из РФ',
-  port_unreachable: 'Порты не отвечают',
+  russia_unreachable: 'Недоступен из России',
+  port_unreachable: 'Не отвечает',
   unknown: 'Неполный результат',
 };
-export function NodeTcpCheck({ uuid }: { uuid: string }) {
+const tone = (verdict: TcpCheckReport['verdict']) =>
+  verdict === 'reachable' ? 'ok' : verdict === 'unknown' ? 'warn' : 'crit';
+
+/**
+ * «Доступность порта · Check-Host» в окне ноды: проверка из разных стран, итог по каждому порту последней проверки
+ * и история. `runToken` — кнопка «Проверить порт» в паспорте окна: смена числа запускает проверку.
+ */
+export function NodeTcpCheck({ uuid, runToken = 0 }: { uuid: string; runToken?: number }) {
   const [result, setResult] = useState<TcpCheckReport | null>(null),
     [open, setOpen] = useState(false);
   const history = useQuery({
@@ -35,83 +42,114 @@ export function NodeTcpCheck({ uuid }: { uuid: string }) {
       void history.refetch();
     },
   });
+  const run = () => {
+    setResult(null);
+    setOpen(true);
+    m.mutate();
+  };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: запуск только по нажатию кнопки в паспорте окна
+  useEffect(() => {
+    if (runToken > 0 && !m.isPending) run();
+  }, [runToken]);
+  const last = history.data?.checks[0]?.report ?? null;
   return (
-    <section className="overflow-hidden rounded-[12px] border border-border bg-surface">
-      <div className="flex flex-wrap items-center gap-3 p-4">
-        <span className="grid size-9 place-items-center rounded-[10px] bg-brand-soft text-brand">
-          <NetworkIcon className="size-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h3 className="text-[14px] font-semibold">Доступность TCP · Check-Host</h3>
-          <p className="mt-1 text-[12px] text-text-3">Российские и зарубежные точки · SSH и порт ноды</p>
-        </div>
-        <CardButton
-          className="h-10"
-          disabled={m.isPending}
-          onClick={() => {
-            setResult(null);
-            setOpen(true);
-            m.mutate();
-          }}
-        >
-          {m.isPending ? 'Проверяю…' : 'Проверить порты'}
-        </CardButton>
-      </div>
-      <div className="border-t border-border px-4 py-3">
-        <div className="mb-2 flex items-center justify-between">
-          <h4 className="text-[12px] font-semibold text-text-2">Последние проверки</h4>
-          <span className="text-[11.5px] text-text-3">Результаты также в Журнале</span>
-        </div>
-        {history.isPending && <RowsSkeleton rows={2} label="Загрузка TCP-проверок" />}
-        {history.isError && (
-          <p role="alert" className="text-[12px] text-crit">
-            {apiErrorMessage(history.error)}
+    <section className="rounded-2xl border border-border bg-surface px-[18px] py-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-[11.5px] font-semibold tracking-[0.08em] text-text-2 uppercase">
+            Доступность порта · Check-Host
+          </h3>
+          <p className="mt-[3px] text-[12px] text-text-3">
+            Проверка из разных стран, в том числе из России. Бесплатно, запускаете вы.
           </p>
-        )}
-        {history.data?.checks.length === 0 && (
-          <p className="text-[12px] text-text-3">Ручных проверок пока нет</p>
-        )}
-        <div className="max-h-[180px] space-y-1 overflow-y-auto">
-          {history.data?.checks.map((entry) => (
-            <button
-              type="button"
-              key={entry.id}
-              onClick={() => {
-                setResult(entry.report);
-                setOpen(true);
-              }}
-              className="flex w-full cursor-pointer items-center gap-3 rounded-[9px] px-2 py-2 text-left hover:bg-surface-2"
-            >
-              <span className="min-w-0 flex-1 text-[12px] text-text-3">
-                {formatTime(entry.report.checkedAt)}
-              </span>
-              <Pill
-                tone={
-                  entry.report.verdict === 'reachable'
-                    ? 'ok'
-                    : entry.report.verdict === 'unknown'
-                      ? 'warn'
-                      : 'crit'
-                }
-              >
-                {names[entry.report.verdict]}
-              </Pill>
-              <ChevronRightIcon className="size-3.5 text-text-3" />
-            </button>
-          ))}
         </div>
+        <button
+          type="button"
+          disabled={m.isPending}
+          onClick={run}
+          className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] bg-brand-soft px-3.5 text-[12.5px] font-semibold text-brand transition-[filter] hover:brightness-110 disabled:opacity-60"
+        >
+          {m.isPending ? (
+            <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <RadarIcon className="size-4" aria-hidden="true" />
+          )}
+          {m.isPending ? 'Проверяю…' : 'Проверить порт'}
+        </button>
       </div>
+      {history.isPending ? (
+        <div role="status" aria-label="Загрузка проверок" className="mt-3 flex gap-2">
+          <Skeleton className="h-7 w-48 rounded-full" />
+          <Skeleton className="h-7 w-40 rounded-full" />
+        </div>
+      ) : history.isError ? (
+        <p role="alert" className="mt-3 text-[12.5px] text-crit">
+          {apiErrorMessage(history.error)}
+        </p>
+      ) : last ? (
+        <>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(last.ports?.length ? last.ports : [last]).map((p) => (
+              <Pill key={p.target} tone={tone(p.verdict)}>
+                {p.target} · {names[p.verdict]}
+              </Pill>
+            ))}
+          </div>
+          <p className="mt-2.5 flex flex-wrap items-center gap-x-1.5 text-[11.5px] text-text-3">
+            Последняя проверка {formatTime(last.checkedAt)}
+            {last.link && (
+              <>
+                ·
+                <a
+                  href={last.link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-brand hover:text-foreground"
+                >
+                  Отчёт Check-Host <ExternalLinkIcon className="size-3" aria-hidden="true" />
+                </a>
+              </>
+            )}
+          </p>
+        </>
+      ) : (
+        <p className="mt-3 text-[12.5px] text-text-3">Проверок этой ноды ещё не было.</p>
+      )}
+      {(history.data?.checks.length ?? 0) > 0 && (
+        <div className="mt-3 border-t border-border pt-2.5">
+          <h4 className="mb-1 text-[12px] font-semibold text-text-2">Последние проверки</h4>
+          <div className="max-h-[168px] overflow-y-auto">
+            {history.data?.checks.map((entry) => (
+              <button
+                type="button"
+                key={entry.id}
+                onClick={() => {
+                  setResult(entry.report);
+                  setOpen(true);
+                }}
+                className="flex w-full cursor-pointer items-center gap-3 rounded-[9px] px-2 py-1.5 text-left hover:bg-surface-2"
+              >
+                <span className="min-w-0 flex-1 text-[12px] text-text-3">
+                  {formatTime(entry.report.checkedAt)}
+                </span>
+                <Pill tone={tone(entry.report.verdict)}>{names[entry.report.verdict]}</Pill>
+                <ChevronRightIcon className="size-3.5 text-text-3" aria-hidden="true" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-[760px]">
-          <DialogTitle className="pr-10">TCP-проверка · Check-Host</DialogTitle>
+          <DialogTitle className="pr-10">Проверка порта · Check-Host</DialogTitle>
           <DialogDescription>
-            Основной SSH-порт из настроек, запасной 22 при недоступном 5492 и порт ноды. История сохраняется в
-            панели.
+            Порт из настроек мониторинга (по умолчанию 5492, при неответе ещё 22) и порт самой ноды. Итог
+            «Доступен», если доступен хоть один. История сохраняется в панели.
           </DialogDescription>
           <div className="min-h-0 overflow-y-auto">
             {m.isPending && !result && (
               <p className="py-4 text-[13px] text-text-3" role="status">
-                Ожидаю ответы точек. Несколько портов могут занять до двух минут.
+                Жду ответы точек. Несколько портов могут занять до двух минут.
               </p>
             )}
             {m.isError && !result && (

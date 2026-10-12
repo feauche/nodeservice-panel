@@ -36,7 +36,11 @@ type LocalHistory = {
 export class NodeMetricsService {
   private readonly log = new Logger(NodeMetricsService.name);
   private historyCache = new Map<string, LocalHistory>();
-  private typicalCache: { key: string; at: number; value: NodeMetrics['onlineTypical'] } | null = null;
+  private typicalCache: {
+    key: string;
+    at: number;
+    value: Pick<NodeMetrics, 'onlineTypical' | 'onlineTypicalByNode'>;
+  } | null = null;
   private pending: Promise<void> | null = null;
   /** Последний записанный снимок: тот же снимок повторно не пишем — его замер уже в базе. */
   private recorded: string | null = null;
@@ -115,6 +119,7 @@ export class NodeMetricsService {
         history: [],
         fleet: [],
         onlineTypical: null,
+        onlineTypicalByNode: {},
         collectedSince: null,
       };
     return {
@@ -122,7 +127,7 @@ export class NodeMetricsService {
       bucketSeconds: local.bucket,
       history: local.history,
       fleet: fleetSeries(local.history, local.up),
-      onlineTypical: minutes <= 60 ? await this.onlineTypical(local.panel) : null,
+      ...(await this.onlineTypical(local.panel)),
       collectedSince: local.since,
     };
   }
@@ -211,33 +216,48 @@ export class NodeMetricsService {
   }
 
   /**
-   * Обычный онлайн парка в этот час суток: 10-й и 90-й процентили снимков за 7 дней в тот же час.
-   * Меньше трёх дней истории — не знаем, что для парка обычно.
+   * Обычный онлайн в этот час суток — у парка и у каждой ноды: 10-й и 90-й процентили замеров за 7 дней в тот же
+   * час. Меньше трёх дней истории — не знаем, что обычно.
    */
-  private async onlineTypical(domain: string): Promise<NodeMetrics['onlineTypical']> {
+  private async onlineTypical(
+    domain: string,
+  ): Promise<Pick<NodeMetrics, 'onlineTypical' | 'onlineTypicalByNode'>> {
     const hour = new Date().getUTCHours();
     const key = `${domain}:${hour}`;
     if (this.typicalCache?.key === key && Date.now() - this.typicalCache.at < 5 * 60_000)
       return this.typicalCache.value;
-    const res = await this.db.execute(sql`WITH snaps AS (
-        SELECT sampled_at, sum((values->>'online')::float) AS total FROM remna_metric_samples
-        WHERE panel=${domain} AND sampled_at >= now() - interval '7 days' AND sampled_at < now() - interval '1 hour'
-        GROUP BY sampled_at)
-      SELECT percentile_cont(0.1) WITHIN GROUP (ORDER BY total) AS low,
-        percentile_cont(0.9) WITHIN GROUP (ORDER BY total) AS high,
-        count(DISTINCT (sampled_at AT TIME ZONE 'UTC')::date) AS days
-      FROM snaps WHERE extract(hour FROM sampled_at AT TIME ZONE 'UTC') = ${hour}`);
-    const row = res.rows[0];
-    const low = Number(row?.low);
-    const high = Number(row?.high);
-    const step = (v: number) => (v >= 1000 ? 100 : 10);
-    const value =
-      row && Number(row.days) >= 3 && Number.isFinite(low) && Number.isFinite(high)
-        ? {
-            low: Math.floor(low / step(low)) * step(low),
-            high: Math.ceil(high / step(high)) * step(high),
-          }
-        : null;
+    const window = sql`panel=${domain} AND sampled_at >= now() - interval '7 days' AND sampled_at < now() - interval '1 hour'
+      AND extract(hour FROM sampled_at AT TIME ZONE 'UTC') = ${hour}`;
+    const [fleet, nodes] = await Promise.all([
+      this.db.execute(sql`WITH snaps AS (
+          SELECT sampled_at, sum((values->>'online')::float) AS total FROM remna_metric_samples
+          WHERE ${window} GROUP BY sampled_at)
+        SELECT percentile_cont(0.1) WITHIN GROUP (ORDER BY total) AS low,
+          percentile_cont(0.9) WITHIN GROUP (ORDER BY total) AS high,
+          count(DISTINCT (sampled_at AT TIME ZONE 'UTC')::date) AS days
+        FROM snaps`),
+      this.db.execute(sql`SELECT node_uuid AS uuid,
+          percentile_cont(0.1) WITHIN GROUP (ORDER BY (values->>'online')::float) AS low,
+          percentile_cont(0.9) WITHIN GROUP (ORDER BY (values->>'online')::float) AS high,
+          count(DISTINCT (sampled_at AT TIME ZONE 'UTC')::date) AS days
+        FROM remna_metric_samples WHERE ${window} AND values->>'online' IS NOT NULL GROUP BY node_uuid`),
+    ]);
+    const range = (row: Record<string, unknown> | undefined) => {
+      const low = Number(row?.low);
+      const high = Number(row?.high);
+      if (!row || Number(row.days) < 3 || !Number.isFinite(low) || !Number.isFinite(high)) return null;
+      const step = (v: number) => (v >= 1000 ? 100 : v >= 100 ? 10 : 1);
+      return {
+        low: Math.floor(low / step(low)) * step(low),
+        high: Math.ceil(high / step(high)) * step(high),
+      };
+    };
+    const byNode: NodeMetrics['onlineTypicalByNode'] = {};
+    for (const row of nodes.rows) {
+      const r = range(row);
+      if (r) byNode[String(row.uuid)] = r;
+    }
+    const value = { onlineTypical: range(fleet.rows[0]), onlineTypicalByNode: byNode };
     this.typicalCache = { key, at: Date.now(), value };
     return value;
   }

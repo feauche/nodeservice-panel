@@ -291,6 +291,8 @@ describe('Remnawave e2e (J4)', () => {
       const hour = await metrics.get(60);
       expect(hour.onlineTypical).not.toBeNull();
       expect(hour.onlineTypical?.low).toBeLessThanOrEqual(hour.onlineTypical?.high ?? 0);
+      // И у самой ноды: волна 100–500 в одном и том же часе трёх дней.
+      expect(hour.onlineTypicalByNode[node]).toBeDefined();
 
       const points = await metrics.capacityPoints(domain);
       expect(points.get(node)?.length).toBeGreaterThan(200);

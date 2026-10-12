@@ -1,12 +1,6 @@
 import type { RemnawaveNode } from '@nodeservice/shared';
-import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  ChevronRightIcon,
-  Clock3Icon,
-  ShieldCheckIcon,
-  UsersIcon,
-} from 'lucide-react';
+import { ArrowDownIcon, ArrowUpIcon, ShieldCheckIcon, UsersIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { CountryFlag } from '@/components/country-flag';
 import { cn } from '@/lib/utils';
 import { RemnaProviderIcon } from './remna-providers-page';
@@ -59,19 +53,68 @@ const tones = {
   warn: 'border-warn/30 bg-linear-to-r from-warn/14 to-warn/4 hover:border-warn/60',
   muted: 'border-border bg-surface hover:bg-surface-2',
 };
+
+/** Нагрузка на ядро, %: средняя нагрузка за минуту, делённая на число ядер (1,0 на ядро — это 100 %). */
+export function loadPerCore(node: RemnawaveNode) {
+  const load = node.loadAverage?.[0];
+  return load != null && node.cpuCount ? (load / node.cpuCount) * 100 : null;
+}
+
+/** Полоса загрузки с процентом: зелёная, жёлтая ближе к пределу, красная за ним. */
+export function LoadBar({
+  value,
+  warnAt = 65,
+  critAt = 85,
+}: {
+  value: number | null;
+  warnAt?: number;
+  critAt?: number;
+}) {
+  if (value == null) return <span className="text-[12.5px] text-text-3">—</span>;
+  const tone = value >= critAt ? 'bg-crit' : value >= warnAt ? 'bg-warn' : 'bg-ok';
+  return (
+    <span className="flex items-center gap-2">
+      <span className="h-1.5 min-w-[48px] flex-1 overflow-hidden rounded-full bg-foreground/10">
+        <span
+          className={cn('block h-full rounded-full', tone)}
+          style={{ width: `${Math.min(100, Math.max(2, value))}%` }}
+        />
+      </span>
+      <span className="w-9 text-right text-[12px] text-text-2 tabular-nums">
+        {Math.round(value).toLocaleString('ru-RU')} %
+      </span>
+    </span>
+  );
+}
+
+function Metric({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  return (
+    <span className={cn('block min-w-0', className)}>
+      <span className="mb-1 block text-[10.5px] text-text-3">{label}</span>
+      {children}
+    </span>
+  );
+}
+
+/**
+ * Строка ноды: заливка по состоянию (как была), внутри — состояние, флаг, имя, событие и «БС»; адрес и провайдер;
+ * онлайн, нагрузка на ядро и память полосами, сеть и время работы (витрина redesign-2026-10, «Ноды»).
+ */
 export function NodeCard({
   node,
   onClick,
   stale,
+  incident,
 }: {
   node: RemnawaveNode;
   onClick: () => void;
   stale: boolean;
+  /** Открытое событие ноды: короткое название и важность. */
+  incident?: { title: string; tone: 'crit' | 'warn' } | null;
 }) {
   const state = nodeState(node),
     tone = stale ? 'muted' : state.tone;
-  const used = node.trafficUsedBytes,
-    limit = node.trafficLimitBytes;
+  const down = !node.isConnected && !node.isDisabled;
   return (
     <button
       type="button"
@@ -79,12 +122,13 @@ export function NodeCard({
       data-state={tone}
       onClick={onClick}
       className={cn(
-        'group relative grid w-full min-w-0 cursor-pointer grid-cols-1 items-center gap-x-6 gap-y-4 rounded-[10px] border py-3.5 pr-7 pl-9 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:grid-cols-2 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,.8fr)_minmax(0,.65fr)_16px]',
+        'group relative grid w-full min-w-0 cursor-pointer grid-cols-2 items-center gap-x-5 gap-y-3 rounded-[10px] border py-3 pr-12 pl-9 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+        '@min-[720px]/nodes:grid-cols-[minmax(0,1.6fr)_72px_minmax(0,1fr)_minmax(0,1fr)] @min-[1080px]/nodes:grid-cols-[minmax(0,1.7fr)_80px_minmax(0,1fr)_minmax(0,1fr)_120px_84px]',
         tones[tone],
       )}
     >
-      <span className="min-w-0">
-        <span className="flex min-w-0 items-center gap-2.5">
+      <span className="col-span-2 block min-w-0 @min-[720px]/nodes:col-span-1">
+        <span className="flex min-w-0 items-center gap-2">
           <span
             aria-hidden="true"
             className={cn(
@@ -99,73 +143,65 @@ export function NodeCard({
             )}
           />
           {node.countryCode && <CountryFlag code={node.countryCode} size="md" />}
-          <span className="truncate font-heading text-[14px] font-semibold" title={node.name}>
+          <span className="truncate font-heading text-[13.5px] font-semibold" title={node.name}>
             {node.name}
           </span>
+          {incident && (
+            <span
+              className={cn(
+                'shrink-0 rounded-full px-[9px] py-[3px] text-[11.5px] font-semibold whitespace-nowrap',
+                incident.tone === 'crit' ? 'bg-crit-soft text-crit' : 'bg-warn-soft text-warn',
+              )}
+            >
+              {incident.title}
+            </span>
+          )}
           {node.whitelist && <WhitelistBadge />}
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 rounded-md bg-black/10 px-2 py-1 text-[12px] tabular-nums">
-            <UsersIcon className="size-3.5 opacity-60" />
-            {node.usersOnline?.toLocaleString('ru-RU') ?? '—'}
-          </span>
         </span>
-        <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-text-2">
-          <span>{stale ? 'Данные устарели' : state.label}</span>
-          <span className="opacity-35">·</span>
-          <span>
-            {node.cpuPercent == null
-              ? `Load ${node.loadAverage?.[0]?.toFixed(2) ?? '—'}`
-              : `CPU ${percent(node.cpuPercent)}`}
+        <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[11.5px] text-text-3">
+          <span className="truncate font-mono" title={node.address}>
+            {node.address}
           </span>
-          <span>RAM {percent(ram(node))}</span>
-        </span>
-      </span>
-      <span className="min-w-0">
-        <span className="flex items-center gap-2 text-[12.5px] font-medium">
+          <span className="opacity-50">·</span>
           <RemnaProviderIcon
             src={node.providerIcon}
             name={node.providerName ?? '?'}
-            className="size-6 rounded-md [&_img]:size-4"
+            className="size-4 flex-none rounded-[4px] [&_img]:size-3"
           />
           <span className="truncate" title={node.providerName ?? undefined}>
             {node.providerName || 'Провайдер не указан'}
           </span>
-        </span>
-        <span className="mt-2 block truncate font-mono text-[11.5px] text-text-3" title={node.address}>
-          {node.address}
+          {stale && <span className="flex-none text-warn">· данные устарели</span>}
         </span>
       </span>
-      <span className="min-w-0">
-        <span className="flex items-baseline justify-between gap-2 text-[13px] tabular-nums">
-          <span className="font-semibold">{bytes(used)}</span>
-          <span className="text-[11px] text-text-3">{limit ? `/ ${bytes(limit)}` : '∞'}</span>
+      <Metric label="Онлайн">
+        <span
+          className={cn(
+            'flex items-center gap-1 text-[14px] font-semibold tabular-nums',
+            down && 'text-crit',
+          )}
+        >
+          <UsersIcon className="size-3.5 opacity-50 @min-[720px]/nodes:hidden" aria-hidden="true" />
+          {node.usersOnline?.toLocaleString('ru-RU') ?? '—'}
         </span>
-        <span className="my-2 block h-1 overflow-hidden rounded-full bg-foreground/8">
-          <span
-            className="block h-full rounded-full bg-current opacity-40"
-            style={{ width: limit && used != null ? `${Math.min(100, (used / limit) * 100)}%` : '0%' }}
-          />
+      </Metric>
+      <Metric label="Нагрузка на ядро">
+        <LoadBar value={loadPerCore(node)} />
+      </Metric>
+      <Metric label="Память">
+        <LoadBar value={ram(node)} />
+      </Metric>
+      <Metric label="Сеть, Мбит/с" className="hidden @min-[1080px]/nodes:block">
+        <span className="flex items-center gap-1.5 text-[12.5px] whitespace-nowrap tabular-nums">
+          <ArrowDownIcon className="size-3 text-brand" aria-hidden="true" />
+          {mbitPerSecond(node.rxBytesPerSec)}
+          <ArrowUpIcon className="ml-1 size-3 text-teal" aria-hidden="true" />
+          {mbitPerSecond(node.txBytesPerSec)}
         </span>
-        <span className="flex flex-wrap gap-x-3 text-[10.5px] text-text-3">
-          <span className="flex items-center gap-1">
-            <ArrowDownIcon className="size-3" />
-            {mbitPerSecond(node.rxBytesPerSec)} Мбит/с
-          </span>
-          <span className="flex items-center gap-1">
-            <ArrowUpIcon className="size-3" />
-            {mbitPerSecond(node.txBytesPerSec)} Мбит/с
-          </span>
-        </span>
-      </span>
-      <span className="min-w-0">
-        <span className="flex items-center gap-1.5 text-[12px]">
-          <Clock3Icon className="size-3.5 text-text-3" />
-          {uptime(node.uptime)}
-        </span>
-        <span className="mt-2 block truncate text-[10.5px] text-text-3">
-          Xray {node.xrayVersion || '—'} · Node {node.nodeVersion || '—'}
-        </span>
-      </span>
-      <ChevronRightIcon className="absolute top-5 right-3 size-4 text-text-3 md:hidden xl:static xl:block" />
+      </Metric>
+      <Metric label="Работает" className="hidden @min-[1080px]/nodes:block">
+        <span className="block truncate text-[12.5px]">{uptime(node.uptime)}</span>
+      </Metric>
     </button>
   );
 }

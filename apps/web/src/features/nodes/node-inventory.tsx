@@ -1,13 +1,8 @@
 import type { NodeLayout, RemnawaveNode } from '@nodeservice/shared';
 import {
-  SortableTree,
-  type TreeItem,
-  type TreeItemComponentProps,
-  type TreeItems,
-} from 'dnd-kit-sortable-tree';
-import {
-  ChevronDownIcon,
+  ChevronRightIcon,
   FolderIcon,
+  FolderOpenIcon,
   FolderPlusIcon,
   GripVerticalIcon,
   MoreHorizontalIcon,
@@ -20,6 +15,7 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -33,6 +29,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { useIncidents } from '@/features/incidents/incidents-api';
 import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { NodeCard } from './node-card';
@@ -47,9 +44,12 @@ import {
   sortableGroupsToLayout,
 } from './node-layout-dnd';
 import { useNodeLayout, useSaveNodeLayout } from './nodes-api';
+import { SortableTree, type TreeItemComponentProps, type TreeItems } from './sortable-tree';
 
 const empty: NodeLayout = { folders: [], order: [], placement: {}, rootOrder: [], collapsedFolders: [] };
 const sameLayout = (a: NodeLayout, b: NodeLayout) => JSON.stringify(a) === JSON.stringify(b);
+/** Папка открывается и закрывается за 0,17 с — как в витрине. */
+const FOLDER_MS = 170;
 
 type NodeTreeData = {
   kind: 'folder' | 'node';
@@ -58,14 +58,23 @@ type NodeTreeData = {
   label: string;
 };
 
+type NodeIncident = { title: string; tone: 'crit' | 'warn' };
+
 type NodeTreeContextValue = {
   nodes: Map<string, RemnawaveNode>;
+  incidents: Map<string, NodeIncident>;
   folders: NodeLayout['folders'];
   stale: boolean;
-  busy: boolean;
+  /** Раскладка не загрузилась: перетаскивать и менять папки нельзя. */
+  locked: boolean;
   searching: boolean;
   visible: Set<string>;
+  /** Ноды, которые сейчас появляются: их папку только что открыли. */
+  entering: Set<string>;
+  /** Папки, которые сейчас закрываются: их строки уезжают. */
+  closing: Set<string>;
   onSelect: (id: string) => void;
+  onToggleFolder: (folderId: string) => void;
   onMoveNode: (nodeId: string, folderId: string | null) => void;
   onEditFolder: (folder: { id: string; name: string }) => void;
   onDeleteFolder: (folderId: string) => void;
@@ -104,6 +113,7 @@ function layoutToTree(
         kind: 'folder',
         folderId,
         label: folder.name,
+        // Во время поиска папки открыты, чтобы были видны найденные ноды; сохранённое состояние не меняется.
         collapsed: searching ? false : source.collapsedFolders.includes(folderId),
         canHaveChildren: (dragItem) => dragItem.kind === 'node',
         children,
@@ -119,12 +129,10 @@ function treeToLayout(source: NodeLayout, nodes: RemnawaveNode[], tree: TreeItem
   const rootOrder: string[] = [];
   const order: string[] = [];
   const placement: Record<string, string> = {};
-  const collapsedFolders: string[] = [];
   const seenNodes = new Set<string>();
   const seenFolders = new Set<string>();
 
-  const addRootNode = (item: TreeItem<NodeTreeData>) => {
-    const nodeId = item.nodeId;
+  const addRootNode = (nodeId: string | undefined) => {
     if (!nodeId || !knownNodes.has(nodeId) || seenNodes.has(nodeId)) return;
     seenNodes.add(nodeId);
     rootOrder.push(nodeId);
@@ -133,14 +141,13 @@ function treeToLayout(source: NodeLayout, nodes: RemnawaveNode[], tree: TreeItem
 
   for (const item of tree) {
     if (item.kind !== 'folder') {
-      addRootNode(item);
+      addRootNode(item.nodeId);
       continue;
     }
     const folderId = item.folderId;
     if (!folderId || !knownFolders.has(folderId) || seenFolders.has(folderId)) continue;
     seenFolders.add(folderId);
     rootOrder.push(nodeFolderId(folderId));
-    if (item.collapsed) collapsedFolders.push(folderId);
     for (const child of item.children ?? []) {
       const nodeId = child.nodeId;
       if (!nodeId || !knownNodes.has(nodeId) || seenNodes.has(nodeId)) continue;
@@ -153,7 +160,6 @@ function treeToLayout(source: NodeLayout, nodes: RemnawaveNode[], tree: TreeItem
   for (const folder of source.folders) {
     if (seenFolders.has(folder.id)) continue;
     rootOrder.push(nodeFolderId(folder.id));
-    if (source.collapsedFolders.includes(folder.id)) collapsedFolders.push(folder.id);
     for (const nodeId of scopedNodeIds(source, nodeIds, folder.id)) {
       if (seenNodes.has(nodeId)) continue;
       seenNodes.add(nodeId);
@@ -161,13 +167,9 @@ function treeToLayout(source: NodeLayout, nodes: RemnawaveNode[], tree: TreeItem
       order.push(nodeId);
     }
   }
-  for (const node of nodes) {
-    if (seenNodes.has(node.uuid)) continue;
-    seenNodes.add(node.uuid);
-    rootOrder.push(node.uuid);
-    order.push(node.uuid);
-  }
-  return { ...source, order, placement, rootOrder, collapsedFolders };
+  for (const node of nodes) addRootNode(node.uuid);
+  // Свёрнутость папок перетаскивание не меняет: она хранится отдельно и меняется только нажатием на папку.
+  return { ...source, order, placement, rootOrder };
 }
 
 const NodeTreeItem = forwardRef<HTMLDivElement, TreeItemComponentProps<NodeTreeData>>(function NodeTreeItem(
@@ -180,7 +182,6 @@ const NodeTreeItem = forwardRef<HTMLDivElement, TreeItemComponentProps<NodeTreeD
     collapsed,
     depth,
     handleProps,
-    onCollapse,
     wrapperRef,
     style,
     disableInteraction,
@@ -194,15 +195,26 @@ const NodeTreeItem = forwardRef<HTMLDivElement, TreeItemComponentProps<NodeTreeD
   const common = cn(
     'relative min-w-0 transition-opacity',
     ghost && 'opacity-[0.18]',
-    clone && 'w-[min(1200px,calc(100vw-48px))] opacity-100 shadow-xl',
+    // Копия под курсором — ровно по ширине строки, без сдвига: тот же отступ, что у самой строки.
+    clone && 'w-full opacity-100 shadow-xl',
     disableInteraction && !clone && 'pointer-events-none',
   );
-  const offset = clone ? 0 : depth * 12;
+  const offset = depth * 12;
 
   if (item.kind === 'folder') {
     const folderId = item.folderId ?? '';
     const folder = context.folders.find((candidate) => candidate.id === folderId);
     if (!folder) return <li ref={wrapperRef} style={style} />;
+    const kids = (item.children ?? []).flatMap((child) => {
+      const node = context.nodes.get(child.nodeId ?? '');
+      return node ? [node] : [];
+    });
+    const online = kids.reduce((sum, n) => sum + (n.isDisabled ? 0 : (n.usersOnline ?? 0)), 0);
+    const failing = kids.filter(
+      (n) => (!n.isConnected && !n.isDisabled) || context.incidents.get(n.uuid)?.tone === 'crit',
+    ).length;
+    const open = !collapsed && !context.closing.has(folderId);
+    const toggleLocked = context.locked || context.searching;
     return (
       <li
         ref={wrapperRef}
@@ -215,49 +227,69 @@ const NodeTreeItem = forwardRef<HTMLDivElement, TreeItemComponentProps<NodeTreeD
           ref={ref}
           className={cn(
             common,
-            'flex items-center gap-2 rounded-xl border border-border bg-surface py-2.5 pr-3 pl-10',
+            'group/folder flex h-[52px] items-center gap-2.5 rounded-[14px] border border-border bg-surface pr-2 pl-10 transition-colors hover:bg-surface-2/55',
           )}
-          style={{ marginLeft: offset }}
+          style={{ marginLeft: clone ? 0 : offset }}
         >
           {!clone && (
             <button
               type="button"
-              disabled={context.busy}
-              aria-label={`${collapsed ? 'Открыть' : 'Закрыть'} папку ${folder.name}`}
-              aria-expanded={!collapsed}
-              onClick={onCollapse}
-              className="absolute inset-0 cursor-pointer rounded-xl"
+              disabled={toggleLocked}
+              title={
+                context.searching
+                  ? 'Во время поиска папки открыты, чтобы были видны найденные ноды'
+                  : undefined
+              }
+              aria-label={`${open ? 'Закрыть' : 'Открыть'} папку ${folder.name}`}
+              aria-expanded={open}
+              onClick={() => context.onToggleFolder(folderId)}
+              className="absolute inset-0 cursor-pointer rounded-[14px] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand disabled:cursor-default"
             />
           )}
           <button
             type="button"
             {...handleProps}
             onClick={(event) => event.stopPropagation()}
-            disabled={context.busy || context.searching}
+            disabled={context.locked || context.searching}
             aria-label={`Переместить папку ${folder.name}`}
-            className="absolute top-1/2 left-2 z-10 -translate-y-1/2 touch-none rounded p-1 text-text-3 hover:bg-surface-2 disabled:opacity-30"
+            className="absolute top-1/2 left-2 z-10 -translate-y-1/2 cursor-grab touch-none rounded p-1 text-text-3 hover:bg-surface-2 disabled:opacity-30"
           >
             <GripVerticalIcon className="size-4" />
           </button>
-          <div className="pointer-events-none relative flex min-w-0 flex-1 items-center gap-2.5 text-left text-[13px] font-medium">
-            <ChevronDownIcon
+          <div className="pointer-events-none relative flex min-w-0 flex-1 items-center gap-2.5 text-left">
+            <ChevronRightIcon
               className={cn(
-                'size-4 text-text-3 transition-transform duration-200',
-                collapsed && '-rotate-90',
+                'size-4 flex-none text-text-3 transition-transform duration-[170ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none',
+                open && 'rotate-90',
               )}
+              aria-hidden="true"
             />
-            <FolderIcon className="size-4 text-brand" />
-            <span className="truncate">{folder.name}</span>
-            <span className="text-xs text-text-3">{childCount ?? 0}</span>
+            {open ? (
+              <FolderOpenIcon className="size-[18px] flex-none text-brand" aria-hidden="true" />
+            ) : (
+              <FolderIcon className="size-[18px] flex-none text-brand" aria-hidden="true" />
+            )}
+            <span className="truncate text-[14px] font-semibold">{folder.name}</span>
+            <span className="inline-grid h-[22px] min-w-6 flex-none place-items-center rounded-full bg-surface-2 px-[7px] text-[12px] font-bold text-text-2 tabular-nums">
+              {clone ? (childCount ?? 1) - 1 : kids.length}
+            </span>
+            <span className="ml-auto flex flex-none items-center gap-3.5 pl-2 text-[12.5px] whitespace-nowrap text-text-3">
+              <span className="tabular-nums">онлайн {online.toLocaleString('ru-RU')}</span>
+              {kids.length > 0 && (
+                <span className={cn('max-sm:hidden', failing > 0 && 'text-crit')}>
+                  ● {failing > 0 ? `${failing} со сбоем` : 'все в норме'}
+                </span>
+              )}
+            </span>
           </div>
           {!clone && !ghost && (
             <DropdownMenu>
               <DropdownMenuTrigger
-                disabled={context.busy}
+                disabled={context.locked}
                 aria-label={`Настройки папки ${folder.name}`}
                 onClick={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
-                className="relative z-10 rounded-lg p-1.5 text-text-3 hover:bg-surface-2"
+                className="relative z-10 grid size-[30px] place-items-center rounded-[9px] text-text-3 hover:bg-surface-2 hover:text-foreground"
               >
                 <MoreHorizontalIcon className="size-4" />
               </DropdownMenuTrigger>
@@ -266,11 +298,11 @@ const NodeTreeItem = forwardRef<HTMLDivElement, TreeItemComponentProps<NodeTreeD
                 collisionPadding={12}
                 className="w-[240px] max-w-[calc(100vw-24px)]"
               >
-                <DropdownMenuItem disabled={context.busy} onSelect={() => context.onEditFolder(folder)}>
+                <DropdownMenuItem onSelect={() => context.onEditFolder(folder)}>
                   <PencilIcon />
                   Переименовать
                 </DropdownMenuItem>
-                <DropdownMenuItem disabled={context.busy} onSelect={() => context.onDeleteFolder(folder.id)}>
+                <DropdownMenuItem onSelect={() => context.onDeleteFolder(folder.id)}>
                   <Trash2Icon />
                   Удалить папку
                 </DropdownMenuItem>
@@ -287,6 +319,15 @@ const NodeTreeItem = forwardRef<HTMLDivElement, TreeItemComponentProps<NodeTreeD
   const targetFolder = parent?.folderId
     ? context.folders.find((folder) => folder.id === parent.folderId)
     : null;
+  // Строка внутри папки появляется и уходит плавно: высота и прозрачность за 0,17 с.
+  const motion =
+    clone || ghost
+      ? ''
+      : context.entering.has(node.uuid)
+        ? 'ns-row-in'
+        : parent?.folderId && context.closing.has(parent.folderId)
+          ? 'ns-row-out'
+          : '';
   return (
     <li
       ref={wrapperRef}
@@ -294,58 +335,69 @@ const NodeTreeItem = forwardRef<HTMLDivElement, TreeItemComponentProps<NodeTreeD
       data-tree-kind="node"
       data-tree-id={node.uuid}
       data-tree-parent={parent?.folderId ?? 'root'}
-      className="list-none py-1.5"
+      className="list-none"
     >
-      <div ref={ref} className={common} style={{ marginLeft: offset }}>
-        <NodeCard node={node} stale={context.stale} onClick={() => context.onSelect(node.uuid)} />
-        {ghost && (
-          <span className="pointer-events-none absolute top-2 right-10 z-20 rounded-md border border-brand/35 bg-surface/95 px-2 py-1 text-[10px] font-semibold text-brand shadow-sm">
-            {targetFolder ? `В папку: ${targetFolder.name}` : 'Вне папки'}
-          </span>
-        )}
-        <button
-          type="button"
-          {...handleProps}
-          disabled={context.busy || context.searching}
-          aria-label={`Переместить ${node.name}`}
-          className="absolute top-1/2 left-1.5 z-10 -translate-y-1/2 touch-none rounded-md p-1 text-text-3 hover:bg-surface-2 hover:text-foreground disabled:opacity-30"
-        >
-          <GripVerticalIcon className="size-4" />
-        </button>
-        {!clone && !ghost && (
-          <div className="absolute top-2 right-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                aria-label={`Папка ноды ${node.name}`}
-                className="rounded-md p-1 text-text-3 hover:bg-surface-2"
+      <div className={motion}>
+        <div className={motion ? 'min-h-0 overflow-hidden' : undefined}>
+          <div className="py-1.5">
+            <div ref={ref} className={common} style={{ marginLeft: clone ? 0 : offset }}>
+              <NodeCard
+                node={node}
+                stale={context.stale}
+                incident={context.incidents.get(node.uuid) ?? null}
+                onClick={() => context.onSelect(node.uuid)}
+              />
+              {ghost && (
+                <span className="pointer-events-none absolute top-2 right-12 z-20 rounded-md border border-brand/35 bg-surface/95 px-2 py-1 text-[10px] font-semibold text-brand shadow-sm">
+                  {targetFolder ? `В папку: ${targetFolder.name}` : 'Вне папки'}
+                </span>
+              )}
+              <button
+                type="button"
+                {...handleProps}
+                disabled={context.locked || context.searching}
+                aria-label={`Переместить ${node.name}`}
+                className="absolute top-1/2 left-1.5 z-10 -translate-y-1/2 cursor-grab touch-none rounded-md p-1 text-text-3 hover:bg-surface-2 hover:text-foreground disabled:opacity-30"
               >
-                <MoreHorizontalIcon className="size-3.5" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="end"
-                collisionPadding={12}
-                className="w-[240px] max-w-[calc(100vw-24px)]"
-              >
-                <DropdownMenuItem
-                  disabled={context.busy}
-                  onSelect={() => context.onMoveNode(node.uuid, null)}
-                >
-                  Вне папки {!parent ? '✓' : ''}
-                </DropdownMenuItem>
-                {context.folders.map((folder) => (
-                  <DropdownMenuItem
-                    key={folder.id}
-                    disabled={context.busy}
-                    onSelect={() => context.onMoveNode(node.uuid, folder.id)}
-                  >
-                    <FolderIcon />
-                    {folder.name} {parent?.folderId === folder.id ? '✓' : ''}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                <GripVerticalIcon className="size-4" />
+              </button>
+              {!clone && !ghost && (
+                <div className="absolute top-1/2 right-2 -translate-y-1/2">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      aria-label={`Папка ноды ${node.name}`}
+                      className="grid size-[30px] place-items-center rounded-[9px] text-text-3 hover:bg-surface-2 hover:text-foreground"
+                    >
+                      <MoreHorizontalIcon className="size-4" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="end"
+                      collisionPadding={12}
+                      className="w-[240px] max-w-[calc(100vw-24px)]"
+                    >
+                      <DropdownMenuItem
+                        disabled={context.locked}
+                        onSelect={() => context.onMoveNode(node.uuid, null)}
+                      >
+                        Вне папки {!parent ? '✓' : ''}
+                      </DropdownMenuItem>
+                      {context.folders.map((folder) => (
+                        <DropdownMenuItem
+                          key={folder.id}
+                          disabled={context.locked}
+                          onSelect={() => context.onMoveNode(node.uuid, folder.id)}
+                        >
+                          <FolderIcon />
+                          {folder.name} {parent?.folderId === folder.id ? '✓' : ''}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              )}
+            </div>
           </div>
-        )}
+        </div>
       </div>
     </li>
   );
@@ -368,11 +420,18 @@ export function NodeInventory({
 }) {
   const query = useNodeLayout();
   const save = useSaveNodeLayout();
+  const incidents = useIncidents('open');
   const layout = query.data ?? empty;
   const [draft, setDraft] = useState<NodeLayout | null>(null);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<{ id: string; name: string } | null>(null);
+  const [entering, setEntering] = useState<Set<string>>(() => new Set());
+  const [closing, setClosing] = useState<Set<string>>(() => new Set());
+  const [dragging, setDragging] = useState(false);
   const saving = useRef(false);
+  const queued = useRef<NodeLayout | null>(null);
+  const savedRef = useRef(layout);
+  savedRef.current = layout;
   const value = draft ?? layout;
   const valueRef = useRef(value);
   valueRef.current = value;
@@ -380,29 +439,55 @@ export function NodeInventory({
   allNodesRef.current = allNodes;
   const visible = useMemo(() => new Set(nodes.map((node) => node.uuid)), [nodes]);
   const nodeMap = useMemo(() => new Map(allNodes.map((node) => [node.uuid, node])), [allNodes]);
-  const treeItems = useMemo(() => layoutToTree(value, allNodes, searching), [value, allNodes, searching]);
-  const busy = save.isPending || query.isPending || query.isError;
+  const incidentMap = useMemo(() => {
+    const map = new Map<string, NodeIncident>();
+    for (const i of incidents.data?.items ?? []) {
+      if (i.status === 'resolved' || !i.nodeUuid) continue;
+      const node = nodeMap.get(i.nodeUuid);
+      const title =
+        node && i.title.endsWith(` · ${node.name}`) ? i.title.slice(0, -` · ${node.name}`.length) : i.title;
+      const tone = i.severity === 'crit' ? 'crit' : 'warn';
+      if (!map.has(i.nodeUuid) || tone === 'crit') map.set(i.nodeUuid, { title, tone });
+    }
+    return map;
+  }, [incidents.data, nodeMap]);
+  // Дерево зависит только от состава нод и их имён: опрос раз в 15 секунд с новыми цифрами его не пересобирает.
+  const shapeKey = allNodes.map((n) => `${n.uuid}:${n.name}`).join('|');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: allNodes учтён через shapeKey — пересобираем дерево только при смене состава
+  const liveTree = useMemo(() => layoutToTree(value, allNodes, searching), [value, shapeKey, searching]);
+  // Пока строку тянут, дерево не трогаем вовсе.
+  const frozen = useRef(liveTree);
+  if (!dragging) frozen.current = liveTree;
+  const treeItems = dragging ? frozen.current : liveTree;
+  const locked = query.isPending || query.isError;
 
+  /** Экран меняется сразу; сохранение идёт в фоне и по очереди — вторая правка не теряется и ничего не мигает. */
   const persist = useCallback(
     async (next: NodeLayout) => {
-      if (saving.current || sameLayout(next, query.data ?? empty)) {
-        setDraft(null);
+      setDraft(next);
+      setError('');
+      if (saving.current) {
+        queued.current = next;
         return;
       }
       saving.current = true;
-      setDraft(next);
-      setError('');
+      let current: NodeLayout | null = next;
       try {
-        await save.mutateAsync(next);
+        while (current) {
+          queued.current = null;
+          if (!sameLayout(current, savedRef.current)) await save.mutateAsync(current);
+          current = queued.current;
+        }
         setDraft(null);
       } catch (cause) {
+        queued.current = null;
         setError(apiErrorMessage(cause));
         setDraft(null);
       } finally {
         saving.current = false;
       }
     },
-    [query.data, save],
+    [save],
   );
 
   const handleTreeChange = useCallback(
@@ -410,6 +495,62 @@ export function NodeInventory({
       void persist(treeToLayout(valueRef.current, allNodesRef.current, nextTree));
     },
     [persist],
+  );
+
+  const timers = useRef<number[]>([]);
+  useEffect(
+    () => () => {
+      for (const t of timers.current) window.clearTimeout(t);
+    },
+    [],
+  );
+  const later = useCallback((fn: () => void, ms: number) => {
+    timers.current.push(window.setTimeout(fn, ms));
+  }, []);
+
+  const toggleFolder = useCallback(
+    (folderId: string) => {
+      const source = valueRef.current;
+      const isCollapsed = source.collapsedFolders.includes(folderId);
+      const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      const setCollapsed = (collapsed: boolean) => {
+        const current = valueRef.current;
+        const rest = current.collapsedFolders.filter((id) => id !== folderId);
+        void persist({ ...current, collapsedFolders: collapsed ? [...rest, folderId] : rest });
+      };
+      if (isCollapsed) {
+        // Открытие: папка открывается сразу, строки появляются за 0,17 с.
+        const ids = scopedNodeIds(
+          source,
+          allNodesRef.current.map((n) => n.uuid),
+          folderId,
+        );
+        if (!reduce) {
+          setEntering((cur) => new Set([...cur, ...ids]));
+          later(
+            () => setEntering((cur) => new Set([...cur].filter((id) => !ids.includes(id)))),
+            FOLDER_MS + 40,
+          );
+        }
+        setCollapsed(false);
+        return;
+      }
+      if (reduce) {
+        setCollapsed(true);
+        return;
+      }
+      // Закрытие в две фазы: сначала строки сжимаются, потом папка закрывается.
+      setClosing((cur) => new Set(cur).add(folderId));
+      later(() => {
+        setCollapsed(true);
+        setClosing((cur) => {
+          const next = new Set(cur);
+          next.delete(folderId);
+          return next;
+        });
+      }, FOLDER_MS);
+    },
+    [persist, later],
   );
 
   const moveFromMenu = useCallback(
@@ -457,17 +598,35 @@ export function NodeInventory({
   const treeContext = useMemo<NodeTreeContextValue>(
     () => ({
       nodes: nodeMap,
+      incidents: incidentMap,
       folders: value.folders,
       stale,
-      busy,
+      locked,
       searching,
       visible,
+      entering,
+      closing,
       onSelect,
+      onToggleFolder: toggleFolder,
       onMoveNode: moveFromMenu,
       onEditFolder: setEditing,
       onDeleteFolder: deleteFolder,
     }),
-    [nodeMap, value.folders, stale, busy, searching, visible, onSelect, moveFromMenu, deleteFolder],
+    [
+      nodeMap,
+      incidentMap,
+      value.folders,
+      stale,
+      locked,
+      searching,
+      visible,
+      entering,
+      closing,
+      onSelect,
+      toggleFolder,
+      moveFromMenu,
+      deleteFolder,
+    ],
   );
 
   return (
@@ -476,7 +635,7 @@ export function NodeInventory({
         {toolbar}
         <Button
           variant="outline"
-          disabled={busy}
+          disabled={locked}
           className="h-10 shrink-0 rounded-[10px] text-[12px]"
           onClick={() => setEditing({ id: crypto.randomUUID(), name: '' })}
         >
@@ -490,18 +649,16 @@ export function NodeInventory({
         </p>
       )}
       <NodeTreeContext.Provider value={treeContext}>
-        <div data-node-tree className="-my-1.5">
+        <div data-node-tree className="@container/nodes -my-1.5">
           <SortableTree
-            key={searching ? 'search' : 'sortable'}
             items={treeItems}
             onItemsChanged={handleTreeChange}
             TreeItemComponent={NodeTreeItem}
             indentationWidth={12}
             pointerSensorOptions={{ activationConstraint: { distance: 6 } }}
-            disableSorting={searching}
-            canRootHaveChildren
-            {...({ manualDrag: true, hideCollapseButton: true, disableCollapseOnItemClick: true } as object)}
-            dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.2,0,0,1)' }}
+            disableSorting={searching || locked}
+            label={(item) => item.label}
+            onDraggingChange={setDragging}
           />
         </div>
       </NodeTreeContext.Provider>
@@ -539,7 +696,7 @@ export function NodeInventory({
               }
             />
             <div className="mt-4 flex justify-end">
-              <Button type="submit" disabled={busy || !editing?.name.trim()}>
+              <Button type="submit" disabled={locked || !editing?.name.trim()}>
                 Сохранить
               </Button>
             </div>

@@ -1,11 +1,23 @@
-import { Loader2Icon, RefreshCwIcon, SearchIcon } from 'lucide-react';
+import type { RemnawaveCert } from '@nodeservice/shared';
+import {
+  LayersIcon,
+  Loader2Icon,
+  RefreshCwIcon,
+  SearchIcon,
+  ShieldAlertIcon,
+  ShieldCheckIcon,
+  ShieldQuestionIcon,
+} from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
+import { KpiCard } from '@/components/kpi-card';
 import { Button } from '@/components/ui/button';
 import { Combobox } from '@/components/ui/combobox';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PasswordField } from '@/features/auth/components/password-field';
+import { useIncidents } from '@/features/incidents/incidents-api';
+import { plural } from '@/features/overview/overview-format';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -22,6 +34,55 @@ import {
 } from './nodes-api';
 
 const fieldLabel = 'mb-1.5 block text-[12.5px] font-medium text-text-2';
+
+const DATE = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+
+/** Сертификат панели Remnawave: действует и сколько осталось, скоро истекает или уже истёк. */
+function CertPill({ cert }: { cert: RemnawaveCert | null }) {
+  if (!cert) return null;
+  const until = cert.expiresAt ? DATE.format(new Date(cert.expiresAt)) : null;
+  const days = cert.daysLeft;
+  const view =
+    cert.status === 'expired' || (days != null && days < 0)
+      ? {
+          cls: 'bg-crit-soft text-crit',
+          Icon: ShieldAlertIcon,
+          text: 'Сертификат истёк',
+          title: `${until ?? 'Дата неизвестна'} · клиенты не подключатся`,
+        }
+      : cert.status === 'warn'
+        ? {
+            cls: 'bg-warn-soft text-warn',
+            Icon: ShieldAlertIcon,
+            text: `Сертификат истекает через ${days} ${plural(days ?? 0, 'день', 'дня', 'дней')}`,
+            title: `До ${until ?? '—'} · продлите в Remnawave`,
+          }
+        : cert.status === 'ok'
+          ? {
+              cls: 'bg-ok-soft text-ok',
+              Icon: ShieldCheckIcon,
+              text: `Сертификат действует · ещё ${days} ${plural(days ?? 0, 'день', 'дня', 'дней')}`,
+              title: `До ${until ?? '—'}`,
+            }
+          : {
+              cls: 'bg-surface-2 text-text-3',
+              Icon: ShieldQuestionIcon,
+              text: 'Сертификат не проверен',
+              title: cert.note ?? 'Домен панели не ответил по HTTPS',
+            };
+  return (
+    <span
+      title={view.title}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full px-[9px] py-[3px] text-[11.5px] font-semibold whitespace-nowrap',
+        view.cls,
+      )}
+    >
+      <view.Icon className="size-3.5" aria-hidden="true" />
+      {view.text}
+    </span>
+  );
+}
 const secondary =
   'h-9 rounded-[10px] border-border bg-surface px-3 text-[12.5px] text-text-2 hover:bg-surface-2 hover:text-foreground';
 export function NodesPage() {
@@ -47,6 +108,25 @@ export function NodesPage() {
   }, [status?.domain]);
   const nodes = status?.nodes ?? [];
   const activeNode = nodes.find((n) => n.uuid === selected);
+  const incidents = useIncidents('open', { enabled: Boolean(status?.connected) });
+  const enabledNodes = nodes.filter((n) => !n.isDisabled);
+  const enabledCount = enabledNodes.length;
+  const disabledCount = nodes.length - enabledCount;
+  const connectedCount = enabledNodes.filter((n) => n.isConnected).length;
+  const downCount = enabledCount - connectedCount;
+  const onlineCount = enabledNodes.reduce((sum, n) => sum + (n.usersOnline ?? 0), 0);
+  const critNodes = new Set(
+    (incidents.data?.items ?? [])
+      .filter((i) => i.status !== 'resolved' && i.severity === 'crit' && i.nodeUuid)
+      .map((i) => i.nodeUuid as string),
+  );
+  const failingCount = enabledNodes.filter((n) => !n.isConnected || critNodes.has(n.uuid)).length;
+  const lifetimeText = status?.stats ? traffic(status.stats.trafficBytesLifetime) : '—';
+  const lifetimeAt = lifetimeText.lastIndexOf(' ');
+  const lifetime =
+    lifetimeAt > 0
+      ? { value: lifetimeText.slice(0, lifetimeAt), unit: lifetimeText.slice(lifetimeAt + 1) }
+      : { value: lifetimeText, unit: undefined };
   const filtered = useMemo(
     () =>
       nodes.filter(
@@ -97,14 +177,27 @@ export function NodesPage() {
       </section>
     );
   return (
-    <div className="flex flex-col gap-5">
-      <section className="rounded-2xl border border-border bg-surface p-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <h2 className="font-heading text-[15px] font-semibold">Подключение Remnawave</h2>
-          <Pill tone={status?.connected ? 'ok' : 'muted'}>
-            {status?.connected ? 'Подключено' : 'Не подключено'}
-          </Pill>
-          <span className="flex-1" />
+    <div className="flex flex-col gap-3">
+      <section className="rounded-2xl border border-border bg-surface px-4 py-4">
+        <div className="flex flex-wrap items-center gap-x-3.5 gap-y-3">
+          <span className="grid size-10 flex-none place-items-center rounded-full bg-brand-soft text-brand">
+            <LayersIcon className="size-[19px]" aria-hidden="true" />
+          </span>
+          <div className="min-w-[220px] flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="font-heading text-[14.5px] font-semibold">Подключение Remnawave</h2>
+              <Pill tone={status?.connected ? 'ok' : 'muted'}>
+                {status?.connected ? 'Подключено' : 'Не подключено'}
+              </Pill>
+            </div>
+            {status?.connected && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3.5 gap-y-1.5 text-[12.5px] text-text-3">
+                <span className="font-mono">{status.domain}</span>
+                {status.stats?.panelVersion && <span>панель {status.stats.panelVersion}</span>}
+                <CertPill cert={status.cert} />
+              </div>
+            )}
+          </div>
           {status?.connected && (
             <Button
               variant="outline"
@@ -115,7 +208,11 @@ export function NodesPage() {
             </Button>
           )}
           {status?.connected && (
-            <Button variant="outline" className={secondary} onClick={() => setDisconnecting(true)}>
+            <Button
+              variant="outline"
+              className={cn(secondary, 'hover:border-crit/50 hover:bg-crit-soft hover:text-crit')}
+              onClick={() => setDisconnecting(true)}
+            >
               Отключить
             </Button>
           )}
@@ -206,18 +303,41 @@ export function NodesPage() {
       )}
       {status?.connected ? (
         <>
-          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            {[
-              ['Ноды', nodes.length],
-              ['На связи', nodes.filter((n) => n.isConnected && !n.isDisabled).length],
-              ['Онлайн', nodes.reduce((sum, n) => sum + (n.usersOnline ?? 0), 0)],
-              ['Трафик всего', status.stats ? traffic(status.stats.trafficBytesLifetime) : '—'],
-            ].map(([name, value]) => (
-              <div key={name} className="rounded-2xl border border-border bg-surface px-4 py-3.5">
-                <div className="text-[11px] text-text-3">{name}</div>
-                <div className="mt-1 font-heading text-[24px] font-semibold tabular-nums">{value}</div>
-              </div>
-            ))}
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <KpiCard
+              label="Нод"
+              value={nodes.length}
+              status={
+                disabledCount > 0
+                  ? `${disabledCount} ${disabledCount === 1 ? 'не используется' : 'не используются'}`
+                  : 'Все в работе'
+              }
+              tone={disabledCount > 0 ? 'muted' : 'ok'}
+            />
+            <KpiCard
+              label="На связи"
+              value={connectedCount}
+              unit={`/ ${enabledCount}`}
+              status={downCount > 0 ? `${downCount} без связи` : 'Без потерь связи'}
+              tone={downCount > 0 ? 'crit' : 'ok'}
+            />
+            <KpiCard
+              label="Онлайн"
+              value={onlineCount.toLocaleString('ru-RU')}
+              status={
+                failingCount > 0
+                  ? `${failingCount} ${plural(failingCount, 'нода', 'ноды', 'нод')} со сбоем`
+                  : 'Сейчас на нодах'
+              }
+              tone={failingCount > 0 ? 'crit' : 'ok'}
+            />
+            <KpiCard
+              label="Трафик всего"
+              value={lifetime.value}
+              unit={lifetime.unit}
+              status="За всё время"
+              tone="info"
+            />
           </div>
           <section className="overflow-hidden rounded-2xl border border-border bg-surface">
             <div className="flex flex-wrap items-center gap-3 border-b border-border p-4">
