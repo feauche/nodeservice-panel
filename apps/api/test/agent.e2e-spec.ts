@@ -1,5 +1,4 @@
 import { sign as edSign, generateKeyPairSync } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { INestApplication } from '@nestjs/common';
@@ -9,7 +8,6 @@ import {
   AGENT_MSG,
   AGENT_PROTOCOL_VERSION,
   type AgentEnvelope,
-  AUTOCHECKS_DEFAULTS,
   agentEnrollResponseSchema,
   auditListResponseSchema,
   CSRF_HEADER,
@@ -425,20 +423,15 @@ describe('agent e2e', () => {
     }
   });
 
-  it('настройки автопроверок управляют welcome: метрики выключены → metricsSeconds 0', async () => {
+  it('устаревшие настройки автопроверок не открывают HTTP управление агентским мониторингом', async () => {
+    const before = ssh.execLog.length;
     await agent
       .put('/api/settings/autochecks')
       .set(CSRF_HEADER, csrf)
       .send({ metricsEnabled: false })
-      .expect(200);
-    const ws = new WsAgent();
-    await ws.connect(wsBase);
-    ws.send(AGENT_MSG.hello, { serverId, pubkey: pubkeyB64, version: '0.5.0-test' });
-    const challenge = await ws.next();
-    ws.send(AGENT_MSG.auth, { signature: signNonce((challenge.payload as { nonce: string }).nonce) });
-    const welcome = await ws.next();
-    expect((welcome.payload as { metricsSeconds: number }).metricsSeconds).toBe(0);
-    ws.ws.close();
+      .expect(404);
+    await agent.get('/api/settings/autochecks').expect(404);
+    expect(ssh.execLog.length).toBe(before);
   });
 
   it('установка по SSH: панель выполняет скрипт из релизов, статус — «Ожидает агента»', async () => {
@@ -483,77 +476,18 @@ describe('agent e2e', () => {
     }
   });
 
-  it('настройки: GET отдаёт дефолты после PUT-отката «По умолчанию»', async () => {
+  it('актуальные настройки мониторинга принимают Remnawave интервалы, не старые агентские поля', async () => {
     const res = await agent
-      .put('/api/settings/autochecks')
+      .put('/api/settings/monitoring')
       .set(CSRF_HEADER, csrf)
-      .send({ metricsEnabled: true, metricsIntervalSeconds: 10 })
+      .send({ enabled: false, pollSeconds: 90 })
       .expect(200);
-    expect(res.body.metricsEnabled).toBe(true);
-    const audit = auditListResponseSchema.parse(
-      (await agent.get('/api/audit?category=settings').expect(200)).body,
-    );
-    expect(audit.items.some((e) => e.action === 'settings.autochecks.updated')).toBe(true);
-  });
-
-  it('порог «Агент не в сети» меньше трёх сигналов не принимается; сохранённый раньше меньший порог миграция поднимает до минимума', async () => {
-    const low = await agent
-      .put('/api/settings/autochecks')
-      .set(CSRF_HEADER, csrf)
-      .send({ agentOfflineAfterSeconds: 10 })
-      .expect(400);
-    expect(JSON.stringify(low.body.errors)).toContain('Не меньше 30');
-    const ok = await agent
-      .put('/api/settings/autochecks')
+    expect(res.body).toMatchObject({ enabled: false, pollSeconds: 90 });
+    await agent
+      .put('/api/settings/monitoring')
       .set(CSRF_HEADER, csrf)
       .send({ agentOfflineAfterSeconds: 30 })
-      .expect(200);
-    expect(ok.body.agentOfflineAfterSeconds).toBe(30);
-
-    const db = app.get<Db>(DB);
-    // Хранилище настроек держит прочитанное 5 секунд — для проверки «как после перезапуска» сбрасываем.
-    const { AutochecksStore } = await import('../src/modules/settings/autochecks.store.js');
-    const store = app.get(AutochecksStore) as unknown as { cache: unknown };
-    const save = (value: string) =>
-      db.execute(
-        sql`insert into app_meta (key, value) values ('settings.autochecks', ${value})
-            on conflict (key) do update set value = excluded.value`,
-      );
-    const stored = async () =>
-      (await db.execute<{ value: string }>(sql`select value from app_meta where key = 'settings.autochecks'`))
-        .rows[0]?.value ?? '';
-    const current = async () => {
-      store.cache = null;
-      return (await agent.get('/api/settings/autochecks').expect(200)).body as typeof AUTOCHECKS_DEFAULTS;
-    };
-    const migration = readFileSync(
-      new URL('../drizzle/migrations/0048_autochecks_agent_offline_min.sql', import.meta.url),
-      'utf8',
-    );
-    try {
-      // Настройки прежней версии: порог 15 секунд и свой интервал проверки SSH.
-      const old = { ...AUTOCHECKS_DEFAULTS, sshIntervalMinutes: 45, agentOfflineAfterSeconds: 15 };
-      await save(JSON.stringify(old));
-      // Без миграции запись не проходит проверку — и весь раздел возвращается к значениям по умолчанию.
-      expect((await current()).sshIntervalMinutes).toBe(AUTOCHECKS_DEFAULTS.sshIntervalMinutes);
-      await db.execute(sql.raw(migration));
-      expect(JSON.parse(await stored())).toEqual({ ...old, agentOfflineAfterSeconds: 30 });
-      expect(await current()).toMatchObject({ sshIntervalMinutes: 45, agentOfflineAfterSeconds: 30 });
-      // Повторный запуск и значения, которые менять не нужно, — без изменений.
-      for (const keep of [30, 120, 600]) {
-        const value = JSON.stringify({ ...old, agentOfflineAfterSeconds: keep });
-        await save(value);
-        await db.execute(sql.raw(migration));
-        expect(await stored(), String(keep)).toBe(value);
-      }
-      // Повреждённая запись миграцию не роняет.
-      await save('не json');
-      await db.execute(sql.raw(migration));
-      expect(await stored()).toBe('не json');
-    } finally {
-      await save(JSON.stringify(AUTOCHECKS_DEFAULTS));
-      store.cache = null;
-    }
+      .expect(400);
   });
 
   it('удаление сервера закрывает соединение его агента особым кодом, без «пропал со связи» в Журнале', async () => {

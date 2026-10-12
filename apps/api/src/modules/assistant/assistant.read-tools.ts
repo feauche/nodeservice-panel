@@ -485,6 +485,8 @@ export function briefIncident(i: Incident) {
     id: i.id,
     server: i.serverName,
     serverId: i.serverId,
+    nodeUuid: i.nodeUuid ?? null,
+    diagnostics: i.diagnostics ?? null,
     kind: i.kind,
     severity: i.severity,
     status: i.status,
@@ -744,11 +746,16 @@ export async function runReadTool(
     }
     const res = await deps.incidents.list(status);
     const items = res.items
-      .filter((i) => serverId === null || i.serverId === serverId)
+      .filter(
+        (i) =>
+          (serverId === null || i.serverId === serverId) && (!arg.nodeUuid || i.nodeUuid === arg.nodeUuid),
+      )
       .sort((a, b) => b.openedAt.localeCompare(a.openedAt))
       .slice(0, limit);
     // Сводки считаем по всей выборке (до среза по limit): «где больше инцидентов» отвечается числами, а не первыми строками.
-    const pool = res.items.filter((i) => serverId === null || i.serverId === serverId);
+    const pool = res.items.filter(
+      (i) => (serverId === null || i.serverId === serverId) && (!arg.nodeUuid || i.nodeUuid === arg.nodeUuid),
+    );
     const bump = (m: Map<string, { total: number; open: number }>, key: string, isOpen: boolean) => {
       const cur = m.get(key) ?? { total: 0, open: 0 };
       cur.total += 1;

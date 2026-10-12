@@ -24,6 +24,15 @@ import { ServersService } from '../../servers/servers.service.js';
 import { CHANGE_OPS, type ChangeCtx, type ChangePlan, type Json, same } from './change-ops.js';
 import { ChangesRepository } from './changes.repository.js';
 
+const RETIRED_OPERATIONS = new Set(['autofix.pause', 'autofix.policy', 'maintenance.run', 'server.check']);
+const retiredOperation = (operation: string) => {
+  if (RETIRED_OPERATIONS.has(operation))
+    throw problem(HttpStatus.GONE, {
+      detail:
+        'Эта операция больше не используется: SSH-проверки, обслуживание и автопочинка удалены. Историческая запись сохранена.',
+    });
+};
+
 export type ProposeOutcome = { change: AssistantChange; reused: boolean } | { problem: string };
 
 /** Человеческий текст ошибки: у HttpException берём detail, у остальных — общая фраза (подробности в лог). */
@@ -111,7 +120,7 @@ export class ChangesService {
   private async present(row: AssistantChangeRow): Promise<AssistantChange> {
     const dto = this.toDto(row);
     const op = CHANGE_OPS[row.operation as ChangeOperation];
-    if (row.status !== 'applied' || !op.progress) return dto;
+    if (RETIRED_OPERATIONS.has(row.operation) || row.status !== 'applied' || !op.progress) return dto;
     const prog = await op
       .progress(row.args as Record<string, Json>, this.planOf(row), this.ctx())
       .catch(() => null);
@@ -143,6 +152,7 @@ export class ChangesService {
     reason: string | null;
     conversationId: string | null;
   }): Promise<ProposeOutcome> {
+    retiredOperation(input.operation);
     const known = Object.keys(CHANGE_OPS);
     if (!known.includes(input.operation))
       return {
@@ -224,6 +234,7 @@ export class ChangesService {
     this.busy.add(id);
     try {
       const row = await this.load(id);
+      retiredOperation(row.operation);
       if (row.status === 'applied') return this.present(row);
       if (row.status === 'expired') return this.present(row);
       if (row.status !== 'proposed')
@@ -317,6 +328,7 @@ export class ChangesService {
     this.busy.add(id);
     try {
       const row = await this.load(id);
+      retiredOperation(row.operation);
       if (row.status === 'reverted') return this.present(row);
       const plan = this.planOf(row);
       const op = CHANGE_OPS[row.operation as ChangeOperation];

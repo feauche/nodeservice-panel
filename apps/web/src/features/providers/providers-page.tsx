@@ -178,9 +178,9 @@ export function ProvidersPage() {
         // знаний». Оболочка оставляет снизу 60px, «съедаем» лишнее отрицательным полем (как там же):
         // на десктопе низ 24px (лишние 36px), на телефоне 16px (лишние 44px). 258px измерено по месту
         // (шапка + заголовок страницы + строка поиска у «Провайдеров» выше, чем у безымянных страниц).
-        <div className="-mb-11 grid gap-4 overflow-hidden md:-mb-9 lg:h-[calc(100dvh-298px)] lg:min-h-[420px] lg:grid-cols-[300px_minmax(0,1fr)]">
+        <div className="-mb-11 grid gap-4 overflow-hidden md:-mb-9 lg:h-[calc(100dvh-298px)] lg:min-h-[420px] [@media(min-width:1024px)_and_(max-height:760px)]:h-auto [@media(min-width:1024px)_and_(max-height:760px)]:min-h-0 [@media(min-width:1024px)_and_(max-height:760px)]:mb-0 lg:grid-cols-[300px_minmax(0,1fr)]">
           <ul
-            className="flex min-h-0 flex-col overflow-y-auto overscroll-contain rounded-2xl border border-border bg-surface"
+            className="flex min-h-0 flex-col [@media(min-width:1024px)_and_(max-height:760px)]:max-h-[360px] overflow-y-auto overscroll-contain rounded-2xl border border-border bg-surface"
             aria-label="Провайдеры"
           >
             {filtered.length === 0 && (

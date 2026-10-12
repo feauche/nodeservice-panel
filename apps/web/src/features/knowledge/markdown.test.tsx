@@ -1,8 +1,8 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { Markdown } from './markdown';
+import { Markdown, NodeLinkContext } from './markdown';
 
 describe('Markdown', () => {
   it('рендерит markdown-таблицу с заголовком и строками', () => {
@@ -75,4 +75,19 @@ describe('Markdown', () => {
     render(<Markdown content={'```bash\necho hidden\n```'} />);
     expect(screen.queryByRole('button', { name: 'Скопировать код' })).not.toBeInTheDocument();
   });
+});
+
+it('node links use current UUID context and absent nodes are inert', async () => {
+  const uuid = '11111111-1111-4111-8111-111111111111',
+    open = vi.fn();
+  render(
+    <NodeLinkContext.Provider
+      value={{ nodes: { [uuid]: { country: 'DE', state: 'Доступна', tone: 'ok' } }, open }}
+    >
+      <Markdown content={`[Нода](node:${uuid}) [Старая](node:22222222-2222-4222-8222-222222222222)`} />
+    </NodeLinkContext.Provider>,
+  );
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Нода' }));
+  expect(open).toHaveBeenCalledWith(uuid);
+  expect(screen.getByRole('button', { name: 'Старая' })).toBeDisabled();
 });

@@ -52,6 +52,7 @@ import { envValues, parseMeta } from '../src/modules/backups/backups.logic.js';
 import { BackupsService } from '../src/modules/backups/backups.service.js';
 import { internalSignature } from '../src/modules/backups/backups-internal.controller.js';
 import { PANEL_LIFE_KEY, PanelLifecycleService } from '../src/modules/health/panel-lifecycle.service.js';
+import { NotificationsRepository } from '../src/modules/notifications/notifications.repository.js';
 import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications/telegram/telegram.client.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -215,9 +216,9 @@ describe('резервные копии e2e', () => {
   /** Сколько раз про неудачную копию написали в Telegram и сколько — в колокольчик. */
   const failuresInTelegram = () => tg.texts.filter((t) => t.includes('Резервная копия не получилась'));
   const failuresInBell = async () =>
-    (
-      (await agent.get('/api/notifications').expect(200)).body.items as Array<{ title: string; body: string }>
-    ).filter((n) => n.title === 'Резервная копия не получилась');
+    (await app.get(NotificationsRepository).list()).items.filter(
+      (n) => n.title === 'Резервная копия не получилась',
+    );
   const keyPrint = () =>
     createHash('sha256')
       .update(String(app.get(ConfigService).get('ENCRYPTION_KEY')).toLowerCase())

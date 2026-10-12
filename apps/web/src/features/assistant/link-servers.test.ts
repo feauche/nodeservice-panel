@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { linkifyServers } from './link-servers';
+import { linkifyNodes, linkifyServers } from './link-servers';
 
 const S = [
   { id: '11111111-1111-4111-8111-111111111111', name: 'ru-bridge (Аренда VK)' },
@@ -37,5 +37,23 @@ describe('linkifyServers', () => {
     ]);
     expect(r).toContain('[a.b+c](server:');
     expect(linkifyServers('узел aXb+c', [{ id: 'x', name: 'a.b+c' }])).toBe('узел aXb+c');
+  });
+});
+
+describe('linkifyNodes', () => {
+  it('uses UUID namespace and preserves explicit historical server links and code', () => {
+    const uuid = '11111111-1111-4111-8111-111111111111';
+    const old = `[старый](server:${uuid})`;
+    expect(linkifyNodes(`Нода и ${old} и \`Нода\``, [{ uuid, name: 'Нода' }])).toBe(
+      `[Нода](node:${uuid}) и ${old} и \`Нода\``,
+    );
+  });
+  it('does not guess duplicated names', () => {
+    expect(
+      linkifyNodes('Нода', [
+        { uuid: 'a', name: 'Нода' },
+        { uuid: 'b', name: 'Нода' },
+      ]),
+    ).toBe('Нода');
   });
 });

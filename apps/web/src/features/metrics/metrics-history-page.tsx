@@ -1,5 +1,6 @@
 import { nodeMetricHistorySchema } from '@nodeservice/shared';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import {
   ActivityIcon,
   ChevronLeftIcon,
@@ -54,7 +55,7 @@ const localInput = (t: number) => {
 };
 const formatValue = (n: number, kind: Metric) =>
   `${Number(kind === 'rx' || kind === 'tx' ? (n * 8) / 1e6 : n).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}${kind === 'cpu' || kind === 'ram' ? '%' : kind === 'rx' || kind === 'tx' ? ' Мбит/с' : ''}`;
-export function MetricsHistoryPage() {
+export function MetricsHistoryPage({ overview = false }: { overview?: boolean }) {
   const inventory = useNodes();
   const [full, setFull] = useState<Range>(() => ({ from: Date.now() - 86400000, to: Date.now() })),
     [range, setRange] = useState(full);
@@ -135,18 +136,29 @@ export function MetricsHistoryPage() {
   const hasData = data.some((p) => nodes.some((n) => p[n.uuid] !== null && p[n.uuid] !== undefined));
   const onlineSummary = query.data?.onlineSummary;
   return (
-    <div className="flex min-h-0 flex-col gap-4 xl:h-[calc(100dvh-206px)] xl:min-h-[480px] xl:-mb-11">
+    <div className="flex min-h-0 flex-col gap-4 xl:h-[calc(100dvh-206px)] xl:min-h-[480px] xl:-mb-11 [@media(min-width:1280px)_and_(max-height:850px)]:h-auto [@media(min-width:1280px)_and_(max-height:850px)]:min-h-0 [@media(min-width:1280px)_and_(max-height:850px)]:mb-0">
       <section className="flex flex-none flex-col gap-4 rounded-[14px] border border-border bg-surface p-[18px]">
         <div className="flex items-center gap-3">
           <span className="grid size-9 place-items-center rounded-[10px] bg-brand-soft text-brand">
             <ActivityIcon className="size-4" />
           </span>
           <div className="min-w-0 flex-1">
-            <h2 className="font-heading text-[15px] font-semibold">История метрик</h2>
+            <h2 className="font-heading text-[15px] font-semibold">
+              {overview ? 'Графики и события' : 'История метрик'}
+            </h2>
             <p className="mt-1 text-[12px] text-text-3">
               {dateLabel(range.from)} — {dateLabel(range.to)}
             </p>
           </div>
+          {overview && (
+            <Link
+              to="/"
+              search={{ view: 'stats' }}
+              className="inline-flex h-10 flex-none items-center justify-center rounded-[10px] border border-border bg-surface-2 px-3 text-[13px] font-medium text-text-2 hover:bg-surface-3"
+            >
+              ← К сводке
+            </Link>
+          )}
         </div>
         <div
           data-testid="metric-controls"
@@ -264,7 +276,7 @@ export function MetricsHistoryPage() {
               ))}
             </div>
           </header>
-          <div className="min-h-[180px] flex-1 p-4">
+          <div className="min-h-[180px] flex-1 p-4 [@media(min-width:1280px)_and_(max-height:850px)]:h-[240px] [@media(min-width:1280px)_and_(max-height:850px)]:flex-none">
             {query.isPending ? (
               <p role="status" className="grid h-full place-items-center text-[13px] text-text-3">
                 Загружаю историю…

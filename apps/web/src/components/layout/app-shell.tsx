@@ -1,6 +1,5 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
-  ActivityIcon,
   AlertTriangleIcon,
   BookOpenIcon,
   ChevronDownIcon,
@@ -56,7 +55,6 @@ function readRail(): boolean {
 const NAV = [
   { to: '/', label: 'Обзор', icon: LayoutGridIcon },
   { to: '/nodes', label: 'Ноды', icon: ReferenceNodesIcon },
-  { to: '/metrics', label: 'История метрик', icon: ActivityIcon },
   { to: '/billing', label: 'Биллинг', icon: WalletIcon },
   { to: '/incidents', label: 'Инциденты', icon: AlertTriangleIcon },
   { to: '/settings', label: 'Настройки', icon: ReferenceSettingsIcon },

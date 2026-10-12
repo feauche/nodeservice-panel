@@ -86,9 +86,9 @@ describe('чат ассистента: устойчивость e2e', () => {
   const ask = async (script: string, message = 'Вопрос') => {
     fake.script = script;
     fake.calls = [];
-    return assistantChatResponseSchema.parse(
-      (await agent.post('/api/assistant/chat').set(CSRF_HEADER, csrf).send({ message }).expect(200)).body,
-    );
+    const response = await agent.post('/api/assistant/chat').set(CSRF_HEADER, csrf).send({ message });
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    return assistantChatResponseSchema.parse(response.body);
   };
 
   beforeAll(async () => {
@@ -205,5 +205,13 @@ describe('чат ассистента: устойчивость e2e', () => {
   it('вызов инструмента не теряется, даже если провайдер пометил ответ как обычный', async () => {
     const res = await ask('stopped-with-calls');
     expect(res.message.content).toBe('Настройки прочитаны.');
+    const result = fake.calls[1]?.messages
+      .flatMap((message) => message.content)
+      .find((block) => block.type === 'tool_result');
+    if (result?.type !== 'tool_result') throw new Error('Provider tool call was not executed');
+    const settings = JSON.parse(result.content);
+    expect(settings.monitoring.pollSeconds).toBeGreaterThanOrEqual(15);
+    expect(settings).not.toHaveProperty('autochecks');
+    expect(fake.calls).toHaveLength(2);
   });
 });

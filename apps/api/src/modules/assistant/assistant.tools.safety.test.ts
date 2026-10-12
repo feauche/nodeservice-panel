@@ -60,6 +60,7 @@ describe('набор инструментов Ассистента', () => {
         'run_server_check',
         'get_metrics_history',
         'get_node_metrics',
+        'get_node_detail',
         'get_panel_status',
         'get_playbook',
         'get_remnawave_profiles',
@@ -535,8 +536,15 @@ describe('get_remnawave_status', () => {
     } as unknown as ToolDeps;
     const r = JSON.parse((await runTool('get_remnawave_status', {}, d)).content);
     // Сводка и сертификат — как есть; у ноды добавлено, на каком сервере панели она работает.
-    expect(r).toMatchObject({ ...st, nodes: [{ ...st.nodes[0], server: null, serverFoundBy: null }] });
-    expect(r.nodesNote).toContain('сервер этой ноды в панели не найден');
+    expect(r).toMatchObject({
+      connected: st.connected,
+      panel: st.domain,
+      checkedAt: st.checkedAt,
+      stats: st.stats,
+      nodes: st.nodes,
+      cert: st.cert,
+    });
+    expect(r.note).toContain('SSH и агенты не используются');
   });
 
   it('у ноды назван её сервер в панели и то, как панель их связала', async () => {
@@ -560,11 +568,9 @@ describe('get_remnawave_status', () => {
       remnawave: { status: async () => st },
     } as unknown as ToolDeps;
     const r = JSON.parse((await runTool('get_remnawave_status', {}, d)).content);
-    expect(r.nodes[0]).toMatchObject({
-      server: 'Нидерланды - 1 (сервер)',
-      serverFoundBy: 'найдена по IP-адресу сервера',
-    });
-    expect(r.nodes[1]).toMatchObject({ server: null, serverFoundBy: null });
+    expect(r.nodes[0]).toMatchObject({ uuid: 'n1', name: 'Нидерланды - 1' });
+    expect(r.nodes[0].server).toBeUndefined();
+    expect(r.nodes[1].server).toBeUndefined();
     // Служебные идентификаторы серверов модели не нужны.
     expect(JSON.stringify(r)).not.toContain('srv-nl');
   });
@@ -632,11 +638,8 @@ describe('get_panel_status', () => {
     expect(r.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(r.uptimeMinutes).toBeGreaterThanOrEqual(0);
     expect(r.uptimeNote).toContain('после обновления');
-    expect(r.servers).toEqual({
-      total: 4,
-      agents: { online: 2, offline: 1, not_installed: 1 },
-      agentVersions: { 'v0.5.4': 2, 'v0.5.3': 1 },
-    });
+    expect(r.nodes).toEqual({ total: null, connected: null, checkedAt: null, fresh: false, error: null });
+    expect(r.servers).toBeUndefined();
     expect(r.incidents).toEqual({ open: 3, critical: 1, warning: 2 });
     expect(r.auditLastHour.failedOrDenied).toBe(7);
     expect(r.auditLastHour.latest[0]).toMatchObject({ who: 'панель', result: 'failed' });

@@ -283,7 +283,14 @@ describe('ChangesService: предложение', () => {
     expect(await refusal(ctx.svc, 'server.rename', { server: 'ru-entry-1' })).toContain(
       'Аргументы не подходят',
     );
-    expect(await refusal(ctx.svc, 'autofix.pause', { minutes: 5000 })).toContain('Аргументы не подходят');
+    await expect(
+      ctx.svc.propose({
+        operation: 'autofix.pause',
+        args: { minutes: 5000 },
+        reason: null,
+        conversationId: null,
+      }),
+    ).rejects.toMatchObject({ status: 410 });
     expect(ctx.repo.rows.size).toBe(0);
   });
 
@@ -395,14 +402,17 @@ describe('ChangesService: предложение', () => {
     expect(await refusal(ctx.svc, 'incident.resolve', { incidentId: OTHER })).toContain('не найден');
   });
 
-  it('пауза автопочинки: выключенная автопочинка и лишнее снятие отклоняются', async () => {
+  it('пауза автопочинки удалена и не создаёт карточку', async () => {
     ctx.world.policy.autofixEnabled = false;
-    expect(await refusal(ctx.svc, 'autofix.pause', { minutes: 60 })).toContain('выключена');
-    ctx.world.policy.autofixEnabled = true;
-    expect(await refusal(ctx.svc, 'autofix.pause', { minutes: 0 })).toContain('не на паузе');
-    const c = await propose(ctx.svc, 'autofix.pause', { minutes: 90 });
-    expect(c.title).toBe('Поставить автопочинку на паузу');
-    expect(c.rows[0]).toEqual({ label: 'Автопочинка', before: 'Работает', after: 'На паузе на 90 мин' });
+    await expect(
+      ctx.svc.propose({
+        operation: 'autofix.pause',
+        args: { minutes: 60 },
+        reason: null,
+        conversationId: null,
+      }),
+    ).rejects.toMatchObject({ status: 410 });
+    expect(ctx.repo.rows.size).toBe(0);
   });
 });
 
@@ -537,11 +547,12 @@ describe('ChangesService: применение', () => {
     await expect(ctx.svc.revert(c.id)).rejects.toMatchObject({ status: 409 });
   });
 
-  it('пауза автопочинки: ставится и снимается откатом', async () => {
-    const c = await propose(ctx.svc, 'autofix.pause', { minutes: 60 });
-    await ctx.svc.apply(c.id);
-    expect(ctx.world.policy.pausedUntil).not.toBeNull();
-    expect((await ctx.svc.revert(c.id)).status).toBe('reverted');
+  it('историческая пауза автопочинки не применяется и не меняет настройки', async () => {
+    const c = await propose(ctx.svc, 'server.notes', { server: SRV, notes: 'история' });
+    const row = ctx.repo.rows.get(c.id);
+    if (!row) throw Error('fixture');
+    row.operation = 'autofix.pause';
+    await expect(ctx.svc.apply(c.id)).rejects.toMatchObject({ status: 410 });
     expect(ctx.world.policy.pausedUntil).toBeNull();
   });
 
@@ -569,203 +580,32 @@ describe('ChangesService: применение', () => {
   });
 });
 
-describe('ChangesService: режим автопочинки', () => {
-  let ctx: ReturnType<typeof make>;
-  beforeEach(() => {
-    ctx = make();
-  });
-  const policyItem = (kind = 'disk_high') => ctx.world.policy.items.find((i) => i.kind === kind)?.policy;
-
-  it('«Само» это T2, «Спросить» и «Наблюдать» это T1; последствия объяснены', async () => {
-    const auto = await propose(ctx.svc, 'autofix.policy', { kind: 'disk_high', policy: 'auto' });
-    expect(auto).toMatchObject({
-      level: 'T2',
-      reversible: true,
-      target: { type: 'settings', label: 'Автопочинка: Диск заполняется' },
-    });
-    expect(auto.rows[0]).toEqual({
-      label: 'Режим для «Диск заполняется»',
-      before: 'Спросить',
-      after: 'Само',
-    });
-    expect(auto.consequence).toContain('без вашего нажатия');
-    const watch = await propose(ctx.svc, 'autofix.policy', { kind: 'disk_high', policy: 'watch' });
-    expect(watch.level).toBe('T1');
-    expect(watch.consequence).toContain('только следит');
-  });
-
-  it('«Само» для вида без безопасного шага, тот же режим и неверный вид отклоняются', async () => {
-    expect(await refusal(ctx.svc, 'autofix.policy', { kind: 'node_down', policy: 'auto' })).toContain(
-      'нет безопасного шага',
-    );
-    expect(await refusal(ctx.svc, 'autofix.policy', { kind: 'disk_high', policy: 'ask' })).toContain(
-      'уже выбран',
-    );
-    expect(await refusal(ctx.svc, 'autofix.policy', { kind: 'нет', policy: 'auto' })).toContain(
-      'Аргументы не подходят',
-    );
-  });
-
-  it('при выключенном общем выключателе последствие говорит, что режим заработает после его включения', async () => {
-    ctx.world.policy.autofixEnabled = false;
-    const c = await propose(ctx.svc, 'autofix.policy', { kind: 'disk_high', policy: 'auto' });
-    expect(c.consequence).toContain('после его включения');
-  });
-
-  it('применяется, проверяется и откатывается; чужая правка после применения откат не затирает', async () => {
-    const c = await propose(ctx.svc, 'autofix.policy', { kind: 'disk_high', policy: 'auto' });
-    expect((await ctx.svc.apply(c.id)).status).toBe('applied');
-    expect(policyItem()).toBe('auto');
-    expect((await ctx.svc.revert(c.id)).status).toBe('reverted');
-    expect(policyItem()).toBe('ask');
-    const c2 = await propose(ctx.svc, 'autofix.policy', { kind: 'disk_high', policy: 'watch' });
-    await ctx.svc.apply(c2.id);
-    const item = ctx.world.policy.items[0];
-    if (item) item.policy = 'auto';
-    await expect(ctx.svc.revert(c2.id)).rejects.toMatchObject({ status: 409 });
-    expect(policyItem()).toBe('auto');
-  });
-});
-
-describe('ChangesService: обслуживание', () => {
-  let ctx: ReturnType<typeof make>;
-  beforeEach(() => {
-    ctx = make();
-  });
-  const ask = (kind: string) => propose(ctx.svc, 'maintenance.run', { server: 'ru-entry-1', kind });
-
-  it('проверка: T0, только чтение, без данных проверки тоже можно; остальным нужна проверка', async () => {
-    ctx.world.maint.check = null;
-    const c = await ask('check');
-    expect(c).toMatchObject({ level: 'T0', reversible: false, title: 'Проверить сервер' });
-    expect(c.rows[0]).toEqual({
-      label: 'Проверка сервера',
-      before: 'Ещё не было',
-      after: 'Запустится сейчас',
-    });
-    expect(c.consequence).toContain('ничего на сервере не меняет');
-    for (const kind of ['agent_update', 'cleanup', 'unattended_enable'])
-      expect(await refusal(ctx.svc, 'maintenance.run', { server: 'ru-entry-1', kind }), kind).toContain(
-        'операцию «check»',
-      );
-  });
-
-  it('обновление агента: версии до и после, T1; уже последняя и неизвестная версия отклоняются', async () => {
-    const c = await ask('agent_update');
-    expect(c).toMatchObject({ level: 'T1', title: 'Обновить агента' });
-    expect(c.rows[0]).toEqual({ label: 'Агент', before: 'v0.5.3', after: 'v0.5.4' });
-    expect(c.consequence).toContain('несколько секунд без связи с агентом');
-    (ctx.world.maint.check as { agent: unknown }).agent = {
-      installed: '0.5.4',
-      latest: '0.5.4',
-      service: 'active',
-    };
-    expect(
-      await refusal(ctx.svc, 'maintenance.run', { server: 'ru-entry-1', kind: 'agent_update' }),
-    ).toContain('уже последней');
-    (ctx.world.maint.check as { agent: unknown }).agent = { installed: null, latest: '0.5.4', service: null };
-    expect(
-      await refusal(ctx.svc, 'maintenance.run', { server: 'ru-entry-1', kind: 'agent_update' }),
-    ).toContain('не установлен');
-  });
-
-  it('очистка диска: только от 70 %, T2, честно про старые ядра; без apt отклоняется', async () => {
-    const c = await ask('cleanup');
-    expect(c).toMatchObject({ level: 'T2', title: 'Очистить диск' });
-    expect(c.rows[0]?.before).toBe('Занято 82\u00A0%');
-    expect(c.consequence).toContain('очистку кнопкой не отменить');
-    (ctx.world.maint.check as { disk: unknown }).disk = { usedPct: 31, freeMb: 9000 };
-    expect(await refusal(ctx.svc, 'maintenance.run', { server: 'ru-entry-1', kind: 'cleanup' })).toContain(
-      'чистить нечего',
-    );
-    (ctx.world.maint.check as { supported: boolean }).supported = false;
-    expect(await refusal(ctx.svc, 'maintenance.run', { server: 'ru-entry-1', kind: 'cleanup' })).toContain(
-      'Debian и Ubuntu',
-    );
-  });
-
-  it('автообновления безопасности: включены — менять нечего', async () => {
-    const c = await ask('unattended_enable');
-    expect(c.rows[0]).toEqual({
-      label: 'Автообновления безопасности',
-      before: 'Выключены',
-      after: 'Включены',
-    });
-    (ctx.world.maint.check as { unattended: boolean }).unattended = true;
-    expect(
-      await refusal(ctx.svc, 'maintenance.run', { server: 'ru-entry-1', kind: 'unattended_enable' }),
-    ).toContain('уже включены');
-  });
-
-  it('обновление системы (apt upgrade) карточкой не предлагается', async () => {
-    expect(
-      await refusal(ctx.svc, 'maintenance.run', { server: 'ru-entry-1', kind: 'apt_upgrade' }),
-    ).toContain('Аргументы не подходят');
-  });
-
-  it('критичному серверу напоминается окно обслуживания', async () => {
-    const s = ctx.world.servers[0] as Server;
-    s.profile = { ...s.profile, importance: 'critical', maintenanceWindow: 'ночью 03:00' };
-    const c = await ask('cleanup');
-    expect(c.consequence).toContain('Сервер критичный, окно обслуживания: ночью 03:00');
-    expect((await ask('check')).consequence).not.toContain('критичный');
-  });
-
-  it('нет SSH и идущее обслуживание отклоняются', async () => {
-    (ctx.world.servers[0] as Server).sshOk = false;
-    expect(await refusal(ctx.svc, 'maintenance.run', { server: 'ru-entry-1', kind: 'check' })).toContain(
-      'SSH',
-    );
-    (ctx.world.servers[0] as Server).sshOk = true;
-    ctx.world.maint.running = { id: 'r0' };
-    expect(await refusal(ctx.svc, 'maintenance.run', { server: 'ru-entry-1', kind: 'check' })).toContain(
-      'уже идёт обслуживание',
-    );
-  });
-
-  it('применение запускает обслуживание один раз и ведёт карточку: идёт, готово, ошибка', async () => {
-    const c = await ask('cleanup');
-    const applied = await ctx.svc.apply(c.id);
-    expect(applied).toMatchObject({ status: 'applied', live: true });
-    expect(applied.note).toContain('Запущено: Очистить диск. Идёт: Подключение по SSH');
-    expect(ctx.world.maint.started).toEqual([{ serverId: SRV, kind: 'cleanup' }]);
-    expect(ctx.world.audit[0]).toMatchObject({ action: 'assistant.change.applied' });
-    await ctx.svc.apply(c.id);
-    expect(ctx.world.maint.started).toHaveLength(1);
-
-    const run = ctx.world.maint.runs[0] as Record<string, unknown>;
-    Object.assign(run, { status: 'ok', finishedAt: new Date(Date.now() + 42_000).toISOString() });
-    ctx.world.maint.running = null;
-    const done = await ctx.svc.get(c.id);
-    expect(done).toMatchObject({ status: 'applied', live: false });
-    expect(done.note).toMatch(/готово за \d+ с.*вкладка «Обслуживание»/);
-
-    Object.assign(run, { status: 'failed', error: 'apt занят' });
-    expect((await ctx.svc.get(c.id)).note).toContain('ошибка: apt занят');
-    await expect(ctx.svc.revert(c.id)).rejects.toMatchObject({ status: 409 });
-  });
-
-  it('обслуживание запустили после предложения: применение отказывает как «Состояние изменилось»', async () => {
-    const c = await ask('check');
-    ctx.world.maint.running = { id: 'кто-то запустил' };
-    const r = await ctx.svc.apply(c.id);
-    expect(r.status).toBe('stale');
+describe('ChangesService: удалённые операции и исторические записи', () => {
+  it('не создаёт новое предложение удалённой операции, даже с разрешением и неверными аргументами', async () => {
+    const ctx = make();
+    for (const operation of ['autofix.pause', 'autofix.policy', 'maintenance.run', 'server.check']) {
+      await expect(
+        ctx.svc.propose({ operation, args: {}, reason: null, conversationId: null }),
+      ).rejects.toMatchObject({ status: 410 });
+    }
+    expect(ctx.repo.rows.size).toBe(0);
+    expect(ctx.world.updates).toEqual([]);
     expect(ctx.world.maint.started).toEqual([]);
   });
-
-  it('запуск не удался: «Не применено» с текстом, обслуживание не числится запущенным', async () => {
-    const c = await ask('check');
-    (ctx.svc as unknown as { maintenance: { start: () => Promise<never> } }).maintenance.start = async () => {
-      throw new HttpException(
-        { detail: 'На этом сервере уже идёт обслуживание. Дождитесь завершения.' },
-        409,
-      );
-    };
-    const r = await ctx.svc.apply(c.id);
-    expect(r).toMatchObject({
-      status: 'failed',
-      note: 'На этом сервере уже идёт обслуживание. Дождитесь завершения.',
-    });
+  it('историческая запись остаётся читаемой, но apply/revert не запускают обслуживание или автопочинку', async () => {
+    const ctx = make();
+    const normal = await propose(ctx.svc, 'server.notes', { server: SRV, notes: 'historical' });
+    const row = ctx.repo.rows.get(normal.id);
+    if (!row) throw Error('fixture');
+    for (const operation of ['autofix.pause', 'autofix.policy', 'maintenance.run', 'server.check']) {
+      row.operation = operation;
+      row.status = 'applied';
+      expect((await ctx.svc.get(normal.id)).operation).toBe(operation);
+      await expect(ctx.svc.apply(normal.id)).rejects.toMatchObject({ status: 410 });
+      await expect(ctx.svc.revert(normal.id)).rejects.toMatchObject({ status: 410 });
+    }
+    expect(ctx.world.updates).toEqual([]);
+    expect(ctx.world.maint.started).toEqual([]);
   });
 });
 
@@ -819,34 +659,6 @@ describe('ChangesService: страна сервера', () => {
     );
     expect(await refusal(ctx.svc, 'server.country', { server: 'ru-entry-1', country: 'Польша' })).toContain(
       'Аргументы не подходят',
-    );
-  });
-});
-
-describe('ChangesService: тяжёлые проверки сервера', () => {
-  let ctx: ReturnType<typeof make>;
-  beforeEach(() => {
-    ctx = make();
-  });
-
-  it('карточка T2 с предупреждением; применение запускает проверку с согласием на тяжёлую', async () => {
-    const c = await propose(ctx.svc, 'server.check', { server: 'ru-entry-1', check: 'iperf3_ru' });
-    expect(c.level).toBe('T2');
-    expect(c.title).toContain('Скорость до России');
-    expect(c.rows[0]).toMatchObject({ before: 'Ещё не запускалась', after: 'Запустится сейчас' });
-    expect(c.consequence).toContain('трафик');
-    const done = await ctx.svc.apply(c.id);
-    expect(done.status).toBe('applied');
-    expect(ctx.checksRuns[0]).toMatchObject({ check: 'iperf3_ru', confirmHeavy: true });
-  });
-
-  it('лёгкую проверку карточкой не предлагает, и пока идёт другая — отказ', async () => {
-    await expect(
-      refusal(ctx.svc, 'server.check', { server: 'ru-entry-1', check: 'geoblock' }),
-    ).resolves.toBeTruthy();
-    ctx.checksRuns.push({ check: 'cpu', status: 'running', startedAt: new Date().toISOString() });
-    expect(await refusal(ctx.svc, 'server.check', { server: 'ru-entry-1', check: 'yabs' })).toContain(
-      'уже идёт',
     );
   });
 });

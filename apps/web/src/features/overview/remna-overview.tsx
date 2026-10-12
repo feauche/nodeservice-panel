@@ -147,7 +147,8 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
       {view === 'stats' && (
         <div className="flex flex-wrap items-center justify-between gap-3 [&>div[role=radiogroup]]:h-10">
           <Link
-            to="/metrics"
+            to="/"
+            search={{ view: 'stats', detail: 'metrics' }}
             className="inline-flex h-10 items-center justify-center rounded-[10px] border border-border bg-surface-2 px-3 text-[13px] font-medium text-text-2 hover:bg-surface-3"
           >
             Разобрать график и события →

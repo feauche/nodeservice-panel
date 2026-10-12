@@ -28,6 +28,7 @@ usage() {
     cat <<U
 nodeservice — обслуживание панели NodeService
   status            состояние контейнеров и версия кода
+  preflight         проверка данных и настроек перед обновлением, только чтение
   logs [сервис]     логи (по умолчанию api), Ctrl+C — выход
   update [ref]      бэкап → последний стабильный релиз → сборка → перезапуск
                     ref: ветка/тег/commit; main — тестовая ветка
@@ -91,6 +92,7 @@ case "$cmd" in
         echo -e "${G}Прежние код и образ возвращены.${N}"
         [[ -n "$rollback_backup" ]] && printf 'Копия базы перед обновлением: %s\n' "$rollback_backup" ;;
     backup) exec bash "$APP_DIR/infra/scripts/backup.sh" "$@" ;;
+    preflight) exec bash "$APP_DIR/infra/scripts/preflight.sh" "$@" ;;
     restore) exec bash "$APP_DIR/infra/scripts/restore.sh" "$@" ;;
     cli)    [[ $# -ge 1 ]] || die "Укажи команду: nodeservice cli setup-token"; "${COMPOSE[@]}" exec api node dist/cli.js "$@" ;;
     restart) "${COMPOSE[@]}" restart "${@:-api}" ;;

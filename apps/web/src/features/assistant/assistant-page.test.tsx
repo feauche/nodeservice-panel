@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useServerModalStore } from '@/features/servers/server-modal-store';
 import { mockAssistant } from '@/test/msw/assistant-mock';
 import { resetMockState } from '@/test/msw/handlers';
+import { mockRemnawave } from '@/test/msw/remnawave-mock';
 import { server } from '@/test/msw/server';
 import { mockServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
@@ -75,20 +76,64 @@ describe('AssistantPage', () => {
     expect(screen.queryByTestId('change-card')).not.toBeInTheDocument();
   });
 
-  it('имя сервера в ответе — ссылка: клик открывает карточку сервера', async () => {
+  it('текущая нода в ответе и цитате открывает карточку Remnawave без старой серверной связи', async () => {
     mockAssistant.enabled = true;
+    const uuid = '0192f200-0000-7000-8000-000000000001';
     useServerModalStore.getState().close();
+    server.use(
+      http.get('/api/nodes/status', () =>
+        HttpResponse.json({
+          ...mockRemnawave,
+          connected: true,
+          domain: 'panel.test',
+          checkedAt: new Date().toISOString(),
+          nodes: [
+            {
+              uuid,
+              name: 'bridge',
+              address: '1.1.1.1',
+              countryCode: 'DE',
+              isConnected: true,
+              isDisabled: false,
+              isConnecting: false,
+              lastStatusMessage: null,
+              usersOnline: 42,
+              trafficUsedBytes: 1000,
+              trafficLimitBytes: null,
+            },
+          ],
+        }),
+      ),
+    );
+    const reply: AssistantMessage = {
+      id: '0192f000-0000-7000-8000-000000000003',
+      role: 'assistant',
+      content: 'Нода bridge доступна.',
+      citations: [{ type: 'node', id: uuid, label: 'bridge' }],
+      proposals: [],
+      reachability: [],
+      activity: [],
+      createdAt: new Date().toISOString(),
+    };
+    mockAssistant.messages['0192f000-0000-7000-8000-000000000001'] = [reply];
+    server.use(
+      http.post('/api/assistant/chat', () =>
+        HttpResponse.json({
+          conversationId: '0192f000-0000-7000-8000-000000000001',
+          message: reply,
+          messages: [reply],
+        }),
+      ),
+    );
     renderPage(AssistantPage, '/assistant');
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Сообщение Ассистенту'), 'Что с CPU?');
+    await user.type(await screen.findByLabelText('Сообщение Ассистенту'), 'Что с нодой?');
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
-    const link = await within(await screen.findByTestId('assistant-messages')).findByRole('button', {
-      name: 'de-fra-01',
-    });
-    await user.click(link);
-    expect(useServerModalStore.getState().serverId).toBe(
-      mockServers.items.find((x) => x.name === 'de-fra-01')?.id,
-    );
+    const list = await screen.findByTestId('assistant-messages');
+    const buttons = await within(list).findAllByRole('button', { name: 'bridge' });
+    await user.click(buttons[0] as HTMLElement);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(useServerModalStore.getState().serverId).toBeNull();
   });
 
   describe('ответ без пузыря, несколько сообщений, источники', () => {
@@ -103,46 +148,12 @@ describe('AssistantPage', () => {
       await within(list).findByText(/Инциденты по серверам за всё время/);
       return { user, list };
     };
-    const idOf = (name: string) => mockServers.items.find((x) => x.name === name)?.id;
 
-    it('имя сервера в ответе с точкой состояния: в норме — ok, SSH не отвечает — crit', async () => {
+    it('исторические серверные упоминания не получают состояние текущих нод', async () => {
       const { list } = await ask('а по каким серверам больше инцидентов');
-      // Чип в «Основано на:» тоже кнопка с этим именем, но без точки — берём ссылку из текста.
-      const dotOf = (name: string) =>
-        within(list)
-          .getAllByRole('button', { name })
-          .map((b) => b.querySelector('[data-health]'))
-          .find(Boolean)
-          ?.getAttribute('data-health');
-      await waitFor(() => expect(dotOf('de-fra-01')).toBe('ok'));
-      expect(dotOf('nl-ams-02')).toBe('crit');
-    });
-
-    it('точка у имени: SSH не пустил при живом агенте — «внимание»; остановленная нода — «сбой», не «офлайн»', async () => {
-      const [first, second] = mockServers.items;
-      if (!first || !second) throw new Error('нет мок-серверов');
-      mockServers.items = [
-        { ...first, sshOk: false },
-        { ...second, sshOk: true, agentStatus: 'online', node: 'stopped' },
-      ];
-      const { list } = await ask('а по каким серверам больше инцидентов');
-      const linkOf = (name: string) =>
-        within(list)
-          .getAllByRole('button', { name })
-          .find((b) => b.querySelector('[data-health]'));
-      await waitFor(() =>
-        expect(linkOf('de-fra-01')?.querySelector('[data-health]')?.getAttribute('data-health')).toBe('warn'),
-      );
-      expect(linkOf('de-fra-01')).toHaveAttribute('title', 'Требует внимания');
-      expect(linkOf('nl-ams-02')?.querySelector('[data-health]')?.getAttribute('data-health')).toBe('crit');
-      expect(linkOf('nl-ams-02')).toHaveAttribute('title', 'Сбой');
-      expect(within(list).queryByTitle(/офлайн/i)).not.toBeInTheDocument();
-    });
-
-    it('клик по имени с точкой открывает карточку сервера', async () => {
-      const { user, list } = await ask('а по каким серверам больше инцидентов');
-      await user.click(await within(list).findByRole('button', { name: 'nl-ams-02' }));
-      expect(useServerModalStore.getState().serverId).toBe(idOf('nl-ams-02'));
+      expect(within(list).queryByRole('button', { name: 'nl-ams-02' })).not.toBeInTheDocument();
+      const historical = within(list).getByTitle('Исторический сервер: de-fra-01');
+      expect(historical.querySelector('[data-health]')).toBeNull();
     });
 
     it('два ответа подряд: значок Ассистента только у первого, «сейчас посмотрю» приглушено', async () => {
@@ -171,7 +182,9 @@ describe('AssistantPage', () => {
       const { user, list } = await ask('а по каким серверам больше инцидентов');
       const sources = await within(list).findByTestId('assistant-sources');
       await user.click(within(sources).getByRole('button', { name: 'de-fra-01' }));
-      expect(useServerModalStore.getState().serverId).toBe(idOf('de-fra-01'));
+      expect(useServerModalStore.getState().serverId).toBe(
+        mockServers.items.find((node) => node.name === 'de-fra-01')?.id,
+      );
     });
   });
 
@@ -207,7 +220,7 @@ describe('AssistantPage', () => {
     expect(input).toHaveAttribute('placeholder', 'Спросите или вставьте текст…');
     expect(screen.getByRole('button', { name: 'Отправить' })).toBeInTheDocument();
     expect(
-      screen.getByText(/Статью Ассистент сохранит в базу знаний, термины добавит в «Пояснения»/),
+      screen.getByText(/Ассистент читает сохранённые данные и не запускает проверки/),
     ).toBeInTheDocument();
   });
 
@@ -302,9 +315,7 @@ describe('AssistantPage', () => {
         ).toHaveLength(1),
       );
       await waitFor(() =>
-        expect(
-          screen.queryByText('Спросите об инцидентах, серверах или о том, как что-то починить'),
-        ).toBeNull(),
+        expect(screen.queryByText('Спросите о нодах, метриках или сохранённых инцидентах')).toBeNull(),
       );
 
       await waitFor(() => expect(typing()).toBeNull(), { timeout: 4000 });
@@ -439,7 +450,7 @@ describe('AssistantPage', () => {
       expect(hiddenOnPhone(newChat)).toBe(false);
       await user.click(newChat);
       expect(
-        await screen.findByText('Спросите об инцидентах, серверах или о том, как что-то починить'),
+        await screen.findByText('Спросите о нодах, метриках или сохранённых инцидентах'),
       ).toBeInTheDocument();
       expect(within(list).queryByText('Под нагрузкой один сервер из трёх.')).toBeNull();
       expect(screen.queryByTestId('assistant-conversation-title')).toBeNull();

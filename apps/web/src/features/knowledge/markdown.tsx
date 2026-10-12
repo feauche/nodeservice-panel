@@ -131,6 +131,46 @@ export const ServerHealthContext = createContext<Record<string, ServerHealth>>({
 /** Страна сервера по id (из карточки сервера): флаг перед названием, чтобы «Мост» было видно, чей он. */
 export const ServerCountryContext = createContext<Record<string, string>>({});
 
+/** Current Remnawave node links; historical server links retain their own namespace. */
+export const NodeLinkContext = createContext<{
+  nodes: Record<string, { country: string | null; state: string; tone: 'ok' | 'warn' | 'crit' | 'muted' }>;
+  open: (uuid: string) => void;
+}>({ nodes: {}, open: () => undefined });
+function NodeLink({ id, children }: { id: string; children: ReactNode }) {
+  const context = useContext(NodeLinkContext),
+    node = context.nodes[id];
+  return (
+    <button
+      type="button"
+      onClick={() => context.open(id)}
+      disabled={!node}
+      title={node?.state ?? 'Нода отсутствует в текущем подключении'}
+      className="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-semibold text-brand underline decoration-dotted decoration-1 underline-offset-[3px] hover:decoration-solid disabled:cursor-default disabled:text-text-3"
+    >
+      {node && (
+        <span
+          aria-hidden="true"
+          data-health={node.tone}
+          className={cn(
+            'mr-1.5 inline-block size-[7px] rounded-full align-middle',
+            node.tone === 'ok'
+              ? 'bg-ok'
+              : node.tone === 'crit'
+                ? 'bg-crit'
+                : node.tone === 'warn'
+                  ? 'bg-warn'
+                  : 'bg-text-3',
+          )}
+        />
+      )}
+      {node?.country && (
+        <CountryFlag code={node.country} size="sm" decorative className="mr-1.5 inline-block align-[-1px]" />
+      )}
+      {children}
+    </button>
+  );
+}
+
 function ServerLink({ id, children }: { id: string; children: ReactNode }) {
   const health = useContext(ServerHealthContext)[id];
   const country = useContext(ServerCountryContext)[id];
@@ -161,7 +201,7 @@ function ServerLink({ id, children }: { id: string; children: ReactNode }) {
 function renderInline(text: string, keyBase: string): ReactNode[] {
   const nodes: ReactNode[] = [];
   const re =
-    /\*\*(.+?)\*\*|`([^`]+?)`|\[([^\]]+?)\]\((https?:\/\/[^)\s]+|server:[0-9a-fA-F-]{36})\)|(?<![*\w])\*([^*\n]+?)\*(?!\*)|(?<!\w)_([^_\n]+?)_(?!\w)/g;
+    /\*\*(.+?)\*\*|`([^`]+?)`|\[([^\]]+?)\]\((https?:\/\/[^)\s]+|(?:server|node):[0-9a-fA-F-]{36})\)|(?<![*\w])\*([^*\n]+?)\*(?!\*)|(?<!\w)_([^_\n]+?)_(?!\w)/g;
   let last = 0;
   let m: RegExpExecArray | null = re.exec(text);
   let i = 0;
@@ -187,6 +227,12 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
         <em key={`${keyBase}-i${i}`} className="text-foreground italic">
           {renderInline((m[5] ?? m[6]) as string, `${keyBase}-i${i}`)}
         </em>,
+      );
+    } else if (m[3] !== undefined && m[4]?.startsWith('node:')) {
+      nodes.push(
+        <NodeLink key={`${keyBase}-n${i}`} id={m[4].slice(5)}>
+          {m[3]}
+        </NodeLink>,
       );
     } else if (m[3] !== undefined && m[4]?.startsWith('server:')) {
       // Имя сервера: карточка открывается поверх текущей страницы, без перехода.

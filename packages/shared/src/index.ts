@@ -3,7 +3,7 @@
  * Этап 1: auth API, настройки. Этап 2: Журнал (аудит). Этап 5 добавит протокол агента (v1).
  */
 /** Версия панели x.y.z. Поднимается каждой поставкой: `node scripts/bump-version.mjs patch` (фиксы) или `minor` (новые возможности). */
-export const SHARED_VERSION = '0.84.1';
+export const SHARED_VERSION = '0.85.0';
 export * from './agent-protocol.js';
 export * from './assistant.js';
 export * from './assistant-changes.js';
@@ -13,6 +13,8 @@ export * from './autochecks.js';
 export * from './backups.js';
 export * from './billing.js';
 export * from './block-check.js';
+export * from './bs-rentals.js';
+export * from './bschecker.js';
 export * from './capacity.js';
 export * from './changelog.js';
 export * from './countries.js';
@@ -24,6 +26,7 @@ export * from './integrations.js';
 export * from './knowledge.js';
 export * from './maintenance.js';
 export * from './metrics.js';
+export * from './monitoring.js';
 export * from './node-capacity.js';
 export * from './node-metrics.js';
 export * from './notifications.js';
@@ -37,12 +40,6 @@ export * from './server-profile.js';
 export * from './servers.js';
 export * from './settings.js';
 export * from './tags.js';
+export * from './tcp-check.js';
 export * from './telegram.js';
 export * from './terminal.js';
-
-export * from './monitoring.js';
-export * from './bschecker.js';
-
-export * from './tcp-check.js';
-
-export * from './bs-rentals.js';

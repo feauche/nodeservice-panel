@@ -39,7 +39,14 @@ describe('maintenance e2e', () => {
   let serverId = '';
 
   const state = async (): Promise<MaintenanceState> =>
-    maintenanceStateSchema.parse((await agent.get(`/api/servers/${serverId}/maintenance`).expect(200)).body);
+    maintenanceStateSchema.parse(
+      (
+        await agent.get(`/api/servers/${serverId}/maintenance`).expect((res) => {
+          if (res.status !== 200)
+            throw new Error(`maintenance state HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+        })
+      ).body,
+    );
   const start = (kind: string, expected = 202) =>
     agent
       .post(`/api/servers/${serverId}/maintenance/runs`)
@@ -101,6 +108,12 @@ describe('maintenance e2e', () => {
   afterAll(async () => {
     await app?.close();
     await ssh.stop();
+  });
+
+  it('ручной API сохранён, но прежний автоматический job отсутствует в приложении', async () => {
+    const { MaintenanceCheckJob } = await import('../src/modules/maintenance/maintenance-check.job.js');
+    expect(() => app.get(MaintenanceCheckJob)).toThrow();
+    expect(ssh.execLog.some((command) => command.includes('# ns-maint:'))).toBe(false);
   });
 
   it('до проверки: состояние пустое, следующая проверка не назначена', async () => {

@@ -1,111 +1,43 @@
-import type { INestApplication } from '@nestjs/common';
-import type { NestExpressApplication } from '@nestjs/platform-express';
-import { Test } from '@nestjs/testing';
-import { CSRF_HEADER, notificationSchema, notificationsResponseSchema } from '@nodeservice/shared';
+import { CSRF_HEADER } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
-import type { Redis } from 'ioredis';
-import { generate } from 'otplib';
-import request from 'supertest';
-import TestAgent from 'supertest/lib/agent.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-
-import { AppModule } from '../src/app.module.js';
-import { setupHttp } from '../src/common/http/setup-http.js';
-import { DB, type Db } from '../src/infra/db/db.module.js';
-import { runMigrations } from '../src/infra/db/migrate.js';
-import { VALKEY } from '../src/infra/valkey/valkey.module.js';
-import { SetupService } from '../src/modules/auth/setup.service.js';
 import { NotificationsService } from '../src/modules/notifications/notifications.service.js';
+import { currentIncidentApp } from './current-incidents.fixture.js';
 
-const LOGIN = 'admin';
-const PASSWORD = 'correct horse battery staple';
-
-describe('notifications e2e', () => {
-  let app: INestApplication;
-  let agent: InstanceType<typeof TestAgent>;
-  let csrf: string;
-
+describe('удалённый колокольчик и сохранность истории уведомлений (e2e)', () => {
+  let ctx: Awaited<ReturnType<typeof currentIncidentApp>>;
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication<NestExpressApplication>({ bufferLogs: false, logger: false });
-    setupHttp(app as NestExpressApplication);
-    const db = app.get<Db>(DB);
-    await runMigrations(db);
-    await db.execute(
-      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, notifications cascade`,
-    );
-    await app.get<Redis>(VALKEY).flushdb();
-    await app.init();
-    agent = request.agent(app.getHttpServer());
-    csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token as string;
-    const setupToken = await app.get(SetupService).issueToken();
-    const start = await agent
-      .post('/api/auth/setup/start')
-      .set(CSRF_HEADER, csrf)
-      .send({ setupToken, login: LOGIN, password: PASSWORD })
-      .expect(200);
-    await agent
-      .post('/api/auth/setup/confirm')
-      .set(CSRF_HEADER, csrf)
-      .send({ code: await generate({ secret: start.body.totpSecret as string }) })
-      .expect(200);
-  }, 60_000);
-
-  afterAll(async () => {
-    await app?.close();
+    ctx = await currentIncidentApp();
+    await ctx.db.execute(sql`truncate notifications cascade`);
   });
-
-  it('серверное push + всплывашка клиента; непрочитанные; прочитать все; удалить одно; очистить', async () => {
-    await app.get(NotificationsService).push({
-      severity: 'warn',
-      title: 'Инцидент: ждёт подтверждения',
-      body: 'Перезапустить контейнер ноды',
-      link: { to: '/incidents?open=x', label: 'Открыть инцидент' },
-    });
-    const created = notificationSchema.parse(
-      (
-        await agent
-          .post('/api/notifications')
-          .set(CSRF_HEADER, csrf)
-          .send({ severity: 'warn', title: 'Провайдер «4VPS» добавлен' })
-          .expect(201)
-      ).body,
-    );
-    expect(created.readAt).toBeNull();
-    // без заголовка — 400
-    await agent
+  afterAll(async () => {
+    await ctx?.app.close();
+  });
+  it('старые HTTP пути управления колокольчиком отсутствуют', async () => {
+    await ctx.agent.get('/api/notifications').expect(404);
+    await ctx.agent
       .post('/api/notifications')
-      .set(CSRF_HEADER, csrf)
-      .send({ severity: 'ok', title: '' })
-      .expect(400);
-
-    // ok/info в колокольчик не попадают — только «внимание» и «критично» (остальное есть в Журнале)
-    await app.get(NotificationsService).push({ severity: 'ok', title: 'Инцидент закрыт сам' });
-    await app.get(NotificationsService).push({ severity: 'info', title: 'Чиню автоматически' });
-    const list = notificationsResponseSchema.parse((await agent.get('/api/notifications').expect(200)).body);
-    expect(list.unread).toBe(2);
-    expect(list.total).toBe(2);
-    expect(list.items[0]?.title).toBe('Провайдер «4VPS» добавлен');
-    expect(list.items[1]?.link).toEqual({ to: '/incidents?open=x', label: 'Открыть инцидент' });
-    // время — ISO в UTC
-    expect(list.items[0]?.createdAt.endsWith('Z')).toBe(true);
-
-    expect((await agent.post('/api/notifications/read-all').set(CSRF_HEADER, csrf).expect(200)).body).toEqual(
-      { unread: 0 },
+      .set(CSRF_HEADER, ctx.csrf)
+      .send({ severity: 'warn', title: 'Не должно сохраниться' })
+      .expect(404);
+    await ctx.agent.post('/api/notifications/read-all').set(CSRF_HEADER, ctx.csrf).send({}).expect(404);
+    await ctx.agent.delete('/api/notifications').set(CSRF_HEADER, ctx.csrf).expect(404);
+    expect((await ctx.db.execute(sql`select id from notifications`)).rows).toEqual([]);
+  });
+  it('внутренняя история server push сохраняется, но колокольчик по HTTP не возвращается', async () => {
+    await ctx.db.execute(
+      sql`insert into notifications (title, severity) values ('Историческое уведомление', 'warn')`,
     );
-    const read = notificationsResponseSchema.parse((await agent.get('/api/notifications').expect(200)).body);
-    expect(read.unread).toBe(0);
-    expect(read.items.every((n) => n.readAt !== null)).toBe(true);
-
-    await agent.delete(`/api/notifications/${created.id}`).set(CSRF_HEADER, csrf).expect(204);
-    await agent.delete(`/api/notifications/${created.id}`).set(CSRF_HEADER, csrf).expect(404);
-    expect(
-      notificationsResponseSchema.parse((await agent.get('/api/notifications').expect(200)).body).total,
-    ).toBe(1);
-
-    await agent.delete('/api/notifications').set(CSRF_HEADER, csrf).expect(204);
-    expect(
-      notificationsResponseSchema.parse((await agent.get('/api/notifications').expect(200)).body).total,
-    ).toBe(0);
+    await ctx.app
+      .get(NotificationsService)
+      .push({ severity: 'crit', title: 'Только действующая доставка', center: true });
+    const rows = await ctx.db.execute<{ title: string }>(
+      sql`select title from notifications order by created_at, id`,
+    );
+    expect(rows.rows).toEqual([
+      { title: 'Историческое уведомление' },
+      { title: 'Только действующая доставка' },
+    ]);
+    await ctx.agent.get('/api/notifications').expect(404);
   });
 });

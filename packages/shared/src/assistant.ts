@@ -276,7 +276,7 @@ export type AssistantSettingsUpdate = z.infer<typeof assistantSettingsUpdateSche
 
 /** Ссылка-цитата на источник ответа. */
 export const assistantCitationSchema = z.object({
-  type: z.enum(['server', 'incident', 'audit', 'kb', 'metric']),
+  type: z.enum(['node', 'server', 'incident', 'audit', 'kb', 'metric']),
   id: z.string(),
   label: z.string(),
 });
@@ -382,9 +382,9 @@ export const assistantHistoryResponseSchema = z.object({ items: z.array(assistan
 export const ASSISTANT_SUGGESTIONS = [
   'Что сейчас требует внимания?',
   'Почему инцидент открыт?',
-  'Как поднять лимит conntrack?',
-  'Какие серверы под нагрузкой?',
-  'Как установить агента на сервер?',
+  'Когда был пик онлайна за сутки?',
+  'Какие ноды под нагрузкой?',
+  'Что показала последняя TCP-проверка?',
   'Что было в Журнале за час?',
 ] as const;
 

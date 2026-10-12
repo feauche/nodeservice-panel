@@ -152,49 +152,15 @@ describe('server checks e2e', () => {
     await run('rm-rf', {}, 422);
   });
 
-  it('суточная джоба запускает только свои команды: сторонние скрипты и тяжёлые — только по кнопке', async () => {
+  it('прежний автоматический SSH-планировщик отсутствует в приложении; ручная история сохранена', async () => {
     const { ServerChecksJob } = await import('../src/modules/server-checks/server-checks.job.js');
-    const before = ssh.execLog.length;
-    await app.get(ServerChecksJob).run();
-    const res = await waitIdle();
-    const keys = res.items.map((r) => r.check).sort();
-    // Регион IP и качество IP ещё не запускались, но это сторонние скрипты — джоба их не трогает.
-    expect(keys).toEqual(['cpu', 'dpi', 'geoblock', 'yabs'].sort());
-    expect(res.items.filter((r) => r.trigger === 'auto').map((r) => r.check)).toEqual(['cpu']);
-    const ran = ssh.execLog.slice(before).map((c) => c.split('\n')[0]);
-    expect(ran).toEqual(['# ns-check:cpu']);
-    // Следующий суточный запуск — через сутки после замера процессора.
-    const cpu = res.items.find((r) => r.check === 'cpu');
-    expect(res.autoEnabled).toBe(true);
-    expect(Date.parse(res.nextAutoAt ?? '') - Date.parse(cpu?.startedAt ?? '')).toBe(24 * 3_600_000);
-  });
-
-  it('тумблер «Проверки серверов раз в сутки» выключен — джоба ничего не запускает, срока нет', async () => {
-    const { ServerChecksJob } = await import('../src/modules/server-checks/server-checks.job.js');
-    await agent
-      .put('/api/settings/autochecks')
-      .set(CSRF_HEADER, csrf)
-      .send({ serverChecksEnabled: false })
-      .expect(200);
-    try {
-      const db = app.get<Db>(DB);
-      await db.execute(
-        sql`update server_checks set started_at = now() - interval '2 days' where server_id = ${serverId} and "check" = 'cpu'`,
-      );
-      const before = ssh.execLog.length;
-      await app.get(ServerChecksJob).run();
-      await waitIdle();
-      expect(ssh.execLog.length).toBe(before);
-      const res = await list();
-      expect(res.autoEnabled).toBe(false);
-      expect(res.nextAutoAt).toBeNull();
-    } finally {
-      await agent
-        .put('/api/settings/autochecks')
-        .set(CSRF_HEADER, csrf)
-        .send({ serverChecksEnabled: true })
-        .expect(200);
-    }
+    const { MaintenanceCheckJob } = await import('../src/modules/maintenance/maintenance-check.job.js');
+    expect(() => app.get(ServerChecksJob)).toThrow();
+    expect(() => app.get(MaintenanceCheckJob)).toThrow();
+    const res = await list();
+    expect(res.items.every((row) => row.trigger === 'manual')).toBe(true);
+    expect(res.items.map((row) => row.check)).toEqual(expect.arrayContaining(['dpi', 'geoblock', 'yabs']));
+    expect(res.nextAutoAt).toBeNull();
   });
 
   it('«Объяснить»: без настроенного Джарвиса — 409; с ним — пересказ сохраняется у запуска и второй раз модель не зовётся', async () => {
@@ -216,23 +182,6 @@ describe('server checks e2e', () => {
     expect((await list()).items.find((r) => r.id === geo.id)?.explanation).toBe(
       'Геоблока нет, всё открывается.',
     );
-  });
-
-  it('упавшую свою проверку джоба повторяет через час, а не через сутки; упавший сторонний скрипт — нет', async () => {
-    ssh.checks.code.cpu = 1;
-    await run('cpu');
-    expect((await waitIdle()).items.find((r) => r.check === 'cpu')?.status).toBe('failed');
-    const db = app.get<Db>(DB);
-    await db.execute(
-      sql`update server_checks set started_at = now() - interval '2 hours' where server_id = ${serverId} and "check" in ('cpu', 'dpi')`,
-    );
-    ssh.checks.code.cpu = 0;
-    const { ServerChecksJob } = await import('../src/modules/server-checks/server-checks.job.js');
-    await app.get(ServerChecksJob).run();
-    const res = await waitIdle();
-    expect(res.items.find((r) => r.check === 'cpu')).toMatchObject({ status: 'ok', trigger: 'auto' });
-    // DPI упал раньше (таймаут), но это сторонний скрипт: повтор — только по кнопке.
-    expect(res.items.find((r) => r.check === 'dpi')).toMatchObject({ status: 'failed', trigger: 'manual' });
   });
 
   it('скачанный скрипт не совпал с закреплённым — итог «отменена», причина честная, в Журнале отказ', async () => {

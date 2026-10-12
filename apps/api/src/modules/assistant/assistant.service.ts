@@ -33,11 +33,11 @@ import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { RemnawaveTopologyService } from '../remnawave/remnawave-topology.service.js';
 import { ServerChecksService } from '../server-checks/server-checks.service.js';
 import { ServersService } from '../servers/servers.service.js';
-import { AutochecksStore } from '../settings/autochecks.store.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
+import { MonitoringStore } from '../settings/monitoring.store.js';
 import { buildSystem } from './assistant.prompt.js';
 import { AssistantRepository } from './assistant.repository.js';
-import { PASSIVE_ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
+import { PASSIVE_ASSISTANT_TOOLS, runPassiveTool, type ToolDeps } from './assistant.tools.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
 import { ChangesService } from './changes/changes.service.js';
 import { mergeReach, sameReachTarget } from './fleet-probe.logic.js';
@@ -63,11 +63,11 @@ const NUDGE_PROMISE =
   'Вы написали, что вызовете инструмент, но не вызвали. Вызовите нужный инструмент прямо сейчас, а затем дайте ответ по его результату.';
 /** «Добавил», «сохранил статью» без единого вызова инструмента: на деле ничего не записано. */
 const CLAIM_RE =
-  /(?:добавил|сохранил|создал|записал|добавлен|сохранён|сохранены|создан)[^.\n]{0,80}(?:глоссар|стать|баз[а-я]{1,2} знаний|«?пояснени)|(?:глоссар|стать|«?пояснени)[^.\n]{0,80}(?:добавлен|сохранён|создан)/i;
+  /(?:^|[.!?\n]\s*)(?:я\s+)?(?:[А-Яа-яЁё]+\s+){0,4}(?:добавил|сохранил|создал|записал)(?![а-яё])[^."\n{}:]{0,80}(?:глоссар|стать|баз[а-я]{1,2} знаний|«?пояснени)/i;
 const NUDGE_CLAIM =
-  'Вы написали, что уже добавили или сохранили данные, но ни один инструмент не вызывали: ничего не записано. Вызовите нужный инструмент (add_glossary_terms или save_kb_article) прямо сейчас, а затем сообщите реальный результат по его ответу.';
+  'Запись в базу знаний в этом режиме запрещена. Ничего не сохранено. Исправьте утверждение о сохранении и дайте объяснение без обещания записи.';
 const CLAIM_WARNING =
-  'Внимание: в этом ответе инструменты не вызывались, поэтому в базе знаний ничего не сохранено. Повторите запрос.';
+  'Внимание: Ассистент работает только с сохранёнными данными. В базе знаний ничего не сохранено.';
 const NUDGE_EMPTY = 'Ответ пустой. Вызовите нужный инструмент или ответьте текстом по уже имеющимся данным.';
 const NUDGE_FINAL =
   'Дайте итоговый ответ администратору по уже полученным данным. Инструменты больше недоступны, ничего не обещайте вызвать.';
@@ -96,7 +96,7 @@ export class AssistantService {
     private readonly knowledge: KnowledgeService,
     private readonly auditRepo: AuditRepository,
     private readonly audit: AuditService,
-    private readonly autochecks: AutochecksStore,
+    private readonly monitoring: MonitoringStore,
     private readonly incidentSettings: IncidentsSettingsStore,
     private readonly changes: ChangesService,
     private readonly remnawave: RemnawaveService,
@@ -196,7 +196,7 @@ export class AssistantService {
       audit: this.auditRepo,
       conversations: this.repo,
       conversationId: conv.id,
-      autochecks: this.autochecks,
+      monitoring: this.monitoring,
       incidentSettings: this.incidentSettings,
       assistant: { level },
       lastBackup: () => this.backups.lastBackup(),
@@ -205,17 +205,17 @@ export class AssistantService {
         this.events.emit({ type: 'assistant', data: { conversationId: conv.id, activity: a } }),
       upstreamTarget: (server, all) =>
         resolveUpstreamTarget(server, all, this.remnawave, this.links).catch(() => null),
-      // Ноды — уже с их серверами в панели (связь по адресу, IP или выбору в профиле).
       nodeMetrics: async (minutes, uuid) => {
         const data = await this.nodeMetrics.localHistory(minutes);
-        return { ...data, history: data.history.filter((n) => !uuid || n.uuid === uuid) };
+        const status = await this.remnawave.status();
+        if (data.panel !== status.domain) return { error: 'Подключение изменилось. Повторите запрос.' };
+        const current = new Set(status.nodes.map((n) => n.uuid));
+        return {
+          ...data,
+          history: data.history.filter((n) => current.has(n.uuid) && (!uuid || n.uuid === uuid)),
+        };
       },
-      remnawave: {
-        status: async () => {
-          const st = await this.remnawave.status();
-          return { ...st, nodes: await this.links.annotate(await this.servers.list(), st.nodes) };
-        },
-      },
+      remnawave: this.remnawave,
       changes: {
         propose: async (operation, args, reason) => {
           changeCards += 1;
@@ -243,6 +243,7 @@ export class AssistantService {
     const interim: string[] = [];
     let answer = '';
     let toolCalls = 0;
+    let blockedTools = false;
     let nudges = 0;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
@@ -260,7 +261,7 @@ export class AssistantService {
       if (uses.length === 0) {
         // Пустой ответ или обещание вызвать инструмент без вызова: один-два толчка вместо «Не удалось сформировать ответ».
         const promised = PROMISE_RE.test(text);
-        const claimed = toolCalls === 0 && CLAIM_RE.test(text);
+        const claimed = CLAIM_RE.test(text);
         if (nudges < MAX_NUDGES && round < MAX_TOOL_ROUNDS - 1 && (!text || promised || claimed)) {
           nudges += 1;
           if (text) messages.push({ role: 'assistant', content: res.blocks });
@@ -277,7 +278,8 @@ export class AssistantService {
       for (const use of uses) {
         toolCalls += 1;
         try {
-          const outcome = await runTool(use.name, use.input, deps);
+          if (!PASSIVE_ASSISTANT_TOOLS.some((tool) => tool.name === use.name)) blockedTools = true;
+          const outcome = await runPassiveTool(use.name, use.input, deps);
           citations.push(...outcome.citations);
           activity.push(...(outcome.activity ?? []));
           // Повторные проверки той же цели (с другого сервера, по другому порту) — в одну таблицу:
@@ -315,7 +317,10 @@ export class AssistantService {
 
     let finalText = answer || 'Не удалось получить ответ. Повторите вопрос.';
     // Модель заявила «сохранил», а инструменты так и не вызвала: честно говорим, что записи нет.
-    if (toolCalls === 0 && CLAIM_RE.test(finalText)) finalText = `${finalText}\n\n${CLAIM_WARNING}`;
+    if (CLAIM_RE.test(finalText)) finalText = `${finalText}\n\n${CLAIM_WARNING}`;
+    if (blockedTools)
+      finalText +=
+        '\n\nАссистент не выполнял проверки или изменения: этот запрос недоступен в режиме чтения.';
     // Ответ можно разбить на несколько сообщений строкой «===»: вывод, затем инструкция, затем команды.
     const parts = finalText
       .split(/\n[ \t]*={3,}[ \t]*\n/)

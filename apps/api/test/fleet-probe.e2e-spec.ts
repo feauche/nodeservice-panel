@@ -33,6 +33,7 @@ import {
 } from '../src/modules/assistant/llm.provider.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
 import { IncidentsRepository } from '../src/modules/incidents/incidents.repository.js';
+import { RemnawaveSettingsStore } from '../src/modules/remnawave/remnawave-settings.store.js';
 import { ServersService } from '../src/modules/servers/servers.service.js';
 import { FakeSsh, SSH_PASSWORD, SSH_USER } from './fake-ssh.js';
 
@@ -108,6 +109,18 @@ class FakeLlm implements LlmProvider {
         ],
       };
     }
+    if (text.includes('НОДЫ-СНИМОК') && !done)
+      return {
+        stopReason: 'tool_use',
+        blocks: [
+          {
+            type: 'tool_use',
+            id: 'node1',
+            name: 'get_node_detail',
+            input: { node: '11111111-1111-4111-8111-111111111111' },
+          },
+        ],
+      };
     if (text.includes('ТОЛЬКО-ОТВЕТ'))
       return { stopReason: 'end', blocks: [{ type: 'text', text: 'Принято.' }] };
     if (text.includes('ОСМОТР-СЕРВЕРА') || text.includes('ОСМОТР-ЖУРНАЛА')) {
@@ -198,7 +211,7 @@ class FakeLlm implements LlmProvider {
       .flatMap((b) => (b.type === 'tool_result' ? [b.content] : []));
     return {
       stopReason: 'end',
-      blocks: [{ type: 'text', text: `Итог: ${results.join(' ¦ ').slice(0, 400)}` }],
+      blocks: [{ type: 'text', text: `Итог: ${results.join(' ¦ ').slice(0, 4000)}` }],
     };
   }
 }
@@ -326,56 +339,71 @@ describe('проверка доступности, процессы и пред�
     expect(ssh.execLog.some((c) => c.includes('comm=') && !/args|aux/.test(c))).toBe(true);
   });
 
-  it('чат: карточка только по существующему инциденту из цепочки, название из реестра, повтор не дублируется', async () => {
-    const db = app.get<Db>(DB);
-    await db.execute(sql`delete from incidents`);
-    const row = await app.get(IncidentsRepository).open({
-      serverId: target().id,
-      serverName: target().name,
-      kind: 'disk_high',
-      severity: 'warn',
-      title: 'Диск заполняется',
-      detail: 'Диск выше порога.',
-      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+  it('чат читает текущую ноду Remnawave из сохранённого снимка, выдаёт UUID цитату и сохраняет историю без SSH', async () => {
+    const uuid = '11111111-1111-4111-8111-111111111111';
+    const store = app.get(RemnawaveSettingsStore);
+    await store.connect('panel.test', 'secret-read-only', {
+      checkedAt: new Date().toISOString(),
+      error: null,
+      stats: null,
+      cert: null,
+      nodes: [
+        {
+          uuid,
+          name: 'Текущая нода',
+          address: '1.1.1.1',
+          countryCode: 'DE',
+          isConnected: true,
+          isDisabled: false,
+          isConnecting: false,
+          lastStatusMessage: null,
+          usersOnline: 0,
+          cpuPercent: null,
+          trafficUsedBytes: null,
+          trafficLimitBytes: null,
+        },
+      ],
     });
-    const id = row?.id ?? '';
-    fake.preset = 'tmp_clean';
+    ssh.execLog.length = 0;
     const res = assistantChatResponseSchema.parse(
       (
         await agent
           .post('/api/assistant/chat')
           .set(CSRF_HEADER, csrf)
-          .send({ message: `Что делать? incident=${id}` })
+          .send({ message: 'Как нода? НОДЫ-СНИМОК' })
           .expect(200)
       ).body,
     );
-    expect(res.message.proposals).toHaveLength(1);
-    expect(res.message.proposals[0]).toMatchObject({
-      preset: 'tmp_clean',
-      level: 'T2',
-      title: 'Очистить временные файлы',
-      incidentId: id,
-    });
-    expect(res.message.content).toContain('Карточка «Очистить временные файлы» (T2)');
-    expect(res.message.content).toContain('ПЛЕЙБУК «Диск заполнен»');
+    expect(res.message.citations).toEqual([{ type: 'node', id: uuid, label: 'Текущая нода' }]);
+    expect(res.message.content).toContain('Текущая нода');
+    expect(res.message.content).toContain('"cpuPercent":null');
+    expect(ssh.execLog).toEqual([]);
+    expect(res.message.content).not.toContain('secret-read-only');
+    const history = (await agent.get(`/api/assistant/conversations/${res.conversationId}`).expect(200)).body;
+    expect(
+      history.items.some((item: { citations: unknown[] }) => JSON.stringify(item.citations).includes(uuid)),
+    ).toBe(true);
+    await store.disconnect();
+  });
 
-    // T3 карточкой не предлагается
-    fake.preset = 'reboot';
-    const t3 = assistantChatResponseSchema.parse(
+  it('чат отклоняет неожиданные предложения автопочинки, сохраняя доступ к справочнику', async () => {
+    ssh.execLog.length = 0;
+    const res = assistantChatResponseSchema.parse(
       (
         await agent
           .post('/api/assistant/chat')
           .set(CSRF_HEADER, csrf)
-          .send({ message: `Перезагрузить? incident=${id}` })
+          .send({ message: 'Что делать? incident=11111111-1111-4111-8111-111111111111' })
           .expect(200)
       ).body,
     );
-    expect(t3.message.proposals).toHaveLength(0);
-    // reboot не из цепочки disk_high → «нет в цепочке»
-    expect(t3.message.content).toContain('нет в цепочке');
+    expect(res.message.proposals).toEqual([]);
+    expect(res.message.reachability).toEqual([]);
+    expect(res.message.content).toContain('недоступен');
+    expect(ssh.execLog).toEqual([]);
   });
-  it('чат: проверка доступности возвращается структурой и сохраняется в сообщении', async () => {
-    ssh.reachQueue = ['open', 'open', 'open'];
+  it('чат не запускает доступность по SSH, отказ и пустая диагностика сохраняются в беседе', async () => {
+    ssh.execLog.length = 0;
     const res = assistantChatResponseSchema.parse(
       (
         await agent
@@ -385,20 +413,16 @@ describe('проверка доступности, процессы и пред�
           .expect(200)
       ).body,
     );
-    expect(res.message.reachability).toHaveLength(1);
-    const r = res.message.reachability[0];
-    expect(r?.target.name).toBe('цель');
-    expect(r?.probes).toHaveLength(3);
-    expect(r?.ports.map((p) => p.verdict)).toEqual(['reachable', 'reachable']);
-    const history = await agent.get(`/api/assistant/conversations/${res.conversationId}`).expect(200);
-    expect(JSON.stringify(history.body)).toContain('"reachability"');
-    expect(JSON.stringify(history.body)).toContain('reachable');
+    expect(res.message.proposals).toEqual([]);
+    expect(res.message.reachability).toEqual([]);
+    expect(res.message.content).toContain('недоступен');
+    expect(ssh.execLog).toEqual([]);
+    const history = (await agent.get(`/api/assistant/conversations/${res.conversationId}`).expect(200)).body;
+    expect(history.items.at(-1).reachability).toEqual([]);
   });
 
-  it('чат: проверки одной цели с разных серверов складываются в одну таблицу', async () => {
-    // Джарвис сам выбирает проверяющего (from) и стучится три раза: раньше под ответом оставалась
-    // только последняя проверка — «с 1 сервера, открыт со всех», хотя с первого порт не отвечал.
-    ssh.reachQueue = ['closed', 'open', 'open'];
+  it('чат не запускает последовательные SSH-проверки даже при нескольких вызовах модели', async () => {
+    ssh.execLog.length = 0;
     const res = assistantChatResponseSchema.parse(
       (
         await agent
@@ -408,42 +432,28 @@ describe('проверка доступности, процессы и пред�
           .expect(200)
       ).body,
     );
-    expect(res.message.reachability).toHaveLength(1);
-    const r = res.message.reachability[0];
-    expect(r?.target.name).toBe('цель');
-    expect(r?.probes.map((p) => p.from)).toEqual(['проверка-а', 'проверка-б', 'проверка-в']);
-    expect(r?.ports).toHaveLength(1);
-    expect(r?.ports[0]).toMatchObject({ port: 443, open: 2, closed: 1, verdict: 'partial' });
-    expect(r?.notes.join(' ')).not.toContain('Проверяющий один');
+    expect(res.message.proposals).toEqual([]);
+    expect(res.message.reachability).toEqual([]);
+    expect(res.message.content).toContain('недоступен');
+    expect(ssh.execLog).toEqual([]);
   });
 
-  it('разбор инцидента сохраняет проверку доступности вместе с выводом', async () => {
-    const db = app.get<Db>(DB);
-    await db.execute(sql`delete from incidents`);
+  it('удалённый маршрут разбора не исполняется, исторический инцидент читается', async () => {
     const row = await app.get(IncidentsRepository).open({
       serverId: target().id,
       serverName: target().name,
       kind: 'ssh_down',
       severity: 'crit',
-      title: 'SSH недоступен',
-      detail: 'Сервер не отвечает.',
-      timeline: [{ at: new Date().toISOString(), by: 'auto', action: 'Обнаружено', result: 'detect' }],
+      title: 'Исторический сбой',
+      detail: 'Старый сохранённый инцидент',
+      timeline: [],
     });
-    const id = row?.id ?? '';
-    ssh.reachQueue = ['open', 'open', 'open'];
-    await agent.post(`/api/incidents/${id}/analysis`).set(CSRF_HEADER, csrf).expect(202);
-    for (let i = 0; i < 100; i += 1) {
-      const inc = incidentSchema.parse((await agent.get(`/api/incidents/${id}`).expect(200)).body);
-      if (inc.analysis && inc.analysis.status !== 'running') {
-        expect(inc.analysis.status).toBe('done');
-        expect(inc.analysis.reachability?.ports[0]?.verdict).toBe('reachable');
-        expect(inc.analysis.reachability?.probes).toHaveLength(4);
-        expect(inc.analysis.reachability?.probes.at(-1)?.from).toBe('Сервер панели');
-        return;
-      }
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    throw new Error('разбор не завершился');
+    const before = ssh.execLog.length;
+    await agent.post(`/api/incidents/${row?.id}/analysis`).set(CSRF_HEADER, csrf).expect(404);
+    const incident = incidentSchema.parse((await agent.get(`/api/incidents/${row?.id}`).expect(200)).body);
+    expect(incident.detail).toBe('Старый сохранённый инцидент');
+    expect(incident.analysis).toBeNull();
+    expect(ssh.execLog.length).toBe(before);
   });
 
   it('подсказка к терминалу: секреты маскируются до модели, опасные команды убираются, вывод в Журнал не пишется', async () => {
@@ -516,7 +526,7 @@ describe('проверка доступности, процессы и пред�
       );
       return id;
     };
-    const waitDone = async (id: string) => {
+    const _waitDone = async (id: string) => {
       for (let i = 0; i < 100; i += 1) {
         const inc = incidentSchema.parse((await agent.get(`/api/incidents/${id}`).expect(200)).body);
         if (inc.analysis && inc.analysis.status !== 'running') return inc;
@@ -542,46 +552,31 @@ describe('проверка доступности, процессы и пред�
       await setPerms({ reach: true });
     });
 
-    it('без «Разбора по кнопке» запуск и вопрос по разбору отклоняются с понятным текстом', async () => {
-      const id = await openIncident(5 * 60_000);
+    it('удалённые маршруты разбора и уточнения недоступны независимо от старого разрешения', async () => {
+      const id = await openIncident(5 * 60000);
       await setPerms({ analysis: false });
-      const run = await agent.post(`/api/incidents/${id}/analysis`).set(CSRF_HEADER, csrf).expect(409);
-      expect(JSON.stringify(run.body)).toContain('Разбор по кнопке');
+      await agent.post(`/api/incidents/${id}/analysis`).set(CSRF_HEADER, csrf).expect(404);
       await agent
         .post(`/api/incidents/${id}/analysis/ask`)
         .set(CSRF_HEADER, csrf)
         .send({ question: 'Почему?' })
-        .expect(409);
+        .expect(404);
       await setPerms({ analysis: true });
     });
 
-    it('автоматический разбор: выключен по умолчанию, включённый берёт только инцидент старше паузы, один раз', async () => {
-      const analysis = app.get(IncidentAnalysisService);
-      const id = await openIncident(5 * 60_000);
-      expect(await analysis.autoRun()).toEqual([]);
+    it('автоматический разбор не зарегистрирован даже при сохранённом старом разрешении', async () => {
       await setPerms({ autoAnalysis: true });
-      const fresh = await openIncident(10_000);
-      expect(await analysis.autoRun()).toEqual([]);
-      expect(fresh).not.toBe('');
-      const old = await openIncident(5 * 60_000);
-      expect(analysis.autoStatus().startedLastHour).toBe(0);
-      expect(await analysis.autoRun()).toEqual([old]);
-      expect(analysis.autoStatus()).toMatchObject({ startedLastHour: 1, limitPerHour: 5 });
-      expect(analysis.autoStatus().lastRunAt).not.toBeNull();
-      const done = await waitDone(old);
-      expect(done.analysis?.status).toBe('done');
-      expect(await analysis.autoRun()).toEqual([]);
-      expect(id).not.toBe('');
-      const audit = await agent.get('/api/audit?category=server').expect(200);
-      expect(JSON.stringify(audit.body)).toContain('incident.analysis.run');
+      await openIncident(5 * 60000);
+      const before = ssh.execLog.length;
+      expect(() => app.get(IncidentAnalysisService)).toThrow();
+      expect(ssh.execLog.length).toBe(before);
       await setPerms({ autoAnalysis: false });
     });
 
-    it('без «Разбора по кнопке» автоматический разбор тоже не идёт', async () => {
-      const analysis = app.get(IncidentAnalysisService);
+    it('старые настройки анализа не возвращают удалённый фоновый сервис', async () => {
       await setPerms({ autoAnalysis: true, analysis: false });
-      await openIncident(5 * 60_000);
-      expect(await analysis.autoRun()).toEqual([]);
+      await openIncident(5 * 60000);
+      expect(() => app.get(IncidentAnalysisService)).toThrow();
       await setPerms({ autoAnalysis: false, analysis: true });
     });
 
@@ -638,33 +633,25 @@ describe('проверка доступности, процессы и пред�
       for (const c of inspect) expect(c).not.toMatch(/\brm\b|restart|reboot|prune|>\s*\/(?!dev\/null)/);
     });
 
-    it('чат: по умолчанию осмотр разрешён, журналы служб выключены и это сказано прямо', async () => {
+    it('чат не исполняет старые инструменты осмотра независимо от сохранённых разрешений', async () => {
       await setPerms({ inspect: true, serviceLogs: false });
+      ssh.execLog.length = 0;
       const res = await chat('Что с сервером? ОСМОТР-СЕРВЕРА');
-      const text = res.message.content;
-      expect(text).toContain('remnanode');
-      expect(text).toContain('exposedCount');
-      expect(text).toContain('90% /');
-      expect(text).toContain('Out of memory');
-      expect(text).toContain('daysLeft');
-      // журналы служб выключены: инструмент отвечает отказом без выхода на сервер
-      expect(text).toContain('выключено');
-      expect(text).toContain('чтение журналов служб');
+      expect(res.message.content).toContain('недоступен');
+      expect(ssh.execLog).toEqual([]);
     });
 
-    it('чат: с разрешением журнал приходит замаскированным, без него осмотр не идёт вовсе', async () => {
+    it('чат не читает журналы по SSH ни с разрешением, ни без него', async () => {
       await setPerms({ inspect: true, serviceLogs: true, nodeLogs: true });
-      const on = await chat('Журналы, ОСМОТР-ЖУРНАЛА');
-      expect(on.message.content).toContain('connect ok');
-      expect(on.message.content).not.toMatch(/abcdef123456789|203\.0\.113\.44/);
-      expect(on.message.content).toContain('matched');
-
-      await setPerms({ inspect: false, serviceLogs: false, nodeLogs: false });
       ssh.execLog.length = 0;
-      const off = await chat('Ещё раз ОСМОТР-СЕРВЕРА');
-      expect(off.message.content).toContain('осмотр служб и системы');
-      expect(ssh.execLog.filter((c) => c.includes('# ns-inspect:'))).toHaveLength(0);
-      await setPerms({ inspect: true, serviceLogs: false, nodeLogs: false });
+      const on = await chat('Журналы, ОСМОТР-ЖУРНАЛА');
+      expect(on.message.content).toContain('недоступен');
+      expect(ssh.execLog).toEqual([]);
+      await setPerms({ inspect: false, serviceLogs: false, nodeLogs: false });
+      const off = await chat('Ещё ОСМОТР-СЕРВЕРА');
+      expect(off.message.content).toContain('недоступен');
+      expect(ssh.execLog).toEqual([]);
+      await setPerms({ inspect: true });
     });
   });
 

@@ -333,6 +333,13 @@ export function ItemDialog({
             <Label htmlFor="bill-server">
               {SERVERS_LABEL[kind]} <Opt />
             </Label>
+            {!!item?.serverIds.length && !item.nodeRefs?.length && (
+              <p className="mb-3 rounded-[10px] border border-warn/25 bg-warn-soft p-3 text-[12px] leading-5 text-text-2">
+                У записи сохранилась прежняя привязка к серверу. Выберите соответствующую ноду Remnawave
+                вручную: совпадение IP не гарантирует, что это тот же сервер. История оплат и старая привязка
+                сохранятся.
+              </p>
+            )}
             {list.length === 0 ? (
               <p className="rounded-[10px] border border-dashed border-border-2 px-3 py-2.5 text-[12.5px] text-text-3">
                 Ноды Remnawave ещё не загружены. Проверьте подключение в разделе «Ноды».

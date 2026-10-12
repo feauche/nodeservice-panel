@@ -110,7 +110,7 @@ describe('AppShell · меню пользователя', () => {
 
     expect(screen.getByRole('link', { name: 'Ноды' })).toHaveAttribute('href', '/nodes');
     expect(screen.getByRole('link', { name: 'Биллинг' })).toHaveAttribute('href', '/billing');
-    expect(screen.getByRole('link', { name: 'История метрик' })).toHaveAttribute('href', '/metrics');
+    expect(screen.queryByRole('link', { name: 'История метрик' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Настройки/ })).toHaveAttribute('href', '/settings');
     expect(screen.queryByRole('button', { name: /Серверы/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Remnawave' })).not.toBeInTheDocument();

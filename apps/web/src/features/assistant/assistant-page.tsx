@@ -25,6 +25,7 @@ import {
   type ComponentType,
   type ReactNode,
   type SVGProps,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -32,10 +33,11 @@ import {
   useState,
 } from 'react';
 import { JarvisIcon } from '@/components/jarvis-icon';
-import { Markdown, ServerCountryContext, ServerHealthContext } from '@/features/knowledge/markdown';
-import { type ServerHealth, serverHealth } from '@/features/servers/server-health';
+import { Markdown, NodeLinkContext } from '@/features/knowledge/markdown';
+import { nodeState } from '@/features/nodes/node-card';
+import { NodeDialog } from '@/features/nodes/node-dialog';
+import { useNodes } from '@/features/nodes/nodes-api';
 import { openServer } from '@/features/servers/server-modal-store';
-import { useServers } from '@/features/servers/servers-api';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useMediaQuery } from '@/lib/use-media';
@@ -51,7 +53,7 @@ import {
   useSendMessage,
 } from './assistant-api';
 import { ChangeCard } from './change-card';
-import { linkifyServers } from './link-servers';
+import { linkifyNodes, linkifyServers } from './link-servers';
 import { ProposalCard } from './proposal-card';
 import { ReachabilityCard } from './reachability-card';
 
@@ -117,17 +119,32 @@ function AssistantChat() {
   // В jsdom matchMedia нет — считаем экран широким.
   const wide = useMediaQuery(WIDE, true);
   const currentTitle = conversations.data?.items.find((c) => c.id === conversationId)?.title ?? null;
-  const serversQuery = useServers();
-  const healthById = useMemo(() => {
-    const map: Record<string, ServerHealth> = {};
-    for (const srv of serversQuery.data?.items ?? []) map[srv.id] = serverHealth(srv);
-    return map;
-  }, [serversQuery.data]);
-  const countryById = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const srv of serversQuery.data?.items ?? []) if (srv.country.code) map[srv.id] = srv.country.code;
-    return map;
-  }, [serversQuery.data]);
+  const nodesQuery = useNodes();
+  const [openNodeId, setOpenNodeId] = useState<string | null>(null);
+  const staleNodes =
+    !!nodesQuery.data?.error ||
+    !nodesQuery.data?.checkedAt ||
+    Date.now() - Date.parse(nodesQuery.data.checkedAt) >= 90000;
+  const nodeLinks = useMemo(
+    () => ({
+      nodes: Object.fromEntries(
+        (nodesQuery.data?.nodes ?? []).map((node) => {
+          const state = nodeState(node);
+          return [
+            node.uuid,
+            {
+              country: node.countryCode,
+              state: staleNodes ? 'Снимок устарел' : state.label,
+              tone: staleNodes ? ('muted' as const) : state.tone,
+            },
+          ];
+        }),
+      ),
+      open: setOpenNodeId,
+    }),
+    [nodesQuery.data, staleNodes],
+  );
+  const openedNode = nodesQuery.data?.nodes.find((node) => node.uuid === openNodeId);
   const send = useSendMessage();
   const [input, setInput] = useState(() => {
     try {
@@ -314,6 +331,7 @@ function AssistantChat() {
 
   return (
     <div className={PAGE}>
+      {openedNode && <NodeDialog node={openedNode} stale={staleNodes} onClose={() => setOpenNodeId(null)} />}
       {/* История бесед: на широком экране колонкой слева, на узком — в шапке чата */}
       {wide && (
         <aside className="hidden min-h-0 flex-col gap-3 rounded-2xl border border-border bg-surface p-3.5 lg:flex">
@@ -385,45 +403,43 @@ function AssistantChat() {
           className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-5 sm:p-6"
         >
           {messages.length === 0 && !busy && !shownPending && <EmptyChat />}
-          <ServerHealthContext.Provider value={healthById}>
-            <ServerCountryContext.Provider value={countryById}>
-              {messages.map((m, i) => (
-                <MessageRow
-                  key={m.id}
-                  message={m}
-                  grouped={m.role === 'assistant' && messages[i - 1]?.role === 'assistant'}
-                  interim={m.role === 'assistant' && messages[i + 1]?.role === 'assistant'}
-                  searchMatch={matchingIds.has(m.id)}
-                  searchActive={m.id === activeSearchId}
-                />
-              ))}
-              {shownPending && (
-                <MessageRow
-                  message={{
-                    id: 'pending-user',
-                    role: 'user',
-                    content: shownPending,
-                    citations: [],
-                    proposals: [],
-                    reachability: [],
-                    activity: [],
-                    createdAt: '',
-                  }}
-                />
-              )}
-              {busy && live.length > 0 && (
-                <div className="flex max-w-[92%] gap-3">
-                  <span className="size-8 flex-none" aria-hidden="true" />
-                  <div className="flex min-w-0 flex-1 flex-col gap-2">
-                    {live.map((a) => (
-                      <ActivityRow key={a.id} activity={a} />
-                    ))}
-                  </div>
+          <NodeLinkContext.Provider value={nodeLinks}>
+            {messages.map((m, i) => (
+              <MessageRow
+                key={m.id}
+                message={m}
+                grouped={m.role === 'assistant' && messages[i - 1]?.role === 'assistant'}
+                interim={m.role === 'assistant' && messages[i + 1]?.role === 'assistant'}
+                searchMatch={matchingIds.has(m.id)}
+                searchActive={m.id === activeSearchId}
+              />
+            ))}
+            {shownPending && (
+              <MessageRow
+                message={{
+                  id: 'pending-user',
+                  role: 'user',
+                  content: shownPending,
+                  citations: [],
+                  proposals: [],
+                  reachability: [],
+                  activity: [],
+                  createdAt: '',
+                }}
+              />
+            )}
+            {busy && live.length > 0 && (
+              <div className="flex max-w-[92%] gap-3">
+                <span className="size-8 flex-none" aria-hidden="true" />
+                <div className="flex min-w-0 flex-1 flex-col gap-2">
+                  {live.map((a) => (
+                    <ActivityRow key={a.id} activity={a} />
+                  ))}
                 </div>
-              )}
-              {busy && <TypingRow />}
-            </ServerCountryContext.Provider>
-          </ServerHealthContext.Provider>
+              </div>
+            )}
+            {busy && <TypingRow />}
+          </NodeLinkContext.Provider>
         </div>
 
         {/* Композер: одно поле ввода, Ассистент сам понимает, что прислали: вопрос, статью, термины, вывод команды */}
@@ -487,7 +503,7 @@ function AssistantChat() {
           <p className={cn('mt-1.5 px-1 text-[11px]', overLimit ? 'text-destructive' : 'text-text-3')}>
             {overLimit
               ? 'Текст длиннее предела: разбейте его на части и отправьте по очереди.'
-              : 'Enter — отправить, Shift+Enter — перенос строки. Статью Ассистент сохранит в базу знаний, термины добавит в «Пояснения».'}
+              : 'Enter — отправить, Shift+Enter — перенос строки. Ассистент читает сохранённые данные и не запускает проверки.'}
           </p>
         </div>
       </div>
@@ -680,9 +696,7 @@ function EmptyChat() {
         <span className="grid size-11 place-items-center rounded-2xl bg-brand-soft text-brand">
           <JarvisIcon className="size-5" aria-hidden="true" />
         </span>
-        <p className="text-[14px] font-semibold">
-          Спросите об инцидентах, серверах или о том, как что-то починить
-        </p>
+        <p className="text-[14px] font-semibold">Спросите о нодах, метриках или сохранённых инцидентах</p>
         <p className="max-w-[380px] text-[12.5px] text-text-3">
           Ассистент смотрит метрики, Журнал и базу знаний. Действия он только предлагает, запускаете их вы.
         </p>
@@ -739,7 +753,7 @@ function MessageRow({
   searchMatch?: boolean;
   searchActive?: boolean;
 }) {
-  const servers = useServers();
+  const nodes = useNodes();
   if (message.role === 'user')
     return (
       <div
@@ -781,7 +795,13 @@ function MessageRow({
           </div>
         )}
         <Markdown
-          content={linkifyServers(message.content, servers.data?.items ?? [])}
+          content={linkifyNodes(
+            linkifyServers(
+              message.content,
+              message.citations.filter((c) => c.type === 'server').map((c) => ({ id: c.id, name: c.label })),
+            ),
+            nodes.data?.nodes ?? [],
+          )}
           className={cn('-my-1 text-[13.5px]', interim && '[&_p]:text-text-3')}
         />
         {message.citations.length > 0 && <Sources citations={message.citations} />}
@@ -807,7 +827,8 @@ const CITE_META: Record<
   kb: { label: 'База знаний', icon: BookOpenIcon },
   incident: { label: 'Инцидент', icon: AlertTriangleIcon },
   audit: { label: 'Журнал', icon: FileClockIcon },
-  server: { label: 'Сервер', icon: ServerIcon },
+  server: { label: 'Исторический сервер', icon: ServerIcon },
+  node: { label: 'Нода', icon: ServerIcon },
   metric: { label: 'Метрика', icon: JarvisIcon },
 };
 
@@ -824,6 +845,7 @@ function Sources({ citations }: { citations: AssistantCitation[] }) {
 }
 
 function SourceChip({ citation }: { citation: AssistantCitation }) {
+  const nodeContext = useContext(NodeLinkContext);
   const meta = CITE_META[citation.type];
   const Icon = meta.icon;
   const base =
@@ -847,6 +869,18 @@ function SourceChip({ citation }: { citation: AssistantCitation }) {
       <Link to="/incidents" title={title} className={cn(base, interactive)}>
         {inner}
       </Link>
+    );
+  if (citation.type === 'node')
+    return (
+      <button
+        type="button"
+        title={title}
+        disabled={!nodeContext.nodes[citation.id]}
+        onClick={() => nodeContext.open(citation.id)}
+        className={cn(base, interactive, 'disabled:cursor-default disabled:opacity-60')}
+      >
+        {inner}
+      </button>
     );
   if (citation.type === 'server')
     return (

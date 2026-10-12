@@ -72,7 +72,7 @@ export function NodeCard({
       data-state={tone}
       onClick={onClick}
       className={cn(
-        'group relative grid w-full min-w-0 grid-cols-1 items-center gap-x-6 gap-y-4 rounded-[10px] border py-3.5 pr-7 pl-9 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:grid-cols-2 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,.8fr)_minmax(0,.65fr)_16px]',
+        'group relative grid w-full min-w-0 cursor-pointer grid-cols-1 items-center gap-x-6 gap-y-4 rounded-[10px] border py-3.5 pr-7 pl-9 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:grid-cols-2 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,.8fr)_minmax(0,.65fr)_16px]',
         tones[tone],
       )}
     >

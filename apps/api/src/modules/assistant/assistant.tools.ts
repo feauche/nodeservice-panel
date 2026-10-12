@@ -11,7 +11,6 @@ import {
   type Incident,
   KB_SOURCE_LABELS,
   type KbSource,
-  NODE_LINK_BY_LABELS,
   type ReachabilityResult,
   SHARED_VERSION,
 } from '@nodeservice/shared';
@@ -35,19 +34,19 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   {
     name: 'get_settings',
     description:
-      'Текущие настройки панели: автопроверки (интервалы/тумблеры), инциденты (пороги CPU/памяти/диска, время реакции, автопочинка) и твои собственные настройки (assistant.level — уровень пользователя, assistant.permissions — что тебе разрешено). Без секретов. Загляни сюда, если просят действие и надо проверить разрешение.',
+      'Сохранённые настройки текущего мониторинга Remnawave: интервалы, пороги ресурсов и онлайна, TCP-проверки Check-Host; подробность и разрешения Ассистента. Только чтение, никакой автопочинки и запуска проверок.',
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'get_panel_status',
     description:
-      'Состояние самой панели NodeService: версия, сколько она работает без перезапуска (после обновления счёт идёт заново), серверы и агенты (сколько в сети, не в сети, какие версии агентов), число открытых инцидентов, неудачные и отклонённые события Журнала за последний час, состояние автоматического разбора. Без параметров. Зови, когда спрашивают, нормально ли работает панель, что изменилось после обновления, устарели ли агенты. Данные конкретных серверов бери из get_server_detail.',
+      'Состояние самой панели: версия, время с запуска, сохранённый снимок текущих нод и его время, открытые инциденты, ошибки Журнала за последний час и последняя резервная копия. Только чтение.',
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'get_node_metrics',
     description:
-      'История CPU, RAM, load average, сети и онлайна нод из локальной базы NodeService. Не обращается в Remnawave. Пропуски означают отсутствие замера. minutes: 60, 1440, 10080 или 43200; nodeUuid необязателен.',
+      'Сохранённые локальные ряды CPU, RAM, нагрузки, сети и онлайна текущих нод Remnawave. Импорт нового снимка и внешние проверки не запускаются; UUID ограничены текущим снимком. Пропуски означают отсутствие замера. minutes: 60, 1440, 10080 или 43200; nodeUuid необязателен.',
     input_schema: {
       type: 'object',
       properties: { minutes: { type: 'number' }, nodeUuid: { type: 'string' } },
@@ -56,8 +55,14 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   {
     name: 'get_remnawave_status',
     description:
-      'Подключение к панели Remnawave (только чтение, если владелец её подключил): домен, сводка (пользователи по статусам, сколько онлайн сейчас/за сутки/за неделю, сколько нод на связи, суммарный трафик, версия и аптайм самой панели Remnawave), список её нод (адрес, подключена ли, страна, сколько пользователей сейчас на ней онлайн, лимит и использованный трафик, на каком сервере NodeService она работает — server), срок TLS-сертификата домена панели. Без параметров. Если не подключена — скажи прямо и не выдумывай цифры; подключается в «Серверы → Remnawave».',
+      'Подключение к панели Remnawave (только чтение, если владелец её подключил): домен, сводка (пользователи по статусам, сколько онлайн сейчас/за сутки/за неделю, сколько нод на связи, суммарный трафик, версия и аптайм самой панели Remnawave), список её нод (адрес, подключена ли, страна, сколько пользователей сейчас на ней онлайн, лимит и использованный трафик, UUID ноды), срок TLS-сертификата домена панели. Без параметров. Если не подключена — скажи прямо и не выдумывай цифры; подключается в разделе «Ноды».',
     input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_node_detail',
+    description:
+      'Сохранённое состояние одной ноды Remnawave по UUID, точному имени или адресу. Онлайн, CPU, RAM, нагрузка, сеть, версия, состояние и время снимка. Не запускает проверки и SSH; отсутствующие метрики остаются неизвестными.',
+    input_schema: { type: 'object', properties: { node: { type: 'string' } }, required: ['node'] },
   },
   {
     name: 'search_audit',
@@ -90,7 +95,7 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   {
     name: 'search_kb',
     description:
-      'База знаний (статьи-runbooks и глоссарий «Пояснения»). С query — полнотекстовый поиск по теме. У каждой статьи есть дата обновления, возраст в днях и происхождение (Вручную, Ассистент, Веб, Telegram): ссылаясь на статью, называй дату; сведения старше полугода или написанные Ассистентом подавай как «возможно, устарело» или «не проверено человеком». БЕЗ query — список всех статей (для «какие статьи у нас есть»). Всегда проверяй тут перед созданием новой статьи.',
+      'Поиск по существующим статьям базы знаний. Возвращает выдержки и ссылки для объяснения; ничего не создаёт и не редактирует.',
     input_schema: {
       type: 'object',
       properties: { query: { type: 'string' } },
@@ -169,30 +174,43 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
 
 /** Только пассивное чтение уже имеющихся данных. Эти инструменты не запускают SSH, проверки и изменения. */
 const PASSIVE_TOOL_NAMES = new Set([
-  'get_fleet_status',
   'get_remnawave_profiles',
   'get_remnawave_topology',
-  'get_server_detail',
-  'get_metrics_history',
   'list_incidents',
   'get_incident',
   'get_playbook',
   'get_reference',
-  'get_maintenance',
-  'get_server_checks',
-  'get_fleet_stats',
-  'get_capacity',
   'get_billing',
   'get_settings',
   'get_panel_status',
   'get_node_metrics',
   'get_remnawave_status',
+  'get_node_detail',
   'search_audit',
   'search_conversations',
   'search_kb',
 ]);
 export const PASSIVE_ASSISTANT_TOOLS: LlmToolDef[] = ASSISTANT_TOOLS.filter((tool) =>
   PASSIVE_TOOL_NAMES.has(tool.name),
+).map((tool) =>
+  tool.name === 'list_incidents'
+    ? {
+        ...tool,
+        description:
+          'Сохранённые инциденты Remnawave. status: open|resolved|all; nodeUuid — необязательный фильтр ноды; limit до25. Возвращает факты и сохранённые результаты TCP, ничего не проверяет и не исправляет.',
+        input_schema: {
+          type: 'object',
+          properties: { status: { type: 'string' }, nodeUuid: { type: 'string' }, limit: { type: 'number' } },
+        },
+      }
+    : tool.name === 'get_billing'
+      ? {
+          ...tool,
+          description:
+            'Сохранённые оплаты, сроки и связи с нодами; без изменений. Исторические серверные записи сохраняются, но не описывают текущую доступность нод.',
+          input_schema: { type: 'object', properties: { archived: { type: 'boolean' } } },
+        }
+      : tool,
 );
 
 export interface ToolDeps extends ReadDeps {
@@ -202,7 +220,8 @@ export interface ToolDeps extends ReadDeps {
   /** Поиск по прошлым беседам; conversationId — текущая беседа, её из результатов исключаем. */
   conversations: Pick<AssistantRepository, 'recentMessages'>;
   conversationId?: string;
-  autochecks: { get: () => Promise<unknown> };
+  autochecks?: { get: () => Promise<unknown> };
+  monitoring?: { get: () => Promise<unknown> };
   incidentSettings: { get: () => Promise<unknown> };
   /** Снимок настроек самого агента — уровень и разрешения (только чтение). */
   assistant: { level: string };
@@ -252,11 +271,10 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
   if (read) return read;
 
   if (name === 'get_settings') {
-    const [autochecks, incidents] = await Promise.all([deps.autochecks.get(), deps.incidentSettings.get()]);
+    const monitoring = (await deps.monitoring?.get()) ?? { error: 'Настройки мониторинга недоступны.' };
     return {
       content: JSON.stringify({
-        autochecks,
-        incidents,
+        monitoring,
         assistant: {
           level: deps.assistant.level,
           permissions: deps.permissions,
@@ -287,34 +305,61 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
     };
   }
 
-  if (name === 'get_remnawave_status') {
+  if (name === 'get_remnawave_status' || name === 'get_node_detail') {
     if (!deps.remnawave)
-      return { ...empty, content: 'Remnawave не подключена. Подключить можно в «Серверы → Remnawave».' };
+      return {
+        ...empty,
+        content: 'Remnawave не подключена. Настройки подключения находятся в разделе «Ноды».',
+      };
     const st = await deps.remnawave.status();
     if (!st.connected)
-      return { ...empty, content: 'Remnawave не подключена. Подключить можно в «Серверы → Remnawave».' };
-    // К каждой ноде — её сервер в панели: иначе модель сама сверяет адреса и пишет «сервер не добавлен»
-    // там, где он добавлен под другим адресом.
-    const names = new Map((await deps.servers.list()).map((x) => [x.id, x.name]));
-    const nodes = st.nodes.map(({ serverIds, linkedBy, ...n }) => ({
-      ...n,
-      server: serverIds?.[0] ? (names.get(serverIds[0]) ?? null) : null,
-      serverFoundBy: linkedBy ? NODE_LINK_BY_LABELS[linkedBy] : null,
-    }));
+      return {
+        ...empty,
+        content: 'Remnawave не подключена. Настройки подключения находятся в разделе «Ноды».',
+      };
+    const nodes = st.nodes.map(({ serverIds: _ids, linkedBy: _linked, ...node }) => node);
+    const fresh = !st.error && !!st.checkedAt && Date.now() - Date.parse(st.checkedAt) < 90000;
+    const snapshot = {
+      source: 'Remnawave',
+      panel: st.domain,
+      checkedAt: st.checkedAt,
+      fresh,
+      error: st.error,
+      note: 'Сохранённый снимок Remnawave. Недоступная метрика — null/отсутствует, не ноль. isConnected — связь с Remnawave, не доказательство доступности VPN из РФ. SSH и агенты не используются.',
+    };
+    if (name === 'get_node_detail') {
+      const key = String(arg.node ?? '')
+        .trim()
+        .toLowerCase();
+      const matches = nodes.filter((n) => [n.uuid, n.name, n.address].some((v) => v.toLowerCase() === key));
+      if (!key || matches.length !== 1)
+        return {
+          ...empty,
+          content: 'Нода не найдена или имя неоднозначно. Используйте UUID из get_remnawave_status.',
+        };
+      const node = matches[0];
+      if (!node) return { ...empty, content: 'Нода не найдена.' };
+      return {
+        ...empty,
+        content: JSON.stringify({ ...snapshot, node }),
+        citations: [{ type: 'node', id: node.uuid, label: node.name }],
+      };
+    }
     return {
       ...empty,
       content: JSON.stringify({
-        ...st,
+        ...snapshot,
+        connected: st.connected,
+        stats: st.stats,
         nodes,
-        nodesNote:
-          'server — сервер NodeService, на котором работает нода: панель связывает их по адресу, по IP (в том числе когда одно записано доменом, а другое — IP) или по выбору в профиле сервера. server: null — сервер этой ноды в панели не найден: он не добавлен либо добавлен под адресом, который не совпал. Не утверждайте, что сервер «не добавлен»: скажите, что связь не найдена, и что её можно выбрать вручную — окно сервера → «Профиль» → «Нода Remnawave на сервере» → «Какая это нода в Remnawave».',
+        cert: st.cert,
       }),
     };
   }
 
   if (name === 'get_panel_status') {
-    const [servers, open, failed] = await Promise.all([
-      deps.servers.list(),
+    const [status, open, failed] = await Promise.all([
+      deps.remnawave?.status(),
       deps.incidents.list('open'),
       deps.audit.list({
         from: new Date(Date.now() - 3_600_000).toISOString(),
@@ -323,19 +368,22 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
         pageSize: 25,
       }),
     ]);
-    const agents: Record<string, number> = {};
-    const versions: Record<string, number> = {};
-    for (const srv of servers) {
-      agents[srv.agentStatus] = (agents[srv.agentStatus] ?? 0) + 1;
-      if (srv.agentVersion) versions[srv.agentVersion] = (versions[srv.agentVersion] ?? 0) + 1;
-    }
+    const fresh = !!status?.checkedAt && !status.error && Date.now() - Date.parse(status.checkedAt) < 90000;
     return {
       ...empty,
       content: JSON.stringify({
         version: SHARED_VERSION,
         uptimeMinutes: Math.round(process.uptime() / 60),
         uptimeNote: 'Время с последнего перезапуска панели; после обновления панели счёт идёт заново.',
-        servers: { total: servers.length, agents, agentVersions: versions },
+        nodes: {
+          total: status?.nodes.length ?? null,
+          connected: fresh
+            ? (status?.nodes.filter((n) => n.isConnected && !n.isDisabled).length ?? null)
+            : null,
+          checkedAt: status?.checkedAt ?? null,
+          fresh,
+          error: status?.error ?? null,
+        },
         incidents: { open: open.counts.open, critical: open.counts.crit, warning: open.counts.warn },
         auditLastHour: { failedOrDenied: failed.total, latest: failed.items.slice(0, 5).map(auditBrief) },
         ...(deps.autoAnalysis ? { autoAnalysis: deps.autoAnalysis() } : {}),
@@ -584,4 +632,15 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
 
   // Инструмент вне аллоулиста — модель не должна вызвать, но на всякий случай явно отклоняем.
   return { ...empty, content: `Инструмент «${name}» не разрешён.` };
+}
+
+/** Enforce the actual chat boundary, even when a provider returns an unadvertised tool name. */
+export async function runPassiveTool(name: string, input: unknown, deps: ToolDeps): Promise<ToolOutcome> {
+  if (!PASSIVE_TOOL_NAMES.has(name))
+    return {
+      content: 'Этот инструмент недоступен: Ассистент работает только с сохранёнными данными.',
+      citations: [],
+      proposals: [],
+    };
+  return runTool(name, input, deps);
 }

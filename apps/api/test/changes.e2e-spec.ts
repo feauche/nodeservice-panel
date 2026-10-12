@@ -9,7 +9,6 @@ import {
   assistantChangeSchema,
   assistantChatResponseSchema,
   CSRF_HEADER,
-  incidentPolicyResponseSchema,
   providerSchema,
   type Server,
   serverSchema,
@@ -26,6 +25,7 @@ import { setupHttp } from '../src/common/http/setup-http.js';
 import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
+import { ChangesService } from '../src/modules/assistant/changes/changes.service.js';
 import {
   LLM_PROVIDER,
   type LlmProvider,
@@ -96,11 +96,13 @@ describe('изменения по предложению Джарвиса e2e (J
       ).body,
     );
   const propose = async (operation: string, args: Record<string, unknown>): Promise<AssistantChange> => {
-    const res = await chat([{ name: 'propose_change', input: { operation, args, reason: 'Так надо.' } }]);
-    const card = res.message.proposals.find((p) => p.kind === 'change');
-    if (card?.kind !== 'change') throw new Error(`карточки нет: ${res.message.content}`);
+    // Seed a historical proposal through the service; the current chat may never create write cards.
+    const result = await app
+      .get(ChangesService)
+      .propose({ operation, args, reason: 'Историческое предложение.', conversationId: null });
+    if ('problem' in result) throw new Error(result.problem);
     return assistantChangeSchema.parse(
-      (await agent.get(`/api/assistant/changes/${card.changeId}`).expect(200)).body,
+      (await agent.get(`/api/assistant/changes/${result.change.id}`).expect(200)).body,
     );
   };
   const act = (id: string, what: 'apply' | 'reject' | 'revert', status = 200) =>
@@ -111,6 +113,25 @@ describe('изменения по предложению Джарвиса e2e (J
     JSON.stringify((await agent.get('/api/audit?pageSize=100').expect(200)).body);
   const setPerms = (permissions: Record<string, boolean>) =>
     agent.put('/api/settings/assistant').set(CSRF_HEADER, csrf).send({ permissions }).expect(200);
+
+  const assertRetiredOperation = async (operation: string) => {
+    const fixture = await propose('server.notes', { server: 'ru-entry-1', notes: 'Не применять' });
+    const db = app.get<Db>(DB);
+    await db.execute(sql`update assistant_changes set operation=${operation} where id=${fixture.id}::uuid`);
+    const before = await serverNow(),
+      commands = ssh.execLog.length;
+    const historical = assistantChangeSchema.parse(
+      (await agent.get(`/api/assistant/changes/${fixture.id}`).expect(200)).body,
+    );
+    expect(historical.operation).toBe(operation);
+    await act(fixture.id, 'apply', 410);
+    await act(fixture.id, 'revert', 410);
+    expect(await serverNow()).toEqual(before);
+    expect(ssh.execLog.length).toBe(commands);
+    expect((await agent.get(`/api/assistant/changes/${fixture.id}`).expect(200)).body.status).toBe(
+      'proposed',
+    );
+  };
 
   beforeAll(async () => {
     await ssh.start();
@@ -195,11 +216,11 @@ describe('изменения по предложению Джарвиса e2e (J
       await anon.post(`/api/assistant/changes/${id}/${what}`).set(CSRF_HEADER, anonCsrf).expect(401);
   });
 
-  it('разрешение «Изменения по подтверждению» есть в настройках и включено по умолчанию; инструмент доступен модели', async () => {
+  it('старое разрешение изменений сохраняется, но инструмент недоступен пассивной модели', async () => {
     const status = (await agent.get('/api/assistant/status').expect(200)).body;
     expect(status.permissions.changes).toBe(true);
     await chat([]);
-    expect(fake.toolNames).toContain('propose_change');
+    expect(fake.toolNames).not.toContain('propose_change');
   });
 
   it('карточка провайдера: предложение ничего не меняет, применение меняет и пишет в Журнал, откат возвращает', async () => {
@@ -341,7 +362,7 @@ describe('изменения по предложению Джарвиса e2e (J
       },
     ]);
     expect(res.message.proposals).toEqual([]);
-    expect(res.message.content).toContain('уже закрыт');
+    expect(res.message.content).toContain('недоступен');
   });
 
   it('запись в базу знаний (J6): по решённому инциденту создаёт статью с тегом runbook, кнопкой не отменяется', async () => {
@@ -372,62 +393,21 @@ describe('изменения по предложению Джарвиса e2e (J
     await act(c.id, 'revert', 409);
   });
 
-  it('пауза автопочинки: при выключенной отказ, при включённой ставится и снимается откатом', async () => {
-    const off = await chat([
-      { name: 'propose_change', input: { operation: 'autofix.pause', args: { minutes: 30 }, reason: 'x' } },
-    ]);
-    expect(off.message.proposals).toEqual([]);
-    expect(off.message.content).toContain('выключена');
-
-    await agent
-      .patch('/api/incidents/policy')
-      .set(CSRF_HEADER, csrf)
-      .send({ autofixEnabled: true })
-      .expect(200);
-    const c = await propose('autofix.pause', { minutes: 30 });
-    await act(c.id, 'apply');
-    const paused = incidentPolicyResponseSchema.parse(
-      (await agent.get('/api/incidents/policy').expect(200)).body,
-    );
-    expect(paused.pausedUntil).not.toBeNull();
-    await act(c.id, 'revert');
-    expect(
-      incidentPolicyResponseSchema.parse((await agent.get('/api/incidents/policy').expect(200)).body)
-        .pausedUntil,
-    ).toBeNull();
-    await agent
-      .patch('/api/incidents/policy')
-      .set(CSRF_HEADER, csrf)
-      .send({ autofixEnabled: false })
-      .expect(200);
+  it('историческая пауза автопочинки читается, apply/revert возвращают 410', async () => {
+    await assertRetiredOperation('autofix.pause');
   });
 
-  it('за один ответ не больше трёх карточек, чужие операции и негодные аргументы карточки не дают', async () => {
-    const note = (n: number) => ({
-      name: 'propose_change',
-      input: {
-        operation: 'server.notes',
-        args: { server: 'ru-entry-1', notes: `Заметка ${n}` },
-        reason: 'x',
-      },
-    });
-    const res = await chat([note(1), note(2), note(3), note(4)]);
-    expect(res.message.proposals.filter((p) => p.kind === 'change')).toHaveLength(3);
-    expect(res.message.content).toContain('не больше 3');
-
-    const bad = await chat([
-      {
+  it('все неожиданные изменения от модели отклоняются без карточек и изменения сервера', async () => {
+    const before = await serverNow();
+    const res = await chat(
+      ['server.notes', 'maintenance.run', 'autofix.pause', 'server.delete'].map((operation) => ({
         name: 'propose_change',
-        input: { operation: 'server.delete', args: { server: 'ru-entry-1' }, reason: 'x' },
-      },
-      {
-        name: 'propose_change',
-        input: { operation: 'server.rename', args: { server: 'нет-такого', name: 'q' }, reason: 'x' },
-      },
-    ]);
-    expect(bad.message.proposals).toEqual([]);
-    expect(bad.message.content).toContain('Доступные:');
-    expect((await serverNow()).name).toBe('ru-entry-1');
+        input: { operation, args: { server: 'ru-entry-1', notes: 'Не менять' }, reason: 'x' },
+      })),
+    );
+    expect(res.message.proposals).toEqual([]);
+    expect(res.message.content).toContain('недоступен');
+    expect(await serverNow()).toEqual(before);
   });
 
   it('вкладка «Профиль» сохраняет слежение за нодой и профиль одним запросом', async () => {
@@ -446,80 +426,13 @@ describe('изменения по предложению Джарвиса e2e (J
       .expect(200);
   });
 
-  it('режим автопочинки по виду инцидента: «Само» это T2, применяется, виден в политике и откатывается', async () => {
-    const policyOf = async (kind: string) =>
-      incidentPolicyResponseSchema
-        .parse((await agent.get('/api/incidents/policy').expect(200)).body)
-        .items.find((i) => i.kind === kind)?.policy;
-    const c = await propose('autofix.policy', { kind: 'disk_high', policy: 'auto' });
-    expect(c).toMatchObject({ level: 'T2', reversible: true, target: { type: 'settings' } });
-    expect(await policyOf('disk_high')).toBe('ask');
-    await act(c.id, 'apply');
-    expect(await policyOf('disk_high')).toBe('auto');
-    await act(c.id, 'revert');
-    expect(await policyOf('disk_high')).toBe('ask');
-    const no = await chat([
-      {
-        name: 'propose_change',
-        input: { operation: 'autofix.policy', args: { kind: 'ssh_down', policy: 'auto' }, reason: 'x' },
-      },
-    ]);
-    expect(no.message.proposals).toEqual([]);
-    expect(no.message.content).toContain('нет безопасного шага');
+  it('историческая политика автопочинки читается без исполнения, apply/revert возвращают 410', async () => {
+    await assertRetiredOperation('autofix.policy');
   });
 
-  it('обслуживание: проверка запускается по карточке, ход виден в карточке, остальные действия ждут данных проверки', async () => {
-    const waitIdle = async () => {
-      for (let i = 0; i < 100; i += 1) {
-        const st = (await agent.get(`/api/servers/${srv.id}/maintenance`).expect(200)).body;
-        if (!st.running) return st;
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      throw new Error('обслуживание не завершилось');
-    };
-    // До первой проверки очистка и автообновления не предлагаются
-    const early = await chat([
-      {
-        name: 'propose_change',
-        input: { operation: 'maintenance.run', args: { server: 'ru-entry-1', kind: 'cleanup' }, reason: 'x' },
-      },
-    ]);
-    expect(early.message.proposals).toEqual([]);
-    expect(early.message.content).toContain('операцию «check»');
-
-    const c = await propose('maintenance.run', { server: 'ru-entry-1', kind: 'check' });
-    expect(c).toMatchObject({ level: 'T0', reversible: false, title: 'Проверить сервер' });
-    const applied = assistantChangeSchema.parse((await act(c.id, 'apply')).body);
-    expect(applied.status).toBe('applied');
-    expect(applied.note).toContain('Проверить сервер');
-    await waitIdle();
-    const after = assistantChangeSchema.parse(
-      (await agent.get(`/api/assistant/changes/${c.id}`).expect(200)).body,
-    );
-    expect(after).toMatchObject({ status: 'applied', live: false });
-    expect(after.note).toContain('готово');
-    expect(await auditActions()).toContain('server.maintenance.check');
-    await act(c.id, 'revert', 409);
-
-    // Теперь есть данные: диск занят на 16 %, чистить нечего; агент уже нужной версии или последняя неизвестна
-    const clean = await chat([
-      {
-        name: 'propose_change',
-        input: { operation: 'maintenance.run', args: { server: 'ru-entry-1', kind: 'cleanup' }, reason: 'x' },
-      },
-    ]);
-    expect(clean.message.proposals).toEqual([]);
-    expect(clean.message.content).toContain('чистить нечего');
-
-    const u = await propose('maintenance.run', { server: 'ru-entry-1', kind: 'unattended_enable' });
-    expect(u).toMatchObject({ level: 'T2', rows: [{ before: 'Выключены', after: 'Включены' }] });
-    await act(u.id, 'apply');
-    await waitIdle();
-    const uAfter = assistantChangeSchema.parse(
-      (await agent.get(`/api/assistant/changes/${u.id}`).expect(200)).body,
-    );
-    expect(uAfter.live).toBe(false);
-    expect(uAfter.note).toMatch(/готово|ошибка/);
+  it('исторические обслуживание и серверная проверка читаются, но не запускаются', async () => {
+    await assertRetiredOperation('maintenance.run');
+    await assertRetiredOperation('server.check');
   });
 
   it('просроченное предложение не применяется', async () => {
@@ -547,7 +460,7 @@ describe('изменения по предложению Джарвиса e2e (J
     ]);
     expect(fake.toolNames).not.toContain('propose_change');
     expect(res.message.proposals).toEqual([]);
-    expect(res.message.content).toContain('выключены в разрешениях');
+    expect(res.message.content).toContain('недоступен');
     await setPerms({ changes: true });
   });
 

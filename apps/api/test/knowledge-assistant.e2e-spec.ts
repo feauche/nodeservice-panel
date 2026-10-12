@@ -28,10 +28,8 @@ import {
   DOCKER_INSPECT,
   FAQ_TEXT,
   GLOSSARY_TEXT,
-  GLOSSARY_TEXT_TERMS,
   LSCPU_QUESTION,
   MACHINE_LIKE_LINES,
-  MACHINE_LIKE_TERMS,
 } from '../src/modules/assistant/glossary-import.fixture.js';
 import { KbReviewService } from '../src/modules/assistant/kb-review.service.js';
 import {
@@ -287,6 +285,30 @@ describe('knowledge + assistant e2e', () => {
   let csrf: string;
   const fake = new FakeLlm();
 
+  const assertPassiveKnowledge = async (message: string) => {
+    const before = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
+    const docs = await Promise.all(
+      before.items.map(async (item) =>
+        kbDocSchema.parse((await agent.get(`/api/knowledge/${item.id}`).expect(200)).body),
+      ),
+    );
+    const res = assistantChatResponseSchema.parse(
+      (await agent.post('/api/assistant/chat').set(CSRF_HEADER, csrf).send({ message }).expect(200)).body,
+    );
+    expect(res.message.proposals).toEqual([]);
+    const after = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
+    expect(after).toEqual(before);
+    const afterDocs = await Promise.all(
+      after.items.map(async (item) =>
+        kbDocSchema.parse((await agent.get(`/api/knowledge/${item.id}`).expect(200)).body),
+      ),
+    );
+    expect(afterDocs).toEqual(docs);
+    const history = (await agent.get(`/api/assistant/conversations/${res.conversationId}`).expect(200)).body;
+    expect(history.items.some((item: { content: string }) => item.content === message.trim())).toBe(true);
+    return res;
+  };
+
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(LLM_PROVIDER)
@@ -448,22 +470,10 @@ describe('knowledge + assistant e2e', () => {
     expect(chatEvent?.category).toBe('assistant');
   });
 
-  it('присланный мануал: агент сам создаёт статью (source=ai) при разрешении kbWrite', async () => {
-    const res = assistantChatResponseSchema.parse(
-      (
-        await agent
-          .post('/api/assistant/chat')
-          .set(CSRF_HEADER, csrf)
-          .send({ message: 'Вот скопированная страница про Reality… МАНУАЛ' })
-          .expect(200)
-      ).body,
-    );
-    // цитата на созданную статью
-    expect(res.message.citations.some((c) => c.type === 'kb')).toBe(true);
-    // статья реально появилась в базе знаний с меткой AI
-    const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
-    const made = list.items.find((d) => d.title === 'Разбор: настройка Reality');
-    expect(made?.source).toBe('ai');
+  it('присланный мануал не создаёт статью даже при старом разрешении kbWrite', async () => {
+    const res = await assertPassiveKnowledge('Вот скопированная страница про Reality… МАНУАЛ');
+    expect(res.message.citations.filter((c) => c.type === 'kb')).toEqual([]);
+    expect(res.message.content).toContain('ничего не сохранено');
   });
 
   it('присланный мануал: без разрешения kbWrite статья не создаётся', async () => {
@@ -472,15 +482,7 @@ describe('knowledge + assistant e2e', () => {
       .set(CSRF_HEADER, csrf)
       .send({ permissions: { kbWrite: false } })
       .expect(200);
-    await agent
-      .post('/api/assistant/chat')
-      .set(CSRF_HEADER, csrf)
-      .send({ message: 'Ещё одна страница про Reality… МАНУАЛ' })
-      .expect(200);
-    const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
-    // новых статей с этим заголовком больше не появилось (осталась ровно одна из прошлого теста)
-    expect(list.items.filter((d) => d.title === 'Разбор: настройка Reality')).toHaveLength(1);
-    // вернём разрешение
+    await assertPassiveKnowledge('Ещё одна страница про Reality… МАНУАЛ');
     await agent
       .put('/api/settings/assistant')
       .set(CSRF_HEADER, csrf)
@@ -488,65 +490,24 @@ describe('knowledge + assistant e2e', () => {
       .expect(200);
   });
 
-  it('автоглоссарий: агент пополняет статью «Пояснения» (создание, дозапись, дедуп)', async () => {
-    const glossOf = (items: Array<{ title: string; id: string; source: string }>) =>
-      items.find((d) => d.title === 'Пояснения');
-
-    // 1) первый термин → статья-глоссарий создаётся (метка AI)
-    await agent
-      .post('/api/assistant/chat')
-      .set(CSRF_HEADER, csrf)
-      .send({ message: 'Объясни SSH — ГЛОССАРИЙ' })
-      .expect(200);
-    let list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
-    const gloss = glossOf(list.items);
-    if (!gloss) throw new Error('глоссарий «Пояснения» не создан');
-    expect(gloss.source).toBe('ai');
-    let full = kbDocSchema.parse((await agent.get(`/api/knowledge/${gloss.id}`).expect(200)).body);
-    expect(full.content).toContain('SSH');
-
-    // 2) другой термин → дозапись в ту же статью
-    await agent
-      .post('/api/assistant/chat')
-      .set(CSRF_HEADER, csrf)
-      .send({ message: 'Объясни CPU — ГЛОССАРИЙ' })
-      .expect(200);
-    full = kbDocSchema.parse((await agent.get(`/api/knowledge/${gloss.id}`).expect(200)).body);
-    expect(full.content).toContain('SSH');
-    expect(full.content).toContain('CPU');
-
-    // 3) повтор SSH → дедуп: второй статьи «Пояснения» не появляется
-    await agent
-      .post('/api/assistant/chat')
-      .set(CSRF_HEADER, csrf)
-      .send({ message: 'Опять SSH — ГЛОССАРИЙ' })
-      .expect(200);
-    list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
-    expect(list.items.filter((d) => d.title === 'Пояснения')).toHaveLength(1);
-
-    // 4) пополнение Джарвисом видно в истории версий: одна версия на серию (состояние до неё), повтор ничего не пишет
-    const versions = kbVersionsResponseSchema.parse(
-      (await agent.get(`/api/knowledge/${gloss.id}/versions`).expect(200)).body,
-    ).items;
-    expect(versions.map((v) => v.reason)).toEqual(['glossary']);
-    expect(versions[0]?.title).toBe('Пояснения');
-    // Видно не только «что-то изменилось», а какие именно термины добавлены этой версией (глоссарий
-    // существует с самого старта панели пустым — оба термина этого теста попали в одну и ту же серию).
-    expect(versions[0]?.summary).toEqual({ added: ['SSH', 'CPU'], updated: [] });
-    const audit = JSON.stringify((await agent.get('/api/audit?category=knowledge').expect(200)).body);
-    expect(audit).toContain('"via":"glossary"');
+  it('чат не дописывает глоссарий: существующие термины и версии сохраняются', async () => {
+    for (const message of ['Объясни SSH — ГЛОССАРИЙ', 'Объясни CPU — ГЛОССАРИЙ', 'Опять SSH — ГЛОССАРИЙ'])
+      await assertPassiveKnowledge(message);
   });
 
-  it('инструменты чтения подключены: парк, инциденты, история, обслуживание', async () => {
-    const res = await agent
-      .post('/api/assistant/chat')
-      .set(CSRF_HEADER, csrf)
-      .send({ message: 'Что в парке? ИНСТРУМЕНТЫ' })
-      .expect(200);
-    const text = assistantChatResponseSchema.parse(res.body).message.content;
-    expect(text).toContain('"totals"');
-    expect(text).toContain('"matched"');
-    expect(text.match(/не найден/g)?.length).toBeGreaterThanOrEqual(3);
+  it('активный чат читает инциденты и отклоняет старые серверные инструменты', async () => {
+    const res = assistantChatResponseSchema.parse(
+      (
+        await agent
+          .post('/api/assistant/chat')
+          .set(CSRF_HEADER, csrf)
+          .send({ message: 'Что в парке? ИНСТРУМЕНТЫ' })
+          .expect(200)
+      ).body,
+    );
+    expect(res.message.content).toContain('недоступен');
+    expect(res.message.content).toContain('matched');
+    expect(res.message.reachability).toEqual([]);
   });
 
   it('глоссарий «Пояснения» есть всегда: закреплён сверху, не удаляется, не архивируется и не переименовывается', async () => {
@@ -554,7 +515,9 @@ describe('knowledge + assistant e2e', () => {
     const gloss = list.items.find((d) => d.title === 'Пояснения');
     expect(gloss?.pinned).toBe(true);
     // Закреплённая статья идёт первой, что бы ни менялось у остальных.
-    expect(list.items[0]?.id).toBe(gloss?.id);
+    expect(list.items.findIndex((item) => item.id === gloss?.id)).toBeLessThan(
+      list.items.findIndex((item) => !item.pinned),
+    );
     const id = gloss?.id ?? '';
     await agent.delete(`/api/knowledge/${id}`).set(CSRF_HEADER, csrf).expect(409);
     await agent.put(`/api/knowledge/${id}`).set(CSRF_HEADER, csrf).send({ archived: true }).expect(409);
@@ -607,54 +570,11 @@ describe('knowledge + assistant e2e', () => {
     await agent.delete(`/api/knowledge/${created.id}`).set(CSRF_HEADER, csrf).expect(204);
   });
 
-  it('присланный словарь терминов целиком уходит в «Пояснения», отдельной статьи нет, модель не нужна', async () => {
-    const titles = async () =>
-      kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body).items;
-    const before = await titles();
+  it('присланный словарь проходит модель без автоматической записи, полный вопрос сохраняется', async () => {
     const runs = fake.runs;
-    const send = async () =>
-      assistantChatResponseSchema.parse(
-        (
-          await agent
-            .post('/api/assistant/chat')
-            .set(CSRF_HEADER, csrf)
-            .send({ message: GLOSSARY_TEXT })
-            .expect(200)
-        ).body,
-      );
-    const first = await send();
-    expect(first.message.content).toContain('отдельную статью я не создавал');
-    expect(first.message.content).toContain(`Найдено терминов: ${GLOSSARY_TEXT_TERMS}`);
-    expect(fake.runs).toBe(runs);
-    const after = await titles();
-    expect(after.map((d) => d.title).sort()).toEqual(before.map((d) => d.title).sort());
-    const gloss = after.find((d) => d.title === 'Пояснения');
-    expect(first.message.citations).toEqual([{ type: 'kb', id: gloss?.id, label: 'Пояснения' }]);
-    const doc = kbDocSchema.parse((await agent.get(`/api/knowledge/${gloss?.id}`).expect(200)).body);
-    // строка, которую администратор дописал вручную в прошлом тесте, осталась на месте
-    for (const t of [
-      'DPI (Deep Packet Inspection)',
-      'sendThrough',
-      'Гео-файлы',
-      '| VPN | Защищённый канал |',
-    ])
-      expect(doc.content, t).toContain(t);
-    expect(doc.content).not.toContain('Панель: что с чем связано');
-
-    // повторная отправка ничего не дублирует, повторы называются в ответе, версия статьи не плодится
-    const versionsBefore = kbVersionsResponseSchema.parse(
-      (await agent.get(`/api/knowledge/${gloss?.id}/versions`).expect(200)).body,
-    ).items.length;
-    const again = await send();
-    expect(again.message.content).toContain('Добавлено новых: 0');
-    expect(again.message.content).toContain(`Уже были в глоссарии: ${GLOSSARY_TEXT_TERMS}`);
-    expect(again.message.content).toContain('DPI (Deep Packet Inspection)');
-    const versionsAfter = kbVersionsResponseSchema.parse(
-      (await agent.get(`/api/knowledge/${gloss?.id}/versions`).expect(200)).body,
-    ).items.length;
-    expect(versionsAfter).toBe(versionsBefore);
-    const doc2 = kbDocSchema.parse((await agent.get(`/api/knowledge/${gloss?.id}`).expect(200)).body);
-    expect(doc2.content.match(/\| DPI \(Deep Packet Inspection\) \|/g)).toHaveLength(1);
+    await assertPassiveKnowledge(GLOSSARY_TEXT);
+    expect(fake.runs).toBeGreaterThan(runs);
+    await assertPassiveKnowledge(GLOSSARY_TEXT);
   });
 
   describe('вывод команды, «проблема: решение» и вопрос со словарём разбирает модель', () => {
@@ -683,31 +603,12 @@ describe('knowledge + assistant e2e', () => {
         expect(after, junk).not.toContain(junk);
     });
 
-    it('статья «проблема: решение»: пункты не становятся терминами, модель сохраняет её статьёй', async () => {
-      const before = await glossary();
-      const runs = fake.runs;
-      const res = await chat(`${FAQ_TEXT}\nFAQ-СТАТЬЯ`);
-      expect(fake.runs).toBeGreaterThan(runs);
-      expect(res.message.content).toContain('Статья сохранена в базе знаний: «Частые проблемы клиентов»');
-      expect(res.message.content).not.toContain('Статья-глоссарий не создана');
-      expect(await glossary()).toBe(before);
-      const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
-      const faq = list.items.find((d) => d.title === 'Частые проблемы клиентов');
-      expect(faq?.source).toBe('ai');
+    it('статья «проблема: решение» обсуждается без записи статьи или терминов', async () => {
+      await assertPassiveKnowledge(FAQ_TEXT);
     });
 
-    it('инструкция с разделом «Термины»: сервер берёт только его, пункты «проблема: решение» остаются модели', async () => {
-      const terms = GLOSSARY_TEXT.split('\n').slice(8, 20).join('\n');
-      const guide = `# Установка ноды\n\nСначала подготовьте сервер и откройте порт 443.\n\n## Частые проблемы\n${FAQ_TEXT.split('\n').slice(1).join('\n')}\n\n## Термины\n${terms}\n\nОТВЕТ-МОДЕЛИ`;
-      const before = await glossary();
-      const res = await chat(guide);
-      expect(res.message.content).toContain('Разобрал присланное.');
-      // Термины раздела уже были в «Пояснения» после прошлого теста: сервер их нашёл и не задвоил.
-      expect(res.message.content).toContain('найдено 10, добавлено новых в «Пояснения» 0, уже были 10');
-      expect(await glossary()).toBe(before);
-      expect(fake.lastUserText).toContain('СЕРВЕР УЖЕ ДОБАВИЛ');
-      expect(fake.lastUserText).toMatch(/\(найдено 10, новых 0\): ТСПУ, РКН, /);
-      expect(fake.lastUserText).toContain('списки «проблема: решение»');
+    it('инструкция с терминами сохраняется в беседе без изменения базы знаний', async () => {
+      await assertPassiveKnowledge(`${FAQ_TEXT}\n\n# Термины\nSSH: защищённое подключение`);
     });
 
     it('словарь с вопросом: сервер не отвечает шаблоном, отвечает модель', async () => {
@@ -718,81 +619,28 @@ describe('knowledge + assistant e2e', () => {
       expect(res.message.content).not.toContain('отдельную статью я не создавал');
     });
 
-    it('строки словаря, которые сервер не взял, молча не пропадают: модель получает их поимённо', async () => {
-      const runs = fake.runs;
-      const res = await chat(`${GLOSSARY_TEXT}\n${MACHINE_LIKE_LINES.join('\n')}\nОТВЕТ-МОДЕЛИ`);
-      expect(fake.runs).toBeGreaterThan(runs);
-      // Шаблон «Все новые термины добавлены» здесь был бы неправдой: три строки сервер не добавил.
-      expect(res.message.content).not.toContain('Все новые термины добавлены');
-      expect(res.message.content).toContain('Разобрал присланное.');
-      expect(res.message.content).toContain(`найдено ${GLOSSARY_TEXT_TERMS}`);
-      expect(fake.lastUserText).toContain(`сервер не взял`);
-      expect(fake.lastUserText).toContain(MACHINE_LIKE_TERMS.join(', '));
-      const after = await glossary();
-      for (const t of MACHINE_LIKE_TERMS) expect(after, t).not.toContain(t);
+    it('словарь с техническими строками сохраняется целиком без фонового импорта', async () => {
+      await assertPassiveKnowledge(`# Термины\n${MACHINE_LIKE_LINES.join('\n')}`);
     });
   });
 
-  it('попытка сохранить словарь отдельной статьёй отклоняется, модель получает подсказку про «Пояснения»', async () => {
-    const res = assistantChatResponseSchema.parse(
-      (
-        await agent
-          .post('/api/assistant/chat')
-          .set(CSRF_HEADER, csrf)
-          .send({ message: 'Собери статью, СЛОВАРЬ-СТАТЬЯ' })
-          .expect(200)
-      ).body,
-    );
-    expect(res.message.content).toContain('Статья-глоссарий не создана');
-    const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
-    expect(list.items.some((d) => /Глоссарий терминов/.test(d.title))).toBe(false);
+  it('неожиданный save_kb_article отклоняется, словарь не записывается', async () => {
+    const res = await assertPassiveKnowledge('Собери статью, СЛОВАРЬ-СТАТЬЯ');
+    expect(res.message.content).toContain('недоступен');
   });
 
-  it('словарь статьёй не сохраняется и под нейтральным названием без слов «Глоссарий» и «Термины»', async () => {
-    const res = assistantChatResponseSchema.parse(
-      (
-        await agent
-          .post('/api/assistant/chat')
-          .set(CSRF_HEADER, csrf)
-          .send({ message: 'Собери статью, СЛОВАРЬ-ОСНОВЫ' })
-          .expect(200)
-      ).body,
-    );
-    expect(res.message.content).toContain('Статья-глоссарий не создана');
-    const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
-    expect(list.items.some((d) => d.title === 'Основы VPN')).toBe(false);
+  it('пассивный запрет записи не зависит от названия предлагаемой статьи', async () => {
+    const res = await assertPassiveKnowledge('Собери статью, СЛОВАРЬ-ОСНОВЫ');
+    expect(res.message.content).toContain('недоступен');
   });
 
-  it('модель написала «добавил», не вызвав инструмент: после толчка запись действительно происходит', async () => {
-    const res = assistantChatResponseSchema.parse(
-      (
-        await agent
-          .post('/api/assistant/chat')
-          .set(CSRF_HEADER, csrf)
-          .send({ message: 'Запиши термин ЛОЖЬ-ПОТОМ' })
-          .expect(200)
-      ).body,
-    );
-    expect(res.message.content).toContain('Готово');
-    expect(res.message.content).not.toContain('ничего не сохранено');
-    const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
-    const gloss = list.items.find((d) => d.title === 'Пояснения');
-    const doc = kbDocSchema.parse((await agent.get(`/api/knowledge/${gloss?.id}`).expect(200)).body);
-    expect(doc.content).toContain('Ложный термин');
+  it('ложное заявление модели о записи не приводит к записи после подсказки', async () => {
+    await assertPassiveKnowledge('Запиши термин ЛОЖЬ-ПОТОМ');
   });
 
-  it('модель упорствует в «добавил» без вызова: ответ честно предупреждает, что ничего не сохранено', async () => {
-    const res = assistantChatResponseSchema.parse(
-      (
-        await agent
-          .post('/api/assistant/chat')
-          .set(CSRF_HEADER, csrf)
-          .send({ message: 'Запиши термин ЛОЖЬ-УПОРНО' })
-          .expect(200)
-      ).body,
-    );
-    expect(res.message.content).toContain('Добавил термин в глоссарий');
-    expect(res.message.content).toContain('инструменты не вызывались');
+  it('упорное ложное заявление о записи явно исправляется предупреждением', async () => {
+    const res = await assertPassiveKnowledge('Запиши термин ЛОЖЬ-УПОРНО');
+    expect(res.message.content).toContain('ничего не сохранено');
   });
 
   it('сбой провайдера модели: понятный текст со статусом 424, а не «Что-то пошло не так на сервере»', async () => {

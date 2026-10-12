@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { requireAuth } from '@/features/auth/guards';
+import { MetricsHistoryPage } from '@/features/metrics/metrics-history-page';
 import { RemnaOverview } from '@/features/overview/remna-overview';
 import { Segmented } from '@/features/settings/settings-ui';
 import { requireSectionOpen } from '@/lib/stages';
@@ -9,8 +10,12 @@ import { requireSectionOpen } from '@/lib/stages';
 type OverviewView = 'now' | 'stats' | 'capacity';
 
 export const Route = createFileRoute('/')({
-  validateSearch: (raw: Record<string, unknown>): { view?: 'stats' | 'capacity' } =>
-    raw.view === 'stats' || raw.view === 'capacity' ? { view: raw.view } : {},
+  validateSearch: (raw: Record<string, unknown>): { view?: 'stats' | 'capacity'; detail?: 'metrics' } =>
+    raw.view === 'stats'
+      ? { view: 'stats', ...(raw.detail === 'metrics' ? { detail: 'metrics' as const } : {}) }
+      : raw.view === 'capacity'
+        ? { view: 'capacity' }
+        : {},
   beforeLoad: async ({ context }) => {
     await requireAuth(context);
     requireSectionOpen('/');
@@ -31,7 +36,9 @@ function Overview() {
       title="Обзор"
       subtitle={
         view === 'stats'
-          ? 'Трафик, нагрузка, доступность и деньги по всему парку за период'
+          ? search.detail === 'metrics'
+            ? 'Подробный разбор нод, метрик и событий за выбранный промежуток'
+            : 'Трафик, нагрузка, доступность и деньги по всему парку за период'
           : view === 'capacity'
             ? 'Ресурсы, нагрузка и доступные лимиты нод'
             : 'Состояние нод и метрики Remnawave'
@@ -49,7 +56,11 @@ function Overview() {
         />
       }
     >
-      <RemnaOverview view={view} />
+      {view === 'stats' && search.detail === 'metrics' ? (
+        <MetricsHistoryPage overview />
+      ) : (
+        <RemnaOverview view={view} />
+      )}
     </AppShell>
   );
 }
