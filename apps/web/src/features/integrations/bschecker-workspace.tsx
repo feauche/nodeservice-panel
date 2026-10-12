@@ -564,7 +564,7 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[650px] table-fixed text-left text-[12.5px]">
                       <colgroup>
-                        <col className="w-[190px]" />
+                        <col className="w-[220px]" />
                         <col className="w-[110px]" />
                         <col className="w-[110px]" />
                         <col />
@@ -582,17 +582,26 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
                         {selected.run.rows.map((row) => (
                           <tr key={row.unit} className="border-t border-border">
                             <td className="px-2 py-3">
-                              {q.data?.units.find((u) => u.op_key === row.unit)?.name ?? row.operator}
-                              <span className="block text-text-3">{row.region}</span>
-                              <span className="mt-1 inline-block">
-                                <Pill tone={row.dpi === 'on' ? 'warn' : 'muted'}>
-                                  {row.dpi === 'on'
-                                    ? 'БС активен'
-                                    : row.dpi === 'off'
-                                      ? 'Без БС'
-                                      : 'БС неизвестно'}
-                                </Pill>
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className="min-w-0 truncate"
+                                  title={
+                                    q.data?.units.find((u) => u.op_key === row.unit)?.name ?? row.operator
+                                  }
+                                >
+                                  {q.data?.units.find((u) => u.op_key === row.unit)?.name ?? row.operator}
+                                </span>
+                                <span className="flex-none">
+                                  <Pill tone={row.dpi === 'on' ? 'warn' : 'muted'}>
+                                    {row.dpi === 'on'
+                                      ? 'БС активен'
+                                      : row.dpi === 'off'
+                                        ? 'Без БС'
+                                        : 'БС неизвестно'}
+                                  </Pill>
+                                </span>
+                              </div>
+                              <span className="mt-1 block text-text-3">{row.region}</span>
                             </td>
                             {[row.tcp, row.icmp].map((v, i) => (
                               <td key={i === 0 ? 'tcp' : 'icmp'} className="px-2 py-3">

@@ -8,7 +8,7 @@ const from = '2026-10-12T03:00:00+06:00',
   to = '2026-10-12T03:03:00+06:00';
 function fixture(rows: unknown[][] = [[], [], [], []]) {
   const execute = vi.fn();
-  for (const r of rows) execute.mockResolvedValueOnce({ rows: r });
+  for (const r of [...rows, []]) execute.mockResolvedValueOnce({ rows: r });
   const domain = vi.fn().mockResolvedValue('panel.test');
   return {
     execute,
@@ -23,6 +23,29 @@ function fixture(rows: unknown[][] = [[], [], [], []]) {
   };
 }
 describe('combined persisted metric history', () => {
+  it('returns a simultaneous fleet peak with its real timestamp and flags incomplete snapshots', async () => {
+    const range = parseMetricHistoryRange(from, to, uuid);
+    const { service, execute } = fixture([
+      [],
+      [],
+      [],
+      [],
+      [{ peak: 140, minimum: 0, average: 80, samples: 3, peak_at: range.from, partial: true }],
+    ]);
+    const result = await service.get(range);
+    expect(result.onlineSummary).toEqual({
+      peak: 140,
+      minimum: 0,
+      average: 80,
+      samples: 3,
+      peakAt: range.from,
+      partial: true,
+    });
+    const query = new PgDialect().sqlToQuery(execute.mock.calls[4][0]);
+    expect(query.sql).toContain('GROUP BY sampled_at');
+    expect(query.sql).toContain('WHERE known=');
+    expect(query.sql).not.toContain('sum(online_max)');
+  });
   it('requires timezone-qualified finite ordered bounded ranges and safe UUID node filters', () => {
     expect(parseMetricHistoryRange(from, to, uuid).from).toBe('2026-10-11T21:00:00.000Z');
     for (const [a, b, n, p] of [

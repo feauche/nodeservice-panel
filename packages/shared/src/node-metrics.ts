@@ -41,6 +41,16 @@ export const nodeMetricHistorySchema = z.object({
       points: z.array(nodeMetricPointSchema.extend({ min: metricValuesSchema, max: metricValuesSchema })),
     }),
   ),
+  onlineSummary: z
+    .object({
+      peak: z.number().nullable(),
+      peakAt: z.string().nullable(),
+      average: z.number().nullable(),
+      minimum: z.number().nullable(),
+      samples: z.number().int().nonnegative(),
+      partial: z.boolean(),
+    })
+    .optional(),
   events: z.array(
     z.object({
       id: z.string(),

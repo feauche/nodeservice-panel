@@ -62,6 +62,7 @@ export class NodeMetricHistoryService {
       nodes: [],
       events: [],
       eventsTruncated: false,
+      onlineSummary: { peak: null, peakAt: null, average: null, minimum: null, samples: 0, partial: false },
     };
     if (!domain || !selected.length) return result;
     const ids = sql.join(
@@ -76,7 +77,7 @@ export class NodeMetricHistoryService {
       ),
       sql`, `,
     );
-    const [first, samples, incidents, checks] = await Promise.all([
+    const [first, samples, incidents, checks, online] = await Promise.all([
       this.db.execute(
         sql`SELECT min(sampled_at) AS first FROM remna_metric_samples WHERE panel=${domain} AND node_uuid IN (${ids})`,
       ),
@@ -93,7 +94,31 @@ export class NodeMetricHistoryService {
         sql` OR `,
       )})
         AND updated_at >= ${new Date(range.start - 86400000).toISOString()}::timestamptz AND updated_at < ${new Date(range.end + 86400000).toISOString()}::timestamptz ORDER BY updated_at LIMIT 1001`),
+      // Sum simultaneous raw samples; never sum the independent maxima of different nodes.
+      this.db.execute(sql`WITH snapshots AS (
+        SELECT sampled_at, sum((values->>'online')::float) AS total,
+          count(DISTINCT node_uuid) FILTER (WHERE values->>'online' IS NOT NULL) AS known
+        FROM remna_metric_samples WHERE panel=${domain} AND node_uuid IN (${ids})
+          AND sampled_at >= ${range.from}::timestamptz AND sampled_at < ${range.to}::timestamptz
+        GROUP BY sampled_at
+      ), complete AS (SELECT * FROM snapshots WHERE known=${selected.length})
+      SELECT max(total) AS peak, min(total) AS minimum, avg(total) AS average, count(*) AS samples,
+        (SELECT sampled_at FROM complete ORDER BY total DESC, sampled_at ASC LIMIT 1) AS peak_at,
+        EXISTS(SELECT 1 FROM snapshots WHERE known<${selected.length}) AS partial FROM complete`),
     ]);
+    const summary = online.rows[0];
+    if (summary) {
+      const number = (value: unknown) =>
+        value == null || !Number.isFinite(Number(value)) ? null : Number(value);
+      result.onlineSummary = {
+        peak: number(summary.peak),
+        minimum: number(summary.minimum),
+        average: number(summary.average),
+        samples: Number(summary.samples) || 0,
+        peakAt: summary.peak_at ? new Date(String(summary.peak_at)).toISOString() : null,
+        partial: summary.partial === true,
+      };
+    }
     result.collectedSince = first.rows[0]?.first ? new Date(String(first.rows[0].first)).toISOString() : null;
     const byNode = new Map<string, Map<number, NodeMetricHistory['nodes'][number]['points'][number]>>();
     for (const row of samples.rows) {

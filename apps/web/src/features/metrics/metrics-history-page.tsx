@@ -10,7 +10,7 @@ import {
   ZoomInIcon,
   ZoomOutIcon,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { type ComponentProps, useMemo, useState } from 'react';
 import {
   CartesianGrid,
   Line,
@@ -27,8 +27,13 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useNodes } from '@/features/nodes/nodes-api';
-import { BarButton, CardButton, Pill } from '@/features/settings/settings-ui';
+import { BarButton as BaseBarButton, CardButton, Pill } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
+import { cn } from '@/lib/utils';
+
+function BarButton({ className, ...props }: ComponentProps<typeof BaseBarButton>) {
+  return <BaseBarButton {...props} className={cn('h-10 rounded-[10px]', className)} />;
+}
 
 type Range = { from: number; to: number };
 const metrics = { online: 'Онлайн', cpu: 'CPU', ram: 'RAM', rx: 'Входящий трафик', tx: 'Исходящий трафик' };
@@ -128,72 +133,110 @@ export function MetricsHistoryPage() {
     chooseRange({ from: start, to: start + span });
   };
   const hasData = data.some((p) => nodes.some((n) => p[n.uuid] !== null && p[n.uuid] !== undefined));
+  const onlineSummary = query.data?.onlineSummary;
   return (
     <div className="flex min-h-0 flex-col gap-4 xl:h-[calc(100dvh-206px)] xl:min-h-[480px] xl:-mb-11">
-      <section className="flex flex-none flex-wrap items-center gap-3 rounded-[14px] border border-border bg-surface p-[18px]">
-        <span className="grid size-9 place-items-center rounded-[10px] bg-brand-soft text-brand">
-          <ActivityIcon className="size-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h2 className="font-heading text-[15px] font-semibold">История метрик</h2>
-          <p className="mt-1 text-[12px] text-text-3">
-            {dateLabel(range.from)} — {dateLabel(range.to)}
-          </p>
+      <section className="flex flex-none flex-col gap-4 rounded-[14px] border border-border bg-surface p-[18px]">
+        <div className="flex items-center gap-3">
+          <span className="grid size-9 place-items-center rounded-[10px] bg-brand-soft text-brand">
+            <ActivityIcon className="size-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-heading text-[15px] font-semibold">История метрик</h2>
+            <p className="mt-1 text-[12px] text-text-3">
+              {dateLabel(range.from)} — {dateLabel(range.to)}
+            </p>
+          </div>
         </div>
-        <BarButton
-          onClick={() => {
-            setDraftNodes(selected.length ? selected : (inventory.data?.nodes ?? []).map((n) => n.uuid));
-            setPick(true);
-          }}
+        <div
+          data-testid="metric-controls"
+          className="grid grid-cols-1 gap-3 xl:grid-cols-5 [&>button]:h-10 [&>button]:w-full [&>button]:min-w-0 [&>button]:rounded-[10px] [&>button]:px-3 [&>button]:text-[13px] [&>button]:font-medium"
         >
-          Ноды · {selected.length || 'Все'}
-        </BarButton>
-        <Select value={kind} onValueChange={(v) => setKind(v as Metric)}>
-          <SelectTrigger aria-label="Метрика" className="h-10 w-[170px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {Object.entries(metrics).map(([key, label]) => (
-              <SelectItem key={key} value={key}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={period} onValueChange={(v) => preset(Number(v))}>
-          <SelectTrigger aria-label="Период истории" className="h-10 w-[135px]">
-            <SelectValue placeholder="Период" />
-          </SelectTrigger>
-          <SelectContent>
-            {period === 'custom' && (
-              <SelectItem value="custom" disabled>
-                Свои даты
-              </SelectItem>
-            )}
-            {[1, 3, 7, 14, 30].map((d) => (
-              <SelectItem key={d} value={String(d)}>
-                {d === 1 ? '24 часа' : `${d} дней`}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <BarButton
-          onClick={() => {
-            setFrom(localInput(full.from));
-            setTo(localInput(full.to));
-            setDateError('');
-            setDates(true);
-          }}
-        >
-          Выбрать даты
-        </BarButton>
-        <BarButton disabled={query.isFetching} onClick={() => void query.refetch()}>
-          <RefreshCwIcon className={query.isFetching ? 'animate-spin' : ''} />
-          Обновить
-        </BarButton>
+          <BarButton
+            onClick={() => {
+              setDraftNodes(selected.length ? selected : (inventory.data?.nodes ?? []).map((n) => n.uuid));
+              setPick(true);
+            }}
+          >
+            Ноды · {selected.length || 'Все'}
+          </BarButton>
+          <Select value={kind} onValueChange={(v) => setKind(v as Metric)}>
+            <SelectTrigger aria-label="Метрика" className="h-10 w-full rounded-[10px] px-3 text-[13px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(metrics).map(([key, label]) => (
+                <SelectItem key={key} value={key}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={period} onValueChange={(v) => preset(Number(v))}>
+            <SelectTrigger
+              aria-label="Период истории"
+              className="h-10 w-full rounded-[10px] px-3 text-[13px]"
+            >
+              <SelectValue placeholder="Период" />
+            </SelectTrigger>
+            <SelectContent>
+              {period === 'custom' && (
+                <SelectItem value="custom" disabled>
+                  Свои даты
+                </SelectItem>
+              )}
+              {[1, 3, 7, 14, 30].map((d) => (
+                <SelectItem key={d} value={String(d)}>
+                  {d === 1 ? '24 часа' : `${d} дней`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <BarButton
+            onClick={() => {
+              setFrom(localInput(full.from));
+              setTo(localInput(full.to));
+              setDateError('');
+              setDates(true);
+            }}
+          >
+            Выбрать даты
+          </BarButton>
+          <BarButton disabled={query.isFetching} onClick={() => void query.refetch()}>
+            <RefreshCwIcon className={query.isFetching ? 'animate-spin' : ''} />
+            Обновить
+          </BarButton>
+        </div>
       </section>
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <section className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-[14px] border border-border bg-surface">
+          <div
+            className="grid flex-none grid-cols-3 gap-px border-b border-border bg-border"
+            data-testid="online-period-summary"
+          >
+            {[
+              [
+                'Пиковый онлайн',
+                onlineSummary?.peak,
+                onlineSummary?.peakAt ? dateLabel(Date.parse(onlineSummary.peakAt)) : 'Нет полного замера',
+              ],
+              ['Средний онлайн', onlineSummary?.average, 'За выбранный промежуток'],
+              ['Минимальный онлайн', onlineSummary?.minimum, 'По одновременным замерам'],
+            ].map(([label, value, hint]) => (
+              <div key={String(label)} className="min-w-0 bg-surface-2 px-4 py-3">
+                <p className="text-[11.5px] text-text-3">{label}</p>
+                <p className="mt-1 font-mono text-[18px] font-semibold">
+                  {typeof value === 'number' ? Math.round(value).toLocaleString('ru-RU') : '—'}
+                </p>
+                <p className="mt-1 text-[11px] text-text-3">{hint}</p>
+              </div>
+            ))}
+          </div>
+          {onlineSummary?.partial && (
+            <p className="flex-none px-4 py-2 text-[11px] text-text-3">
+              Неполные снимки исключены из сводки онлайна.
+            </p>
+          )}
           <header className="flex flex-none flex-wrap items-center justify-between gap-3 border-b border-border px-[18px] py-3.5">
             <div>
               <h3 className="text-[14px] font-semibold">{metrics[kind]}</h3>
@@ -421,7 +464,7 @@ export function MetricsHistoryPage() {
                     </a>
                   )}
                   <CardButton
-                    className="mt-3 h-9 w-full"
+                    className="mt-3 h-10 w-full"
                     onClick={() =>
                       chooseRange({
                         from: Math.max(full.from, e.t - 15 * 60000),
@@ -463,7 +506,7 @@ export function MetricsHistoryPage() {
               placeholder="Название или адрес"
             />
           </div>
-          <div className="flex gap-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 [&>button]:min-w-0">
             <BarButton
               disabled={!visibleInventory.length}
               onClick={() => setDraftNodes(visibleInventory.map((n) => n.uuid))}

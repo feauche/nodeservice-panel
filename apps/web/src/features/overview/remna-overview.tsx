@@ -1,9 +1,11 @@
 import { auditActionLabel, type NodeMetricPoint } from '@nodeservice/shared';
+import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { CountryFlag } from '@/components/country-flag';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuditList } from '@/features/audit/audit-api';
 import { useBillingStats } from '@/features/billing/billing-api';
+import { useOnlineSummary } from '@/features/metrics/use-online-summary';
 import { bytes, mbitPerSecond, percent, ram } from '@/features/nodes/node-card';
 import { NodeDialog } from '@/features/nodes/node-dialog';
 import { NodeMetricChart, useNodeMetrics } from '@/features/nodes/node-metrics';
@@ -26,6 +28,7 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
     [selected, setSelected] = useState<string | null>(null);
   const metrics = useNodeMetrics(view === 'stats' ? Math.min(Number(days), 30) * 1440 : 60, Number(days));
   const billing = useBillingStats('month');
+  const onlineSummary = useOnlineSummary(Number(days), view === 'stats');
   const audit = useAuditList({ page: 1, pageSize: 6 });
   const status = query.data,
     nodes = status?.nodes ?? [],
@@ -105,7 +108,13 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
       : view === 'stats'
         ? [
             ['ТРАФИК ЗА ПЕРИОД', bytes(trafficSum), `${days} дней · UTC`],
-            ['НОДЫ С ИСТОРИЕЙ', String(traffic?.series.length ?? 0), 'история трафика Remnawave'],
+            [
+              'ПИКОВЫЙ ОНЛАЙН',
+              display(onlineSummary.data?.peak ?? null),
+              onlineSummary.data?.peakAt
+                ? `${Math.min(Number(days), 30)} дней · ${new Date(onlineSummary.data.peakAt).toLocaleString('ru-RU')}`
+                : 'Пик по сохранённым замерам ещё неизвестен',
+            ],
             ['ОНЛАЙН СЕЙЧАС', display(online), 'показания нод'],
             [
               'ОПЛАЧЕНО В ЭТОМ МЕСЯЦЕ',
@@ -136,7 +145,13 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
         </p>
       )}
       {view === 'stats' && (
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-between gap-3 [&>div[role=radiogroup]]:h-10">
+          <Link
+            to="/metrics"
+            className="inline-flex h-10 items-center justify-center rounded-[10px] border border-border bg-surface-2 px-3 text-[13px] font-medium text-text-2 hover:bg-surface-3"
+          >
+            Разобрать график и события →
+          </Link>
           <Segmented
             label="Период статистики"
             value={days}
@@ -149,6 +164,11 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
             ]}
           />
         </div>
+      )}
+      {view === 'stats' && onlineSummary.data?.partial && (
+        <p className="text-[12px] text-text-3">
+          Пик рассчитан по полным одновременным замерам. Неполные снимки нод исключены.
+        </p>
       )}
       <div className={view === 'capacity' ? 'hidden' : 'grid gap-4 sm:grid-cols-2 xl:grid-cols-4'}>
         {kpis.map(([label, value, hint]) => (

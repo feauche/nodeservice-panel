@@ -62,6 +62,14 @@ beforeEach(() => {
         bucketSeconds: 300,
         collectedSince: null,
         eventsTruncated: false,
+        onlineSummary: {
+          peak: 35,
+          peakAt: new Date(from + 60000).toISOString(),
+          average: 22,
+          minimum: 0,
+          samples: 2,
+          partial: false,
+        },
         nodes: nodeIds.map((uuid) => ({
           uuid,
           name: names[ids.indexOf(uuid)],
@@ -94,6 +102,8 @@ describe('Общая история метрик', () => {
   it('меняет ISO-границы масштаба и восстанавливает исходный период', async () => {
     renderPage(MetricsHistoryPage, '/metrics');
     await screen.findByText('Проверка TCP: результат неполный');
+    expect(within(screen.getByTestId('online-period-summary')).getByText('35')).toBeInTheDocument();
+    expect(within(screen.getByTestId('online-period-summary')).getByText('Минимальный онлайн')).toBeInTheDocument();
     const initial = lastRequest();
     const span = Date.parse(param(initial, 'to')) - Date.parse(param(initial, 'from'));
     const user = userEvent.setup();
