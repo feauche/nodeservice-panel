@@ -6,6 +6,7 @@ import { NodeEventsStore } from '../node-events/node-events.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
+import { bridgeSingleGaps, mean2 } from './metric-buckets.js';
 
 const fields = ['cpu', 'ram', 'load', 'rx', 'tx', 'online'] as const;
 const empty = () => ({ cpu: null, ram: null, load: null, rx: null, tx: null, online: null });
@@ -147,11 +148,24 @@ export class NodeMetricHistoryService {
       if (!byNode.has(uuid)) byNode.set(uuid, new Map());
       byNode.get(uuid)?.set(t, point);
     }
+    type Point = NodeMetricHistory['nodes'][number]['points'][number];
+    // Одиночный пропуск замера дорисовываем по соседям; настоящий перерыв остаётся пустым.
+    const fill = (prev: Point, next: Point, gap: Point): Point => {
+      const point = { ...gap, min: empty(), max: empty() } as Point;
+      for (const f of fields) {
+        point[f] = mean2(prev[f], next[f]);
+        const lo = [prev.min[f], next.min[f]].filter((v): v is number => v != null);
+        const hi = [prev.max[f], next.max[f]].filter((v): v is number => v != null);
+        point.min[f] = lo.length ? Math.min(...lo) : null;
+        point.max[f] = hi.length ? Math.max(...hi) : null;
+      }
+      return point;
+    };
     result.nodes = selected.map((n) => {
-      const points: NodeMetricHistory['nodes'][number]['points'] = [];
+      const points: Point[] = [];
       for (let t = range.start; t < range.end; t += range.bucketSeconds * 1000)
         points.push(byNode.get(n.uuid)?.get(t) ?? { t, ...empty(), min: empty(), max: empty() });
-      return { uuid: n.uuid, name: n.name, address: n.address, points };
+      return { uuid: n.uuid, name: n.name, address: n.address, points: bridgeSingleGaps(points, fill) };
     });
     for (const row of incidents.rows) {
       const t = new Date(String(row.event_at)).getTime();

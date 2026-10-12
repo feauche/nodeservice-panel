@@ -29,7 +29,7 @@ export const GROUP_HEIGHT = 36;
 /** Рамка карточки реестра сверху и снизу. */
 export const LIST_BORDER = 2;
 /** Поле под реестром — как боковые поля страницы. */
-export const BOTTOM_GAP = 26;
+export const BOTTOM_GAP = 22;
 /** Строка с номерами страниц вместе с отступом до реестра. */
 export const FOOTER_HEIGHT = 16 + 32;
 

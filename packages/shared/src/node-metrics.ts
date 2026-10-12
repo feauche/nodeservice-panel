@@ -15,14 +15,35 @@ export const remnaTrafficSchema = z.object({
     z.object({ uuid: z.string(), name: z.string(), total: z.number(), data: z.array(z.number()) }),
   ),
 });
+/**
+ * Весь парк в одной корзине (считает сервер): онлайн и трафик — сумма по нодам, приславшим замер; память,
+ * нагрузка и процессор — среднее по ним же. Выключенная нода даёт ноль в сумме и не входит в среднее.
+ */
+export const fleetMetricPointSchema = z.object({
+  t: z.number(),
+  online: z.number().nullable(),
+  rx: z.number().nullable(),
+  tx: z.number().nullable(),
+  ram: z.number().nullable(),
+  load: z.number().nullable(),
+  cpu: z.number().nullable(),
+  /** Сколько нод было на связи. */
+  up: z.number().nullable(),
+  /** Сколько нод прислали замер; 0 — в корзине нет данных. */
+  nodes: z.number().int().nonnegative(),
+});
 export const nodeMetricsSchema = z.object({
   panel: z.string().nullable(),
+  /** Шаг корзин, секунды. */
+  bucketSeconds: z.number().positive(),
   history: z.array(z.object({ uuid: z.string(), points: z.array(nodeMetricPointSchema) })),
-  traffic: remnaTrafficSchema.nullable(),
-  trafficError: z.string().nullable(),
+  fleet: z.array(fleetMetricPointSchema),
+  /** Обычный онлайн парка в этот час: 10-й и 90-й процентили за 7 дней; null — истории меньше трёх дней. */
+  onlineTypical: z.object({ low: z.number(), high: z.number() }).nullable(),
   collectedSince: z.string().nullable(),
 });
 export type NodeMetricPoint = z.infer<typeof nodeMetricPointSchema>;
+export type FleetMetricPoint = z.infer<typeof fleetMetricPointSchema>;
 export type NodeMetrics = z.infer<typeof nodeMetricsSchema>;
 
 /** Bounded persisted history; time bounds are instants, not browser-local dates. */

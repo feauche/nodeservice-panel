@@ -410,14 +410,16 @@ export function Segmented<K extends string>({
   onChange,
 }: {
   label: string;
-  items: ReadonlyArray<{ key: K; label: string }>;
+  /** `disabled` — вариант виден, но недоступен; `title` — почему (подсказка при наведении). */
+  items: ReadonlyArray<{ key: K; label: ReactNode; disabled?: boolean; title?: string }>;
   value: K;
   onChange: (key: K) => void;
 }) {
+  const enabled = items.filter((i) => !i.disabled);
   const move = (e: KeyboardEvent, step: number) => {
     e.preventDefault();
-    const at = items.findIndex((i) => i.key === value);
-    const next = items[(at + step + items.length) % items.length];
+    const at = enabled.findIndex((i) => i.key === value);
+    const next = enabled[(at + step + enabled.length) % enabled.length];
     if (next) onChange(next.key);
   };
   return (
@@ -437,13 +439,17 @@ export function Segmented<K extends string>({
           type="button"
           role="radio"
           aria-checked={it.key === value}
+          aria-disabled={it.disabled || undefined}
+          title={it.title}
           tabIndex={it.key === value ? 0 : -1}
-          onClick={() => onChange(it.key)}
+          onClick={() => !it.disabled && onChange(it.key)}
           className={cn(
-            'flex-1 cursor-pointer rounded-[8px] px-2.5 py-1.5 text-center text-[13px] whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-brand',
+            'inline-flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[8px] px-2.5 py-1.5 text-center text-[13px] whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-brand',
             it.key === value
               ? 'bg-surface font-semibold text-foreground shadow-[0_0_0_1px_var(--ns-border-2)]'
-              : 'text-text-3 hover:text-foreground',
+              : it.disabled
+                ? 'cursor-default text-text-3 opacity-55'
+                : 'text-text-3 hover:text-foreground',
           )}
         >
           {it.label}

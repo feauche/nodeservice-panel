@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   BadRequestException,
   Controller,
@@ -10,31 +9,39 @@ import {
   Query,
 } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import { estimateNodeCapacity, type NodeMetrics, remnaTrafficSchema } from '@nodeservice/shared';
+import { CAPACITY_DAYS, NODE_STATS_DAYS, type NodeCapacity, type NodeMetrics } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { NodePreferencesStore } from '../remnawave/node-preferences.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
-import { getJson, RemnawaveApiError } from '../remnawave/remnawave-client.js';
 import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
+import { bridgeSingleGaps, fillPoint, fleetSeries, mean2, UP_SQL } from './metric-buckets.js';
+import { type CapacityPoint, estimateCapacity } from './node-capacity.logic.js';
 import { NodeMetricHistoryService, parseMetricHistoryRange } from './node-metric-history.service.js';
+import { NodeStatsService } from './node-stats.service.js';
 
 const PRUNE_EVERY_MS = 10 * 60_000;
+
+type LocalHistory = {
+  at: number;
+  history: NodeMetrics['history'];
+  since: string | null;
+  bucket: number;
+  /** Доля времени на связи по нодам и корзинам: для числа нод на связи в сумме по парку. */
+  up: Map<string, Map<number, number>>;
+};
 
 @Injectable()
 export class NodeMetricsService {
   private readonly log = new Logger(NodeMetricsService.name);
-  private historyCache = new Map<
-    string,
-    { at: number; history: NodeMetrics['history']; since: string | null }
-  >();
+  private historyCache = new Map<string, LocalHistory>();
+  private typicalCache: { key: string; at: number; value: NodeMetrics['onlineTypical'] } | null = null;
   private pending: Promise<void> | null = null;
-  /** Последний записанный снимок: тот же снимок повторно не пишем — замер этой минуты уже в базе. */
+  /** Последний записанный снимок: тот же снимок повторно не пишем — его замер уже в базе. */
   private recorded: string | null = null;
   /** Старые замеры чистим не на каждом тике, а раз в 10 минут: удаление проходит по всей таблице. */
   private prunedAt = 0;
-  private cache = new Map<string, { at: number; traffic: NodeMetrics['traffic']; error: string | null }>();
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly store: RemnawaveSettingsStore,
@@ -65,9 +72,13 @@ export class NodeMetricsService {
     if (status.domain !== domain || status.error || !status.checkedAt) return;
     const snapshot = `${domain}:${status.checkedAt}`;
     if (snapshot === this.recorded) return;
-    const t = new Date(Math.floor(Date.parse(status.checkedAt) / 60000) * 60000);
+    // Точное время снимка, а не начало минуты: два снимка в одной минуте больше не вытесняют друг друга,
+    // и у соседней минуты не появляется ложный пропуск. Все ноды одного снимка получают одно время.
+    const t = new Date(Date.parse(status.checkedAt));
     const inserts = status.nodes.map((n) => {
       const online = n.isConnected && !n.isDisabled;
+      // Нода не на связи или выключена: в сумме онлайна и трафика она даёт ноль, в среднем памяти и нагрузки
+      // не участвует (там пусто).
       const values = {
         cpu: online ? (n.cpuPercent ?? null) : null,
         ram:
@@ -75,9 +86,10 @@ export class NodeMetricsService {
             ? (n.memoryUsedBytes / n.memoryTotalBytes) * 100
             : null,
         load: online ? (n.loadAverage?.[0] ?? null) : null,
-        rx: online ? (n.rxBytesPerSec ?? null) : null,
-        tx: online ? (n.txBytesPerSec ?? null) : null,
+        rx: online ? (n.rxBytesPerSec ?? null) : 0,
+        tx: online ? (n.txBytesPerSec ?? null) : 0,
         online: online ? (n.usersOnline ?? null) : 0,
+        up: online ? 1 : 0,
       };
       return sql`(${domain},${n.uuid},${t.toISOString()},${JSON.stringify(values)}::jsonb)`;
     });
@@ -92,49 +104,40 @@ export class NodeMetricsService {
     );
     this.prunedAt = Date.now();
   }
-  async get(minutes: number, days: number): Promise<NodeMetrics> {
+  /** Метрики за последние `minutes` минут: по нодам и весь парк (сумма считается здесь, а не в браузере). */
+  async get(minutes: number): Promise<NodeMetrics> {
     await this.collect();
-    const c = await this.store.credentials();
-    if (!c) return { panel: null, history: [], traffic: null, trafficError: null, collectedSince: null };
-    const local = await this.localHistory(minutes);
-    if (local.panel !== c.domain) throw new BadRequestException('Подключение изменилось. Обновите метрики.');
-    const end = new Date().toISOString().slice(0, 10),
-      start = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10);
-    const cacheKey = `${c.domain}:${createHash('sha256').update(c.apiKey).digest('hex')}:${days}`;
-    let cached = this.cache.get(cacheKey);
-    if (!cached || Date.now() - cached.at > 60000) {
-      try {
-        const raw = await getJson(
-          `https://${c.domain}/api/bandwidth-stats/nodes?start=${start}&end=${end}&topNodesLimit=100`,
-          c.apiKey,
-        );
-        cached = { at: Date.now(), traffic: remnaTrafficSchema.parse(raw.response), error: null };
-      } catch (e) {
-        cached = {
-          at: Date.now(),
-          traffic: null,
-          error:
-            e instanceof RemnawaveApiError && e.kind === 'unauthorized'
-              ? 'Для истории трафика ключу требуется разрешение bandwidth-stats:nodes-usage.'
-              : 'Не удалось загрузить историю трафика Remnawave.',
-        };
-      }
-      this.cache.clear();
-      this.cache.set(cacheKey, cached);
-    }
+    const local = await this.localData(minutes);
+    if (!local)
+      return {
+        panel: null,
+        bucketSeconds: 60,
+        history: [],
+        fleet: [],
+        onlineTypical: null,
+        collectedSince: null,
+      };
     return {
-      panel: c.domain,
+      panel: local.panel,
+      bucketSeconds: local.bucket,
       history: local.history,
-      traffic: cached.traffic,
-      trafficError: cached.error,
+      fleet: fleetSeries(local.history, local.up),
+      onlineTypical: minutes <= 60 ? await this.onlineTypical(local.panel) : null,
       collectedSince: local.since,
     };
   }
 
   /** Reads persisted samples only: no collection, credentials or external requests. */
   async localHistory(minutes: number) {
+    const local = await this.localData(minutes);
+    return local
+      ? { panel: local.panel, history: local.history, since: local.since }
+      : { panel: null, history: [], since: null };
+  }
+
+  private async localData(minutes: number): Promise<(LocalHistory & { panel: string }) | null> {
     const domain = await this.store.domain();
-    if (!domain) return { panel: null, history: [], since: null };
+    if (!domain) return null;
     const historyKey = `${domain}:${minutes}`;
     let local = this.historyCache.get(historyKey);
     if (!local || Date.now() - local.at >= 60000) {
@@ -147,9 +150,11 @@ export class NodeMetricsService {
       const bucket = Math.max(Math.ceil(pollSeconds / 60) * 60, Math.ceil(span / 240 / 60) * 60);
       const rows = await this.db.execute(sql`SELECT node_uuid AS uuid, bucket_t AS t,
       avg((values->>'cpu')::float) AS cpu, avg((values->>'ram')::float) AS ram, avg((values->>'load')::float) AS load,
-      avg((values->>'rx')::float) AS rx, avg((values->>'tx')::float) AS tx, avg((values->>'online')::float) AS online
+      avg((values->>'rx')::float) AS rx, avg((values->>'tx')::float) AS tx, avg((values->>'online')::float) AS online,
+      avg(${UP_SQL}) AS up
       FROM (SELECT node_uuid, values, floor(extract(epoch FROM sampled_at)/${bucket})*${bucket} AS bucket_t FROM remna_metric_samples WHERE panel=${domain} AND sampled_at >= ${new Date(Date.now() - minutes * 60000).toISOString()}::timestamptz) samples GROUP BY node_uuid,bucket_t ORDER BY t`);
       const history: NodeMetrics['history'] = [];
+      const up = new Map<string, Map<number, number>>();
       for (const r of rows.rows) {
         let node = history.find((n) => n.uuid === r.uuid);
         if (!node) {
@@ -157,8 +162,9 @@ export class NodeMetricsService {
           history.push(node);
         }
         const num = (x: unknown) => (x == null ? null : Number(x));
+        const t = Number(r.t) * 1000;
         node.points.push({
-          t: Number(r.t) * 1000,
+          t,
           cpu: num(r.cpu),
           ram: num(r.ram),
           load: num(r.load),
@@ -166,32 +172,99 @@ export class NodeMetricsService {
           tx: num(r.tx),
           online: num(r.online),
         });
+        const byT = up.get(node.uuid) ?? new Map<number, number>();
+        byT.set(t, Number(r.up) || 0);
+        up.set(node.uuid, byT);
       }
-      // Explicit gaps prevent charts from joining across missing/offline intervals.
+      // Пустые корзины явно: график не соединяет линию через настоящий перерыв. Одиночный пропуск дорисован.
       const endBucket = Math.floor(Date.now() / (bucket * 1000)) * bucket * 1000;
       for (const node of history) {
         const points = new Map(node.points.map((p) => [p.t, p]));
         const start = node.points[0]?.t ?? endBucket;
-        node.points = [];
+        const grid: NodeMetrics['history'][number]['points'] = [];
         for (
           let t = start;
           t <= (points.has(endBucket) ? endBucket : endBucket - bucket * 1000);
           t += bucket * 1000
         ) {
-          node.points.push(
+          grid.push(
             points.get(t) ?? { t, cpu: null, ram: null, load: null, rx: null, tx: null, online: null },
           );
         }
+        const byT = up.get(node.uuid);
+        node.points = bridgeSingleGaps(grid, (prev, next, gap) => {
+          byT?.set(gap.t, mean2(byT.get(prev.t) ?? null, byT.get(next.t) ?? null) ?? 0);
+          return fillPoint(prev, next, gap);
+        });
       }
       local = {
         at: Date.now(),
         history,
         since: first.rows[0]?.first ? new Date(String(first.rows[0].first)).toISOString() : null,
+        bucket,
+        up,
       };
       if (this.historyCache.size > 8) this.historyCache.clear();
       this.historyCache.set(historyKey, local);
     }
-    return { panel: domain, history: local.history, since: local.since };
+    return { ...local, panel: domain };
+  }
+
+  /**
+   * Обычный онлайн парка в этот час суток: 10-й и 90-й процентили снимков за 7 дней в тот же час.
+   * Меньше трёх дней истории — не знаем, что для парка обычно.
+   */
+  private async onlineTypical(domain: string): Promise<NodeMetrics['onlineTypical']> {
+    const hour = new Date().getUTCHours();
+    const key = `${domain}:${hour}`;
+    if (this.typicalCache?.key === key && Date.now() - this.typicalCache.at < 5 * 60_000)
+      return this.typicalCache.value;
+    const res = await this.db.execute(sql`WITH snaps AS (
+        SELECT sampled_at, sum((values->>'online')::float) AS total FROM remna_metric_samples
+        WHERE panel=${domain} AND sampled_at >= now() - interval '7 days' AND sampled_at < now() - interval '1 hour'
+        GROUP BY sampled_at)
+      SELECT percentile_cont(0.1) WITHIN GROUP (ORDER BY total) AS low,
+        percentile_cont(0.9) WITHIN GROUP (ORDER BY total) AS high,
+        count(DISTINCT (sampled_at AT TIME ZONE 'UTC')::date) AS days
+      FROM snaps WHERE extract(hour FROM sampled_at AT TIME ZONE 'UTC') = ${hour}`);
+    const row = res.rows[0];
+    const low = Number(row?.low);
+    const high = Number(row?.high);
+    const step = (v: number) => (v >= 1000 ? 100 : 10);
+    const value =
+      row && Number(row.days) >= 3 && Number.isFinite(low) && Number.isFinite(high)
+        ? {
+            low: Math.floor(low / step(low)) * step(low),
+            high: Math.ceil(high / step(high)) * step(high),
+          }
+        : null;
+    this.typicalCache = { key, at: Date.now(), value };
+    return value;
+  }
+
+  /** Замеры для «Ёмкости»: корзины по 15 минут за последние две недели, по нодам. */
+  async capacityPoints(domain: string): Promise<Map<string, CapacityPoint[]>> {
+    const rows =
+      await this.db.execute(sql`SELECT node_uuid AS uuid, floor(extract(epoch FROM sampled_at)/900)*900 AS t,
+      avg((values->>'online')::float) AS online, avg((values->>'ram')::float) AS ram, avg((values->>'load')::float) AS load,
+      avg((values->>'rx')::float) AS rx, avg((values->>'tx')::float) AS tx
+      FROM remna_metric_samples WHERE panel=${domain} AND sampled_at >= ${new Date(Date.now() - CAPACITY_DAYS * 86_400_000).toISOString()}::timestamptz
+      GROUP BY 1, 2 ORDER BY 2`);
+    const num = (x: unknown) => (x == null ? null : Number(x));
+    const out = new Map<string, CapacityPoint[]>();
+    for (const r of rows.rows) {
+      const list = out.get(String(r.uuid)) ?? [];
+      list.push({
+        t: Number(r.t) * 1000,
+        online: num(r.online),
+        ram: num(r.ram),
+        load: num(r.load),
+        rx: num(r.rx),
+        tx: num(r.tx),
+      });
+      out.set(String(r.uuid), list);
+    }
+    return out;
   }
 }
 @Controller('nodes')
@@ -201,33 +274,36 @@ export class NodeMetricsController {
     private readonly remna: RemnawaveService,
     private readonly preferences: NodePreferencesStore,
     private readonly history: NodeMetricHistoryService,
+    private readonly stats: NodeStatsService,
   ) {}
-  @Get('capacity') async capacity() {
-    const [status, local] = await Promise.all([this.remna.status(), this.metrics.localHistory(20160)]);
-    if (local.panel !== status.domain)
-      throw new BadRequestException('Подключение изменилось. Обновите страницу.');
-    const fresh = !status.error && !!status.checkedAt && Date.now() - Date.parse(status.checkedAt) < 90000;
+  @Get('capacity') async capacity(): Promise<NodeCapacity> {
+    const status = await this.remna.status();
+    const points = status.domain ? await this.metrics.capacityPoints(status.domain) : new Map();
     const rows = await Promise.all(
       status.nodes.map(async (n) => {
         const prefs = await this.preferences.get(n.uuid);
-        const estimate = estimateNodeCapacity(
-          local.history.find((h) => h.uuid === n.uuid)?.points ?? [],
-          prefs.channelMbps,
-        );
+        const cores = n.cpuCount ?? null;
         return {
-          ...estimate,
           uuid: n.uuid,
           name: n.name,
-          online: n.usersOnline ?? null,
-          available: fresh && n.isConnected && !n.isDisabled,
-          headroom:
-            estimate.capacity != null && n.usersOnline != null
-              ? Math.max(0, estimate.capacity - n.usersOnline)
-              : null,
+          countryCode: n.countryCode,
+          cores,
+          channelMbps: prefs.channelMbps,
+          ...estimateCapacity(points.get(n.uuid) ?? [], {
+            cores,
+            channelMbps: prefs.channelMbps,
+            disabled: n.isDisabled,
+          }),
         };
       }),
     );
     return { rows, calculatedAt: new Date().toISOString() };
+  }
+  @Get('stats') statsGet(@Query('days') days = '30') {
+    const n = Number(days);
+    if (!(NODE_STATS_DAYS as readonly number[]).includes(n))
+      throw new BadRequestException('Неверный период.');
+    return this.stats.get(n);
   }
   @Get('metrics/history') historyRange(
     @Query('from') from = '',
@@ -237,9 +313,9 @@ export class NodeMetricsController {
   ) {
     return this.history.get(parseMetricHistoryRange(from, to, nodes, maxPoints));
   }
-  @Get('metrics') get(@Query('minutes') minutes = '60', @Query('days') days = '30') {
-    if (![60, 1440, 10080, 43200].includes(Number(minutes)) || ![1, 7, 30, 90].includes(Number(days)))
+  @Get('metrics') get(@Query('minutes') minutes = '60') {
+    if (![60, 1440, 10080, 43200].includes(Number(minutes)))
       throw new BadRequestException('Неверный период.');
-    return this.metrics.get(Number(minutes), Number(days));
+    return this.metrics.get(Number(minutes));
   }
 }

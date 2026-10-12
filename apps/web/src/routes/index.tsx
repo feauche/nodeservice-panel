@@ -2,7 +2,9 @@ import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { requireAuth } from '@/features/auth/guards';
-import { RemnaOverview } from '@/features/overview/remna-overview';
+import { OverviewCapacity } from '@/features/overview/overview-capacity';
+import { OverviewNow } from '@/features/overview/overview-now';
+import { OverviewStats } from '@/features/overview/overview-stats';
 import { Segmented } from '@/features/settings/settings-ui';
 import { requireSectionOpen } from '@/lib/stages';
 
@@ -28,8 +30,8 @@ export const Route = createFileRoute('/')({
 });
 
 /**
- * «Обзор»: вкладки «Сейчас / Статистика / Ёмкость» в шапке (витрины `stats-switch-variants.html`, вариант 1, и
- * `capacity-0.58-readings-variants.html`, вариант A).
+ * «Обзор»: вкладки «Сейчас / Статистика / Ёмкость» в шапке. Раскладка — витрина redesign-2026-10: «Сейчас»
+ * в стиле 0.67.0, «Статистика» — отчёт за период, «Ёмкость» — запас по нодам.
  */
 function Overview() {
   const search = Route.useSearch();
@@ -40,12 +42,10 @@ function Overview() {
       title="Обзор"
       subtitle={
         view === 'stats'
-          ? search.detail === 'metrics'
-            ? 'Подробный разбор нод, метрик и событий за выбранный промежуток'
-            : 'Трафик, нагрузка, доступность и деньги по всему парку за период'
+          ? 'Что было за период: трафик, онлайн, часы пика, сбои и ноды'
           : view === 'capacity'
-            ? 'Ресурсы, нагрузка и доступные лимиты нод'
-            : 'Состояние нод и метрики Remnawave'
+            ? 'Сколько ещё пользователей выдержит каждая нода'
+            : 'Состояние нод одним взглядом'
       }
       aside={
         <Segmented
@@ -60,7 +60,7 @@ function Overview() {
         />
       }
     >
-      <RemnaOverview view={view} />
+      {view === 'stats' ? <OverviewStats /> : view === 'capacity' ? <OverviewCapacity /> : <OverviewNow />}
     </AppShell>
   );
 }

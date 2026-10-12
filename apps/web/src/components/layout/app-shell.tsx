@@ -532,9 +532,10 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
           <UserMenu />
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-[26px] pt-6 pb-[60px] max-md:px-4 max-md:pt-4">
+        {/* Общая сетка (витрина redesign-2026-10, вариант B): поля 22 по бокам, 20 сверху; между блоками 12. */}
+        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-[22px] pt-5 pb-[60px] max-md:px-4 max-md:pt-4">
           {title && (
-            <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+            <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
               <div>
                 <div className="flex items-start justify-between gap-3">
                   <h1 className="text-[23px]">{title}</h1>

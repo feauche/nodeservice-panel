@@ -4,11 +4,11 @@ import { useId } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ChartSkeleton } from '@/components/ui/loading-state';
 import { api } from '@/lib/api';
-export function useNodeMetrics(minutes = 60, days = 30) {
+/** Замеры за последние `minutes` минут: по нодам и весь парк (сумму считает сервер). */
+export function useNodeMetrics(minutes = 60) {
   return useQuery({
-    queryKey: ['nodes', 'metrics', minutes, days],
-    queryFn: ({ signal }) =>
-      api.get(`/nodes/metrics?minutes=${minutes}&days=${days}`, nodeMetricsSchema, signal),
+    queryKey: ['nodes', 'metrics', minutes],
+    queryFn: ({ signal }) => api.get(`/nodes/metrics?minutes=${minutes}`, nodeMetricsSchema, signal),
     refetchInterval: 15000,
     staleTime: 10000,
   });

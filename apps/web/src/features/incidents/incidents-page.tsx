@@ -300,8 +300,8 @@ export function IncidentsPage() {
   const openThisWeek = openItems.some((i) => new Date(i.openedAt).getTime() >= now - 7 * 86_400_000);
 
   return (
-    // Нижнее поле страницы (60px у оболочки) на широком экране сводим к боковому — 26px.
-    <div className="flex flex-col gap-4 md:-mb-[34px]">
+    // Нижнее поле страницы (60px у оболочки) на широком экране сводим к боковому — 22px.
+    <div className="flex flex-col gap-4 md:-mb-[38px]">
       <div className="flex flex-wrap items-center gap-2">
         <fieldset className="m-0 flex h-9 w-fit items-center rounded-[10px] border border-border bg-surface p-[3px]">
           <legend className="sr-only">Фильтр событий</legend>

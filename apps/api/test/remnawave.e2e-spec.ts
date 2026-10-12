@@ -12,7 +12,7 @@ import type { Redis } from 'ioredis';
 import { generate } from 'otplib';
 import request from 'supertest';
 import TestAgent from 'supertest/lib/agent.js';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { AppModule } from '../src/app.module.js';
 import { setupHttp } from '../src/common/http/setup-http.js';
@@ -20,6 +20,8 @@ import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
+import { NodeMetricsService } from '../src/modules/node-metrics/node-metrics.controller.js';
+import { NodeStatsService } from '../src/modules/node-metrics/node-stats.service.js';
 import { HOST_RESOLVER } from '../src/modules/remnawave/host-addresses.service.js';
 import { NodePreferencesStore } from '../src/modules/remnawave/node-preferences.store.js';
 import { RemnawaveService } from '../src/modules/remnawave/remnawave.service.js';
@@ -239,6 +241,63 @@ describe('Remnawave e2e (J4)', () => {
     s = await status();
     expect(s.error).toBeNull();
     expect(await auditActions()).toContain('remnawave.reconnected');
+  });
+
+  it('замеры: отчёт за период, сумма парка и запас считаются запросами к настоящей базе', async () => {
+    const db = app.get<Db>(DB);
+    const domain = (await status()).domain ?? '';
+    const node = '0192f200-0000-7000-8000-0000000000aa';
+    const now = Date.now();
+    // Три дня снимков раз в 15 минут: онлайн волной 100–500, нагрузка и память растут вместе с ним.
+    const rows = Array.from({ length: 3 * 96 }, (_, i) => {
+      const online = Math.round(300 + 200 * Math.sin((i / 96) * 2 * Math.PI));
+      const values = {
+        cpu: null,
+        ram: 20 + online * 0.04,
+        load: 0.4 + online * 0.004,
+        rx: online * 1000,
+        tx: online * 900,
+        online,
+        up: 1,
+      };
+      const at = new Date(now - (3 * 96 - i) * 15 * 60_000 + 1234).toISOString();
+      return sql`(${domain}, ${node}::uuid, ${at}::timestamptz, ${JSON.stringify(values)}::jsonb)`;
+    });
+    await db.execute(
+      sql`INSERT INTO remna_metric_samples(panel,node_uuid,sampled_at,values) VALUES ${sql.join(rows, sql`, `)}`,
+    );
+    try {
+      const statsService = app.get(NodeStatsService);
+      // Трафик берётся у Remnawave по сети — здесь его нет.
+      vi.spyOn(statsService as never, 'traffic').mockResolvedValue({ traffic: null, error: null } as never);
+      const stats = await statsService.get(7);
+      expect(stats.online.peak).toBe(500);
+      expect(stats.online.minimum).toBe(100);
+      expect(stats.heatmap.days).toBeGreaterThanOrEqual(3);
+      expect(stats.heatmap.peak).not.toBeNull();
+      expect(stats.online.series.filter((p) => p.v != null).length).toBeGreaterThan(60);
+      expect(stats.timeZone).toBeTruthy();
+
+      const metrics = app.get(NodeMetricsService);
+      vi.spyOn(metrics, 'collect').mockResolvedValue();
+      const day = await metrics.get(1440);
+      const fleet = day.fleet.filter((p) => p.nodes > 0);
+      expect(fleet.length).toBeGreaterThan(10);
+      expect(fleet.every((p) => p.up === 1)).toBe(true);
+      // Пятнадцатиминутные снимки в корзинах по 6 минут: пропуск между ними — перерыв, а не одиночная дыра.
+      expect(day.bucketSeconds).toBe(360);
+
+      // Обычный онлайн в этот час — по трём прошлым дням в тот же час.
+      const hour = await metrics.get(60);
+      expect(hour.onlineTypical).not.toBeNull();
+      expect(hour.onlineTypical?.low).toBeLessThanOrEqual(hour.onlineTypical?.high ?? 0);
+
+      const points = await metrics.capacityPoints(domain);
+      expect(points.get(node)?.length).toBeGreaterThan(200);
+    } finally {
+      vi.restoreAllMocks();
+      await db.execute(sql`DELETE FROM remna_metric_samples WHERE node_uuid = ${node}::uuid`);
+    }
   });
 
   it('отключение стирает всё, запись в Журнале', async () => {
