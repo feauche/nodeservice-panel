@@ -218,6 +218,38 @@ export function packArgs(paths: string[], hostRoot: string, out: string): string
   return ['-czf', out, '--ignore-failed-read', '-C', hostRoot || '/', '--', ...rel];
 }
 
+/**
+ * Развёрнутая копия пригодна для панели: есть настройки и администратор, по которому можно войти, а
+ * шифротексты читаются ключом этой установки. Проверяем только то, без чего панель не поднимется:
+ * таблица, которую однажды уберут (как серверы в 0.89.0), не должна делать негодной каждую копию.
+ */
+export async function checkRestoredDatabase(client: pg.ClientBase, crypto?: CryptoService): Promise<boolean> {
+  const required = await client.query<{ users: string | null; meta: string | null }>(
+    `select to_regclass('public.users')::text as users,
+            to_regclass('public.app_meta')::text as meta`,
+  );
+  const tables = required.rows[0];
+  if (!tables?.users || !tables.meta) return false;
+  // Запись администратора должна быть пригодна для входа: логин есть, хеш имеет формат argon2.
+  const users = await client.query<{ login: string; password_hash: string }>(
+    'select login, password_hash from users order by created_at limit 2',
+  );
+  if (users.rows.length === 0) return false;
+  if (users.rows.some((user) => !user.login || !user.password_hash.startsWith('$argon2'))) return false;
+  // Копия без подходящего ENCRYPTION_KEY бесполезна: не прочитаются секрет кода входа и ключи подключений.
+  if (crypto) {
+    const secrets = await client.query<{ secret: string }>(
+      'select totp_secret_enc as secret from users where totp_secret_enc is not null',
+    );
+    try {
+      for (const row of secrets.rows) crypto.decrypt(row.secret);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
 export class PgBackupTools implements BackupTools {
   private readonly log = new Logger('BackupTools');
 
@@ -275,38 +307,13 @@ export class PgBackupTools implements BackupTools {
         this.log.warn(`Пробное восстановление копии не удалось: ${failureText(restored)}`);
         return false;
       }
-      const valid = await withAdmin(target.toString(), async (client) => {
-        const required = await client.query<{
-          users: string | null;
-          servers: string | null;
-          meta: string | null;
-        }>(
-          `select to_regclass('public.users')::text as users,
-                  to_regclass('public.servers')::text as servers,
-                  to_regclass('public.app_meta')::text as meta`,
+      const valid = await withAdmin(target.toString(), (client) =>
+        checkRestoredDatabase(client, this.crypto),
+      );
+      if (!valid)
+        this.log.warn(
+          'Пробная копия развернулась, но не прошла проверку: нет таблиц панели или администратора, либо не подходит ключ шифрования.',
         );
-        const tables = required.rows[0];
-        if (!tables?.users || !tables.servers || !tables.meta) return false;
-        // Запись администратора должна быть пригодна для входа: логин есть, хеш имеет формат argon2.
-        const users = await client.query<{ login: string; password_hash: string }>(
-          'select login, password_hash from users order by created_at limit 2',
-        );
-        if (users.rows.length === 0) return false;
-        if (users.rows.some((user) => !user.login || !user.password_hash.startsWith('$argon2'))) return false;
-        // Копия без подходящего ENCRYPTION_KEY бесполезна: SSH-ключи и ключи агентов не прочитаются.
-        if (this.crypto) {
-          const secrets = await client.query<{ ssh: string | null; agent: string | null }>(
-            `select ssh_private_key_enc as ssh, agent_access_key_enc as agent
-             from servers
-             where ssh_private_key_enc is not null or agent_access_key_enc is not null`,
-          );
-          for (const secret of secrets.rows) {
-            if (secret.ssh) this.crypto.decrypt(secret.ssh);
-            if (secret.agent) this.crypto.decrypt(secret.agent);
-          }
-        }
-        return true;
-      });
       return valid;
     } catch (err) {
       this.log.warn(

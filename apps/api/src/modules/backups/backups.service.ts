@@ -51,7 +51,12 @@ import { CLS_USER } from '../auth/cls-keys.js';
 import { PanelLifecycleService } from '../health/panel-lifecycle.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { esc } from '../notifications/telegram/telegram.format.js';
-import { backupBlocks } from '../notifications/telegram/telegram.rich.js';
+import {
+  backupBlocks,
+  backupChatTestBlocks,
+  backupFailedBlocks,
+  backupPartsSentBlocks,
+} from '../notifications/telegram/telegram.rich.js';
 import { TelegramService } from '../notifications/telegram/telegram.service.js';
 import { decryptFile, encryptFile, isEncrypted } from './backup-crypto.js';
 import { BackupError, BackupToolError, explainBackupError, rawErrorText } from './backup-errors.js';
@@ -89,6 +94,16 @@ interface Sidecar {
 }
 
 const mb = (b: number) => `${(b / 1024 / 1024).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} МБ`;
+
+/** Какая копия не получилась — строкой для сообщения в Telegram. */
+const FAILED_KIND: Record<BackupKind, string> = {
+  auto: 'По расписанию',
+  manual: 'Вручную',
+  pre_restore: 'Перед восстановлением',
+  pre_update: 'Перед обновлением',
+  console: 'Из консоли',
+  uploaded: 'Загруженная',
+};
 
 /** Копия по расписанию: к какому моменту расписания относится попытка и когда она началась. */
 interface Scheduled {
@@ -616,14 +631,15 @@ export class BackupsService implements OnModuleInit {
     const s = await this.store.load();
     if (s.telegram.enabled && s.telegram.notifyFailure) {
       const d = await this.targetOf(s);
+      const next = retry
+        ? 'Панель попробует ещё раз через час. О повторных неудачах этой копии сообщать не будет — загляните в «Настройки → Резервные копии».'
+        : 'Следующая — по расписанию. Сделать вручную: «Настройки → Резервные копии».';
       if (d)
         await this.telegram.sendTo(
           d,
-          `🔴 <b>Резервная копия не получилась</b>\n${esc(reason.slice(0, 500))}\n\n<i>${
-            retry
-              ? 'Панель попробует ещё раз через час. О повторных неудачах этой копии сообщать не будет — загляните в «Настройки → Резервные копии».'
-              : 'Следующая — по расписанию. Сделать вручную: «Настройки → Резервные копии».'
-          }</i>`,
+          `🔴 <b>Резервная копия не получилась</b>\n${esc(reason.slice(0, 500))}\n\n<i>${next}</i>`,
+          false,
+          backupFailedBlocks({ kind: FAILED_KIND[kind], reason: reason.slice(0, 500), next }),
         );
     }
   }
@@ -741,6 +757,7 @@ export class BackupsService implements OnModuleInit {
         d,
         `✅ <b>Все части резервной копии отправлены</b>\n\nОбъединить после скачивания:\n<code>${esc(mergeCommand ?? '')}</code>`,
         true,
+        backupPartsSentBlocks(mergeCommand),
       );
       return { ok: true, note: null, parts: partsPlan.length };
     } catch (err) {
@@ -1157,6 +1174,8 @@ export class BackupsService implements OnModuleInit {
     const res = await this.telegram.sendTo(
       d,
       '✅ <b>NodeService</b>\nТест: сюда будут приходить резервные копии.',
+      false,
+      backupChatTestBlocks(),
     );
     return res.ok ? { ok: true, detail: 'Сообщение отправлено.' } : { ok: false, detail: res.error };
   }

@@ -34,6 +34,7 @@ import request from 'supertest';
 import TestAgent from 'supertest/lib/agent.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { CryptoService } from '../src/common/crypto/crypto.service.js';
 import { setupHttp } from '../src/common/http/setup-http.js';
 import { createPool, DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
@@ -45,6 +46,7 @@ import { BackupToolError } from '../src/modules/backups/backup-errors.js';
 import {
   BACKUP_TOOLS,
   type BackupTools,
+  checkRestoredDatabase,
   PgBackupTools,
   swapDatabases,
 } from '../src/modules/backups/backup-tools.js';
@@ -90,13 +92,34 @@ class FakeTools implements BackupTools {
   }
 }
 
+/** Весь текст rich-сообщения подряд: заголовок, ячейки таблиц, абзацы и подвал. */
+const richText = (node: unknown): string =>
+  typeof node === 'string'
+    ? node
+    : Array.isArray(node)
+      ? node.map(richText).join(' ')
+      : node && typeof node === 'object'
+        ? Object.entries(node)
+            .filter(([k]) => ['text', 'cells', 'blocks', 'items', 'rich_message'].includes(k))
+            .map(([, v]) => richText(v))
+            .join(' ')
+        : '';
+
 class FakeTelegram {
   files: Array<Record<string, string>> = [];
   texts: string[] = [];
   rich: Array<Record<string, unknown>> = [];
+  /** Все сообщения по порядку: обычные — как есть, rich — текстом блоков. */
+  sent: Array<{ rich: boolean; text: string }> = [];
   async call<T>(_t: string, method: string, body: Record<string, unknown>): Promise<TelegramCall<T>> {
-    if (method === 'sendMessage') this.texts.push(String(body.text));
-    if (method === 'sendRichMessage') this.rich.push(body);
+    if (method === 'sendMessage') {
+      this.texts.push(String(body.text));
+      this.sent.push({ rich: false, text: String(body.text) });
+    }
+    if (method === 'sendRichMessage') {
+      this.rich.push(body);
+      this.sent.push({ rich: true, text: richText(body) });
+    }
     if (method === 'getMe') return { ok: true, result: { username: 'bot' } as T };
     if (method === 'getChat') return { ok: true, result: { title: 'чат', type: 'private' } as T };
     return { ok: true, result: { message_id: 1 } as T };
@@ -211,7 +234,9 @@ describe('резервные копии e2e', () => {
     return up.body.name as string;
   };
   /** Сколько раз про неудачную копию написали в Telegram. */
-  const failuresInTelegram = () => tg.texts.filter((t) => t.includes('Резервная копия не получилась'));
+  const failuresInTelegram = () =>
+    tg.sent.filter((m) => m.text.includes('Резервная копия не получилась')).map((m) => m.text);
+  const lastFailure = () => tg.sent.filter((m) => m.text.includes('Резервная копия не получилась')).at(-1);
   const keyPrint = () =>
     createHash('sha256')
       .update(String(app.get(ConfigService).get('ENCRYPTION_KEY')).toLowerCase())
@@ -625,6 +650,54 @@ describe('резервные копии e2e', () => {
     const r = await list();
     expect(r.run.lastError).toContain('Нет связи с базой данных');
     expect(r.run.lastError).not.toMatch(/[A-Za-z]/);
+    // Расширенное оформление включено — сообщение о сбое приходит в нём, как и сами копии.
+    expect(lastFailure()?.rich).toBe(true);
+    const blocks =
+      (tg.rich.at(-1)?.rich_message as { blocks?: Array<Record<string, unknown>> } | undefined)?.blocks ?? [];
+    expect(blocks[0]).toMatchObject({ type: 'heading', text: '🔴 Резервная копия не получилась' });
+    expect(sent).toContain('Вручную');
+  });
+
+  it('проверка развёрнутой копии подходит к нынешней базе: администратор, настройки, ключ шифрования', async () => {
+    // Сама проверка в других тестах подменена; здесь — её запросы к настоящей схеме после всех миграций.
+    // Так таблица, которую однажды уберут, больше не сделает негодной каждую копию (как серверы в 0.89.0).
+    const config = app.get(ConfigService);
+    const client = new pg.Client({ connectionString: config.get('DATABASE_URL') as string });
+    await client.connect();
+    try {
+      expect(await checkRestoredDatabase(client, app.get(CryptoService))).toBe(true);
+      // Ключ другой установки: секрет кода входа не читается — такая копия бесполезна.
+      const foreign = new CryptoService({
+        get: (k: string) => (k === 'ENCRYPTION_KEY' ? 'ab'.repeat(32) : config.get(k)),
+      } as unknown as ConfigService);
+      expect(await checkRestoredDatabase(client, foreign)).toBe(false);
+    } finally {
+      await client.end();
+    }
+  });
+
+  it('оформление выключено — о сбое копии пишет обычным сообщением', async () => {
+    const setRich = (rich: boolean) =>
+      agent
+        .put('/api/settings/telegram')
+        .set(CSRF_HEADER, csrf)
+        .send({ delivery: { groupPerServer: true, silentWarnings: true, remindHours: 2, rich } })
+        .expect(200);
+    await setRich(false);
+    const orig = tools.verify;
+    tools.verify = async () => false;
+    try {
+      const before = failuresInTelegram().length;
+      app.get(BackupsService).start('manual');
+      await waitIdle();
+      for (let i = 0; i < 20 && failuresInTelegram().length === before; i += 1) await sleep(50);
+      expect(failuresInTelegram()).toHaveLength(before + 1);
+      expect(lastFailure()?.rich).toBe(false);
+      expect(lastFailure()?.text).toContain('Дамп базы не читается');
+    } finally {
+      tools.verify = orig;
+      await setRich(true);
+    }
   });
 
   it('копия перед обновлением: служебный запрос с подписью — копия по настройкам панели; без подписи — 404', async () => {

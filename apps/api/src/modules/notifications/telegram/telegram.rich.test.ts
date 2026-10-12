@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   backupBlocks,
+  backupChatTestBlocks,
+  backupFailedBlocks,
+  backupPartsSentBlocks,
   bodyBlocks,
   digestBlocks,
   isRichRejected,
@@ -198,6 +201,29 @@ describe('расширенное оформление Telegram', () => {
       text: '📦 Архив разделён. Частей: 2. Скачайте все файлы в одну папку.',
     });
     expect(blocks).toContainEqual({ type: 'paragraph', text: { type: 'code', text: command } });
+  });
+
+  it('копия не получилась — заголовок, таблица «Копия / Причина» и что будет дальше', () => {
+    const blocks = backupFailedBlocks({
+      kind: 'По расписанию',
+      reason: 'Дамп базы не читается — копия не сохранена.',
+      next: 'Панель попробует ещё раз через час.',
+    });
+    expect(blocks[0]).toEqual({ type: 'heading', size: 3, text: '🔴 Резервная копия не получилась' });
+    const table = blocks.find((b) => b.type === 'table');
+    expect(table?.type === 'table' && table.cells.map((row) => row.map((c) => c.text))).toEqual([
+      ['Копия', 'По расписанию'],
+      ['Причина', 'Дамп базы не читается — копия не сохранена.'],
+    ]);
+    expect(blocks.at(-1)).toEqual({ type: 'footer', text: 'Панель попробует ещё раз через час.' });
+  });
+
+  it('все части отправлены — команда объединения отдельным блоком кода; тест чата копий — заголовок и текст', () => {
+    const parts = backupPartsSentBlocks('cat a.part* > a.enc');
+    expect(parts[0]).toMatchObject({ type: 'heading', text: '✅ Все части резервной копии отправлены' });
+    expect(parts.at(-1)).toEqual({ type: 'paragraph', text: { type: 'code', text: 'cat a.part* > a.enc' } });
+    expect(backupPartsSentBlocks(null)).toHaveLength(1);
+    expect(backupChatTestBlocks().map((b) => b.type)).toEqual(['heading', 'paragraph']);
   });
 
   it('образец для кнопки «Проверить» содержит заголовок и таблицу', () => {

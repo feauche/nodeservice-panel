@@ -965,13 +965,18 @@ export class TelegramService {
     return res.ok ? { ok: true, messageId: res.messageId } : res;
   }
 
-  /** Текст в указанный чат (без правил «что присылать»: это служебные сообщения о копиях). */
+  /**
+   * Текст в указанный чат (без правил «что присылать»: это служебные сообщения о копиях). `rich` — то же
+   * сообщение блоками: уходит, когда включено расширенное оформление, как и все остальные сообщения панели.
+   */
   async sendTo(
     d: LiveDestination,
     html: string,
     silent = false,
+    rich: RichBlock[] | null = null,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
-    const res = await this.send(d, html, [], null, silent);
+    const blocks = rich && (await this.richEnabled()) ? rich : null;
+    const res = await this.send(d, html, [], null, silent, blocks);
     const trouble = await this.noteDelivery(d, res);
     if (trouble) await this.warnUndelivered([trouble]);
     return res.ok ? { ok: true } : res;

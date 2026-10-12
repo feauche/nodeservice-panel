@@ -206,6 +206,45 @@ export function backupBlocks(input: {
   ];
 }
 
+/** Копия не получилась: какая, почему и что будет дальше. */
+export function backupFailedBlocks(input: { kind: string; reason: string; next: string }): RichBlock[] {
+  return [
+    { type: 'heading', size: 3, text: '🔴 Резервная копия не получилась' },
+    {
+      type: 'table',
+      is_bordered: true,
+      is_striped: true,
+      is_compact: true,
+      cells: [
+        [cell('Копия', true), cell(input.kind)],
+        [cell('Причина', true), cell(input.reason)],
+      ],
+    },
+    { type: 'footer', text: input.next },
+  ];
+}
+
+/** Все части разделённой копии дошли: как их объединить. */
+export function backupPartsSentBlocks(mergeCommand: string | null): RichBlock[] {
+  return [
+    { type: 'heading', size: 3, text: '✅ Все части резервной копии отправлены' },
+    ...(mergeCommand
+      ? [
+          { type: 'paragraph' as const, text: 'Объединить после скачивания:' },
+          { type: 'paragraph' as const, text: { type: 'code' as const, text: mergeCommand } },
+        ]
+      : []),
+  ];
+}
+
+/** Тест своего чата для копий (кнопка «Отправить тест» в «Резервных копиях»). */
+export function backupChatTestBlocks(): RichBlock[] {
+  return [
+    { type: 'heading', size: 3, text: '✅ NodeService' },
+    { type: 'paragraph', text: 'Тест: сюда будут приходить резервные копии.' },
+  ];
+}
+
 /**
  * Образец для кнопки «Проверить»: по нему владелец видит, показывает ли его Telegram расширенное оформление.
  * Видны заголовок и таблица — можно включать; вместо сообщения «не поддерживается» — приложение нужно обновить.
