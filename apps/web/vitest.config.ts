@@ -9,6 +9,8 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     passWithNoTests: true,
+    // Машины GitHub в разы медленнее локальных: длинные сценарии с набором текста там не укладывались в 5 с.
+    testTimeout: 15_000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
