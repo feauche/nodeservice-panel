@@ -42,6 +42,8 @@ export const remnawaveNodeSchema = z.object({
   uptime: z.string().nullable().optional(),
   nodeVersion: z.string().nullable().optional(),
   xrayVersion: z.string().nullable().optional(),
+  /** Отметка «Сервер белого списка» из настроек ноды; считается при отдаче статуса. */
+  whitelist: z.boolean().optional(),
 });
 export type RemnawaveNode = z.infer<typeof remnawaveNodeSchema>;
 
@@ -304,6 +306,8 @@ export type RemnawaveTopology = z.infer<typeof remnawaveTopologySchema>;
 
 /** Local monitoring thresholds. Null inherits global policy; remote configuration is unchanged. */
 export const nodePreferencesSchema = z.object({
+  /** «Сервер белого списка (БС)»: IP ноды в белых списках мобильных операторов. Ассистент советует BS Checker. */
+  whitelist: z.boolean().default(false),
   channelMbps: z.number().positive().max(1000000).nullable().default(null),
   note: z.string().trim().max(1000).default(''),
   cpuWarningPercent: z.number().int().min(1).max(100).nullable().default(null),

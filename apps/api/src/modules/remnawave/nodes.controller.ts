@@ -86,15 +86,27 @@ export class NodesController {
         (!lastAttempt || Date.now() - Date.parse(lastAttempt) >= cfg.pollSeconds * 1000)
       ) {
         await this.remnawave.syncQuiet(cfg.apiTimeoutSeconds * 1000);
-        return this.providers.enrich(await this.remnawave.status());
+        return this.withWhitelist(await this.providers.enrich(await this.remnawave.status()));
       }
-      return this.providers.enrich(current);
+      return this.withWhitelist(await this.providers.enrich(current));
     })();
     try {
       return await this.pending;
     } finally {
       this.pending = null;
     }
+  }
+
+  /** Отметка «Сервер белого списка» из настроек ноды — для метки «БС» в списке нод. */
+  private async withWhitelist(status: NodesStatusDto): Promise<NodesStatusDto> {
+    let marked = new Set<string>();
+    try {
+      marked = await this.preferences.whitelisted(status.domain);
+    } catch {
+      // Сбой чтения отметок не должен ломать список нод: просто без метки «БС».
+    }
+    if (marked.size === 0) return status;
+    return { ...status, nodes: status.nodes.map((n) => ({ ...n, whitelist: marked.has(n.uuid) })) };
   }
 
   @Post('connect')

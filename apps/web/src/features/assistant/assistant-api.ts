@@ -1,5 +1,6 @@
 import {
   type AssistantChatResponse,
+  type AssistantContextKind,
   type AssistantStatus,
   assistantChatResponseSchema,
   assistantConversationsResponseSchema,
@@ -21,10 +22,10 @@ export const assistantApi = {
     api.get('/assistant/conversations', assistantConversationsResponseSchema, signal),
   history: (id: string, signal?: AbortSignal): Promise<HistoryResponse> =>
     api.get(`/assistant/conversations/${id}`, assistantHistoryResponseSchema, signal),
-  chat: (message: string, conversationId?: string): Promise<AssistantChatResponse> =>
+  chat: (message: string, conversationId?: string, context?: ChatContext): Promise<AssistantChatResponse> =>
     api.post(
       '/assistant/chat',
-      { message, ...(conversationId ? { conversationId } : {}) },
+      { message, ...(conversationId ? { conversationId } : {}), ...(context ? { context } : {}) },
       assistantChatResponseSchema,
     ),
 };
@@ -35,9 +36,15 @@ export const LAST_CONV_KEY = 'ns.assistant.conversation';
 export const ASSISTANT_DRAFT_KEY = 'ns.assistant.draft';
 /** Ключ запроса чата: по нему любая страница видит, что Ассистент ещё думает, даже если запрос отправили с другой. */
 export const CHAT_MUTATION_KEY = ['assistant', 'chat'] as const;
+/** Вопрос со страницы события или из окна ноды: сервер подставит Ассистенту их данные. */
+export interface ChatContext {
+  kind: AssistantContextKind;
+  id: string;
+}
 export interface ChatVars {
   message: string;
   conversationId?: string;
+  context?: ChatContext;
 }
 
 export const assistantKeys = {
@@ -85,7 +92,8 @@ export function useSendMessage() {
   const qc = useQueryClient();
   return useMutation({
     mutationKey: CHAT_MUTATION_KEY,
-    mutationFn: ({ message, conversationId }: ChatVars) => assistantApi.chat(message, conversationId),
+    mutationFn: ({ message, conversationId, context }: ChatVars) =>
+      assistantApi.chat(message, conversationId, context),
     onSuccess: (res, vars) => {
       // Новый чат закончился, пока страницы Ассистента не было на экране: запоминаем беседу, чтобы вернуться в неё.
       if (!vars.conversationId) {

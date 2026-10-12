@@ -68,6 +68,10 @@ export const assistantMessages = pgTable(
     reachability: jsonb('reachability').$type<unknown[]>().notNull().default([]),
     /** Долгие действия при ответе — строки «Проверка … готова за 1:12» (миграция 0042). */
     activity: jsonb('activity').$type<unknown[]>().notNull().default([]),
+    /** Советы проверок под ответом Ассистента (миграция 0064). */
+    advice: jsonb('advice').$type<unknown[]>().notNull().default([]),
+    /** Откуда задан вопрос: событие или нода (миграция 0064). */
+    context: jsonb('context').$type<unknown>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('assistant_msg_conv_idx').on(t.conversationId, t.createdAt)],

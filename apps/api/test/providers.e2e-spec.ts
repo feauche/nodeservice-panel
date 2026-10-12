@@ -37,24 +37,44 @@ const PNG = Buffer.from(
 
 /** Запасной кэш иконок (аналог Google): включается только в своём тесте. */
 let fallbackOn = false;
+/**
+ * Придержать ответ главной страницы сайта: тест проверяет «иконка ещё ищется», пока ответ не отпущен.
+ * Без этого быстрая машина успевала найти иконку раньше, чем тест читал ответ, и тест изредка падал.
+ */
+let hold: Promise<void> | null = null;
+/** Придержать ответы сайта до вызова release(): поиск иконки гарантированно ещё идёт. */
+function holdSite(): () => void {
+  let release: () => void = () => {};
+  hold = new Promise<void>((r) => {
+    release = r;
+  });
+  return () => {
+    hold = null;
+    release();
+  };
+}
 
 /** Сайт хостера: HTML с <link rel="icon">, сама иконка, и второй сайт без иконок вовсе. */
 function fakeSite(): Promise<{ server: HttpServer; url: string; bare: string }> {
   const server = createServer((req, res) => {
     if (req.url?.startsWith('/fallback/')) {
       // как Google: картинка для известного хоста, 404 для неизвестного
-      if (fallbackOn && req.url === '/fallback/127.0.0.1') {
-        res.setHeader('content-type', 'image/png');
-        res.end(PNG);
-      } else {
-        res.statusCode = 404;
-        res.end();
-      }
+      void (hold ?? Promise.resolve()).then(() => {
+        if (fallbackOn && req.url === '/fallback/127.0.0.1') {
+          res.setHeader('content-type', 'image/png');
+          res.end(PNG);
+        } else {
+          res.statusCode = 404;
+          res.end();
+        }
+      });
     } else if (req.url === '/') {
-      res.setHeader('content-type', 'text/html');
-      res.end(
-        '<html><head><link rel="apple-touch-icon" href="/big.png"><link rel="icon" sizes="32x32" href="/i/fav.png"></head><body>Hoster</body></html>',
-      );
+      void (hold ?? Promise.resolve()).then(() => {
+        res.setHeader('content-type', 'text/html');
+        res.end(
+          '<html><head><link rel="apple-touch-icon" href="/big.png"><link rel="icon" sizes="32x32" href="/i/fav.png"></head><body>Hoster</body></html>',
+        );
+      });
     } else if (req.url === '/i/fav.png') {
       res.setHeader('content-type', 'image/png');
       res.end(PNG);
@@ -148,6 +168,7 @@ describe('providers e2e', () => {
   });
 
   it('создание: сайт без схемы дополняется https, иконка берётся с сайта, запись в Журнале', async () => {
+    const releaseCreate = holdSite();
     const res = await agent
       .post('/api/providers')
       .set(CSRF_HEADER, csrf)
@@ -159,7 +180,9 @@ describe('providers e2e', () => {
     expect(p.iconPending).toBe(true);
     // «127.0.0.1:port/» без схемы → https://…, иконку с https не найти; ниже — явный http.
     expect(p.siteUrl.startsWith('https://')).toBe(true);
+    releaseCreate();
     expect((await settled(p.id)).hasIcon).toBe(false);
+    const releasePatch = holdSite();
     const patched = providerSchema.parse(
       (
         await agent
@@ -170,6 +193,7 @@ describe('providers e2e', () => {
       ).body,
     );
     expect(patched.iconPending).toBe(true);
+    releasePatch();
     const fixed = await settled(p.id);
     expect(fixed).toMatchObject({
       name: 'Aéza',

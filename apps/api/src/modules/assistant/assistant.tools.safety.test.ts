@@ -55,6 +55,7 @@ describe('набор инструментов Ассистента', () => {
         'get_remnawave_topology',
         'get_settings',
         'list_incidents',
+        'recommend_check',
         'save_kb_article',
         'search_audit',
         'search_conversations',

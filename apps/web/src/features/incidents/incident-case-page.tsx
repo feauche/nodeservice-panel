@@ -4,7 +4,9 @@ import { ArrowLeftIcon, CheckIcon, ServerIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { AskAssistant } from '@/features/assistant/ask-assistant';
 import { formatWhen } from '@/features/audit/audit-format';
+import type { NodeDialogTab } from '@/features/knowledge/markdown';
 import { NodeDialog } from '@/features/nodes/node-dialog';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { TcpResults } from '@/features/nodes/tcp-results';
@@ -51,6 +53,7 @@ export function IncidentCasePage({ id }: { id: string }) {
   const [confirmResolve, setConfirmResolve] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [nodeOpen, setNodeOpen] = useState(false);
+  const [nodeTab, setNodeTab] = useState<NodeDialogTab | undefined>();
   const inc = q.data;
   const now = useNow(Boolean(inc && inc.status !== 'resolved'));
 
@@ -122,8 +125,31 @@ export function IncidentCasePage({ id }: { id: string }) {
             </p>
           </div>
           <div className="flex max-w-full flex-wrap items-center gap-2">
+            <AskAssistant
+              target={{
+                context: { kind: 'incident', id: inc.id },
+                label: `Событие: ${inc.title}`,
+                question: node
+                  ? `Что случилось с ${node.name} и что проверить?`
+                  : 'Что означает это событие и что проверить?',
+                placeholder: 'Спросите про это событие…',
+              }}
+              onOpenNode={(uuid, tab) => {
+                if (node && uuid === node.uuid) {
+                  setNodeTab(tab);
+                  setNodeOpen(true);
+                }
+              }}
+            />
             {node && (
-              <button type="button" onClick={() => setNodeOpen(true)} className={BTN}>
+              <button
+                type="button"
+                onClick={() => {
+                  setNodeTab(undefined);
+                  setNodeOpen(true);
+                }}
+                className={BTN}
+              >
                 <ServerIcon className="size-3.5" aria-hidden="true" />
                 Нода
               </button>
@@ -259,7 +285,12 @@ export function IncidentCasePage({ id }: { id: string }) {
         }}
       />
       {nodeOpen && node && (
-        <NodeDialog node={node} stale={Boolean(nodes.data?.error)} onClose={() => setNodeOpen(false)} />
+        <NodeDialog
+          node={node}
+          stale={Boolean(nodes.data?.error)}
+          initialTab={nodeTab}
+          onClose={() => setNodeOpen(false)}
+        />
       )}
     </div>
   );

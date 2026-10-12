@@ -234,7 +234,16 @@ function ConnectionCard({
   );
 }
 
-export function IntegrationsPage({ kind }: { kind: 'dpi' | 'dns' | 'bschecker' }) {
+export function IntegrationsPage({
+  kind,
+  initialNode,
+  onInitialNodeUsed,
+}: {
+  kind: 'dpi' | 'dns' | 'bschecker';
+  /** Нода из совета Ассистента: открыть проверку сразу с ней. */
+  initialNode?: string;
+  onInitialNodeUsed?: () => void;
+}) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const query = useQuery({
     queryKey: key,
@@ -252,11 +261,17 @@ export function IntegrationsPage({ kind }: { kind: 'dpi' | 'dns' | 'bschecker' }
       <>
         <div>
           {kind === 'bschecker' ? (
-            <BsCheckerWorkspace settings={() => setSettingsOpen(true)} />
+            <BsCheckerWorkspace
+              settings={() => setSettingsOpen(true)}
+              initialNode={initialNode}
+              onInitialNodeUsed={onInitialNodeUsed}
+            />
           ) : kind === 'dpi' ? (
             <DpiWorkspace
               balance={query.data?.items.find((s) => s.provider === 'dpi')?.balance ?? null}
               settings={() => setSettingsOpen(true)}
+              initialNode={initialNode}
+              onInitialNodeUsed={onInitialNodeUsed}
             />
           ) : (
             <DnsWorkspace settings={() => setSettingsOpen(true)} />

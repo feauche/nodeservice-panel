@@ -8,7 +8,7 @@ import {
 } from '@nodeservice/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ChevronRightIcon, HistoryIcon, RefreshCwIcon, SearchIcon, SettingsIcon } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -81,7 +81,15 @@ export function BsBalanceSkeleton() {
   );
 }
 
-export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
+export function BsCheckerWorkspace({
+  settings,
+  initialNode,
+  onInitialNodeUsed,
+}: {
+  settings: () => void;
+  initialNode?: string;
+  onInitialNodeUsed?: () => void;
+}) {
   const q = useQuery({
     queryKey: ['bschecker-workspace'],
     queryFn: ({ signal }) => api.get('/integrations/bschecker/workspace', bsWorkspaceSchema, signal),
@@ -105,6 +113,15 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
     [region, setRegion] = useState('all'),
     [dpi, setDpi] = useState('all'),
     [selected, setSelected] = useState<BsHistoryEntry | null>(null);
+  // Пришли из совета Ассистента: подставляем ноду и её адрес, как при выборе из списка.
+  useEffect(() => {
+    if (!initialNode) return;
+    const n = nodes.data?.nodes.find((x) => x.uuid === initialNode);
+    if (!n) return;
+    setNodeUuid(n.uuid);
+    setIp(n.address);
+    onInitialNodeUsed?.();
+  }, [initialNode, nodes.data, onInitialNodeUsed]);
   const preview = useMutation({
     mutationFn: () =>
       api.post(

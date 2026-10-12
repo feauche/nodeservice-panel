@@ -58,14 +58,26 @@ function aProblem(status: number, detail: string) {
 }
 
 /** Демо-ответ Ассистента: текст и цитаты (база знаний + событие). Действий Ассистент не предлагает. */
+/** Нода из советов демо-ответа: в тестах её подставляют в список нод. */
+export const MOCK_ADVICE_NODE = { uuid: '0192f200-0000-7000-8000-000000000002', name: 'nl-ams-02' } as const;
+
 function buildReply(text = ''): AssistantMessage {
-  if (/доступ|снаружи/i.test(text))
+  if (/доступ|снаружи|проверить/i.test(text))
     return {
       id: uid(),
       role: 'assistant',
       content:
-        'По последней проверке Check-Host порт 443 не отвечает из России. Запустите проверку порта в окне ноды, чтобы увидеть свежий результат.',
+        'Remnawave не получает ответа от ноды три проверки подряд. Похоже на сеть или блокировку — сначала проверьте порт снаружи.',
       citations: [],
+      advice: [
+        {
+          check: 'tcp',
+          nodeUuid: MOCK_ADVICE_NODE.uuid,
+          nodeName: MOCK_ADVICE_NODE.name,
+          address: '45.12.8.20:443',
+          reason: 'Remnawave не получает ответа от ноды три проверки подряд.',
+        },
+      ],
       createdAt: new Date().toISOString(),
     };
   const cpu = mockIncidents.items.find((i) => i.kind === 'cpu_high' && i.status !== 'resolved');
@@ -150,6 +162,7 @@ export const assistantHandlers = [
     const body = (await request.json()) as {
       message: string;
       conversationId?: string;
+      context?: { kind: 'incident' | 'node'; id: string };
     };
     const convId = body.conversationId ?? uid();
     const existing = mockAssistant.conversations.find((c) => c.id === convId);
@@ -163,11 +176,25 @@ export const assistantHandlers = [
         ...mockAssistant.conversations,
       ];
     }
+    // Как на сервере: у вопроса со страницы события или из окна ноды — метка, откуда он задан.
+    const inc =
+      body.context?.kind === 'incident'
+        ? mockIncidents.items.find((i) => i.id === body.context?.id)
+        : undefined;
+    const context = body.context
+      ? {
+          ...body.context,
+          label: inc
+            ? `Событие: ${inc.title}`
+            : `${body.context.kind === 'node' ? 'Нода' : 'Событие'}: ${body.context.id}`,
+        }
+      : null;
     const userMsg: AssistantMessage = {
       id: uid(),
       role: 'user',
       content: body.message,
       citations: [],
+      context,
       createdAt: new Date().toISOString(),
     };
     // Как на сервере: сообщение администратора сохраняется сразу, ответ приходит после раздумий.

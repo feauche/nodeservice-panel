@@ -71,6 +71,14 @@ class FakeLlm implements LlmProvider {
         return step === 1
           ? { stopReason: 'end', blocks: [{ type: 'tool_use', id: 'x', name: 'get_settings', input: {} }] }
           : text('Настройки прочитаны.');
+      case 'context': {
+        // Вопрос со страницы события: данные события приходят модели впереди самого вопроса.
+        const last = input.messages.at(-1)?.content ?? [];
+        const seen = last.some(
+          (b) => b.type === 'text' && b.text.includes('Вопрос задан со страницы события'),
+        );
+        return text(seen ? 'Вижу событие.' : 'Без контекста.');
+      }
       default:
         return text('ok');
     }
@@ -211,5 +219,51 @@ describe('чат ассистента: устойчивость e2e', () => {
     expect(settings.monitoring.pollSeconds).toBeGreaterThanOrEqual(15);
     expect(settings).not.toHaveProperty('autochecks');
     expect(fake.calls).toHaveLength(2);
+  });
+
+  it('вопрос со страницы события: модель получает данные события, у вопроса метка «Событие: …»', async () => {
+    const inc = await app.get(IncidentsRepository).open({
+      serverId: null,
+      serverName: 'de-1',
+      kind: 'server_down',
+      severity: 'crit',
+      title: 'Нода недоступна · de-1',
+      detail: 'Тест контекста.',
+      timeline: [],
+    });
+    expect(inc).toBeTruthy();
+    fake.script = 'context';
+    fake.calls = [];
+    const response = await agent
+      .post('/api/assistant/chat')
+      .set(CSRF_HEADER, csrf)
+      .send({ message: 'Что случилось?', context: { kind: 'incident', id: inc?.id } });
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const res = assistantChatResponseSchema.parse(response.body);
+    expect(res.message.content).toBe('Вижу событие.');
+    expect(res.message.advice).toEqual([]);
+    const history = await agent.get(`/api/assistant/conversations/${res.conversationId}`).expect(200);
+    const asked = (history.body.items as Array<{ role: string; context: unknown }>).find(
+      (m) => m.role === 'user',
+    );
+    expect(asked?.context).toEqual({
+      kind: 'incident',
+      id: inc?.id,
+      label: 'Событие: Нода недоступна · de-1',
+    });
+  });
+
+  it('событие из контекста не найдено: вопрос уходит как обычный, без метки', async () => {
+    fake.script = 'context';
+    fake.calls = [];
+    const response = await agent
+      .post('/api/assistant/chat')
+      .set(CSRF_HEADER, csrf)
+      .send({ message: 'А это?', context: { kind: 'incident', id: '0192c000-0000-7000-8000-00000000dead' } });
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const res = assistantChatResponseSchema.parse(response.body);
+    expect(res.message.content).toBe('Без контекста.');
+    const history = await agent.get(`/api/assistant/conversations/${res.conversationId}`).expect(200);
+    expect((history.body.items as Array<{ role: string; context: unknown }>)[0]?.context).toBeNull();
   });
 });

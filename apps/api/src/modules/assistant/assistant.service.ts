@@ -1,11 +1,15 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  ASSISTANT_ADVICE_MAX,
+  type AssistantAdvice,
   type AssistantChatResponse,
   type AssistantCitation,
+  type AssistantContext,
   type AssistantMessage,
   type AssistantStatus,
   brandNamePlain,
+  INCIDENT_KIND_META,
 } from '@nodeservice/shared';
 import { problem } from '../../common/filters/problem-details.filter.js';
 import type { Env } from '../../config/env.schema.js';
@@ -20,6 +24,7 @@ import { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
 import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import { NodeMetricsService } from '../node-metrics/node-metrics.controller.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { NodePreferencesStore } from '../remnawave/node-preferences.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { RemnawaveTopologyService } from '../remnawave/remnawave-topology.service.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
@@ -81,6 +86,7 @@ export class AssistantService {
     private readonly panelSettings: SettingsService,
     private readonly notifications: NotificationsService,
     private readonly config: ConfigService<Env, true>,
+    private readonly nodePrefs: NodePreferencesStore,
   ) {}
 
   status(): Promise<AssistantStatus> {
@@ -93,8 +99,50 @@ export class AssistantService {
       role: row.role as 'user' | 'assistant',
       content: row.content,
       citations: (row.citations as AssistantCitation[]) ?? [],
+      advice: (row.advice as AssistantAdvice[]) ?? [],
+      context: (row.context as AssistantContext | null) ?? null,
       createdAt: row.createdAt.toISOString(),
     };
+  }
+
+  /**
+   * Вопрос задан со страницы события или из окна ноды: метка для истории и данные для модели.
+   * Если события или ноды уже нет, метку не ставим — вопрос уходит как обычный.
+   */
+  private async resolveContext(
+    ref: { kind: 'incident' | 'node'; id: string } | undefined,
+  ): Promise<{ context: AssistantContext; brief: string } | null> {
+    if (!ref) return null;
+    try {
+      if (ref.kind === 'incident') {
+        const inc = await this.incidents.get(ref.id);
+        const brief = {
+          title: inc.title,
+          kind: INCIDENT_KIND_META[inc.kind]?.label ?? inc.kind,
+          status: inc.status,
+          severity: inc.severity,
+          openedAt: inc.openedAt,
+          resolvedAt: inc.resolvedAt,
+          node: inc.nodeUuid ? { uuid: inc.nodeUuid, name: inc.serverName } : null,
+          detail: inc.detail,
+          timeline: inc.timeline.slice(-10),
+          snapshot: inc.snapshot,
+        };
+        return {
+          context: { kind: 'incident', id: ref.id, label: `Событие: ${inc.title}` },
+          brief: `Вопрос задан со страницы события. Данные события из панели: ${JSON.stringify(brief)}. Опирайся на них; за свежим состоянием ноды обращайся к инструментам.`,
+        };
+      }
+      const st = await this.remnawave.status();
+      const node = st.nodes.find((n) => n.uuid === ref.id);
+      if (!node) return null;
+      return {
+        context: { kind: 'node', id: ref.id, label: `Нода: ${node.name}` },
+        brief: `Вопрос задан из окна ноды «${node.name}» (UUID ${node.uuid}, адрес ${node.address}${node.port ? `:${node.port}` : ''}). Её состояние и историю смотри инструментами get_node_detail и get_node_metrics.`,
+      };
+    } catch {
+      return null;
+    }
   }
 
   async conversations() {
@@ -124,7 +172,11 @@ export class AssistantService {
     }
   }
 
-  async chat(message: string, conversationId: string | undefined): Promise<AssistantChatResponse> {
+  async chat(
+    message: string,
+    conversationId: string | undefined,
+    contextRef?: { kind: 'incident' | 'node'; id: string },
+  ): Promise<AssistantChatResponse> {
     const cfg = await this.settings.config();
     if (!cfg)
       throw problem(HttpStatus.CONFLICT, {
@@ -165,15 +217,28 @@ export class AssistantService {
       ...(sites ? { customSites: sites.map((site) => ({ name: site.name })) } : {}),
     });
 
-    await this.repo.addMessage({ conversationId: conv.id, role: 'user', content: message });
+    const ctx = await this.resolveContext(contextRef);
+    const asked = await this.repo.addMessage({
+      conversationId: conv.id,
+      role: 'user',
+      content: message,
+      context: ctx?.context ?? null,
+    });
 
     // История беседы → сообщения модели (только текст; предыдущий tool-контекст не тащим).
+    // К текущему вопросу со страницы события или из окна ноды впереди добавляем их данные.
     const prior = await this.repo.messages(conv.id);
     const messages: LlmMsg[] = prior
       .filter((m) => m.content.trim().length > 0)
       .map((m) => ({
         role: m.role as 'user' | 'assistant',
-        content: [{ type: 'text', text: m.content }],
+        content:
+          m.id === asked.id && ctx
+            ? [
+                { type: 'text', text: ctx.brief },
+                { type: 'text', text: m.content },
+              ]
+            : [{ type: 'text', text: m.content }],
       }));
 
     const deps: ToolDeps = {
@@ -208,8 +273,10 @@ export class AssistantService {
         return { id: doc.id, title: doc.title };
       },
       addGlossary: (terms) => this.knowledge.appendGlossary(terms, { auditSource: 'auto' }),
+      whitelisted: (domain) => this.nodePrefs.whitelisted(domain),
     };
     const citations: AssistantCitation[] = [];
+    const advice: AssistantAdvice[] = [];
     /** Реплики по ходу работы («Смотрю данные…»): каждая идёт отдельным сообщением. */
     const interim: string[] = [];
     let answer = '';
@@ -252,6 +319,7 @@ export class AssistantService {
           const outcome = await runTool(use.name, use.input, deps);
           if (outcome.kbWritten) kbWrites += 1;
           citations.push(...outcome.citations);
+          if (outcome.advice) advice.push(...outcome.advice);
           results.push({ type: 'tool_result', tool_use_id: use.id, content: outcome.content });
         } catch (err) {
           // Падение одного инструмента не должно ронять весь чат: логируем и даём модели
@@ -295,6 +363,7 @@ export class AssistantService {
           content,
           // Вложения относятся к итогу, а не к промежуточным репликам.
           citations: last ? dedupe(citations) : [],
+          advice: last ? dedupeAdvice(advice) : [],
         }),
       );
     }
@@ -309,6 +378,8 @@ export class AssistantService {
         toolCalls,
         messages: texts.length,
         kbWrites,
+        advice: dedupeAdvice(advice).map((a) => `${a.check}:${a.nodeName}`),
+        ...(ctx ? { context: ctx.context.label } : {}),
       },
     });
     const out = saved.map((r) => this.toMessage(r));
@@ -344,4 +415,17 @@ function dedupe(list: AssistantCitation[]): AssistantCitation[] {
     seen.add(k);
     return true;
   });
+}
+
+/** Один совет на пару «проверка — нода», не больше ASSISTANT_ADVICE_MAX под ответом. */
+function dedupeAdvice(list: AssistantAdvice[]): AssistantAdvice[] {
+  const seen = new Set<string>();
+  return list
+    .filter((a) => {
+      const k = `${a.check}:${a.nodeUuid}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .slice(0, ASSISTANT_ADVICE_MAX);
 }

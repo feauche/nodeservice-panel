@@ -128,9 +128,11 @@ function CodeBlock({ code, lang, copyable }: { code: string; lang: string; copya
  * Ссылки на текущие ноды Remnawave: точка состояния, флаг страны и окно ноды по нажатию. Старые ссылки
  * на удалённые серверы (`server:<id>`) показываются простым текстом.
  */
+/** Вкладка окна ноды, на которой его открыть: совет «порт через Check-Host» ведёт сразу на «Подключение». */
+export type NodeDialogTab = 'metrics' | 'connection' | 'settings' | 'scenarios';
 export const NodeLinkContext = createContext<{
   nodes: Record<string, { country: string | null; state: string; tone: 'ok' | 'warn' | 'crit' | 'muted' }>;
-  open: (uuid: string) => void;
+  open: (uuid: string, tab?: NodeDialogTab) => void;
 }>({ nodes: {}, open: () => undefined });
 function NodeLink({ id, children }: { id: string; children: ReactNode }) {
   const context = useContext(NodeLinkContext),

@@ -21,6 +21,7 @@ import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
 import { HOST_RESOLVER } from '../src/modules/remnawave/host-addresses.service.js';
+import { NodePreferencesStore } from '../src/modules/remnawave/node-preferences.store.js';
 import { RemnawaveService } from '../src/modules/remnawave/remnawave.service.js';
 import {
   REMNAWAVE_CLIENT,
@@ -212,6 +213,16 @@ describe('Remnawave e2e (J4)', () => {
     const res = await agent.post('/api/nodes/refresh').set(CSRF_HEADER, csrf).expect(200);
     expect(remnawaveStatusSchema.parse(res.body).stats?.online.now).toBe(55);
     fake.usersOnline = 42;
+  });
+
+  it('отметка «Сервер белого списка» из настроек ноды видна в списке нод', async () => {
+    const prefs = app.get(NodePreferencesStore);
+    expect((await status()).nodes[0]?.whitelist).toBeUndefined();
+    const saved = await prefs.set('n1', { ...(await prefs.get('n1')), whitelist: true });
+    expect(saved.whitelist).toBe(true);
+    expect((await status()).nodes[0]?.whitelist).toBe(true);
+    await prefs.set('n1', { ...saved, whitelist: false });
+    expect((await status()).nodes[0]?.whitelist).toBeUndefined();
   });
 
   it('плановая перепроверка (джоба): недоступность и восстановление отражаются в статусе и Журнале', async () => {

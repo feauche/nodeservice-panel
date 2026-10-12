@@ -428,6 +428,13 @@
       "when": 1791810810101,
       "tag": "0063_billing_drop_server_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1791811810101,
+      "tag": "0064_assistant_advice",
+      "breakpoints": true
     }
   ]
 }

@@ -149,7 +149,17 @@ const status = (c: DpiCheck) =>
         : 'Есть ограничения'
     : ({ pending: 'В очереди', running: 'Выполняется', failed: 'Ошибка', cancelled: 'Отменена' }[c.status] ??
       c.status);
-export function DpiWorkspace({ balance, settings }: { balance: string | null; settings: () => void }) {
+export function DpiWorkspace({
+  balance,
+  settings,
+  initialNode,
+  onInitialNodeUsed,
+}: {
+  balance: string | null;
+  settings: () => void;
+  initialNode?: string;
+  onInitialNodeUsed?: () => void;
+}) {
   const query = useQuery({
     queryKey: ['dpi-workspace'],
     queryFn: ({ signal }) => api.get('/integrations/dpi/overview', dpiWorkspaceSchema, signal),
@@ -172,6 +182,13 @@ export function DpiWorkspace({ balance, settings }: { balance: string | null; se
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [requestId, setRequestId] = useState(crypto.randomUUID());
+  // Пришли из совета Ассистента: сразу «Новая проверка» с этой нодой. Запускает проверку владелец.
+  useEffect(() => {
+    if (!initialNode) return;
+    setNode(initialNode);
+    setModal('run');
+    onInitialNodeUsed?.();
+  }, [initialNode, onInitialNodeUsed]);
   useEffect(() => {
     if (!detail || !['pending', 'running'].includes(detail.status)) return;
     const controller = new AbortController();

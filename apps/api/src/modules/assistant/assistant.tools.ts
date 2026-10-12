@@ -1,4 +1,7 @@
 import {
+  ASSISTANT_CHECKS,
+  type AssistantAdvice,
+  type AssistantCheck,
   type AssistantCitation,
   AUDIT_CATEGORIES,
   type AuditCategory,
@@ -55,6 +58,20 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
     description:
       'Сохранённое состояние одной ноды Remnawave по UUID, точному имени или адресу. Онлайн, CPU, RAM, нагрузка, сеть, версия, состояние и время снимка. Не запускает проверки и SSH; отсутствующие метрики остаются неизвестными.',
     input_schema: { type: 'object', properties: { node: { type: 'string' } }, required: ['node'] },
+  },
+  {
+    name: 'recommend_check',
+    description:
+      'Посоветовать владельцу проверку ноды. Под твоим ответом появится карточка: какая проверка, для какой ноды, зачем, что покажет, сколько стоит, и кнопка «Открыть проверку». Сам ничего не запускает и не тратит деньги. check: tcp — порт через Check-Host (бесплатно, открыт ли порт из России и Европы); dpi — DPI Checker (платно, открывается ли нода у домашних провайдеров России); bs — BS Checker (кредиты, проходит ли белые списки мобильных операторов; только для нод с whitelist: true). node — UUID, точное имя или адрес ноды. reason — одна короткая фраза владельцу, зачем эта проверка сейчас. Порядок обычно: сначала tcp, потом dpi; для нод белого списка — bs вместо dpi. Не больше двух советов за ответ. Если советуешь проверку, вызывай этот инструмент, а не описывай кнопки текстом.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        check: { type: 'string', enum: [...ASSISTANT_CHECKS] },
+        node: { type: 'string' },
+        reason: { type: 'string', description: 'одна фраза, до 200 знаков' },
+      },
+      required: ['check', 'node', 'reason'],
+    },
   },
   {
     name: 'search_audit',
@@ -158,6 +175,8 @@ export interface ToolDeps extends ReadDeps {
   }) => Promise<{ id: string; title: string }>;
   /** Статус Remnawave (J4), если владелец её подключил; нет — инструмент честно говорит «не подключена». */
   remnawave?: { status: () => Promise<import('@nodeservice/shared').RemnawaveStatus> };
+  /** UUID нод с отметкой «Сервер белого списка» (настройки ноды). Для них советуется BS Checker. */
+  whitelisted?: (domain: string | null) => Promise<Set<string>>;
   /** Пополнение глоссария «Пояснения». Работает всегда, отдельного разрешения нет. */
   addGlossary: (
     terms: Array<{ term: string; explain: string; update?: boolean }>,
@@ -170,6 +189,8 @@ export interface ToolOutcome {
   citations: AssistantCitation[];
   /** Запись в базу знаний действительно прошла: только тогда Ассистент вправе сказать «сохранил». */
   kbWritten?: boolean;
+  /** Совет проверки — карточка под ответом. */
+  advice?: AssistantAdvice[];
 }
 
 /** Выполнить инструмент из аллоулиста. Неизвестный инструмент — явная ошибка (не молчим). */
@@ -211,6 +232,48 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
     };
   }
 
+  if (name === 'recommend_check') {
+    const check = String(arg.check ?? '') as AssistantCheck;
+    if (!(ASSISTANT_CHECKS as readonly string[]).includes(check))
+      return { ...empty, content: `Неизвестная проверка «${check}». Допустимо: tcp, dpi, bs.` };
+    const reason = String(arg.reason ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 200);
+    if (!reason) return { ...empty, content: 'Не указано, зачем проверка: передай reason одной фразой.' };
+    if (!deps.remnawave)
+      return { ...empty, content: 'Remnawave не подключена: советовать проверку ноды не для чего.' };
+    const st = await deps.remnawave.status();
+    const key = String(arg.node ?? '')
+      .trim()
+      .toLowerCase();
+    const matches = st.nodes.filter((n) => [n.uuid, n.name, n.address].some((v) => v.toLowerCase() === key));
+    const target = matches.length === 1 ? matches[0] : undefined;
+    if (!target)
+      return {
+        ...empty,
+        content: 'Нода не найдена или имя неоднозначно. Возьми UUID из get_remnawave_status и повтори.',
+      };
+    const marked = (await deps.whitelisted?.(st.domain).catch(() => null)) ?? new Set<string>();
+    const whitelist = marked.has(target.uuid);
+    // Белый список мобильных DPI Checker не видит: для такой ноды советуем BS Checker.
+    const final: AssistantCheck = check === 'dpi' && whitelist ? 'bs' : check;
+    return {
+      ...empty,
+      content: `Карточка совета добавлена под ответ: ${final === 'tcp' ? 'порт через Check-Host' : final === 'dpi' ? 'DPI Checker' : 'BS Checker'} для «${target.name}»${final !== check ? ' (нода отмечена как сервер белого списка, поэтому BS Checker вместо DPI Checker)' : ''}. В тексте ответа хватит одной фразы о совете, кнопки описывать не нужно.`,
+      citations: [{ type: 'node', id: target.uuid, label: target.name }],
+      advice: [
+        {
+          check: final,
+          nodeUuid: target.uuid,
+          nodeName: target.name,
+          address: target.address ? `${target.address}${target.port ? `:${target.port}` : ''}` : null,
+          reason,
+        },
+      ],
+    };
+  }
+
   if (name === 'get_remnawave_status' || name === 'get_node_detail') {
     if (!deps.remnawave)
       return {
@@ -223,7 +286,9 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
         ...empty,
         content: 'Remnawave не подключена. Настройки подключения находятся в разделе «Ноды».',
       };
-    const nodes = st.nodes;
+    const marked = (await deps.whitelisted?.(st.domain).catch(() => null)) ?? new Set<string>();
+    // whitelist — отметка владельца «Сервер белого списка»: для таких нод проверка — BS Checker.
+    const nodes = st.nodes.map((n) => ({ ...n, whitelist: marked.has(n.uuid) }));
     const fresh = !st.error && !!st.checkedAt && Date.now() - Date.parse(st.checkedAt) < 90000;
     const snapshot = {
       source: 'Remnawave',

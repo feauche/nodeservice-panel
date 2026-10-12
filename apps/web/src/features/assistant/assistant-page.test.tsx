@@ -164,7 +164,7 @@ describe('AssistantPage', () => {
       const user = userEvent.setup();
       await user.type(await screen.findByLabelText('Сообщение Ассистенту'), 'Сервер доступен снаружи?');
       await user.click(screen.getByRole('button', { name: 'Отправить' }));
-      await screen.findByText(/порт 443 не отвечает из России/);
+      await screen.findByText(/сначала проверьте порт снаружи/);
       expect(screen.queryByText('Основано на:')).not.toBeInTheDocument();
     });
 

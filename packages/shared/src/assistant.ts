@@ -75,11 +75,49 @@ export const assistantCitationSchema = z.object({
 });
 export type AssistantCitation = z.infer<typeof assistantCitationSchema>;
 
+/** Проверки, которые Ассистент может посоветовать. Запускает их владелец: Ассистент только советует. */
+export const ASSISTANT_CHECKS = ['tcp', 'dpi', 'bs'] as const;
+export type AssistantCheck = (typeof ASSISTANT_CHECKS)[number];
+export const ASSISTANT_CHECK_LABELS: Record<AssistantCheck, string> = {
+  tcp: 'Порт через Check-Host',
+  dpi: 'DPI Checker, IP-проверка',
+  bs: 'BS Checker',
+};
+/** Не больше стольких советов под одним ответом: третий совет уже шум. */
+export const ASSISTANT_ADVICE_MAX = 2;
+
+/** Совет проверить ноду. Под ответом становится карточкой с кнопкой «Открыть проверку». */
+export const assistantAdviceSchema = z.object({
+  check: z.enum(ASSISTANT_CHECKS),
+  nodeUuid: z.string(),
+  /** Имя и адрес на момент совета: нода могла пропасть из Remnawave, а карточка должна читаться. */
+  nodeName: z.string(),
+  address: z.string().nullable(),
+  /** Одна фраза владельцу: зачем эта проверка. */
+  reason: z.string(),
+});
+export type AssistantAdvice = z.infer<typeof assistantAdviceSchema>;
+
+/** Откуда задан вопрос: со страницы события или из окна ноды. */
+export const ASSISTANT_CONTEXT_KINDS = ['incident', 'node'] as const;
+export type AssistantContextKind = (typeof ASSISTANT_CONTEXT_KINDS)[number];
+export const assistantContextRefSchema = z.object({
+  kind: z.enum(ASSISTANT_CONTEXT_KINDS),
+  id: z.string().trim().min(1).max(64),
+});
+/** Метка над вопросом: «Событие: Нода недоступна · nl-ams-02» или «Нода: CONTEL». */
+export const assistantContextSchema = assistantContextRefSchema.extend({ label: z.string() });
+export type AssistantContext = z.infer<typeof assistantContextSchema>;
+
 export const assistantMessageSchema = z.object({
   id: z.uuid(),
   role: z.enum(['user', 'assistant']),
   content: z.string(),
   citations: z.array(assistantCitationSchema).default([]),
+  /** Советы проверок под ответом Ассистента. Сервер присылает всегда; у старых сообщений поля нет. */
+  advice: z.array(assistantAdviceSchema).optional(),
+  /** У вопроса, заданного со страницы события или из окна ноды, — откуда он задан. */
+  context: assistantContextSchema.nullable().optional(),
   createdAt: z.iso.datetime(),
 });
 export type AssistantMessage = z.infer<typeof assistantMessageSchema>;
@@ -88,6 +126,8 @@ export const assistantChatRequestSchema = z
   .object({
     message: z.string().trim().min(1),
     conversationId: z.uuid().optional(),
+    /** Вопрос задан со страницы события или из окна ноды: сервер сам подставит Ассистенту их данные. */
+    context: assistantContextRefSchema.optional(),
   })
   .superRefine((val, ctx) => {
     if (val.message.length > ASSISTANT_MESSAGE_MAX) {

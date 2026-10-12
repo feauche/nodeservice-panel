@@ -46,9 +46,9 @@ export class AssistantController {
 
   @Post('chat')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Отправить сообщение Ассистенту (tool-use, предложения действий)' })
+  @ApiOperation({ summary: 'Отправить сообщение Ассистенту (чтение панели, советы проверок)' })
   @ApiOkResponse({ type: AssistantChatResponseDto })
   chat(@Body() body: AssistantChatRequestDto): Promise<AssistantChatResponseDto> {
-    return this.assistant.chat(body.message, body.conversationId);
+    return this.assistant.chat(body.message, body.conversationId, body.context);
   }
 }

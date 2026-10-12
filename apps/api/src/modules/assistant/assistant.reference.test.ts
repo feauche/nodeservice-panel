@@ -78,7 +78,6 @@ describe('справочник Ассистента', () => {
       expect(unknown, t.id).toEqual([]);
       for (const bad of [
         'get_node_tcp_checks',
-        'recommend_check',
         'docker',
         'systemctl',
         'journalctl',

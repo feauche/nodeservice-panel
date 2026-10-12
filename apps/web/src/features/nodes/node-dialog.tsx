@@ -1,18 +1,20 @@
 import type { NodePreferences, RemnawaveNode } from '@nodeservice/shared';
-import { ActivityIcon, CableIcon, CopyIcon, GitBranchIcon, Settings2Icon } from 'lucide-react';
+import { ActivityIcon, CableIcon, CheckIcon, CopyIcon, GitBranchIcon, Settings2Icon } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { CountryFlag } from '@/components/country-flag';
 import { DialogPrimaryButton } from '@/components/dialog-actions';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { FormSkeleton } from '@/components/ui/loading-state';
+import { AskAssistant } from '@/features/assistant/ask-assistant';
+import type { NodeDialogTab } from '@/features/knowledge/markdown';
 import { ProviderSelect } from '@/features/providers/provider-select';
 import { ProvidersSourceContext } from '@/features/providers/providers-api';
 import { NodeScenarios } from '@/features/scenarios/node-scenarios';
 import { Pill, Segmented } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { bytes, mbitPerSecond, nodeState, percent, ram, uptime } from './node-card';
+import { bytes, mbitPerSecond, nodeState, percent, ram, uptime, WhitelistBadge } from './node-card';
 import { NodeMetricChart, useNodeMetrics } from './node-metrics';
 import { NodeTcpCheck } from './node-tcp-check';
 import { useAssignNodeProvider, useNodePreferences, useNodes, useSaveNodePreferences } from './nodes-api';
@@ -23,15 +25,18 @@ export function NodeDialog({
   node,
   stale,
   onClose,
+  initialTab,
 }: {
   node: RemnawaveNode;
   stale: boolean;
   onClose: () => void;
+  /** Совет «порт через Check-Host» открывает окно сразу на «Подключении». */
+  initialTab?: NodeDialogTab;
 }) {
   const [range, setRange] = useState('60');
   const metrics = useNodeMetrics(Number(range));
   const points = metrics.data?.history.find((n) => n.uuid === node.uuid)?.points ?? [];
-  const [tab, setTab] = useState('metrics'),
+  const [tab, setTab] = useState<string>(initialTab ?? 'metrics'),
     query = useNodePreferences(node.uuid),
     save = useSaveNodePreferences(node.uuid),
     assign = useAssignNodeProvider(node.uuid),
@@ -82,6 +87,7 @@ export function NodeDialog({
               {node.countryCode && <CountryFlag code={node.countryCode} size="md" />}
               <DialogTitle className="font-heading text-[18px]">{node.name}</DialogTitle>
               <Pill tone={stale ? 'muted' : state.tone}>{stale ? 'Старый снимок' : state.label}</Pill>
+              {(form?.whitelist ?? node.whitelist) && <WhitelistBadge />}
             </div>
             <DialogDescription className="mt-2 flex flex-wrap items-center gap-3 text-[12px]">
               <span className="font-mono md:hidden">
@@ -97,6 +103,18 @@ export function NodeDialog({
                 {node.providerName || 'Без провайдера'}
               </span>
             </DialogDescription>
+            <AskAssistant
+              className="mt-4 w-full"
+              target={{
+                context: { kind: 'node', id: node.uuid },
+                label: `Нода: ${node.name}`,
+                question: `Что с ${node.name} и что проверить?`,
+                placeholder: 'Спросите про эту ноду…',
+              }}
+              onOpenNode={(uuid, next) => {
+                if (uuid === node.uuid && next) setTab(next);
+              }}
+            />
           </div>
           <dl className="hidden space-y-6 px-5 py-4 text-sm md:block">
             <div>
@@ -315,9 +333,63 @@ export function NodeDialog({
                 <div>
                   <h2 className="font-heading text-[16px] font-semibold">Настройки ноды</h2>
                   <p className="mt-1 text-[12px] text-text-3">
-                    Провайдер, предупреждения, расчёт ёмкости и заметка.
+                    Тип ноды, провайдер, предупреждения, расчёт ёмкости и заметка.
                   </p>
                 </div>
+                <section className="rounded-[14px] border border-border bg-surface p-5">
+                  <h3 className="flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wide text-text-3">
+                    Тип ноды
+                    <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] font-semibold tracking-normal normal-case">
+                      Необязательно
+                    </span>
+                  </h3>
+                  <p className="mt-1 mb-4 text-[12px] leading-5 text-text-3">
+                    Ассистент выбирает проверки с учётом этой отметки. На работу ноды она не влияет.
+                  </p>
+                  {form ? (
+                    <label
+                      className={cn(
+                        'flex w-full cursor-pointer items-start gap-3 rounded-[14px] border px-4 py-3.5 text-left transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-brand has-[:disabled]:cursor-default',
+                        form.whitelist
+                          ? 'border-teal/55 bg-teal/[0.07]'
+                          : 'border-border bg-surface hover:border-border-2',
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        className="sr-only"
+                        checked={form.whitelist}
+                        disabled={save.isPending || assign.isPending}
+                        onChange={(e) => {
+                          setForm({ ...form, whitelist: e.target.checked });
+                          setDirty(true);
+                          setSaved(false);
+                        }}
+                      />
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          'mt-px grid size-5 flex-none place-items-center rounded-[6px] border-[1.5px] transition-colors',
+                          form.whitelist
+                            ? 'border-transparent bg-teal text-bg'
+                            : 'border-border-2 text-transparent',
+                        )}
+                      >
+                        <CheckIcon className="size-[13px]" strokeWidth={3} />
+                      </span>
+                      <span>
+                        <span className="block text-[14.5px] font-semibold">Сервер белого списка (БС)</span>
+                        <span className="mt-1 block text-[13px] leading-normal text-text-2">
+                          IP ноды входит в белые списки мобильных операторов. Ассистент будет советовать BS
+                          Checker с точками, где включён белый список. Без отметки нода считается обычной:
+                          Ассистент советует Check-Host и DPI Checker.
+                        </span>
+                      </span>
+                    </label>
+                  ) : (
+                    <div className="h-[86px] animate-pulse rounded-[14px] bg-surface-2" aria-hidden="true" />
+                  )}
+                </section>
                 <section className="rounded-[14px] border border-border bg-surface p-5">
                   <h3 className="mb-4 text-[12px] font-semibold uppercase tracking-wide text-text-3">
                     Провайдер
@@ -460,7 +532,7 @@ export function NodeDialog({
               {saved
                 ? 'Сохранено'
                 : tab === 'settings'
-                  ? 'Провайдер — в Remnawave, заметка и пороги — в NodeService'
+                  ? 'Провайдер — в Remnawave, остальное — в панели'
                   : 'Данные Remnawave · обновление каждые 15 секунд'}
             </span>
             {tab === 'settings' && (

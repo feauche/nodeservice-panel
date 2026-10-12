@@ -48,7 +48,6 @@ describe('подсказка Ассистента: режим только чт�
       'get_metrics_history',
       'check_reachability',
       'get_node_tcp_checks',
-      'recommend_check',
     ])
       expect(text, old).not.toContain(old);
   });

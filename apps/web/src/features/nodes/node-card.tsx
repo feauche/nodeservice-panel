@@ -1,5 +1,12 @@
 import type { RemnawaveNode } from '@nodeservice/shared';
-import { ArrowDownIcon, ArrowUpIcon, ChevronRightIcon, Clock3Icon, UsersIcon } from 'lucide-react';
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ChevronRightIcon,
+  Clock3Icon,
+  ShieldCheckIcon,
+  UsersIcon,
+} from 'lucide-react';
 import { CountryFlag } from '@/components/country-flag';
 import { cn } from '@/lib/utils';
 import { RemnaProviderIcon } from './remna-providers-page';
@@ -95,6 +102,7 @@ export function NodeCard({
           <span className="truncate font-heading text-[14px] font-semibold" title={node.name}>
             {node.name}
           </span>
+          {node.whitelist && <WhitelistBadge />}
           <span className="ml-auto flex shrink-0 items-center gap-1.5 rounded-md bg-black/10 px-2 py-1 text-[12px] tabular-nums">
             <UsersIcon className="size-3.5 opacity-60" />
             {node.usersOnline?.toLocaleString('ru-RU') ?? '—'}
@@ -159,5 +167,18 @@ export function NodeCard({
       </span>
       <ChevronRightIcon className="absolute top-5 right-3 size-4 text-text-3 md:hidden xl:static xl:block" />
     </button>
+  );
+}
+
+/** Метка «БС»: нода отмечена как сервер белого списка. */
+export function WhitelistBadge() {
+  return (
+    <span
+      title="Сервер белого списка"
+      className="inline-flex items-center gap-1 rounded-full bg-teal/15 px-[9px] py-[3px] text-[11.5px] font-semibold whitespace-nowrap text-teal"
+    >
+      <ShieldCheckIcon className="size-3" aria-hidden="true" />
+      БС
+    </span>
   );
 }
