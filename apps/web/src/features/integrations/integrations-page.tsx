@@ -17,10 +17,11 @@ import { PasswordField } from '@/features/auth/components/password-field';
 import { formatDate } from '@/features/security/security-format';
 import { Pill, RowButton, SettingsCard } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage, request } from '@/lib/api';
+import { BsCheckerWorkspace } from './bschecker-workspace';
 import { DnsWorkspace, DpiWorkspace } from './workspace';
 
 const key = ['integrations'] as const;
-const names = { dpi: 'DPI Checker', regru: 'REG.RU', cloudflare: 'Cloudflare' };
+const names = { dpi: 'DPI Checker', regru: 'REG.RU', cloudflare: 'Cloudflare', bschecker: 'BS Checker' };
 function ConnectionCard({
   provider,
   status,
@@ -54,6 +55,7 @@ function ConnectionCard({
       setConfirm(false);
       void client.invalidateQueries({ queryKey: key });
       void client.invalidateQueries({ queryKey: ['dpi-workspace'] });
+      void client.invalidateQueries({ queryKey: ['bschecker-workspace'] });
       void client.invalidateQueries({ queryKey: ['dns-workspace'] });
       void client.invalidateQueries({ queryKey: ['dns-history'] });
     },
@@ -86,7 +88,11 @@ function ConnectionCard({
     >
       <div className="flex min-h-[72px] flex-wrap items-center gap-3 border-b border-border px-[18px] py-4 max-md:px-4">
         <span className="grid size-10 flex-none place-items-center rounded-[11px] border border-border bg-surface-2">
-          <img src={`/integration-icons/${provider}.ico`} alt="" className="size-6 rounded-[5px]" />
+          <img
+            src={`/integration-icons/${provider}.${provider === 'bschecker' ? 'svg' : 'ico'}`}
+            alt=""
+            className="size-6 rounded-[5px]"
+          />
         </span>
         <div className="min-w-0 flex-1">
           <h2 className="font-heading text-[15px] font-semibold">{names[provider]}</h2>
@@ -167,7 +173,11 @@ function ConnectionCard({
         ) : (
           <div className="min-w-0">
             <label htmlFor={`${id}-token`} className="mb-1.5 block text-[12.5px] font-medium text-text-2">
-              {provider === 'dpi' ? 'API-токен DPI Checker' : 'API Token Cloudflare'}
+              {provider === 'dpi'
+                ? 'API-токен DPI Checker'
+                : provider === 'bschecker'
+                  ? 'API-ключ BS Checker'
+                  : 'API Token Cloudflare'}
             </label>
             <PasswordField
               id={`${id}-token`}
@@ -186,7 +196,9 @@ function ConnectionCard({
             ? 'Логин аккаунта и пароль доступа к API из личного кабинета REG.RU.'
             : provider === 'cloudflare'
               ? 'Cloudflare API Token: Zone Read и DNS Read для нужных зон. Для замены записей — DNS Edit. Global API Key сюда не подходит.'
-              : 'Токен из личного кабинета DPI Checker. После подключения загрузится баланс.'}
+              : provider === 'bschecker'
+                ? 'Ключ bsk_live… из bsbord.com. Подключение читает баланс; платные проверки запускаются только вручную.'
+                : 'Токен из личного кабинета DPI Checker. После подключения загрузится баланс.'}
         </p>
         {error && (
           <p
@@ -219,13 +231,14 @@ function ConnectionCard({
   );
 }
 
-export function IntegrationsPage({ kind }: { kind: 'dpi' | 'dns' }) {
+export function IntegrationsPage({ kind }: { kind: 'dpi' | 'dns' | 'bschecker' }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const query = useQuery({
     queryKey: key,
     queryFn: ({ signal }) => api.get('/integrations', integrationsStatusSchema, signal),
   });
-  const providers: IntegrationProvider[] = kind === 'dpi' ? ['dpi'] : ['regru', 'cloudflare'];
+  const providers: IntegrationProvider[] =
+    kind === 'dpi' ? ['dpi'] : kind === 'bschecker' ? ['bschecker'] : ['regru', 'cloudflare'];
   const domains =
     query.data?.items
       .filter((s) => providers.includes(s.provider))
@@ -235,7 +248,9 @@ export function IntegrationsPage({ kind }: { kind: 'dpi' | 'dns' }) {
     return (
       <>
         <div>
-          {kind === 'dpi' ? (
+          {kind === 'bschecker' ? (
+            <BsCheckerWorkspace settings={() => setSettingsOpen(true)} />
+          ) : kind === 'dpi' ? (
             <DpiWorkspace
               balance={query.data?.items.find((s) => s.provider === 'dpi')?.balance ?? null}
               settings={() => setSettingsOpen(true)}
@@ -245,8 +260,16 @@ export function IntegrationsPage({ kind }: { kind: 'dpi' | 'dns' }) {
           )}
         </div>
         <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-          <DialogContent className="max-h-[90dvh] overflow-auto sm:max-w-[1000px]">
-            <DialogTitle>Подключения {kind === 'dpi' ? 'DPI Checker' : 'DNS'}</DialogTitle>
+          <DialogContent
+            className={
+              kind === 'bschecker'
+                ? 'max-h-[90dvh] overflow-auto sm:max-w-[600px]'
+                : 'max-h-[90dvh] overflow-auto sm:max-w-[1000px]'
+            }
+          >
+            <DialogTitle>
+              Подключения {kind === 'dpi' ? 'DPI Checker' : kind === 'bschecker' ? 'BS Checker' : 'DNS'}
+            </DialogTitle>
             <DialogDescription>
               Сохранённые доступы уже используются. Вводите новый ключ только для изменения подключения.
             </DialogDescription>

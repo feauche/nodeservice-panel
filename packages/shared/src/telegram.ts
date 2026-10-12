@@ -45,8 +45,8 @@ export const TELEGRAM_EVENT_LABELS: Record<TelegramEvent, string> = {
   panel_health: 'Сбои самой панели',
 };
 export const TELEGRAM_EVENT_HINTS: Record<TelegramEvent, string> = {
-  incident_crit: 'Сервер или агент недоступен, нода упала, похоже на блокировку.',
-  incident_warn: 'Высокая нагрузка, диск заполняется, онлайн упал без подтверждённой блокировки.',
+  incident_crit: 'Потеря связи с нодой, резкое падение онлайна или недоступность TCP-порта.',
+  incident_warn: 'Устойчивая перегрузка CPU или памяти по данным Remnawave.',
   needs_confirm:
     'Автопочинка предлагает шаг и ждёт подтверждения — или нужно вмешаться вручную. Первое сообщение о новом инциденте приходит, даже если этот тумблер выключен: за него отвечают «Критичный инцидент» и «Предупреждение».',
   resolved:
@@ -63,7 +63,7 @@ export const TELEGRAM_EVENT_HINTS: Record<TelegramEvent, string> = {
   billing_overdue:
     'Со звуком, в день срока и раз в сутки, пока не продлите. Если сервер из этой оплаты недоступен — скажем об этом.',
   panel_health:
-    'Панель перезапустилась после сбоя, метрики серверов перестали записываться (и снова записываются), на сервере панели мало места. По каждому поводу — не чаще раза в сутки. Если панель не отвечает совсем, она сама ничего не пришлёт — для этого есть «Сторож панели» на этой странице.',
+    'Панель перезапустилась после сбоя, мониторинг перестал обновляться (и снова работает), на сервере панели мало места. По каждому поводу — не чаще раза в сутки. Если панель не отвечает совсем, она сама ничего не пришлёт.',
 };
 /** Метка важности рядом с названием (как в витрине K1); null — без метки. */
 export const TELEGRAM_EVENT_TONE: Record<TelegramEvent, 'crit' | 'warn' | 'ok' | null> = {
@@ -83,24 +83,18 @@ export const TELEGRAM_EVENT_TONE: Record<TelegramEvent, 'crit' | 'warn' | 'ok' |
   panel_health: 'warn',
 };
 export const TELEGRAM_EVENT_GROUPS: ReadonlyArray<{ title: string; keys: readonly TelegramEvent[] }> = [
-  {
-    title: 'Инциденты',
-    keys: ['incident_crit', 'incident_warn', 'needs_confirm', 'resolved', 'autofix_started', 'fix_failed'],
-  },
-  { title: 'Серверы и Ассистент', keys: ['maintenance', 'check_failed', 'jarvis_card'] },
   { title: 'Биллинг', keys: ['billing_soon', 'billing_overdue'] },
-  { title: 'Безопасность', keys: ['login'] },
-  { title: 'Сама панель', keys: ['panel_health'] },
+  { title: 'Панель', keys: ['login', 'panel_health'] },
 ];
 
 export type TelegramEvents = Record<TelegramEvent, boolean>;
 export const TELEGRAM_EVENTS_DEFAULT: TelegramEvents = {
   incident_crit: true,
   incident_warn: true,
-  needs_confirm: true,
+  needs_confirm: false,
   resolved: true,
   autofix_started: false,
-  fix_failed: true,
+  fix_failed: false,
   reminder: true,
   maintenance: false,
   check_failed: false,
@@ -120,20 +114,20 @@ export const TELEGRAM_KIND_GROUPS: ReadonlyArray<{ title: string; keys: readonly
 export const TELEGRAM_KIND_LABELS: Record<IncidentKind, string> = {
   agent_offline: 'Агент не в сети',
   ssh_down: 'SSH недоступен',
-  server_down: 'Сервер недоступен',
-  node_down: 'Контейнер ноды не запущен',
-  node_blocked: 'Резкое падение онлайна и блокировки',
+  server_down: 'TCP-порт недоступен',
+  node_down: 'Нода не на связи',
+  node_blocked: 'Падение онлайна или ограничение из РФ',
   cpu_high: 'Нагрузка на процессор',
   mem_high: 'Память на пределе',
   disk_high: 'Диск заполняется',
 };
 export const TELEGRAM_KIND_HINTS: Record<IncidentKind, string> = {
   agent_offline: 'Агент перестал присылать сигнал, а сам сервер отвечает — дело в агенте.',
-  server_down: 'Сервер не отвечает целиком: молчит агент и не открывается порт SSH. Одно дело вместо трёх.',
+  server_down: 'Check-Host не смог подключиться к выбранному TCP-порту из РФ и других стран.',
   ssh_down: 'Панель не может зайти на сервер по SSH.',
-  node_down: 'Сервер жив, но нода остановлена.',
+  node_down: 'Remnawave не видит ноду несколько последовательных опросов.',
   node_blocked:
-    'Онлайн ноды упал на 80 % и больше: блокировка ТСПУ, «16–20 КБ», IP из России или сервер недоступен.',
+    'Онлайн устойчиво упал относительно исходного уровня или TCP-порт недоступен только из РФ. Точная причина блокировки не доказана.',
   cpu_high: 'Загрузка держится выше порога дольше времени реакции.',
   mem_high: 'Занятость памяти держится выше порога.',
   disk_high: 'Заполнение диска держится выше порога.',
@@ -171,7 +165,7 @@ export type TelegramDelivery = z.infer<typeof telegramDeliverySchema>;
 export const TELEGRAM_DELIVERY_DEFAULT: TelegramDelivery = {
   groupPerServer: true,
   silentWarnings: true,
-  remindHours: 2,
+  remindHours: 8,
   rich: false,
 };
 

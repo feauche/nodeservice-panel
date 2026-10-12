@@ -1,3 +1,4 @@
+import { MONITORING_DEFAULTS } from '@nodeservice/shared';
 import { describe, expect, it, vi } from 'vitest';
 
 import { RemnawaveSyncJob } from './remnawave-sync.job.js';
@@ -8,7 +9,7 @@ describe('RemnawaveSyncJob', () => {
   it('в тестовом окружении не тикает', async () => {
     process.env.NODE_ENV = 'test';
     const syncQuiet = vi.fn();
-    await new RemnawaveSyncJob({ syncQuiet } as never).tick();
+    await new RemnawaveSyncJob({ syncQuiet } as never, {get:async()=>MONITORING_DEFAULTS} as never).tick();
     expect(syncQuiet).not.toHaveBeenCalled();
     process.env.NODE_ENV = prevEnv;
   });
@@ -24,9 +25,10 @@ describe('RemnawaveSyncJob', () => {
       calls += 1;
       await gate;
     });
-    const job = new RemnawaveSyncJob({ syncQuiet } as never);
+    const job = new RemnawaveSyncJob({ syncQuiet } as never, {get:async()=>MONITORING_DEFAULTS} as never);
     const first = job.tick();
     await job.tick();
+    await Promise.resolve();
     expect(calls).toBe(1);
     resolve();
     await first;

@@ -341,13 +341,13 @@ export class RemnawaveService {
   }
 
   /** Плановая перепроверка (джоба): тихо пишет ошибку в снимок, не роняет и не шумит в Журнале на каждый тик. */
-  async syncQuiet(): Promise<void> {
+  async syncQuiet(timeoutMs?: number): Promise<void> {
     const creds = await this.store.credentials();
     if (!creds) return;
     const before = await this.store.snapshot();
     const wasOk = before ? !before.error : true;
     try {
-      await this.sync(creds.domain, creds.apiKey);
+      await this.sync(creds.domain, creds.apiKey, timeoutMs);
     } catch (err) {
       const message = errorText(err);
       const attemptedAt = new Date().toISOString();
@@ -378,7 +378,7 @@ export class RemnawaveService {
             title: 'Remnawave не отвечает',
             body: `Больше пяти минут панель не может прочитать ${creds.domain}. Онлайн нод и резкие падения сейчас не отслеживаются. Причина: ${message}`,
             center: true,
-            link: { to: '/servers/remnawave', label: 'Открыть Remnawave' },
+            link: { to: '/nodes', label: 'Открыть Remnawave' },
             telegram: { event: 'panel_health' },
           })
           .catch((notifyErr) =>
@@ -399,7 +399,7 @@ export class RemnawaveService {
             title: 'Remnawave снова отвечает',
             body: `Связь с ${creds.domain} восстановлена. Онлайн нод и падения снова отслеживаются по свежим данным.`,
             center: true,
-            link: { to: '/servers/remnawave', label: 'Открыть Remnawave' },
+            link: { to: '/nodes', label: 'Открыть Remnawave' },
             telegram: { event: 'panel_health' },
           })
           .catch((notifyErr) =>
@@ -408,8 +408,8 @@ export class RemnawaveService {
     }
   }
 
-  private async sync(domain: string, apiKey: string): Promise<void> {
-    const { stats, nodes } = await this.fetchOrThrow(domain, apiKey);
+  private async sync(domain: string, apiKey: string, timeoutMs?: number): Promise<void> {
+    const { stats, nodes } = await this.fetchOrThrow(domain, apiKey, timeoutMs);
     // Онлайн нод читаем раз в минуту, а сертификат — раз в полчаса: он меняется раз в месяцы.
     const before = await this.store.snapshot();
     const fresh = Date.now() - this.certCheckedAt < REMNAWAVE_CERT_CHECK_INTERVAL_MIN * 60_000;
@@ -429,9 +429,9 @@ export class RemnawaveService {
     void this.recordOnline(nodes);
   }
 
-  private async fetchOrThrow(domain: string, apiKey: string) {
+  private async fetchOrThrow(domain: string, apiKey: string, timeoutMs?: number) {
     try {
-      return await this.client.fetch(domain, apiKey);
+      return await this.client.fetch(domain, apiKey, timeoutMs);
     } catch (err) {
       if (err instanceof RemnawaveApiError) {
         if (err.kind === 'unauthorized')

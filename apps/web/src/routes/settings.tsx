@@ -37,9 +37,9 @@ const GROUPS = [
     ],
   },
   {
-    title: 'Слежение',
+    title: 'Мониторинг',
     items: [
-      { to: '/settings/autochecks', label: 'Автопроверки', icon: ActivityIcon },
+      { to: '/settings/autochecks', label: 'Автопроверки нод', icon: ActivityIcon },
       { to: '/settings/incidents', label: 'Инциденты', icon: TriangleAlertIcon },
     ],
   },
@@ -139,7 +139,7 @@ function SettingsLayout() {
           })}
         </nav>
         {/* Одна ширина содержимого у всех разделов. */}
-        <div className="min-w-0 max-w-[860px]">
+        <div className="min-w-0">
           <Outlet />
         </div>
       </div>

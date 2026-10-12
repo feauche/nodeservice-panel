@@ -76,41 +76,6 @@ export class SettingsController {
     return this.settings.updateCustomSites(body);
   }
 
-  @Get('autochecks')
-  @ApiOperation({ summary: 'Автопроверки: тумблеры и интервалы фоновых проверок' })
-  @ApiOkResponse({ type: AutochecksSettingsDto })
-  getAutochecks(): Promise<AutochecksSettingsDto> {
-    return this.settings.getAutochecks();
-  }
-
-  /** «По умолчанию» на фронте — тот же PUT со значениями AUTOCHECKS_DEFAULTS. Diff — в Журнал. */
-  @Put('autochecks')
-  @Audit('settings.autochecks.updated', {
-    target: { type: 'settings', id: 'autochecks', display: 'Автопроверки' },
-  })
-  @ApiOperation({ summary: 'Изменить автопроверки' })
-  @ApiOkResponse({ type: AutochecksSettingsDto })
-  updateAutochecks(@Body() body: AutochecksSettingsUpdateDto): Promise<AutochecksSettingsDto> {
-    return this.settings.updateAutochecks(body);
-  }
-
-  @Get('incidents')
-  @ApiOperation({ summary: 'Настройки инцидентов: пороги, время реакции, автопочинка' })
-  @ApiOkResponse({ type: IncidentsSettingsDto })
-  getIncidents(): Promise<IncidentsSettingsDto> {
-    return this.settings.getIncidents();
-  }
-
-  @Put('incidents')
-  @Audit('settings.incidents.updated', {
-    target: { type: 'settings', id: 'incidents', display: 'Инциденты' },
-  })
-  @ApiOperation({ summary: 'Изменить настройки инцидентов' })
-  @ApiOkResponse({ type: IncidentsSettingsDto })
-  updateIncidents(@Body() body: IncidentsSettingsUpdateDto): Promise<IncidentsSettingsDto> {
-    return this.settings.updateIncidents(body);
-  }
-
   @Get('assistant')
   @ApiOperation({ summary: 'Статус Ассистента (задан ли ключ, модель)' })
   @ApiOkResponse({ type: AssistantStatusDto })

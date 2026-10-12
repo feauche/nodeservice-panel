@@ -1,5 +1,4 @@
 import {
-  INCIDENT_KIND_META,
   isValidTelegramProxy,
   parseTelegramUrl,
   TELEGRAM_DESTINATIONS_MAX,
@@ -7,9 +6,6 @@ import {
   TELEGRAM_EVENT_HINTS,
   TELEGRAM_EVENT_LABELS,
   TELEGRAM_EVENT_TONE,
-  TELEGRAM_KIND_GROUPS,
-  TELEGRAM_KIND_HINTS,
-  TELEGRAM_KIND_LABELS,
   TELEGRAM_REMIND_HOURS,
   type TelegramDelivery,
   type TelegramDestination,
@@ -29,7 +25,6 @@ import { cn } from '@/lib/utils';
 import { SaveBar, SectionHeader, SettingsCard, SettingsRow, Toggle } from './settings-ui';
 import { useTelegramSettings, useTestTelegram, useUpdateTelegram } from './telegram-api';
 import { timeZoneLabel } from './time-zones';
-import { WatchdogCard } from './watchdog-card';
 
 /** Строка чата: сохранённая (по id, токен только маской) или новая (ссылка целиком, пока не сохранили). */
 type Row = { key: string; saved: TelegramDestination } | { key: string; url: string };
@@ -481,14 +476,8 @@ export function NotificationsPage() {
       </SettingsCard>
       <NotificationGroupHeader
         number={2}
-        title="Резервная тревога"
-        hint="Сообщит о полном падении панели независимо от самой панели"
-      />
-      <WatchdogCard />
-      <NotificationGroupHeader
-        number={3}
         title="Какие сообщения отправлять"
-        hint="Сначала общие события, затем отдельные виды инцидентов"
+        hint="Общие события панели. Виды инцидентов выбираются в настройках инцидентов."
       />
       <SettingsCard title="Что присылать" hint="Одинаково для всех чатов.">
         {TELEGRAM_EVENT_GROUPS.map((g) => (
@@ -533,53 +522,8 @@ export function NotificationsPage() {
         ))}
       </SettingsCard>
 
-      <SettingsCard
-        title="Какие инциденты"
-        hint={
-          'Выключенный вид не присылается совсем — ни открытие, ни «ждёт "Да"», ни «починилось». В колокольчике панели всё остаётся.'
-        }
-      >
-        {TELEGRAM_KIND_GROUPS.map((g) => (
-          <div key={g.title} className="pt-2">
-            <h4 className="m-0 pt-1 text-[10.5px] font-semibold tracking-[0.07em] text-text-3 uppercase">
-              {g.title}
-            </h4>
-            <div>
-              {g.keys.map((k) => {
-                const crit = INCIDENT_KIND_META[k].severity === 'crit';
-                return (
-                  <SettingsRow
-                    key={k}
-                    htmlFor={`tg-kind-${k}`}
-                    label={
-                      <>
-                        {TELEGRAM_KIND_LABELS[k]}
-                        <span
-                          className={cn(
-                            'ml-1.5 inline-flex h-[18px] items-center rounded-[5px] px-1.5 align-[1px] text-[10.5px] font-semibold',
-                            crit ? TONE_BADGE.crit[0] : TONE_BADGE.warn[0],
-                          )}
-                        >
-                          {crit ? TONE_BADGE.crit[1] : TONE_BADGE.warn[1]}
-                        </span>
-                      </>
-                    }
-                    hint={TELEGRAM_KIND_HINTS[k]}
-                  >
-                    <Toggle
-                      id={`tg-kind-${k}`}
-                      checked={draft.kinds[k]}
-                      onChange={(v) => setDraft({ ...draft, kinds: { ...draft.kinds, [k]: v } })}
-                    />
-                  </SettingsRow>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </SettingsCard>
       <NotificationGroupHeader
-        number={4}
+        number={3}
         title="Как доставлять сообщения"
         hint="Оформление, звук, повторы и ночной режим"
       />
@@ -587,7 +531,7 @@ export function NotificationsPage() {
         <SettingsRow
           label="Один сбой сервера — одно уведомление со звуком"
           htmlFor="tg-group"
-          hint="Второй сбой того же сервера за 10 минут («агент» + «SSH») приходит ответом на первый и без звука. Критичный сбой после предупреждения всё равно приходит со звуком."
+          hint="Повторный сигнал той же ноды за 10 минут приходит ответом на первый и без звука. Критичный сбой после предупреждения всё равно приходит со звуком."
         >
           <Toggle
             id="tg-group"
@@ -599,7 +543,7 @@ export function NotificationsPage() {
           label="Предупреждения без звука"
           htmlFor="tg-silent"
           hint={
-            'Звук только у критичных, «ждёт "Да"», входа в панель и напоминаний; остальное приходит тихо.'
+            'Звук только у критичных инцидентов, входа в панель и напоминаний; предупреждения приходят тихо.'
           }
         >
           <Toggle

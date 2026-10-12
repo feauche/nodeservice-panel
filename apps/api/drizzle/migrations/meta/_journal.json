@@ -400,6 +400,20 @@
       "when": 1791705857784,
       "tag": "0059_node_metrics_billing_refs",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1791749893323,
+      "tag": "0060_incident_node_uuid",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1791751508368,
+      "tag": "0061_incident_diagnostics",
+      "breakpoints": true
     }
   ]
 }

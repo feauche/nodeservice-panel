@@ -208,6 +208,8 @@ export class IncidentsRepository {
   }
 
   async open(values: {
+    nodeUuid?: string;
+    diagnostics?: import("@nodeservice/shared").NodeTcpDiagnostics | null;
     serverId: string | null;
     serverName: string;
     kind: IncidentKind;

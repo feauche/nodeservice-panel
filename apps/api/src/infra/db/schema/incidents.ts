@@ -1,4 +1,5 @@
 import type {
+  NodeTcpDiagnostics,
   IncidentAnalysis,
   IncidentAttempt,
   IncidentEvent,
@@ -15,6 +16,8 @@ export const incidents = pgTable(
   'incidents',
   {
     id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    nodeUuid: uuid('node_uuid'),
+    diagnostics: jsonb('diagnostics').$type<NodeTcpDiagnostics | null>(),
     serverId: uuid('server_id').references(() => servers.id, { onDelete: 'set null' }),
     serverName: text('server_name').notNull(),
     kind: text('kind').notNull(),

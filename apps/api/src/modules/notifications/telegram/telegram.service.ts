@@ -610,6 +610,8 @@ export class TelegramService {
       if (m.incidentId && this.cancelledIncidents.has(m.incidentId)) return;
       const s = await this.store.load();
       if (s.destinations.length === 0) return;
+      if (['needs_confirm','autofix_started','fix_failed','maintenance','check_failed','jarvis_card'].includes(m.event)) return;
+      if (m.kind && ['agent_offline','ssh_down','disk_high'].includes(m.kind)) return;
       if (m.kind && !s.kinds[m.kind]) return;
       const previousMessageAt = m.incidentId ? await this.lastMessageAt(m.incidentId) : null;
       // Первое сообщение о деле — его открытие, каким бы событием оно ни пришло. Панель сразу предложила

@@ -1,6 +1,5 @@
+import {TcpResults} from '@/features/nodes/tcp-results';
 import {
-  AUTOFIX_POLICY_LABELS,
-  actionKeySchema,
   actionMeta,
   INCIDENT_KIND_META,
   type Incident,
@@ -21,18 +20,15 @@ import { toast } from '@/lib/notify';
 import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
 import { DetailText } from './detail-text';
-import { AttemptsAccordion, ProposalBlock, Timeline } from './incident-blocks';
+import { AttemptsAccordion, Timeline } from './incident-blocks';
 import { durationText, outcomeSentence } from './incident-format';
 import {
   useAcknowledgeIncident,
   useDeleteIncident,
   useIncident,
-  useIncidentPolicy,
   useIncidents,
   useResolveIncident,
-  useRunAction,
 } from './incidents-api';
-import { LevelChip } from './level-chip';
 
 const STATUS_PILL: Record<IncidentStatus, { tone: 'ok' | 'warn' | 'crit' | 'muted'; label: string }> = {
   open: { tone: 'crit', label: 'Открыт' },
@@ -51,12 +47,12 @@ const BTN =
 export function IncidentCasePage({ id }: { id: string }) {
   const q = useIncident(id);
   const all = useIncidents('all');
-  const policy = useIncidentPolicy();
+
   const navigate = useNavigate();
   const ack = useAcknowledgeIncident();
   const resolve = useResolveIncident();
   const remove = useDeleteIncident();
-  const run = useRunAction();
+
   const [confirmResolve, setConfirmResolve] = useState(false);
   const [stopNodeWatch, setStopNodeWatch] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -87,10 +83,8 @@ export function IncidentCasePage({ id }: { id: string }) {
 
   const meta = INCIDENT_KIND_META[inc.kind];
   const status = STATUS_PILL[inc.status];
-  const running = inc.attempts.find((a) => a.status === 'running');
-  const canAct = inc.status !== 'resolved' && inc.serverId !== null;
   const canStopNodeWatch = inc.kind === 'node_down' && inc.serverId !== null;
-  const rule = policy.data?.items.find((i) => i.kind === inc.kind);
+
   const similar = (all.data?.items ?? []).filter(
     (i) =>
       i.id !== inc.id &&
@@ -103,19 +97,6 @@ export function IncidentCasePage({ id }: { id: string }) {
     ? [...lastSimilar.attempts].reverse().find((a) => a.status === 'helped')
     : undefined;
 
-  const doRun = async (raw: string) => {
-    const parsed = actionKeySchema.safeParse(raw);
-    if (!parsed.success) {
-      toast.error('Этого действия больше нет в реестре — закройте инцидент вручную.');
-      return;
-    }
-    try {
-      await run.mutateAsync({ id: inc.id, action: parsed.data });
-      toast.success(`«${actionMeta(parsed.data).title}» запущено — ход выполнения ниже.`);
-    } catch (err) {
-      toast.error(apiErrorMessage(err));
-    }
-  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -193,11 +174,7 @@ export function IncidentCasePage({ id }: { id: string }) {
           {/* Основная колонка */}
           <div className="flex flex-col gap-4 px-5 py-4 md:border-r md:border-border">
             {/* Текст бывает блоками по строкам (падение онлайна: откуда проверяли, вывод) — строки сохраняем. */}
-            <p className="text-[13.5px] leading-normal whitespace-pre-line">
-              <DetailText text={inc.detail} />
-              {inc.detail.includes('\n') ? '\n\n' : ' '}
-              <span className="text-text-2">{outcomeSentence(inc, now)}.</span>
-            </p>
+            {inc.diagnostics ? <TcpResults report={inc.diagnostics.report} online={inc.diagnostics.online}/> : <LegacyIncidentDetail detail={inc.detail} outcome={outcomeSentence(inc,now)}/>}
             <section>
               <h3 className="mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
                 Что происходило
@@ -212,13 +189,7 @@ export function IncidentCasePage({ id }: { id: string }) {
                 <AttemptsAccordion attempts={inc.attempts} />
               </section>
             )}
-            {canAct && inc.proposal && !running && (
-              <ProposalBlock
-                incident={inc}
-                onRun={() => void doRun(inc.proposal?.action ?? '')}
-                busy={run.isPending}
-              />
-            )}
+
           </div>
 
           {/* Правая колонка: короткие значения, цепочка списком — ничего не переносится «в кашу» */}
@@ -245,46 +216,8 @@ export function IncidentCasePage({ id }: { id: string }) {
                 </dl>
               ) : (
                 <p className="text-[12.5px] leading-snug text-text-3">
-                  Снимок сигналов не сохранился: инцидент старше этой возможности.
+                  Отдельный снимок ресурсов отсутствует. Данные TCP-проверки показаны в описании, если проверка выполнялась.
                 </p>
-              )}
-            </section>
-            <section>
-              <h3 className="mb-2.5 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
-                Правило
-              </h3>
-              {rule ? (
-                rule.chain.length === 0 ? (
-                  <p className="text-[12.5px] leading-snug text-text-2">
-                    Панель ничего не может сделать без доступа — только уведомление.
-                  </p>
-                ) : (
-                  <>
-                    <ol className="flex flex-col gap-1.5 text-[12.5px]">
-                      {rule.chain.map((c, i) => (
-                        <li key={c.key} className="flex items-center gap-2">
-                          <span className="grid size-[18px] flex-none place-items-center rounded-[5px] bg-surface-3 text-[10.5px] font-bold text-text-3 tabular-nums">
-                            {i + 1}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-text-2">{c.title}</span>
-                          <LevelChip level={c.level} />
-                        </li>
-                      ))}
-                    </ol>
-                    <div className="mt-2.5 flex items-center gap-2 border-t border-border pt-2.5 text-[12.5px]">
-                      <span className="text-text-3">Политика</span>
-                      <span className="font-semibold">{AUTOFIX_POLICY_LABELS[rule.policy]}</span>
-                      <Link
-                        to="/incidents/autofix"
-                        className="ml-auto text-[12px] text-brand hover:underline"
-                      >
-                        Изменить
-                      </Link>
-                    </div>
-                  </>
-                )
-              ) : (
-                <Skeleton className="h-[64px] rounded-[8px]" />
               )}
             </section>
             <section>
@@ -423,4 +356,11 @@ function Kv({ k, v, crit }: { k: string; v: string; crit?: boolean }) {
       </dd>
     </div>
   );
+}
+
+function LegacyIncidentDetail({detail,outcome}:{detail:string;outcome:string}){
+ const lines=detail.split('\n'),report=lines.find(l=>/^https:\/\/check-host\.net\/check-report\/[a-zA-Z0-9_-]+$/.test(l));
+ if(!report)return <p className="text-[13.5px] leading-normal whitespace-pre-line"><DetailText text={detail}/><span className="mt-3 block text-text-3">{outcome}.</span></p>;
+ const target=lines.find(l=>/^[\d.:[\]a-fA-F]+:\d+$/.test(l));
+ return <section className="space-y-3"><div className="rounded-[12px] border border-border bg-surface-2 p-4"><h3 className="font-heading text-[15px] font-semibold">Результат проверки доступности</h3>{target&&<p className="mt-2 font-mono text-[14px]">{target}</p>}<p className="mt-2 text-[13px] leading-5 text-text-2">{lines.filter(l=>l!==report&&l!==target).join(' ')}</p><a href={report} target="_blank" rel="noreferrer" className="mt-3 inline-flex h-9 items-center rounded-[9px] border border-border bg-surface px-3 text-[12.5px] text-brand hover:bg-surface-3">Открыть отчёт Check-Host ↗</a></div><p className="text-[12px] text-text-3">{outcome}.</p></section>;
 }

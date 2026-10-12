@@ -1,3 +1,6 @@
+import {NodeTcpHistoryService} from './node-tcp-history.service.js';
+import {CheckHostModule} from '../incidents/check-host.module.js';
+import { SettingsModule } from '../settings/settings.module.js';
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module.js';
 import { BillingModule } from '../billing/billing.module.js';
@@ -26,7 +29,7 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
 
 /** J4: подключение к панели Remnawave, только чтение (домен + токен API с правами на чтение). */
 @Module({
-  imports: [AuditModule, BillingModule, ServersModule, NotificationsModule, ProvidersModule],
+  imports: [CheckHostModule,SettingsModule,AuditModule, BillingModule, ServersModule, NotificationsModule, ProvidersModule],
   controllers: [
     NodeMetricsController,
     RemnaBillingProvidersController,
@@ -36,7 +39,7 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
     RemnaProvidersController,
     RemnaProviderCatalogController,
   ],
-  providers: [
+  providers: [NodeTcpHistoryService,
     NodeMetricsService,
     RemnaProviderCatalogController,
     NodeLayoutStore,

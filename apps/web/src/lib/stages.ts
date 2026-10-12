@@ -15,6 +15,7 @@ export const OPEN_SECTIONS: ReadonlySet<string> = new Set<string>([
   '/nodes',
   '/integrations/dpi',
   '/integrations/dns',
+  '/integrations/bschecker',
   '/billing/providers',
   // Биллинг: оплаты серверов, аренды, доменов и сертификатов.
   '/billing',

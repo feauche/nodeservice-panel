@@ -11,6 +11,14 @@ const TOKEN = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw';
 describe('NotificationsPage', () => {
   beforeEach(() => resetMockState({ authenticated: true }));
 
+  it('сторож и резервная тревога удалены из настроек', async () => {
+    renderPage(NotificationsPage, '/settings/notifications');
+    await screen.findByRole('button', { name: 'Добавить чат' });
+    expect(screen.queryByText('Резервная тревога')).not.toBeInTheDocument();
+    expect(screen.queryByText('Сторож панели')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Поставить сторожа' })).not.toBeInTheDocument();
+  });
+
   it('добавить чат: неверная ссылка подсвечена и не сохраняется; верная — тест, сохранение, токен скрыт', async () => {
     renderPage(NotificationsPage, '/settings/notifications');
     const user = userEvent.setup();
@@ -125,25 +133,24 @@ describe('NotificationsPage', () => {
     renderPage(NotificationsPage, '/settings/notifications');
     const user = userEvent.setup();
     await screen.findByText('Что присылать');
-    const maint = document.getElementById('tg-ev-maintenance') as HTMLElement;
+    const maint = document.getElementById('tg-ev-login') as HTMLElement;
     await user.click(maint);
     await user.click(document.getElementById('tg-quiet') as HTMLElement);
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
-    await waitFor(() => expect(mockTelegram.settings.events.maintenance).toBe(true));
+    await waitFor(() => expect(mockTelegram.settings.events.login).toBe(false));
     expect(mockTelegram.settings.quiet.enabled).toBe(true);
   });
 
-  it('какие инциденты и как присылать: выключить SSH, без склейки, напоминать раз в 4 ч', async () => {
+  it('инциденты перенесены; доставка без склейки и напоминания раз в 4 ч', async () => {
     renderPage(NotificationsPage, '/settings/notifications');
     const user = userEvent.setup();
-    await screen.findByText('Какие инциденты');
-    await user.click(document.getElementById('tg-kind-ssh_down') as HTMLElement);
+    await screen.findByText('Что присылать');
+    expect(screen.queryByText('Какие инциденты')).not.toBeInTheDocument();
+    expect(document.getElementById('tg-kind-ssh_down')).toBeNull();
     await user.click(document.getElementById('tg-group') as HTMLElement);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Как часто напоминать' }), '4');
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
-    await waitFor(() => expect(mockTelegram.settings.kinds.ssh_down).toBe(false));
-    expect(mockTelegram.settings.kinds.agent_offline).toBe(true);
-    expect(mockTelegram.settings.delivery).toMatchObject({ groupPerServer: false, remindHours: 4 });
+    await waitFor(() => expect(mockTelegram.settings.delivery).toMatchObject({ groupPerServer: false, remindHours: 4 }));
   });
 
   it('расширенное оформление: выключено по умолчанию; образец можно прислать до сохранения, потом включить', async () => {

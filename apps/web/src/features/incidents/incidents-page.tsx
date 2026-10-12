@@ -347,11 +347,11 @@ export function IncidentsPage() {
           </button>
         )}
         <Link
-          to="/incidents/autofix"
+          to="/settings/incidents"
           className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3.5 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground"
         >
           <WrenchIcon className="size-3.5" aria-hidden="true" />
-          Автопочинка
+          Настройки
         </Link>
       </div>
 

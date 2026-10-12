@@ -192,6 +192,8 @@ export class IncidentsService {
   toDto(row: IncidentRow): Incident {
     return {
       id: row.id,
+      nodeUuid: row.nodeUuid ?? null,
+      diagnostics: row.diagnostics ?? null,
       serverId: row.serverId,
       serverName: row.serverName,
       kind: row.kind as IncidentKind,

@@ -9,7 +9,6 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from '@/lib/api';
-import { WATCHDOG_KEY } from './watchdog-api';
 
 const KEY = ['settings', 'telegram'] as const;
 
@@ -28,8 +27,6 @@ export function useUpdateTelegram() {
       api.put('/settings/telegram', body, telegramSettingsSchema),
     onSuccess: (s) => {
       qc.setQueryData(KEY, s);
-      // Сторож пишет в эти же чаты: после сохранения он мог стать «поставленным по-старому» или стать возможным.
-      void qc.invalidateQueries({ queryKey: WATCHDOG_KEY });
     },
   });
 }

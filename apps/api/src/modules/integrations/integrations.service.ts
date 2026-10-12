@@ -60,7 +60,7 @@ export class IntegrationsService {
     if (session && method !== 'GET' && (await this.identity(provider)) !== session.identity)
       throw new BadRequestException('Подключение изменилось. Повторите действие из обновлённой страницы.');
     const credentials = session?.credentials ?? (await this.credentials(provider));
-    const base = provider === 'dpi' ? 'https://dpichecker.st/api/v1' : 'https://api.cloudflare.com/client/v4';
+    const base = provider === 'bschecker' ? 'https://bsbord.com/v1' : provider === 'dpi' ? 'https://dpichecker.st/api/v1' : 'https://api.cloudflare.com/client/v4';
     return this.json(base + path, {
       method,
       headers: {
@@ -111,7 +111,7 @@ export class IntegrationsService {
     return (await this.stored(provider))?.status ?? empty(provider);
   }
   async list() {
-    return { items: await Promise.all((['dpi', 'regru', 'cloudflare'] as const).map((p) => this.status(p))) };
+    return { items: await Promise.all((['dpi', 'regru', 'cloudflare', 'bschecker'] as const).map((p) => this.status(p))) };
   }
   async disconnect(provider: IntegrationProvider) {
     await this.db.delete(appMeta).where(eq(appMeta.key, this.key(provider)));
@@ -179,7 +179,12 @@ export class IntegrationsService {
         connected: true,
         checkedAt: new Date().toISOString(),
       };
-      if (provider === 'dpi') {
+      if (provider === 'bschecker') {
+        const data = await this.json('https://bsbord.com/v1/account', {headers:{Authorization:`Bearer ${credentials.apiKey}`}});
+        const total = data.balance_total;
+        if (typeof total !== 'number' || !Number.isFinite(total)) throw new Error('Неверный ответ аккаунта BS Checker');
+        status.balance = String(total / 100);
+      } else if (provider === 'dpi') {
         const data = await this.json('https://dpichecker.st/api/v1/profile', {
           headers: { 'X-API-Key': credentials.apiKey ?? '' },
         });

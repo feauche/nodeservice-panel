@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <filter id="g" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.5" result="b"></feGaussianBlur>
+      <feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+    </filter>
+  </defs>
+  <rect width="64" height="64" rx="10" fill="#0a0e0a"></rect>
+  <rect x="2" y="2" width="60" height="60" rx="9" fill="none" stroke="#16341f"></rect>
+  <g filter="url(#g)" fill="none" stroke="#22c55e" stroke-width="3" stroke-linecap="square" stroke-linejoin="miter">
+    <polyline points="6,32 18,32 22,32 26,18 32,46 38,32 58,32"></polyline>
+  </g>
+  <circle cx="32" cy="46" r="2.5" fill="#4ade80"></circle>
+</svg>

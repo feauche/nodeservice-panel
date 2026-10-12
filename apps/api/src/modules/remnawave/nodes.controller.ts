@@ -1,9 +1,23 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Put } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  NotFoundException,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Put,
+} from '@nestjs/common';
 import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { nodeLayoutSchema, nodePreferencesSchema } from '@nodeservice/shared';
 import { createZodDto } from 'nestjs-zod';
+import { CheckHostService } from '../incidents/check-host.service.js';
+import { MonitoringStore } from '../settings/monitoring.store.js';
 import { NodeLayoutStore } from './node-layout.store.js';
 import { NodePreferencesStore } from './node-preferences.store.js';
+import { NodeTcpHistoryService } from './node-tcp-history.service.js';
 import { NodesConnectRequestDto, NodesStatusDto } from './nodes.dto.js';
 import { RemnaProvidersService } from './remna-providers.service.js';
 import { RemnawaveService } from './remnawave.service.js';
@@ -22,8 +36,25 @@ export class NodesController {
     private readonly preferences: NodePreferencesStore,
     private readonly providers: RemnaProvidersService,
     private readonly layout: NodeLayoutStore,
+    private readonly tcp: CheckHostService,
+    private readonly monitoring: MonitoringStore,
+    private readonly tcpHistory: NodeTcpHistoryService,
   ) {}
 
+  @Post(':uuid/tcp-check')
+  @HttpCode(200)
+  async tcpCheck(@Param('uuid', new ParseUUIDPipe()) uuid: string) {
+    const status = await this.remnawave.status();
+    const node = status.nodes.find((n) => n.uuid === uuid);
+    if (!node) throw new NotFoundException('Нода не найдена в Remnawave.');
+    const cfg = await this.monitoring.get();
+    const report = await this.tcp.checkNode(node.address, cfg.checkHostPort, node.port);
+    await this.tcpHistory.save(uuid, node.name, report);
+    return report;
+  }
+  @Get(':uuid/tcp-checks') tcpChecks(@Param('uuid', new ParseUUIDPipe()) uuid: string) {
+    return this.tcpHistory.list(uuid);
+  }
   @Get('layout') layoutGet() {
     return this.layout.get();
   }
@@ -48,8 +79,13 @@ export class NodesController {
     this.pending = (async () => {
       const current = await this.remnawave.status();
       const lastAttempt = current.lastAttemptAt ?? current.checkedAt;
-      if (current.connected && (!lastAttempt || Date.now() - Date.parse(lastAttempt) >= 14_000)) {
-        await this.remnawave.syncQuiet();
+      const cfg = await this.monitoring.get();
+      if (
+        cfg.enabled &&
+        current.connected &&
+        (!lastAttempt || Date.now() - Date.parse(lastAttempt) >= cfg.pollSeconds * 1000)
+      ) {
+        await this.remnawave.syncQuiet(cfg.apiTimeoutSeconds * 1000);
         return this.providers.enrich(await this.remnawave.status());
       }
       return this.providers.enrich(current);

@@ -59,24 +59,6 @@ export class IncidentsController {
     return this.incidents.weekStats();
   }
 
-  // Статический маршрут раньше `:id`, иначе ParseUUIDPipe отвергнет «policy».
-  @Get('policy')
-  @ApiOperation({ summary: 'Автопочинка: политика по сигналам, цепочки шагов, статистика' })
-  @ApiOkResponse({ type: IncidentPolicyResponseDto })
-  policy(): Promise<IncidentPolicyResponseDto> {
-    return this.incidents.policy();
-  }
-
-  @Patch('policy')
-  @Audit('settings.incidents.updated', {
-    target: { type: 'settings', id: 'incidents', display: 'Инциденты' },
-  })
-  @ApiOperation({ summary: 'Автопочинка: общий тумблер, политика по сигналам, пауза' })
-  @ApiOkResponse({ type: IncidentPolicyResponseDto })
-  updatePolicy(@Body() body: IncidentPolicyUpdateDto): Promise<IncidentPolicyResponseDto> {
-    return this.incidents.updatePolicy(body);
-  }
-
   @Delete('resolved')
   @HttpCode(200)
   @ApiOperation({ summary: 'Удалить все решённые инциденты' })
@@ -115,13 +97,4 @@ export class IncidentsController {
     return this.incidents.resolveManual(id, resolveIncidentRequestSchema.parse(body ?? {}));
   }
 
-  @Post(':id/actions/:action/run')
-  @HttpCode(202)
-  @ApiOperation({
-    summary: 'Запустить действие реестра (T1/T2): попытка идёт в фоне, инцидент перечитывается',
-  })
-  @ApiOkResponse({ type: IncidentDto })
-  run(@Param('id', ParseUUIDPipe) id: string, @Param('action') action: string): Promise<IncidentDto> {
-    return this.incidents.runAction(id, actionKeySchema.parse(action) as ActionKey);
-  }
 }

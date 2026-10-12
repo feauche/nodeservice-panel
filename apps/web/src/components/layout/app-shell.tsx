@@ -64,9 +64,11 @@ const NAV_HELP = [
   { to: '/assistant', label: 'Ассистент', icon: JarvisIcon },
   { to: '/knowledge', label: 'База знаний', icon: BookOpenIcon },
 ] as const;
+function BsCheckerIcon({className}:{className?:string}){return <img src="/integration-icons/bschecker.svg" alt="" className={className}/>;}
 const NAV_INTEGRATIONS = [
   { to: '/integrations/dpi', label: 'DPI Checker', icon: DpiCheckerIcon },
   { to: '/integrations/dns', label: 'DNS интеграции', icon: DnsIntegrationsIcon },
+  { to: '/integrations/bschecker', label: 'BS Checker', icon: BsCheckerIcon },
 ] as const;
 /** Версия панели из сборки; в тестах без Vite — «dev». */
 const APP_VERSION = import.meta.env.VITE_APP_VERSION ?? 'dev';

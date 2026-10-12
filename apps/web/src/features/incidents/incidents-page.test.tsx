@@ -487,7 +487,7 @@ describe('IncidentsPage', () => {
 describe('IncidentCasePage', () => {
   beforeEach(() => resetMockState({ authenticated: true }));
 
-  it('кейс: хронология, сигналы в момент сбоя, правило и подтверждение шага', async () => {
+  it('кейс: хронология и сигналы без запуска автопочинки', async () => {
     const { IncidentCasePage } = await import('./incident-case-page');
     const id = openId();
     const { ServerModalHost } = await import('@/features/servers/server-modal-host');
@@ -517,10 +517,8 @@ describe('IncidentCasePage', () => {
     // правая колонка: сигналы
     expect(screen.getByText('Сигналы в момент сбоя')).toBeInTheDocument();
     expect(screen.getByText('Контейнер ноды')).toBeInTheDocument();
-    // подтверждение шага запускает попытку
-    const user = userEvent.setup();
-    await user.click(screen.getAllByRole('button', { name: /^Подтвердить:/ })[0] as HTMLElement);
-    await waitFor(() => expect(screen.getByTestId('attempt-block')).toBeInTheDocument(), { timeout: 4000 });
+    expect(screen.queryByRole('button', { name: /^Подтвердить:/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: 'Автопочинка' })).not.toBeInTheDocument();
   });
 
   it('кейс: закрытие «Контейнер ноды не запущен» с галочкой выключает слежение', async () => {

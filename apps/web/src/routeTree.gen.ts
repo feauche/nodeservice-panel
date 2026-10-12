@@ -24,6 +24,7 @@ import { Route as SetupRouteImport } from './routes/setup';
 import { Route as BillingProvidersRouteImport } from './routes/billing_.providers';
 import { Route as IncidentsIdRouteImport } from './routes/incidents_.$id';
 import { Route as IncidentsAutofixRouteImport } from './routes/incidents_.autofix';
+import { Route as IntegrationsBscheckerRouteImport } from './routes/integrations_.bschecker';
 import { Route as IntegrationsDnsRouteImport } from './routes/integrations_.dns';
 import { Route as IntegrationsDpiRouteImport } from './routes/integrations_.dpi';
 import { Route as Login2faRouteImport } from './routes/login_.2fa';
@@ -113,6 +114,11 @@ const IncidentsAutofixRoute = IncidentsAutofixRouteImport.update({
   path: '/incidents/autofix',
   getParentRoute: () => rootRouteImport,
 } as any);
+const IntegrationsBscheckerRoute = IntegrationsBscheckerRouteImport.update({
+  id: '/integrations_/bschecker',
+  path: '/integrations/bschecker',
+  getParentRoute: () => rootRouteImport,
+} as any);
 const IntegrationsDnsRoute = IntegrationsDnsRouteImport.update({
   id: '/integrations_/dns',
   path: '/integrations/dns',
@@ -195,6 +201,7 @@ export interface FileRoutesByFullPath {
   '/billing/providers': typeof BillingProvidersRoute;
   '/incidents/$id': typeof IncidentsIdRoute;
   '/incidents/autofix': typeof IncidentsAutofixRoute;
+  '/integrations/bschecker': typeof IntegrationsBscheckerRoute;
   '/integrations/dns': typeof IntegrationsDnsRoute;
   '/integrations/dpi': typeof IntegrationsDpiRoute;
   '/login/2fa': typeof Login2faRoute;
@@ -224,6 +231,7 @@ export interface FileRoutesByTo {
   '/billing/providers': typeof BillingProvidersRoute;
   '/incidents/$id': typeof IncidentsIdRoute;
   '/incidents/autofix': typeof IncidentsAutofixRoute;
+  '/integrations/bschecker': typeof IntegrationsBscheckerRoute;
   '/integrations/dns': typeof IntegrationsDnsRoute;
   '/integrations/dpi': typeof IntegrationsDpiRoute;
   '/login/2fa': typeof Login2faRoute;
@@ -255,6 +263,7 @@ export interface FileRoutesById {
   '/billing_/providers': typeof BillingProvidersRoute;
   '/incidents_/$id': typeof IncidentsIdRoute;
   '/incidents_/autofix': typeof IncidentsAutofixRoute;
+  '/integrations_/bschecker': typeof IntegrationsBscheckerRoute;
   '/integrations_/dns': typeof IntegrationsDnsRoute;
   '/integrations_/dpi': typeof IntegrationsDpiRoute;
   '/login_/2fa': typeof Login2faRoute;
@@ -287,6 +296,7 @@ export interface FileRouteTypes {
     | '/billing/providers'
     | '/incidents/$id'
     | '/incidents/autofix'
+    | '/integrations/bschecker'
     | '/integrations/dns'
     | '/integrations/dpi'
     | '/login/2fa'
@@ -316,6 +326,7 @@ export interface FileRouteTypes {
     | '/billing/providers'
     | '/incidents/$id'
     | '/incidents/autofix'
+    | '/integrations/bschecker'
     | '/integrations/dns'
     | '/integrations/dpi'
     | '/login/2fa'
@@ -346,6 +357,7 @@ export interface FileRouteTypes {
     | '/billing_/providers'
     | '/incidents_/$id'
     | '/incidents_/autofix'
+    | '/integrations_/bschecker'
     | '/integrations_/dns'
     | '/integrations_/dpi'
     | '/login_/2fa'
@@ -377,6 +389,7 @@ export interface RootRouteChildren {
   BillingProvidersRoute: typeof BillingProvidersRoute;
   IncidentsIdRoute: typeof IncidentsIdRoute;
   IncidentsAutofixRoute: typeof IncidentsAutofixRoute;
+  IntegrationsBscheckerRoute: typeof IntegrationsBscheckerRoute;
   IntegrationsDnsRoute: typeof IntegrationsDnsRoute;
   IntegrationsDpiRoute: typeof IntegrationsDpiRoute;
   Login2faRoute: typeof Login2faRoute;
@@ -489,6 +502,13 @@ declare module '@tanstack/react-router' {
       path: '/incidents/autofix';
       fullPath: '/incidents/autofix';
       preLoaderRoute: typeof IncidentsAutofixRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    '/integrations_/bschecker': {
+      id: '/integrations_/bschecker';
+      path: '/integrations/bschecker';
+      fullPath: '/integrations/bschecker';
+      preLoaderRoute: typeof IntegrationsBscheckerRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     '/integrations_/dns': {
@@ -627,6 +647,7 @@ const rootRouteChildren: RootRouteChildren = {
   BillingProvidersRoute: BillingProvidersRoute,
   IncidentsIdRoute: IncidentsIdRoute,
   IncidentsAutofixRoute: IncidentsAutofixRoute,
+  IntegrationsBscheckerRoute: IntegrationsBscheckerRoute,
   IntegrationsDnsRoute: IntegrationsDnsRoute,
   IntegrationsDpiRoute: IntegrationsDpiRoute,
   Login2faRoute: Login2faRoute,

@@ -105,6 +105,10 @@ const KEY_LABELS: Record<string, string> = {
   proposals: 'Предложений',
   changeId: 'ID изменения',
   note: 'Итог',
+  verdict: 'Доступность',
+  checkedAt: 'Время проверки',
+  ports: 'Порты и точки Check-Host',
+  reports: 'Отчёты Check-Host',
 };
 
 /** Записи о решениях по изменениям, которые предложил Ассистент (J5): показываются своей строкой. */
@@ -150,7 +154,17 @@ export function metadataRows(
     .filter(([key]) => !HIDDEN_KEYS.has(key))
     .map(([key, raw]) => {
       let value = formatValue(raw);
-      if (key === 'amr' && Array.isArray(raw))
+      if (key === 'verdict' && typeof raw === 'string')
+        value =
+          (
+            {
+              reachable: 'Доступен',
+              russia_unreachable: 'Недоступен из РФ',
+              port_unreachable: 'TCP-порты не отвечают',
+              unknown: 'Неполный результат',
+            } as Record<string, string>
+          )[raw] ?? raw;
+      else if (key === 'amr' && Array.isArray(raw))
         value = capFirst(raw.map((m) => AMR_LABELS[String(m)] ?? String(m)).join(' + '));
       else if (key === 'reason' && typeof raw === 'string') value = capFirst(REASON_LABELS[raw] ?? raw);
       else if (key === 'mode' && typeof raw === 'string') value = MODE_LABELS[raw] ?? raw;

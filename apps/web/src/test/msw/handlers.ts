@@ -1,4 +1,4 @@
-import { AUTH_PROBLEM, BRAND_NAME_DEFAULT, type Me } from '@nodeservice/shared';
+import { MONITORING_DEFAULTS, monitoringSettingsUpdateSchema, AUTH_PROBLEM, BRAND_NAME_DEFAULT, type Me } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
 import { analysisHandlers, seedAnalysis } from './analysis-mock';
 import { assistantHandlers, seedAssistant } from './assistant-mock';
@@ -50,6 +50,7 @@ export interface MockState {
   locked: boolean;
 }
 
+export const mockMonitoring = {value:{...MONITORING_DEFAULTS}};
 export const mockSnippets: { items: Array<{ id: string; name: string; command: string }> } = { items: [] };
 export const mockCustomSites: { items: Array<{ id: string; name: string; url: string }> } = { items: [] };
 
@@ -76,6 +77,7 @@ seedAudit();
 
 export function resetMockState(patch: Partial<MockState> = {}): void {
   seedAudit();
+  mockMonitoring.value={...MONITORING_DEFAULTS};
   seedAutochecks();
   seedSecurity();
   seedServers();
@@ -196,6 +198,8 @@ export const handlers = [
   ),
   ...auditHandlers,
   ...autochecksHandlers,
+  http.get('/api/settings/monitoring',()=>HttpResponse.json(mockMonitoring.value)),
+  http.put('/api/settings/monitoring',async({request})=>{const p=monitoringSettingsUpdateSchema.safeParse(await request.json());if(!p.success)return HttpResponse.json({detail:'Некорректные настройки'},{status:422});mockMonitoring.value={...mockMonitoring.value,...p.data};return HttpResponse.json(mockMonitoring.value);}),
   ...securityHandlers,
   ...serversHandlers,
   ...terminalHistoryHandlers,

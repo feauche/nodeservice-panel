@@ -137,6 +137,7 @@ export const AUDIT_ACTIONS = {
   'remnawave.provider_created': { category: 'settings', label: 'Провайдер создан в Remnawave' },
   'remnawave.provider_deleted': { category: 'settings', label: 'Провайдер удалён из Remnawave' },
   'remnawave.provider_updated': { category: 'settings', label: 'Провайдер обновлён в Remnawave' },
+  'remnawave.tcp.checked': { category: 'settings', label: 'TCP-проверка ноды через Check-Host' },
   'remnawave.node_provider_updated': { category: 'settings', label: 'Привязка провайдера ноды изменена' },
   'remnawave.connected': { category: 'settings', label: 'Remnawave подключена' },
   'remnawave.disconnected': { category: 'settings', label: 'Remnawave отключена' },
@@ -193,6 +194,7 @@ export const AUDIT_ACTIONS = {
     category: 'settings',
     label: 'Номер чата Telegram обновлён: группа стала супергруппой',
   },
+  // Исторические записи журнала: сам модуль сторожа удалён в 0.82.1.
   'settings.watchdog.installed': { category: 'settings', label: 'Сторож панели поставлен' },
   'settings.watchdog.removed': { category: 'settings', label: 'Сторож панели убран' },
   'settings.watchdog.test': { category: 'settings', label: 'Проверка сторожа панели' },

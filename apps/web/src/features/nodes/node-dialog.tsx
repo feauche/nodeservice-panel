@@ -1,3 +1,4 @@
+import {NodeTcpCheck} from './node-tcp-check';
 import type { NodePreferences, RemnawaveNode } from '@nodeservice/shared';
 import { ActivityIcon, CableIcon, CopyIcon, Settings2Icon } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
@@ -121,7 +122,7 @@ export function NodeDialog({
             </div>
           </dl>
           <div className="mt-auto hidden border-t border-border p-5 text-xs leading-relaxed text-text-3 md:block">
-            Показания хранятся в NodeService. Обновление снимка — каждые 15 секунд.
+            Показания приходят из Remnawave. Частота опроса задаётся в настройках автопроверок.
           </div>
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -281,8 +282,9 @@ export function NodeDialog({
               </div>
             ) : tab === 'connection' ? (
               <div className="space-y-5">
+                <NodeTcpCheck uuid={node.uuid}/>
                 <div>
-                  <h2 className="font-heading text-[16px] font-semibold">Данные подключения</h2>
+                  <h2 className="font-heading text-[16px] font-semibold">Данные подключения и проверки</h2>
                   <p className="mt-1 text-[12px] text-text-3">
                     Адрес, порт и идентификаторы из текущего подключения Remnawave.
                   </p>

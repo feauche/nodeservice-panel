@@ -6,7 +6,6 @@ import { ServersModule } from '../servers/servers.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { RussiaAccessCheckService } from './russia-access-check.service.js';
 import { ServerChecksController } from './server-checks.controller.js';
-import { ServerChecksJob } from './server-checks.job.js';
 import { ServerChecksRepository } from './server-checks.repository.js';
 import { ServerChecksService } from './server-checks.service.js';
 
@@ -17,7 +16,7 @@ import { ServerChecksService } from './server-checks.service.js';
 @Module({
   imports: [ServersModule, SettingsModule, IncidentsModule, RemnawaveModule],
   controllers: [ServerChecksController],
-  providers: [ServerChecksRepository, ServerChecksService, ServerChecksJob, RussiaAccessCheckService],
+  providers: [ServerChecksRepository, ServerChecksService, RussiaAccessCheckService],
   exports: [ServerChecksService, ServerChecksRepository],
 })
 export class ServerChecksModule {}

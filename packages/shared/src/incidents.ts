@@ -1,3 +1,4 @@
+import {nodeTcpDiagnosticsSchema} from './tcp-check.js';
 import { z } from 'zod';
 
 import { reachabilityResultSchema } from './reachability.js';
@@ -335,7 +336,8 @@ export const incidentSnapshotSchema = z.object({
       members: z.array(
         z.object({
           serverId: z.uuid().nullable(),
-          nodeUuid: z.string().nullable(),
+          diagnostics: nodeTcpDiagnosticsSchema.nullable().optional(),
+  nodeUuid: z.string().nullable(),
           name: z.string(),
           baseline: z.number().nullable(),
         }),
@@ -431,6 +433,8 @@ export function isAnalysisStale(
 
 export const incidentSchema = z.object({
   id: z.uuid(),
+  diagnostics: nodeTcpDiagnosticsSchema.nullable().optional(),
+  nodeUuid: z.uuid().nullable().optional(),
   serverId: z.uuid().nullable(),
   serverName: z.string(),
   kind: z.enum(INCIDENT_KINDS),

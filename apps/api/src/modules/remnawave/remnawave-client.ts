@@ -56,7 +56,7 @@ export interface RemnawaveNodeInbound {
 
 /** Обёртка над публичным API Remnawave. В тестах подменяется. */
 export interface RemnawaveClient {
-  fetch(domain: string, apiKey: string): Promise<RemnawaveFetched>;
+  fetch(domain: string, apiKey: string, timeoutMs?: number): Promise<RemnawaveFetched>;
   /** Срок TLS-сертификата самого домена панели Remnawave — своя проверка, не через API Remnawave. */
   checkCertificate(domain: string): Promise<RemnawaveCert>;
   /** SNI и порт для проверки блокировки этой ноды; вызывается только когда проверка реально нужна. */
@@ -97,6 +97,7 @@ export async function getJson(
   url: string,
   apiKey: string,
   init?: { method: string; body: string },
+  timeoutMs = FETCH_TIMEOUT_MS,
 ): Promise<Record<string, unknown>> {
   let res: Response;
   try {
@@ -108,7 +109,7 @@ export async function getJson(
         authorization: `Bearer ${apiKey}`,
         ...(init ? { 'content-type': 'application/json' } : {}),
       },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     throw new RemnawaveApiError(`Remnawave не отвечает: ${connectionErrorText(err)}`, 'unreachable');
@@ -196,13 +197,13 @@ export function nodeTelemetry(n: Record<string, unknown>) {
 export class HttpRemnawaveClient implements RemnawaveClient {
   private readonly log = new Logger(HttpRemnawaveClient.name);
 
-  async fetch(domain: string, apiKey: string): Promise<RemnawaveFetched> {
+  async fetch(domain: string, apiKey: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<RemnawaveFetched> {
     const base = `https://${domain}`;
     const [statsBody, nodesBody, metricsBody, metaBody] = await Promise.all([
-      getJson(`${base}/api/system/stats`, apiKey),
-      getJson(`${base}/api/nodes`, apiKey),
-      getJson(`${base}/api/system/nodes/metrics`, apiKey),
-      getJson(`${base}/api/system/metadata`, apiKey),
+      getJson(`${base}/api/system/stats`, apiKey, undefined, timeoutMs),
+      getJson(`${base}/api/nodes`, apiKey, undefined, timeoutMs),
+      getJson(`${base}/api/system/nodes/metrics`, apiKey, undefined, timeoutMs),
+      getJson(`${base}/api/system/metadata`, apiKey, undefined, timeoutMs),
     ]);
     const s = (statsBody.response ?? {}) as Record<string, unknown>;
     const users = (s.users ?? {}) as Record<string, unknown>;

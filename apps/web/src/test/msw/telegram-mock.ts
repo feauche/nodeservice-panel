@@ -10,14 +10,8 @@ import {
   type TelegramSettings,
   type TelegramSettingsUpdate,
   type TelegramTestRequest,
-  WATCHDOG_PROBLEM,
-  type WatchdogInstallRequest,
-  type WatchdogStatus,
-  type WatchdogTestResponse,
 } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
-
-import { mockServers } from './servers-mock';
 
 /** Мок настроек Telegram: токены «хранятся» тут же, наружу — только маска, как на сервере. */
 export const mockTelegram = {
@@ -25,10 +19,6 @@ export const mockTelegram = {
   tokens: new Map<string, string>(),
   /** С каким значением «Расширенное оформление» пришёл последний тест; null — теста не было. */
   lastTestRich: null as boolean | null,
-  /** Сторож панели: где стоит (null — не поставлен). */
-  watchdog: null as WatchdogStatus['installed'],
-  /** Что ответит «Проверить сторожа». */
-  watchdogTest: null as unknown as WatchdogTestResponse,
 };
 
 let seq = 0;
@@ -36,8 +26,6 @@ let seq = 0;
 export function resetTelegram(): void {
   mockTelegram.tokens = new Map();
   mockTelegram.lastTestRich = null;
-  mockTelegram.watchdog = null;
-  mockTelegram.watchdogTest = { ok: true, detail: '' };
   mockTelegram.settings = {
     destinations: [],
     events: { ...TELEGRAM_EVENTS_DEFAULT },
@@ -63,7 +51,6 @@ export const telegramHandlers = [
   http.put('/api/settings/telegram', async ({ request }) => {
     const body = (await request.json()) as TelegramSettingsUpdate;
     const s = mockTelegram.settings;
-    const was = JSON.stringify([s.destinations.map((d) => d.id), s.proxy]);
     if (body.destinations) {
       const next: TelegramSettings['destinations'] = [];
       for (const d of body.destinations) {
@@ -109,9 +96,6 @@ export const telegramHandlers = [
     if (body.kinds) s.kinds = { ...s.kinds, ...(body.kinds as TelegramSettings['kinds']) };
     if (body.delivery) s.delivery = body.delivery;
     if (body.proxy !== undefined) s.proxy = body.proxy ? maskTelegramProxy(body.proxy) : null;
-    // Чаты или прокси поменялись — поставленный сторож пишет по-старому, как на сервере.
-    if (mockTelegram.watchdog && JSON.stringify([s.destinations.map((d) => d.id), s.proxy]) !== was)
-      mockTelegram.watchdog = { ...mockTelegram.watchdog, outdated: true };
     return HttpResponse.json(s);
   }),
   http.post('/api/settings/telegram/test', async ({ request }) => {
@@ -135,61 +119,4 @@ export const telegramHandlers = [
       chatTitle: chatId.startsWith('-') ? 'VPN-алерты' : 'Личный чат',
     });
   }),
-  http.get('/api/settings/watchdog', () => HttpResponse.json(watchdogStatus())),
-  http.post('/api/settings/watchdog/install', async ({ request }) => {
-    const { serverId } = (await request.json()) as WatchdogInstallRequest;
-    const status = watchdogStatus();
-    if (status.blocker) return watchdogProblem(409, WATCHDOG_PROBLEM.blocked, status.blocker);
-    const cur = mockTelegram.watchdog;
-    if (cur && cur.serverId !== serverId)
-      return watchdogProblem(
-        409,
-        WATCHDOG_PROBLEM.blocked,
-        `Сторож уже стоит на сервере «${cur.serverName}». Сначала уберите его там: сторож нужен один.`,
-      );
-    const server = mockServers.items.find((x) => x.id === serverId);
-    if (!server) return watchdogProblem(404, 'about:blank', 'Сервер не найден.');
-    mockTelegram.watchdog = {
-      serverId,
-      serverName: server.name,
-      installedAt: new Date().toISOString(),
-      serverGone: false,
-      outdated: false,
-    };
-    return HttpResponse.json(watchdogStatus());
-  }),
-  http.post('/api/settings/watchdog/remove', () => {
-    mockTelegram.watchdog = null;
-    return HttpResponse.json(watchdogStatus());
-  }),
-  http.post('/api/settings/watchdog/test', () => {
-    const cur = mockTelegram.watchdog;
-    if (!cur) return watchdogProblem(409, WATCHDOG_PROBLEM.blocked, 'Сторож ещё не поставлен.');
-    return HttpResponse.json(
-      mockTelegram.watchdogTest.detail
-        ? mockTelegram.watchdogTest
-        : {
-            ok: true,
-            detail: `Сторож на сервере «${cur.serverName}» на месте: тестовое сообщение отправлено, панель с этого сервера отвечает.`,
-          },
-    );
-  }),
 ];
-
-/** Как на сервере: без сохранённых чатов сторожу некуда писать. */
-function watchdogStatus(): WatchdogStatus {
-  return {
-    installed: mockTelegram.watchdog,
-    blocker:
-      mockTelegram.settings.destinations.length === 0
-        ? 'Сначала добавьте чат Telegram выше и сохраните: сторожу некуда будет писать.'
-        : null,
-  };
-}
-
-function watchdogProblem(status: number, type: string, detail: string) {
-  return HttpResponse.json(
-    { type, title: detail, status, detail },
-    { status, headers: { 'content-type': 'application/problem+json' } },
-  );
-}

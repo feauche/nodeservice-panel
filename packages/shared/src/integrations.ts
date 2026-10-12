@@ -1,5 +1,5 @@
 import { z } from 'zod';
-export const integrationProviderSchema = z.enum(['dpi', 'regru', 'cloudflare']);
+export const integrationProviderSchema = z.enum(['dpi', 'regru', 'cloudflare', 'bschecker']);
 export type IntegrationProvider = z.infer<typeof integrationProviderSchema>;
 export const integrationConnectionSchema = z.object({
   apiKey: z.string().trim().min(8).max(4096).optional(),
