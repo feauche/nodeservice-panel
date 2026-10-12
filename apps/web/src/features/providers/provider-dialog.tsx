@@ -268,7 +268,7 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
             {provider ? 'Изменить провайдера' : 'Новый провайдер'}
           </DialogTitle>
           <DialogDescription className="text-[13px] text-text-2">
-            Хостер, у которого куплен сервер. Иконку панель возьмёт с его сайта сама.
+            Хостер, у которого стоит нода. Иконку панель возьмёт с его сайта сама.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -419,8 +419,7 @@ export function ProviderDialog({ open, onOpenChange, provider = null, onSaved }:
         </form>
         <div className="flex flex-none items-center gap-3 border-t border-border bg-bg-2 px-6 py-3.5 max-sm:flex-col max-sm:items-stretch">
           <p className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">
-            <span className="text-crit">*</span> обязательные поля. Провайдер общий для всех{' '}
-            {remote ? 'нод' : 'серверов'}.
+            <span className="text-crit">*</span> обязательные поля. Провайдер общий для всех нод.
           </p>
           <div className="flex gap-2 max-sm:flex-col">
             <DialogSecondaryButton

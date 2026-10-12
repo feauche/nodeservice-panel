@@ -85,7 +85,7 @@ export class RemnaBillingProvidersController {
         return p
           ? { ...(await this.assets.dto(p, domain ?? undefined)), id: row.id }
           : {
-              ...this.legacy.toDto({ ...row, serversCount: 0 }),
+              ...this.legacy.toDto(row),
               selectable: !row.archivedAt && (!row.remotePanel || row.remotePanel === domain),
             };
       }),

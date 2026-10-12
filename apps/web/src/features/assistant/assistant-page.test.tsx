@@ -41,7 +41,6 @@ describe('AssistantPage', () => {
     mockAssistant.enabled = true;
     const conversationId = '0192f000-0000-7000-8000-000000000e01';
     const iso = new Date().toISOString();
-    const incidentId = '0192d000-0000-7000-8000-000000000e02';
     mockAssistant.conversations = [{ id: conversationId, title: 'Старая беседа', createdAt: iso }];
     mockAssistant.messages = {
       [conversationId]: [
@@ -50,9 +49,6 @@ describe('AssistantPage', () => {
           role: 'user',
           content: 'Почему упал de-fra-01?',
           citations: [],
-          proposals: [],
-          reachability: [],
-          activity: [],
           createdAt: iso,
         },
         {
@@ -60,44 +56,6 @@ describe('AssistantPage', () => {
           role: 'assistant',
           content: 'Нода остановилась после обновления. Предлагаю перезапустить контейнер.',
           citations: [],
-          proposals: [
-            {
-              kind: 'autofix',
-              incidentId,
-              preset: 'restart_node',
-              title: 'Перезапустить контейнер ноды',
-              description: 'Снимет нагрузку.',
-              level: 'T2',
-            },
-            {
-              kind: 'change',
-              changeId: '0192f000-0000-7000-8000-000000000e05',
-              operation: 'server.provider',
-              title: 'Сменить провайдера',
-              level: 'T1',
-            },
-          ],
-          reachability: [
-            {
-              target: { name: 'de-fra-01', address: '203.0.113.7' },
-              probes: [],
-              ports: [
-                { port: 443, open: 0, closed: 3, verdict: 'closed_everywhere', text: 'Порт 443 закрыт.' },
-              ],
-              dns: { answers: [], consistent: true },
-              notes: [],
-            },
-          ],
-          activity: [
-            {
-              id: 'a1',
-              label: 'Проверка процессора',
-              state: 'done',
-              startedAt: iso,
-              finishedAt: iso,
-              detail: 'вывод во вкладке «Проверки»',
-            },
-          ],
           createdAt: iso,
         },
       ],
@@ -147,9 +105,6 @@ describe('AssistantPage', () => {
       role: 'assistant',
       content: 'Нода bridge доступна.',
       citations: [{ type: 'node', id: uuid, label: 'bridge' }],
-      proposals: [],
-      reachability: [],
-      activity: [],
       createdAt: new Date().toISOString(),
     };
     mockAssistant.messages['0192f000-0000-7000-8000-000000000001'] = [reply];
@@ -187,7 +142,7 @@ describe('AssistantPage', () => {
     it('исторические серверные упоминания не получают состояние текущих нод', async () => {
       const { list } = await ask('а по каким серверам больше событий');
       expect(within(list).queryByRole('button', { name: 'nl-ams-02' })).not.toBeInTheDocument();
-      const historical = within(list).getByTitle('Исторический сервер: de-fra-01');
+      const historical = within(list).getByTitle('Прежняя нода: de-fra-01');
       expect(historical.querySelector('[data-health]')).toBeNull();
     });
 
@@ -217,7 +172,7 @@ describe('AssistantPage', () => {
       const { list } = await ask('а по каким серверам больше событий');
       const sources = await within(list).findByTestId('assistant-sources');
       expect(within(sources).queryByRole('button', { name: MOCK_OLD_SERVER.name })).not.toBeInTheDocument();
-      const chip = within(sources).getByTitle(`Исторический сервер: ${MOCK_OLD_SERVER.name}`);
+      const chip = within(sources).getByTitle(`Прежняя нода: ${MOCK_OLD_SERVER.name}`);
       expect(chip.tagName).toBe('SPAN');
       // и имя сервера в тексте не становится ссылкой
       expect(within(list).queryByRole('button', { name: 'de-fra-01' })).not.toBeInTheDocument();
@@ -384,9 +339,6 @@ describe('AssistantPage', () => {
       role,
       content,
       citations: [],
-      proposals: [],
-      reachability: [],
-      activity: [],
       createdAt: iso,
     });
     const OLD = '0192f000-0000-7000-8000-000000000b01';
@@ -500,9 +452,6 @@ describe('AssistantPage', () => {
       role,
       content,
       citations: [],
-      proposals: [],
-      reachability: [],
-      activity: [],
       createdAt: iso,
     });
     mockAssistant.enabled = true;
@@ -595,9 +544,6 @@ describe('AssistantPage', () => {
           role: 'user',
           content: question,
           citations: [],
-          proposals: [],
-          reachability: [],
-          activity: [],
           createdAt: iso,
         },
         {
@@ -605,9 +551,6 @@ describe('AssistantPage', () => {
           role: 'assistant',
           content: 'Первый ответ.',
           citations: [],
-          proposals: [],
-          reachability: [],
-          activity: [],
           createdAt: iso,
         },
       ],
@@ -626,9 +569,6 @@ describe('AssistantPage', () => {
           role: 'assistant' as const,
           content: 'Второй ответ.',
           citations: [],
-          proposals: [],
-          reachability: [],
-          activity: [],
           createdAt: iso,
         };
         mockAssistant.messages[convId] = [
@@ -638,9 +578,6 @@ describe('AssistantPage', () => {
             role: 'user',
             content: question,
             citations: [],
-            proposals: [],
-            reachability: [],
-            activity: [],
             createdAt: iso,
           },
           reply,

@@ -19,11 +19,14 @@ describe('IncidentsPage', () => {
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     const rows = await screen.findAllByTestId('incident-row');
     expect(rows.length).toBeGreaterThanOrEqual(4);
-    // итог за 7 дней
+    // итог за 7 дней: без счётчиков автопочинки и времени починки
     const stats = screen.getByTestId('incidents-stats');
     expect(stats).toHaveTextContent('сбоев за 7 дней');
-    expect(stats).toHaveTextContent('починила панель');
     expect(stats).toHaveTextContent('прошли сами');
+    expect(stats).toHaveTextContent('закрыты вручную');
+    expect(stats).not.toHaveTextContent('починила панель');
+    expect(stats).not.toHaveTextContent('по вашей команде');
+    expect(stats).not.toHaveTextContent('Типичное время починки');
     // группа «Сейчас» для открытых
     expect(screen.getByRole('region', { name: 'Сейчас' })).toBeInTheDocument();
     // открытое событие со старым предложением шага: подтверждать нечего, строка без обещаний автопочинки
@@ -33,8 +36,17 @@ describe('IncidentsPage', () => {
     expect(within(cpuRow).getByText('Наблюдаем')).toBeInTheDocument();
     // уровень старого предложения (T2) в строке больше не показывается
     expect(within(cpuRow).queryByText('T2')).not.toBeInTheDocument();
-    // решённый: «Помогло с первой попытки»
-    expect(screen.getByText(/Помогло с первой попытки: освободить диск, автоматически/)).toBeInTheDocument();
+    // решённое шагом прежних версий: без рассказа о попытках, без уровня шага и без «все починила панель»
+    const fixedRow = rows.find(
+      (r) => within(r).queryByText('Диск заполняется') && within(r).queryAllByText('de-fra-01').length > 0,
+    );
+    if (!fixedRow) throw new Error('нет строки диска de-fra-01');
+    expect(within(fixedRow).getByText('Проблема устранена')).toBeInTheDocument();
+    expect(within(fixedRow).queryByText('T1')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Помогло/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/починила панель/)).not.toBeInTheDocument();
+    // закрытое вручную
+    expect(screen.getAllByText('Закрыто администратором').length).toBeGreaterThan(0);
   });
 
   it('решённые: недавно закрытый сверху, а не недавно открытый', async () => {
@@ -74,7 +86,7 @@ describe('IncidentsPage', () => {
     expect(screen.getAllByText('Диск заполняется').length).toBeGreaterThan(0);
   });
 
-  it('строка ведёт на страницу-кейс, кнопка — на «Автопочинку»', async () => {
+  it('строка ведёт на страницу-кейс', async () => {
     const { router } = renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
     const user = userEvent.setup();
     const rows = await screen.findAllByTestId('incident-row');
@@ -475,14 +487,10 @@ describe('IncidentsPage', () => {
     await screen.findAllByTestId('incident-row');
     const placeholder = screen.getByTestId('incidents-stats-placeholder');
     expect(placeholder).toHaveAttribute('aria-hidden', 'true');
-    for (const label of [
-      'сбоев за 7 дней',
-      'починила панель',
-      'по вашей команде',
-      'прошли сами',
-      'закрыты вручную',
-    ])
+    for (const label of ['сбоев за 7 дней', 'прошли сами', 'закрыты вручную'])
       expect(placeholder).toHaveTextContent(label);
+    expect(placeholder).not.toHaveTextContent('починила панель');
+    expect(placeholder).not.toHaveTextContent('по вашей команде');
     // Активные сейчас есть — и в заглушке есть их ячейка: от неё зависит, переносится ли полоса.
     expect(placeholder).toHaveTextContent('открыто сейчас');
     expect(await screen.findByTestId('incidents-stats')).toHaveTextContent('сбоев за 7 дней');
@@ -513,7 +521,31 @@ describe('IncidentCasePage', () => {
     ];
     const Page = () => <IncidentCasePage id={current.id} />;
     renderPage(Page, '/incidents/$id', ['/incidents'], `/incidents/${current.id}`);
-    expect(await screen.findByText('На этом сервере за 7 дней такого не было.')).toBeInTheDocument();
+    expect(await screen.findByText('На этой ноде за 7 дней такого не было.')).toBeInTheDocument();
+  });
+
+  it('кейс старого события с попытками прежних версий: без попыток, уровней и «В прошлый раз помогло»', async () => {
+    const { IncidentCasePage } = await import('./incident-case-page');
+    const old = mockIncidents.items.find((i) => i.kind === 'disk_high' && i.resolvedBy === 'auto');
+    if (!old) throw new Error('нет мок-события');
+    // То же событие повторилось на той же ноде: прежний случай закрыл помогший шаг.
+    const again = {
+      ...old,
+      id: '7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3c5a',
+      openedAt: new Date(Date.now() - 120_000).toISOString(),
+      resolvedAt: new Date(Date.now() - 60_000).toISOString(),
+    };
+    mockIncidents.items = [again, old];
+    const Page = () => <IncidentCasePage id={again.id} />;
+    renderPage(Page, '/incidents/$id', ['/incidents'], `/incidents/${again.id}`);
+    expect(await screen.findByText('На этой ноде 2 раза за 7 дней.')).toBeInTheDocument();
+    expect(screen.queryByText(/В прошлый раз помогло/)).not.toBeInTheDocument();
+    expect(screen.getByText('Проблема устранена.')).toBeInTheDocument();
+    // Хронология осталась, но без уровней шагов; аккордеона попыток нет.
+    expect(screen.getByRole('list', { name: 'Хронология' })).toBeInTheDocument();
+    expect(screen.queryByText(/^T[0-3]$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Попытки починки/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('attempts')).not.toBeInTheDocument();
   });
 
   /** Нода Remnawave события: подключение и пустые метрики, чтобы окно ноды открылось без лишних запросов. */
@@ -642,57 +674,5 @@ describe('IncidentCasePage', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Закрыть' }));
     await waitFor(() => expect(mockIncidents.items[0]?.status).toBe('resolved'));
     expect(sent).toEqual({});
-  });
-});
-
-describe('AttemptsAccordion', () => {
-  it('раскрыта только последняя попытка, остальные — по клику', async () => {
-    const { AttemptsAccordion } = await import('./incident-blocks');
-    const step = (
-      key: 'precheck' | 'action' | 'postcheck' | 'rollback',
-      label: string,
-      status: 'ok' | 'skipped',
-    ) => ({
-      key,
-      label,
-      status,
-      startedAt: null,
-      finishedAt: null,
-      note: null,
-    });
-    const mk = (n: number, action: string, status: 'not_helped' | 'helped') => ({
-      id: `7d9a2b1c-3e4f-4a5b-8c6d-9e0f1a2b3c0${n}`,
-      action,
-      level: 'T1' as const,
-      by: 'manual' as const,
-      status,
-      startedAt: new Date(Date.now() - 60_000).toISOString(),
-      finishedAt: new Date(Date.now() - 40_000).toISOString(),
-      steps: [step('precheck', `Пред-проверка ${n}`, 'ok'), step('rollback', `Откат ${n}`, 'skipped')],
-      log: '',
-    });
-    const Page = () => (
-      <AttemptsAccordion
-        attempts={[
-          mk(1, 'free_disk', 'not_helped'),
-          mk(2, 'apt_clean', 'not_helped'),
-          mk(3, 'free_disk', 'helped'),
-        ]}
-      />
-    );
-    renderPage(Page, '/x');
-    const user = userEvent.setup();
-    const buttons = await screen.findAllByRole('button', { name: /Освободить диск|Очистить кэш apt/ });
-    // последняя раскрыта, первые две свёрнуты
-    expect(buttons[2]).toHaveAttribute('aria-expanded', 'true');
-    expect(buttons[0]).toHaveAttribute('aria-expanded', 'false');
-    expect(buttons[1]).toHaveAttribute('aria-expanded', 'false');
-    // клик раскрывает вторую, третья остаётся открытой
-    await user.click(buttons[1] as HTMLElement);
-    expect(buttons[1]).toHaveAttribute('aria-expanded', 'true');
-    expect(buttons[2]).toHaveAttribute('aria-expanded', 'true');
-    // итог виден и у свёрнутой строки
-    expect(buttons[0]).toHaveTextContent('Не помогло');
-    expect(buttons[2]).toHaveTextContent('Помогло');
   });
 });

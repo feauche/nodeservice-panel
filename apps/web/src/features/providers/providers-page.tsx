@@ -38,7 +38,7 @@ const BTN =
 
 /**
  * Справочник провайдеров в две панели: слева список с поиском, справа карточка выбранного —
- * иконка, сайт, его серверы и заметка про аккаунт и оплату.
+ * иконка, сайт, его ноды и заметка про аккаунт и оплату.
  */
 export function ProvidersPage() {
   const remote = useProviderApiBase() !== '/providers';
@@ -46,7 +46,7 @@ export function ProvidersPage() {
   const remove = useDeleteProvider();
   const refresh = useRefreshProviderIcon();
   const [q, setQ] = useState('');
-  // По умолчанию сверху те, у кого больше серверов (так отдаёт API); «по имени» — алфавит.
+  // По умолчанию сверху те, у кого больше нод (так отдаёт API); «по имени» — алфавит.
   const [sort, setSort] = useState<'servers' | 'name'>('servers');
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<Provider | null>(null);
@@ -134,7 +134,7 @@ export function ProvidersPage() {
         <Button
           type="button"
           variant="outline"
-          aria-label={sort === 'servers' ? 'Сортировка: по числу серверов' : 'Сортировка: по имени'}
+          aria-label={sort === 'servers' ? 'Сортировка: по числу нод' : 'Сортировка: по имени'}
           title="Сменить сортировку"
           onClick={() => setSort((v) => (v === 'servers' ? 'name' : 'servers'))}
           className="h-9 rounded-[10px] bg-surface-2 px-3 text-[12.5px] text-text-2"
@@ -144,7 +144,7 @@ export function ProvidersPage() {
           ) : (
             <ArrowDownAZIcon className="size-4" aria-hidden="true" />
           )}
-          {sort === 'servers' ? (remote ? 'По нодам' : 'По серверам') : 'По имени'}
+          {sort === 'servers' ? 'По нодам' : 'По имени'}
         </Button>
         <Button
           type="button"
@@ -160,8 +160,8 @@ export function ProvidersPage() {
         <div className="grid place-items-center rounded-2xl border border-dashed border-border-2 px-6 py-16 text-center">
           <p className="text-[14px] font-semibold">Провайдеров пока нет</p>
           <p className="mt-1 max-w-[420px] text-[12.5px] text-text-3">
-            Добавьте хостеров, у которых куплены серверы: название и сайт. Иконку панель возьмёт с сайта, а на
-            карточках серверов появится значок провайдера.
+            Добавьте хостеров, у которых стоят ваши ноды: название и сайт. Иконку панель возьмёт с сайта, а на
+            карточках нод появится значок провайдера.
           </p>
           <Button
             type="button"
@@ -200,11 +200,9 @@ export function ProvidersPage() {
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13.5px] font-semibold">{p.name}</span>
                     <span className="block truncate text-[11.5px] text-text-3">
-                      {p.serversCount === 0
-                        ? remote
-                          ? 'Нод нет'
-                          : 'Серверов нет'
-                        : `${p.serversCount} ${remote ? plural(p.serversCount, 'нода', 'ноды', 'нод') : plural(p.serversCount, 'сервер', 'сервера', 'серверов')}`}
+                      {p.nodesCount === 0
+                        ? 'Нод нет'
+                        : `${p.nodesCount} ${plural(p.nodesCount, 'нода', 'ноды', 'нод')}`}
                     </span>
                   </span>
                 </button>
@@ -244,8 +242,8 @@ export function ProvidersPage() {
           description={
             remote
               ? 'В Remnawave ноды будут отвязаны от провайдера; его записи инфраструктурного биллинга и история оплат будут удалены. Сами ноды сохранятся. Действие необратимо.'
-              : active.serversCount > 0
-                ? `У ${active.serversCount} ${plural(active.serversCount, 'сервера', 'серверов', 'серверов')} провайдер сбросится. Сам провайдер скроется из справочника, а его название сохранится во всей истории оплат.`
+              : active.nodesCount > 0
+                ? `У ${active.nodesCount} ${plural(active.nodesCount, 'ноды', 'нод', 'нод')} провайдер сбросится. Сам провайдер скроется из справочника, а его название сохранится во всей истории оплат.`
                 : 'Провайдер скроется из справочника, а его название сохранится во всей истории оплат.'
           }
           yesLabel={remote ? 'Удалить' : 'В архив'}

@@ -29,7 +29,7 @@ export interface ReadyCheck {
 }
 export interface ReadyReport {
   status: 'ok';
-  checks: Record<'postgres' | 'valkey' | 'metrics' | 'incidents', ReadyCheck>;
+  checks: Record<'postgres' | 'valkey' | 'incidents', ReadyCheck>;
 }
 
 /**
@@ -42,18 +42,15 @@ export interface ReadyReport {
 @Controller('health')
 export class HealthController {
   private readonly log = new Logger(HealthController.name);
-  private readonly vmUrl: string;
   /** Свойством, а не константой: модульные тесты сокращают ожидание зависшей части. */
   timeoutMs = READY_CHECK_TIMEOUT_MS;
 
   constructor(
     @Inject(DB) private readonly db: Db,
     @Inject(VALKEY) private readonly valkey: Redis,
-    config: ConfigService<Env, true>,
+    _config: ConfigService<Env, true>,
     private readonly pulse: PanelPulse,
-  ) {
-    this.vmUrl = config.get('VM_URL');
-  }
+  ) {}
 
   @Get('live')
   live(): { status: 'ok'; uptime: number } {
@@ -62,17 +59,13 @@ export class HealthController {
 
   @Get('ready')
   async ready(): Promise<ReadyReport> {
-    const [postgres, valkey, metrics] = await Promise.all([
+    const [postgres, valkey] = await Promise.all([
       this.check('база данных не отвечает', async () => {
         await this.db.execute(sql`select 1`);
       }),
       this.check('хранилище сессий не отвечает', async () => {
         const pong = await this.valkey.ping();
         if (pong !== 'PONG') throw new Error(`Valkey ответил "${pong}"`);
-      }),
-      this.check('хранилище метрик не отвечает', async () => {
-        const res = await fetch(`${this.vmUrl}/health`, { signal: AbortSignal.timeout(this.timeoutMs) });
-        if (!res.ok) throw new Error(`VictoriaMetrics ответила ${res.status}`);
       }),
     ]);
     const silent = this.pulse.incidentsSilentMs();
@@ -84,7 +77,7 @@ export class HealthController {
             silentSec: Math.round(silent / 1000),
             problem: `поиск инцидентов не отрабатывал ${Math.floor(silent / 60_000)} мин`,
           };
-    const checks = { postgres, valkey, metrics, incidents };
+    const checks = { postgres, valkey, incidents };
     const problems = Object.values(checks).flatMap((c) => (c.problem ? [c.problem] : []));
     if (problems.length > 0)
       throw problem(HttpStatus.SERVICE_UNAVAILABLE, {

@@ -52,7 +52,6 @@ import { envValues, parseMeta } from '../src/modules/backups/backups.logic.js';
 import { BackupsService } from '../src/modules/backups/backups.service.js';
 import { internalSignature } from '../src/modules/backups/backups-internal.controller.js';
 import { PANEL_LIFE_KEY, PanelLifecycleService } from '../src/modules/health/panel-lifecycle.service.js';
-import { NotificationsRepository } from '../src/modules/notifications/notifications.repository.js';
 import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications/telegram/telegram.client.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -138,9 +137,7 @@ describe('резервные копии e2e', () => {
     await runMigrations(db);
     // Колокольчик тоже с чистого листа: тесты считают уведомления о сбое, а список отдаётся с ограничением
     // по числу — без чистки от прогона к прогону он заполнился бы и счёт перестал бы расти.
-    await db.execute(
-      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents, notifications cascade`,
-    );
+    await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens, incidents cascade`);
     await db.execute(
       sql`delete from app_meta where key like 'settings.%' or key like 'telegram.%' or key like 'backups.%'`,
     );
@@ -213,12 +210,8 @@ describe('резервные копии e2e', () => {
     expect(up.body.kind).toBe('uploaded');
     return up.body.name as string;
   };
-  /** Сколько раз про неудачную копию написали в Telegram и сколько — в колокольчик. */
+  /** Сколько раз про неудачную копию написали в Telegram. */
   const failuresInTelegram = () => tg.texts.filter((t) => t.includes('Резервная копия не получилась'));
-  const failuresInBell = async () =>
-    (await app.get(NotificationsRepository).list()).items.filter(
-      (n) => n.title === 'Резервная копия не получилась',
-    );
   const keyPrint = () =>
     createHash('sha256')
       .update(String(app.get(ConfigService).get('ENCRYPTION_KEY')).toLowerCase())
@@ -611,7 +604,7 @@ describe('резервные копии e2e', () => {
       await agent.delete(`/api/backups/${n}`).set(CSRF_HEADER, csrf).expect(204);
   });
 
-  it('копия не получилась — колокольчик и сообщение в чат копий, причина по-русски', async () => {
+  it('копия не получилась — сообщение в чат копий, причина по-русски', async () => {
     const orig = tools.dump;
     tools.dump = async () => {
       throw new BackupToolError(
@@ -632,7 +625,6 @@ describe('резервные копии e2e', () => {
     const r = await list();
     expect(r.run.lastError).toContain('Нет связи с базой данных');
     expect(r.run.lastError).not.toMatch(/[A-Za-z]/);
-    expect((await failuresInBell())[0]?.body).toContain('Нет связи с базой данных');
   });
 
   it('копия перед обновлением: служебный запрос с подписью — копия по настройкам панели; без подписи — 404', async () => {
@@ -750,7 +742,6 @@ describe('резервные копии e2e', () => {
     await putSettings({ auto: true, frequency: 'day', time }).expect(200);
     const at = (min: number) => new Date(slot.getTime() + min * 60_000);
     const tgBefore = failuresInTelegram().length;
-    const bellBefore = (await failuresInBell()).length;
     const orig = tools.dump;
     tools.dump = async () => {
       throw new BackupToolError(
@@ -773,7 +764,6 @@ describe('резервные копии e2e', () => {
       await waitIdle();
       await sleep(300);
       expect(failuresInTelegram()).toHaveLength(tgBefore + 1);
-      expect(await failuresInBell()).toHaveLength(bellBefore + 1);
       expect((await list()).run.lastError).toContain('закончилось место');
       // Время попытки лежит в базе рядом с настройками: перезапуск панели отсчёт не сбрасывает.
       const row = await db.execute<{ value: string }>(
@@ -811,20 +801,16 @@ describe('резервные копии e2e', () => {
       try {
         await (svc as unknown as { refreshState(): Promise<void> }).refreshState();
         expect((await list()).available).toBe(false);
-        const bellBefore = (await failuresInBell()).length;
         const tgBefore = failuresInTelegram().length;
         expect(await svc.tick(at(0.2))).toBe(false);
-        const bell = await failuresInBell();
-        expect(bell).toHaveLength(bellBefore + 1);
-        expect(bell[0]?.body).toContain('Копия по расписанию не сделана');
-        expect(bell[0]?.body).toContain('не хватает прав на папку копий');
         for (let i = 0; i < 20 && failuresInTelegram().length === tgBefore; i += 1) await sleep(50);
         expect(failuresInTelegram()).toHaveLength(tgBefore + 1);
+        expect(failuresInTelegram().at(-1)).toContain('Копия по расписанию не сделана');
+        expect(failuresInTelegram().at(-1)).toContain('не хватает прав на папку копий');
         // Дальше — раз в час и молча: второе сообщение о том же моменте не нужно.
         expect(await svc.tick(at(1))).toBe(false);
         expect(await svc.tick(at(61))).toBe(false);
         await sleep(200);
-        expect(await failuresInBell()).toHaveLength(bellBefore + 1);
         expect(failuresInTelegram()).toHaveLength(tgBefore + 1);
       } finally {
         chmodSync(store, 0o700);

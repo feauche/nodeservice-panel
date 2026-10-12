@@ -1,4 +1,3 @@
-import { ASSISTANT_PERMISSION_LABELS } from '@nodeservice/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FLEET_RULES_WHITELIST_SECTION } from '../knowledge/fleet-rules.js';
@@ -67,7 +66,13 @@ describe('подсказка Ассистента: режим только чт�
     expect(text).not.toContain('— разрешено');
     expect(text).not.toContain('— запрещено');
     expect(text).not.toContain('РАЗРЕШЕНИЯ (сохранённые настройки)');
-    for (const label of Object.values(ASSISTANT_PERMISSION_LABELS)) expect(text, label).not.toContain(label);
+    for (const label of [
+      'Создание и правка статей',
+      'Еженедельная ревизия',
+      'Изменения по подтверждению',
+      'Осмотр процессов',
+    ])
+      expect(text, label).not.toContain(label);
   });
 
   it('правила рекомендаций проверок: только советом, с путём по интерфейсу', () => {

@@ -1,50 +1,29 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
-import { type ProviderRow, providers, servers } from '../../infra/db/schema/index.js';
+import { type ProviderRow, providers } from '../../infra/db/schema/index.js';
 
-export type ProviderWithCount = ProviderRow & { serversCount: number };
+export type ProviderWithCount = ProviderRow;
 
 @Injectable()
 export class ProvidersRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
 
-  /** Число серверов по провайдерам одним запросом — без коррелированных подзапросов. */
-  private async counts(): Promise<Map<string, number>> {
-    const rows = await this.db
-      .select({ providerId: servers.providerId, n: sql<number>`count(*)::int` })
-      .from(servers)
-      .where(isNotNull(servers.providerId))
-      .groupBy(servers.providerId);
-    return new Map(rows.map((r) => [r.providerId as string, Number(r.n)]));
-  }
-
   async list(): Promise<ProviderWithCount[]> {
-    const [rows, counts] = await Promise.all([
-      this.db
-        .select()
-        .from(providers)
-        .where(and(isNull(providers.archivedAt), isNull(providers.remotePanel)))
-        .orderBy(asc(providers.name)),
-      this.counts(),
-    ]);
-    // Сначала те, у кого больше серверов, при равенстве — по имени: рабочие хостеры всегда сверху.
-    return rows
-      .map((r) => ({ ...r, serversCount: counts.get(r.id) ?? 0 }))
-      .sort((a, b) => b.serversCount - a.serversCount || a.name.localeCompare(b.name, 'ru'));
+    const rows = await this.db
+      .select()
+      .from(providers)
+      .where(and(isNull(providers.archivedAt), isNull(providers.remotePanel)))
+      .orderBy(asc(providers.name));
+    return rows.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
   }
 
   async findById(id: string): Promise<ProviderWithCount | undefined> {
     const row = await this.db.query.providers.findFirst({
       where: and(eq(providers.id, id), isNull(providers.archivedAt), isNull(providers.remotePanel)),
     });
-    if (!row) return undefined;
-    const [{ n } = { n: 0 }] = await this.db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(servers)
-      .where(eq(servers.providerId, id));
-    return { ...row, serversCount: Number(n) };
+    return row;
   }
 
   /** Провайдеры, у которых поиск иконки не завершился (например, API перезапустили). */
@@ -95,19 +74,13 @@ export class ProvidersRepository {
     return row;
   }
 
-  /** Скрыть провайдера и отвязать текущие серверы, сохранив FK у старых оплат и платежей. */
+  /** Скрыть провайдера, сохранив FK у старых оплат и платежей. */
   async archive(id: string): Promise<boolean> {
-    return this.db.transaction(async (tx) => {
-      await tx
-        .update(servers)
-        .set({ providerId: null, updatedAt: new Date() })
-        .where(eq(servers.providerId, id));
-      const rows = await tx
-        .update(providers)
-        .set({ archivedAt: new Date(), iconPending: false, updatedAt: new Date() })
-        .where(and(eq(providers.id, id), isNull(providers.archivedAt), isNull(providers.remotePanel)))
-        .returning({ id: providers.id });
-      return rows.length > 0;
-    });
+    const rows = await this.db
+      .update(providers)
+      .set({ archivedAt: new Date(), iconPending: false, updatedAt: new Date() })
+      .where(and(eq(providers.id, id), isNull(providers.archivedAt), isNull(providers.remotePanel)))
+      .returning({ id: providers.id });
+    return rows.length > 0;
   }
 }

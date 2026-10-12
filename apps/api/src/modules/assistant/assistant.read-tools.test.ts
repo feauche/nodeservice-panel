@@ -190,7 +190,7 @@ describe('get_billing', () => {
       rates: null,
     }));
     const { json } = await call('get_billing', { archived: true }, deps({ billing: { forAssistant } }));
-    expect(forAssistant).toHaveBeenCalledWith({ archived: true, serverId: null });
+    expect(forAssistant).toHaveBeenCalledWith({ archived: true });
     expect(json().items[0].due).toBe('просрочено на 1 день');
   });
 });

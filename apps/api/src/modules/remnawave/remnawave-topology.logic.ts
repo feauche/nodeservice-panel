@@ -136,7 +136,7 @@ type TargetAnalysis = Pick<
 function servicePurpose(protocol: string, address: string | null): string {
   if (protocol === 'socks')
     return address && /^(127\.|localhost|::1)/i.test(address)
-      ? 'Локальный SOCKS-прокси на этом сервере.'
+      ? 'Локальный SOCKS-прокси на этой ноде.'
       : 'Внешний SOCKS-прокси.';
   if (protocol === 'http') return 'HTTP-прокси для исходящего трафика.';
   if (protocol === 'vless' || protocol === 'vmess' || protocol === 'trojan')
@@ -264,10 +264,10 @@ function targetOf(
       targetNodeUuids: [],
       status: 'unknown',
       confidence: 'inferred',
-      note: 'Маршрут распознан по локальному SOCKS-выходу; состояние службы проверяется на сервере.',
+      note: 'Маршрут распознан по локальному SOCKS-выходу; состояние службы проверяется на ноде.',
       ...metadata,
       explanation:
-        'Xray передаёт подходящий трафик в локальный SOCKS-порт Psiphon. Это описание настройки; работу процесса нужно подтверждать проверкой сервера.',
+        'Xray передаёт подходящий трафик в локальный SOCKS-порт Psiphon. Это описание настройки; работу процесса нужно подтверждать проверкой на ноде.',
     };
   if (protocol === 'socks' && address && /^(127\.|localhost|::1)/i.test(address))
     return {
@@ -279,7 +279,7 @@ function targetOf(
       note: 'Конфигурация подтверждает локальный SOCKS-выход, но не называет процесс, который слушает порт.',
       ...metadata,
       explanation:
-        'Xray передаёт подходящий трафик в SOCKS-прокси на этом же сервере. Назвать его Psiphon можно только тогда, когда это явно указано в теге.',
+        'Xray передаёт подходящий трафик в SOCKS-прокси на этой же ноде. Назвать его Psiphon можно только тогда, когда это явно указано в теге.',
     };
   return {
     targetKind: 'service',
@@ -350,7 +350,6 @@ function targetForRule(
 
 export function buildRemnawaveTopology(
   source: RemnawaveTopologySource,
-  linkedServerIds: ReadonlyMap<string, readonly string[]> = new Map(),
   resolvedAddresses: ReadonlyMap<string, readonly string[]> = new Map(),
   generatedAt = new Date().toISOString(),
 ): RemnawaveTopology {
@@ -377,7 +376,6 @@ export function buildRemnawaveTopology(
       inboundUuids: rows(profile.activeInbounds)
         .map((item) => text(item.uuid))
         .filter(Boolean),
-      serverIds: [...(linkedServerIds.get(id) ?? [])],
       status: disabled ? 'unknown' : connected ? 'ok' : 'error',
     };
   });
@@ -680,7 +678,6 @@ export function buildRemnawaveTopology(
               host.nodeUuids.length && route && (route.targetKind !== 'node' || exitNodeUuid)
                 ? route.confidence
                 : 'unknown',
-            diagnostics: null,
             segments: [
               segment('client_host', 'client', host.id, host.status),
               segment(
@@ -726,7 +723,6 @@ export function buildRemnawaveTopology(
     nodes,
     routes,
     paths,
-    readiness: [],
     profiles,
     issues,
     configSnapshot: null,

@@ -38,7 +38,7 @@ export class RemnawaveTopologyService {
       });
     const source = await this.client.readTopology(creds.domain, creds.apiKey);
     const resolvedAddresses = await this.addresses.resolveAddresses(topologyAddresses(source));
-    const value = buildRemnawaveTopology(source, new Map(), resolvedAddresses);
+    const value = buildRemnawaveTopology(source, resolvedAddresses);
     value.configSnapshot = await this.captureConfigSnapshot(value);
     addRuntime(value);
     this.cache = { at: Date.now(), value };
@@ -96,7 +96,6 @@ export class RemnawaveTopologyService {
         nodes: topology.nodes.slice(0, 100),
         routes: topology.routes.slice(0, 150),
         paths: topology.paths.slice(0, 250),
-        readiness: topology.readiness.slice(0, 100),
         profiles: topology.profiles.slice(0, 50),
         issues: topology.issues.slice(0, 100),
         safety:

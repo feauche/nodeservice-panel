@@ -1,46 +1,31 @@
 /**
  * @nodeservice/shared — общие контракты панели.
- * Этап 1: auth API, настройки. Этап 2: Журнал (аудит). Этап 5 добавит протокол агента (v1).
+ * Этап 1: auth API, настройки. Этап 2: Журнал (аудит).
  */
 /** Версия панели x.y.z. Поднимается каждой поставкой: `node scripts/bump-version.mjs patch` (фиксы) или `minor` (новые возможности). */
-export const SHARED_VERSION = '0.88.0';
-export * from './agent-protocol.js';
+export const SHARED_VERSION = '0.89.0';
 export * from './assistant.js';
-export * from './assistant-changes.js';
 export * from './audit.js';
 export * from './auth.js';
-export * from './autochecks.js';
 export * from './backups.js';
 export * from './billing.js';
-export * from './block-check.js';
 export * from './bs-rentals.js';
 export * from './bschecker.js';
-export * from './capacity.js';
 export * from './changelog.js';
 export * from './countries.js';
-export * from './egress.js';
-export * from './fleet-stats.js';
 export * from './incidents.js';
 export * from './integration-workspaces.js';
 export * from './integrations.js';
 export * from './knowledge.js';
-export * from './maintenance.js';
-export * from './metrics.js';
 export * from './monitoring.js';
 export * from './node-capacity.js';
 export * from './node-metrics.js';
 export * from './notifications.js';
 export * from './panel-release.js';
 export * from './providers.js';
-export * from './reachability.js';
 export * from './remnawave.js';
 export * from './scenarios.js';
 export * from './security.js';
-export * from './server-checks.js';
-export * from './server-profile.js';
-export * from './servers.js';
 export * from './settings.js';
-export * from './tags.js';
 export * from './tcp-check.js';
 export * from './telegram.js';
-export * from './terminal.js';

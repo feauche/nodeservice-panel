@@ -1,4 +1,4 @@
-import { constants, createReadStream, createWriteStream, openAsBlob } from 'node:fs';
+import { constants, createReadStream, createWriteStream } from 'node:fs';
 import {
   access,
   chmod,
@@ -117,7 +117,6 @@ export class BackupsService implements OnModuleInit {
   private readonly log = new Logger(BackupsService.name);
   private readonly dir: string;
   private readonly hostRoot: string;
-  private readonly vmUrl: string;
   /** Ключи этой установки — чтобы понять, от неё ли копия (из настроек, а не из окружения процесса). */
   private readonly keys: Record<string, string>;
   /**
@@ -143,7 +142,6 @@ export class BackupsService implements OnModuleInit {
   ) {
     this.dir = resolve(config.get('BACKUPS_DIR'));
     this.hostRoot = config.get('HOST_ROOT');
-    this.vmUrl = config.get('VM_URL');
     this.keys = Object.fromEntries(SECRET_KEYS.map((k) => [k, String(config.get(k) ?? '')]));
     this.installEnv = installEnv({
       keys: this.keys,
@@ -281,7 +279,6 @@ export class BackupsService implements OnModuleInit {
       ...(patch.time ? { time: patch.time } : {}),
       ...(patch.keep ? { keep: patch.keep } : {}),
       ...(patch.beforeUpdate !== undefined ? { beforeUpdate: patch.beforeUpdate } : {}),
-      ...(patch.includeMetrics !== undefined ? { includeMetrics: patch.includeMetrics } : {}),
       ...(patch.extra
         ? { extra: { enabled: patch.extra.enabled, paths: [...new Set(patch.extra.paths)] } }
         : {}),
@@ -344,16 +341,7 @@ export class BackupsService implements OnModuleInit {
     const before = this.store.toPublic(cur);
     const after = this.store.toPublic(next);
     const changes: Record<string, { before: unknown; after: unknown }> = {};
-    for (const k of [
-      'auto',
-      'frequency',
-      'weekday',
-      'time',
-      'keep',
-      'beforeUpdate',
-      'includeMetrics',
-      'passwordSet',
-    ] as const)
+    for (const k of ['auto', 'frequency', 'weekday', 'time', 'keep', 'beforeUpdate', 'passwordSet'] as const)
       if (before[k] !== after[k]) changes[k] = { before: before[k], after: after[k] };
     if (JSON.stringify(before.telegram) !== JSON.stringify(after.telegram))
       changes.telegram = { before: before.telegram.enabled, after: after.telegram.enabled };
@@ -453,12 +441,8 @@ export class BackupsService implements OnModuleInit {
       this.stage('env');
       await writeFile(join(work, 'env'), env.text, { mode: 0o600 });
       files.push('env');
-      let hasMetrics = false;
-      if (s.includeMetrics) {
-        this.stage('metrics');
-        hasMetrics = await this.exportMetrics(join(work, 'metrics.native'));
-        if (hasMetrics) files.push('metrics.native');
-      }
+      // Метрики в копию больше не входят: замеры нод хранятся в базе и попадают в неё вместе с дампом.
+      const hasMetrics = false;
       let pathsCount = 0;
       if (s.extra.enabled && s.extra.paths.length > 0) {
         this.stage('files');
@@ -769,24 +753,6 @@ export class BackupsService implements OnModuleInit {
     }
   }
 
-  /** Метрики VictoriaMetrics в родном формате; не вышло — копия без метрик. */
-  private async exportMetrics(out: string): Promise<boolean> {
-    try {
-      const res = await fetch(
-        `${this.vmUrl}/api/v1/export/native?match[]=${encodeURIComponent('{__name__!=""}')}`,
-        {
-          signal: AbortSignal.timeout(20 * 60_000),
-        },
-      );
-      if (!res.ok || !res.body) return false;
-      await pipeline(res.body as unknown as Readable, createWriteStream(out));
-      return (await stat(out)).size > 0;
-    } catch (err) {
-      this.log.warn(`Метрики в копию не попали: ${err instanceof Error ? err.message : err}`);
-      return false;
-    }
-  }
-
   /** Держим последние keep копий; старше — удаляем вместе с описанием. */
   /**
    * Хранение: «последние N» — по обычным копиям (расписание, вручную, перед обновлением, из консоли).
@@ -1093,7 +1059,6 @@ export class BackupsService implements OnModuleInit {
       const { work } = await this.unpack(name, password);
       try {
         await this.tools.restore(join(work, 'db.dump'));
-        if (info.contents?.metrics) await this.importMetrics(join(work, 'metrics.native'));
       } finally {
         await rm(work, { recursive: true, force: true }).catch(() => undefined);
       }
@@ -1130,18 +1095,6 @@ export class BackupsService implements OnModuleInit {
     await this.lifecycle.markStopped().catch(() => undefined);
     if (process.env.NODE_ENV !== 'test') setTimeout(() => process.exit(0), 1500).unref();
     else this.runState = { stage: null, startedAt: null, mode: null, lastError: null };
-  }
-
-  private async importMetrics(path: string): Promise<void> {
-    try {
-      await fetch(`${this.vmUrl}/api/v1/import/native`, {
-        method: 'POST',
-        body: await openAsBlob(path),
-        signal: AbortSignal.timeout(20 * 60_000),
-      });
-    } catch (err) {
-      this.log.warn(`Метрики не вернулись: ${err instanceof Error ? err.message : err}`);
-    }
   }
 
   /* ─────────── расписание ─────────── */

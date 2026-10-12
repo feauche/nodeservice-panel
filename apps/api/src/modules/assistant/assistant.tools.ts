@@ -1,6 +1,5 @@
 import {
   type AssistantCitation,
-  type AssistantProposal,
   AUDIT_CATEGORIES,
   type AuditCategory,
   type AuditResult,
@@ -169,7 +168,6 @@ export interface ToolDeps extends ReadDeps {
 export interface ToolOutcome {
   content: string;
   citations: AssistantCitation[];
-  proposals: AssistantProposal[];
   /** Запись в базу знаний действительно прошла: только тогда Ассистент вправе сказать «сохранил». */
   kbWritten?: boolean;
 }
@@ -177,7 +175,7 @@ export interface ToolOutcome {
 /** Выполнить инструмент из аллоулиста. Неизвестный инструмент — явная ошибка (не молчим). */
 export async function runTool(name: string, input: unknown, deps: ToolDeps): Promise<ToolOutcome> {
   const arg = (input ?? {}) as Record<string, unknown>;
-  const empty: ToolOutcome = { content: '', citations: [], proposals: [] };
+  const empty: ToolOutcome = { content: '', citations: [] };
   if (arg.__truncated)
     return {
       ...empty,
@@ -198,7 +196,6 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
         },
       }),
       citations: [],
-      proposals: [],
     };
   }
 
@@ -226,7 +223,7 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
         ...empty,
         content: 'Remnawave не подключена. Настройки подключения находятся в разделе «Ноды».',
       };
-    const nodes = st.nodes.map(({ serverIds: _ids, linkedBy: _linked, ...node }) => node);
+    const nodes = st.nodes;
     const fresh = !st.error && !!st.checkedAt && Date.now() - Date.parse(st.checkedAt) < 90000;
     const snapshot = {
       source: 'Remnawave',
@@ -349,7 +346,6 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
         items: res.items.map(auditBrief),
       }),
       citations: res.items.slice(0, 3).map((e) => ({ type: 'audit', id: e.id, label: e.action })),
-      proposals: [],
     };
   }
 
@@ -374,7 +370,6 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
         })),
       ),
       citations: limited.slice(0, 6).map((d) => ({ type: 'kb', id: d.id, label: d.title })),
-      proposals: [],
     };
   }
 
@@ -404,7 +399,6 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
     return {
       content: `Статья сохранена в базе знаний: «${saved.title}» (метка AI).`,
       citations: [{ type: 'kb', id: saved.id, label: saved.title }],
-      proposals: [],
       kbWritten: true,
     };
   }
@@ -435,7 +429,6 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
         .filter(Boolean)
         .join(' '),
       citations: [{ type: 'kb', id: res.id, label: 'Пояснения' }],
-      proposals: [],
       kbWritten: res.added + res.updated.length > 0,
     };
   }

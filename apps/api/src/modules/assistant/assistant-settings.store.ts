@@ -2,11 +2,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   ASSISTANT_LEVEL_DEFAULT,
   ASSISTANT_LEVELS,
-  ASSISTANT_PERMISSION_KEYS,
-  ASSISTANT_PERMISSIONS_DEFAULT,
   ASSISTANT_PROVIDERS,
   type AssistantLevel,
-  type AssistantPermissions,
   type AssistantProvider,
   type AssistantSettingsUpdate,
   type AssistantStatus,
@@ -25,12 +22,6 @@ interface Stored {
   provider: AssistantProvider;
   model: string;
   level: AssistantLevel;
-  permissions: AssistantPermissions;
-}
-
-/** Свежая копия дефолтных разрешений (объект не переиспользуем — его мутируют при merge). */
-function defaultPermissions(): AssistantPermissions {
-  return { ...ASSISTANT_PERMISSIONS_DEFAULT };
 }
 
 /** Ключ LLM хранится шифрованным (как TOTP-секрет), в app_meta — попадает в бэкап. */
@@ -46,7 +37,6 @@ export class AssistantSettingsStore {
       provider: DEFAULT_PROVIDER,
       model: '',
       level: ASSISTANT_LEVEL_DEFAULT,
-      permissions: defaultPermissions(),
     };
     const row = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, KEY) });
     if (!row) return base;
@@ -58,17 +48,11 @@ export class AssistantSettingsStore {
       const level = ASSISTANT_LEVELS.includes(p.level as AssistantLevel)
         ? (p.level as AssistantLevel)
         : ASSISTANT_LEVEL_DEFAULT;
-      const permissions = defaultPermissions();
-      if (p.permissions && typeof p.permissions === 'object') {
-        const raw = p.permissions as Record<string, unknown>;
-        for (const k of ASSISTANT_PERMISSION_KEYS) if (typeof raw[k] === 'boolean') permissions[k] = raw[k];
-      }
       return {
         apiKeyEnc: p.apiKeyEnc,
         provider,
         model: typeof p.model === 'string' ? p.model : '',
         level,
-        permissions,
       };
     } catch {
       return base;
@@ -91,7 +75,6 @@ export class AssistantSettingsStore {
       provider: s.provider,
       model: s.model,
       level: s.level,
-      permissions: s.permissions,
     };
   }
 
@@ -100,7 +83,6 @@ export class AssistantSettingsStore {
     provider: AssistantProvider;
     model: string;
     level: AssistantLevel;
-    permissions: AssistantPermissions;
   } | null> {
     const s = await this.load();
     if (!s.apiKeyEnc || !s.model.trim()) return null;
@@ -110,7 +92,6 @@ export class AssistantSettingsStore {
         provider: s.provider,
         model: s.model,
         level: s.level,
-        permissions: s.permissions,
       };
     } catch {
       return null;
@@ -119,19 +100,11 @@ export class AssistantSettingsStore {
 
   async set(patch: AssistantSettingsUpdate): Promise<void> {
     const current = await this.load();
-    // Мержим только явно заданные булевы разрешения (partial-схема допускает undefined).
-    const permissions = { ...current.permissions };
-    if (patch.permissions)
-      for (const k of ASSISTANT_PERMISSION_KEYS) {
-        const v = patch.permissions[k];
-        if (typeof v === 'boolean') permissions[k] = v;
-      }
     const next: Stored = {
       provider: patch.provider ?? current.provider,
       model: patch.model !== undefined ? patch.model : current.model,
       apiKeyEnc: current.apiKeyEnc,
       level: patch.level ?? current.level,
-      permissions,
     };
     if (patch.clearKey) next.apiKeyEnc = undefined;
     else if (patch.apiKey) next.apiKeyEnc = this.crypto.encrypt(patch.apiKey);

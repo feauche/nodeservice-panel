@@ -572,7 +572,7 @@ describe('login guard e2e', () => {
 
   /* ---------- api-platform#8: вход по коду восстановления ---------- */
 
-  it('вход по коду восстановления присылает уведомление в колокольчик и Telegram с числом оставшихся кодов', async () => {
+  it('вход по коду восстановления присылает сообщение в Telegram с числом оставшихся кодов', async () => {
     const c = await newClient('198.51.100.50');
     await login(c).expect(200);
     const res = await c.post('/api/auth/login/recovery', { code: recoveryCodes[1] }).expect(200);
@@ -590,9 +590,6 @@ describe('login guard e2e', () => {
     expect(sent[0]?.body).toContain('Остальные сессии завершены');
     // «вход с нового устройства» отдельно не приходит — одно сообщение на один вход
     expect(pushed().filter((p) => p.title === NEW_DEVICE)).toHaveLength(0);
-    // колокольчик
-    const bell = await app.get(NotificationsService).list();
-    expect(bell.items.some((n) => n.title === 'Вход по коду восстановления')).toBe(true);
   });
 
   /* ---------- api-platform#7: владелец не заперт чужими неудачами ---------- */

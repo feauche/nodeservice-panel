@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HealthController, NOT_READY_PROBLEM } from './health.controller.js';
 import { PanelPulse } from './panel-pulse.js';
 
-const VM_URL = 'http://vm.test:8428';
 /** Сырой текст ошибки базы — с адресом и паролем: наружу он попадать не должен. */
 const DB_ERROR = 'connect ECONNREFUSED postgres://nodeservice:s3cret-pass@postgres:5432/nodeservice';
 const never = () => new Promise<never>(() => undefined);
@@ -12,7 +11,6 @@ const never = () => new Promise<never>(() => undefined);
 interface Parts {
   db?: () => Promise<unknown>;
   ping?: () => Promise<string>;
-  vm?: () => Promise<Response>;
   /** Поиск инцидентов уже отработал (по умолчанию — только что). */
   ticked?: boolean;
 }
@@ -20,14 +18,10 @@ interface Parts {
 function make(parts: Parts = {}) {
   const pulse = new PanelPulse();
   if (parts.ticked !== false) pulse.incidentsTick();
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-    expect(String(url)).toBe(`${VM_URL}/health`);
-    return parts.vm ? parts.vm() : new Response('OK', { status: 200 });
-  });
   const ctrl = new HealthController(
     { execute: parts.db ?? (async () => ({ rows: [{ '?column?': 1 }] })) } as never,
     { ping: parts.ping ?? (async () => 'PONG') } as never,
-    { get: (k: string) => (k === 'VM_URL' ? VM_URL : undefined) } as never,
+    { get: () => undefined } as never,
     pulse,
   );
   // Ожидание каждой проверки сокращаем: зависшая часть должна давать 503, а не держать тест.
@@ -61,7 +55,7 @@ describe('/api/health/ready — готовность по-настоящему',
     const { ctrl } = make();
     const res = await ctrl.ready();
     expect(res.status).toBe('ok');
-    expect(Object.keys(res.checks).sort()).toEqual(['incidents', 'metrics', 'postgres', 'valkey']);
+    expect(Object.keys(res.checks).sort()).toEqual(['incidents', 'postgres', 'valkey']);
     for (const c of Object.values(res.checks)) expect(c.ok).toBe(true);
   });
 
@@ -96,21 +90,6 @@ describe('/api/health/ready — готовность по-настоящему',
     expect((await notReady(odd.ctrl)).extensions.problems).toEqual(['хранилище сессий не отвечает']);
   });
 
-  it('хранилище метрик не отвечает или отвечает ошибкой — 503', async () => {
-    const down = make({
-      vm: async () => {
-        throw new TypeError('fetch failed');
-      },
-    });
-    expect((await notReady(down.ctrl)).extensions.problems).toEqual(['хранилище метрик не отвечает']);
-    vi.restoreAllMocks();
-    const bad = make({ vm: async () => new Response('storage full', { status: 500 }) });
-    expect((await notReady(bad.ctrl)).extensions.problems).toEqual(['хранилище метрик не отвечает']);
-    vi.restoreAllMocks();
-    const hung = make({ vm: never });
-    expect((await notReady(hung.ctrl)).extensions.problems).toEqual(['хранилище метрик не отвечает']);
-  });
-
   it('поиск инцидентов не отрабатывал больше 3 минут — 503, хотя всё остальное отвечает', async () => {
     const { ctrl, pulse } = make();
     pulse.incidentsTick(Date.now() - 4 * 60_000);
@@ -135,22 +114,18 @@ describe('/api/health/ready — готовность по-настоящему',
       db: async () => {
         throw new Error(DB_ERROR);
       },
-      vm: never,
     });
     pulse.incidentsTick(Date.now() - 10 * 60_000);
     const body = await notReady(ctrl);
     expect(body.extensions.problems).toEqual([
       'база данных не отвечает',
-      'хранилище метрик не отвечает',
       'поиск инцидентов не отрабатывал 10 мин',
     ]);
-    expect(body.detail).toBe(
-      'база данных не отвечает; хранилище метрик не отвечает; поиск инцидентов не отрабатывал 10 мин',
-    );
+    expect(body.detail).toBe('база данных не отвечает; поиск инцидентов не отрабатывал 10 мин');
   });
 
   it('/api/health/live по-прежнему отвечает без проверок: по нему Docker перезапускает контейнер', () => {
-    const { ctrl } = make({ db: never, ping: never, vm: never });
+    const { ctrl } = make({ db: never, ping: never });
     expect(ctrl.live().status).toBe('ok');
   });
 });

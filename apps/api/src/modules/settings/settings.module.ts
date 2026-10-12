@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AssistantSettingsModule } from '../assistant/assistant-settings.module.js';
 import { ProvidersModule } from '../providers/providers.module.js';
-import { AutochecksStore } from './autochecks.store.js';
 import { IncidentsSettingsStore } from './incidents-settings.store.js';
 import { MonitoringController } from './monitoring.controller.js';
 import { MonitoringStore } from './monitoring.store.js';
@@ -12,7 +11,7 @@ import { SiteIconsController } from './site-icons.controller.js';
 @Module({
   imports: [AssistantSettingsModule, ProvidersModule],
   controllers: [MonitoringController, SettingsController, SiteIconsController],
-  providers: [MonitoringStore, SettingsService, AutochecksStore, IncidentsSettingsStore],
-  exports: [MonitoringStore, SettingsService, AutochecksStore, IncidentsSettingsStore],
+  providers: [MonitoringStore, SettingsService, IncidentsSettingsStore],
+  exports: [MonitoringStore, SettingsService, IncidentsSettingsStore],
 })
 export class SettingsModule {}

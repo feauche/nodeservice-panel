@@ -57,7 +57,10 @@ describe('AssistantSettingsPage', () => {
 
     await screen.findByText('Включён');
     await go(router, 'privacy');
-    expect(screen.getByText(/Метрики, состояние серверов и их названия/)).toBeInTheDocument();
+    expect(screen.getByText(/Метрики, состояние нод и их названия/)).toBeInTheDocument();
+    expect(screen.getByText('События и их хронология.')).toBeInTheDocument();
+    expect(screen.queryByText(/попытки починки/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/серверов/)).not.toBeInTheDocument();
     expect(screen.getByText(/Сохранённые метрики нод, результаты прошлых проверок/)).toBeInTheDocument();
     expect(screen.getByText('Ассистент не запускает проверки и изменения.')).toBeInTheDocument();
     expect(screen.queryByText(/SSH/)).not.toBeInTheDocument();

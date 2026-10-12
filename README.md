@@ -17,8 +17,8 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/feauche/nodeservice-panel/main/infra/scripts/install.sh)
 ```
 
-Скрипт поставит Docker, соберёт и запустит панель (Caddy с авто-HTTPS, API, Postgres, Valkey,
-VictoriaMetrics), напечатает токен первого запуска. Caddy принимает запросы на домене и
+Скрипт поставит Docker, соберёт и запустит панель (Caddy с авто-HTTPS, API, Postgres, Valkey),
+напечатает токен первого запуска. Caddy принимает запросы на домене и
 автоматически выпускает HTTPS-сертификат. Расписание копий настраивается в панели:
 «Настройки → Резервные копии». Обслуживание —
 команда `nodeservice` (`update`, `rollback`, `backup`, `restore`, `logs`, `cli`). Подробно:
@@ -60,7 +60,7 @@ infra/            Docker Compose (prod + dev), Caddy, скрипты устан�
 ## Разработка
 
 ```bash
-docker compose -f infra/compose.dev.yaml up -d      # Postgres 18, Valkey 8, VictoriaMetrics
+docker compose -f infra/compose.dev.yaml up -d      # Postgres 18, Valkey 8
 cp apps/api/.env.example apps/api/.env
 pnpm install
 pnpm dev                                            # api :3000 (+ /api/backend-tools/docs), web :5173

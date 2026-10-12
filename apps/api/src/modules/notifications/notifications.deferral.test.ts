@@ -13,7 +13,6 @@ function makeDb() {
     /** По каким делам в Telegram уже что-то ушло. */
     announced: new Set<string>(),
     sent: [] as TelegramDispatch[],
-    bell: [] as string[],
     failDefer: false,
   };
 }
@@ -26,14 +25,10 @@ const openedAgo = (ms: number): IncidentState => ({
   analysis: null,
 });
 
-/** Минимальный сервис: колокольчик — в память, Telegram — в список, отложенное — в «базу». */
+/** Минимальный сервис: Telegram — в список, отложенное — в «базу». */
 function make(db: FakeDb = makeDb()) {
   const svc = new NotificationsService(
     {
-      insert: async (r: { title: string }) => {
-        db.bell.push(r.title);
-        return { ...r, id: 'n', createdAt: new Date(), readAt: null };
-      },
       deferTelegram: async (id: string, alert: TelegramDispatch) => {
         if (db.failDefer) throw new Error('нет такого дела');
         db.pending.set(id, {
@@ -69,7 +64,7 @@ function make(db: FakeDb = makeDb()) {
   );
   // Таймер ожидания в этих тестах не нужен (кроме теста про него): сообщение выпускают события.
   svc.analysisWaitMs = 60_000;
-  return { svc, db, sent: db.sent, bell: db.bell };
+  return { svc, db, sent: db.sent };
 }
 
 const alert = (id: string, extra: Partial<PushInput> = {}): PushInput => ({
@@ -93,8 +88,8 @@ const done = (verdict: string): IncidentAnalysis =>
 afterEach(() => vi.useRealTimers());
 
 describe('Telegram ждёт разбора Джарвиса', () => {
-  it('колокольчик сразу, Telegram — после разбора и с выводом первым блоком', async () => {
-    const { svc, sent, bell, db } = make();
+  it('Telegram — после разбора и с выводом первым блоком', async () => {
+    const { svc, sent, db } = make();
     db.incidents.set('i1', openedAgo(90_000));
     await svc.push({
       severity: 'crit',
@@ -102,7 +97,6 @@ describe('Telegram ждёт разбора Джарвиса', () => {
       body: 'Онлайн: 476 → 0',
       telegram: { event: 'incident_crit', incidentId: 'i1', kind: 'server_down', awaitAnalysis: true },
     });
-    expect(bell).toHaveLength(1);
     expect(sent).toHaveLength(0);
     await svc.releaseAfterAnalysis(
       'i1',

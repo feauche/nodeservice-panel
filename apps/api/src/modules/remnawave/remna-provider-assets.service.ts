@@ -151,7 +151,7 @@ export class RemnaProviderAssetsService {
       iconPending: !a.checked,
       iconVersion: a.version,
       note: a.note,
-      serversCount: p.nodes.length,
+      nodesCount: p.nodes.length,
       createdAt: a.createdAt,
       updatedAt: a.updatedAt,
     };

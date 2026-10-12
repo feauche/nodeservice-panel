@@ -1,14 +1,27 @@
 import { Inject, Injectable } from '@nestjs/common';
-import {
-  AUTOCHECKS_DEFAULTS,
-  autochecksSettingsSchema,
-  MONITORING_DEFAULTS,
-  type MonitoringSettings,
-  monitoringSettingsSchema,
-} from '@nodeservice/shared';
+import { MONITORING_DEFAULTS, type MonitoringSettings, monitoringSettingsSchema } from '@nodeservice/shared';
 import { eq } from 'drizzle-orm';
+import { z } from 'zod';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { appMeta } from '../../infra/db/schema/index.js';
+
+/**
+ * Старые «Автопроверки» (до 0.85) — только для переноса при обновлении: выключенный мониторинг остаётся
+ * выключенным, испорченная запись его не включает. Поля и границы — как в той версии.
+ */
+const legacyInterval = (min: number, max: number) => z.coerce.number().int().min(min).max(max);
+const legacyAutochecksSchema = z.object({
+  sshEnabled: z.boolean().default(true),
+  sshIntervalMinutes: legacyInterval(5, 1440).default(15),
+  sshAgentEnabled: z.boolean().default(true),
+  sshAgentIntervalMinutes: legacyInterval(15, 10_080).default(60),
+  agentOfflineEnabled: z.boolean().default(true),
+  agentOfflineAfterSeconds: legacyInterval(30, 600).default(30),
+  metricsEnabled: z.boolean().default(true),
+  metricsIntervalSeconds: legacyInterval(5, 120).default(10),
+  serverChecksEnabled: z.boolean().default(true),
+});
+
 @Injectable()
 export class MonitoringStore {
   constructor(@Inject(DB) private readonly db: Db) {}
@@ -21,7 +34,7 @@ export class MonitoringStore {
         try {
           const value: unknown = JSON.parse(legacy.value);
           if (value && typeof value === 'object' && !Array.isArray(value)) {
-            const parsed = autochecksSettingsSchema.safeParse({ ...AUTOCHECKS_DEFAULTS, ...value });
+            const parsed = legacyAutochecksSchema.safeParse(value);
             const globalEnabled = 'enabled' in value ? value.enabled : undefined;
             enabled =
               parsed.success &&

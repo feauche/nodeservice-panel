@@ -110,7 +110,7 @@ export function TotpPage() {
           </Link>
         ) : (
           <span className="text-text-3">
-            Кодов восстановления не осталось. Сброс: nodeservice cli на сервере
+            Кодов восстановления не осталось. Сброс: nodeservice cli на сервере панели
           </span>
         )}
       </AuthLinks>

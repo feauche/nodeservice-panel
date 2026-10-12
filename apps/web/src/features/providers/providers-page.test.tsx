@@ -20,6 +20,10 @@ describe('ProvidersPage', () => {
     const list = await screen.findByRole('list', { name: 'Провайдеры' });
     expect(within(list).getAllByRole('button')).toHaveLength(3);
     expect(within(list).getByRole('button', { name: /Aéza/ })).toHaveAttribute('aria-pressed', 'true');
+    // Счёт и сортировка — по нодам, слова «серверы» в справочнике нет.
+    expect(within(list).getAllByText('Нод нет')).toHaveLength(3);
+    expect(screen.getByRole('button', { name: 'Сортировка: по числу нод' })).toHaveTextContent('По нодам');
+    expect(screen.queryByText(/[Сс]ервер/)).not.toBeInTheDocument();
 
     const card = screen.getByTestId('provider-card');
     expect(within(card).getByRole('heading', { name: 'Aéza' })).toBeInTheDocument();
@@ -223,7 +227,7 @@ describe('ProvidersPage', () => {
       iconPending: false,
       iconVersion: 1,
       note: null,
-      serversCount: 1,
+      nodesCount: 1,
       createdAt: '2026-09-12T10:00:00.000Z',
       updatedAt: '2026-09-12T10:00:00.000Z',
     };

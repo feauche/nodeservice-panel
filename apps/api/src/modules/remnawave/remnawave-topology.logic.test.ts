@@ -66,7 +66,7 @@ const source = (): RemnawaveTopologySource => ({
 
 describe('buildRemnawaveTopology', () => {
   it('связывает хост, инбаунд, ноды и выход без секретных полей', () => {
-    const result = buildRemnawaveTopology(source(), new Map([['node-ru', ['server-1']]]));
+    const result = buildRemnawaveTopology(source());
     expect(result.hosts[0]).toMatchObject({
       id: 'host-1',
       inboundTag: 'VLESS_IN',
@@ -74,7 +74,7 @@ describe('buildRemnawaveTopology', () => {
       nodeUuids: ['node-ru'],
       status: 'ok',
     });
-    expect(result.nodes[0]).toMatchObject({ usersOnline: 42, serverIds: ['server-1'] });
+    expect(result.nodes[0]).toMatchObject({ usersOnline: 42 });
     expect(result.routes.find((route) => route.outboundTag === 'NL_OUT')).toMatchObject({
       hostIds: ['host-1'],
       targetKind: 'node',
@@ -102,7 +102,7 @@ describe('buildRemnawaveTopology', () => {
       activeInbounds: [{ uuid: 'in-1' }],
     };
 
-    const result = buildRemnawaveTopology(input, new Map(), new Map([['ru.example.com', ['10.0.0.2']]]));
+    const result = buildRemnawaveTopology(input, new Map([['ru.example.com', ['10.0.0.2']]]));
 
     expect(result.hosts[0]).toMatchObject({ nodeUuids: ['node-nl'], status: 'error' });
   });
@@ -160,7 +160,7 @@ describe('buildRemnawaveTopology', () => {
     ]);
 
     expect(topologyAddresses(input)).toContain('bridge-nl.example.com');
-    expect(buildRemnawaveTopology(input, new Map(), resolved).routes[0]).toMatchObject({
+    expect(buildRemnawaveTopology(input, resolved).routes[0]).toMatchObject({
       targetKind: 'node',
       targetLabel: 'Нидерланды - 1',
       targetNodeUuids: ['node-nl'],

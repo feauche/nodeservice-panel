@@ -44,7 +44,7 @@ const when = (at: Date, timeZone: string) =>
 
 /**
  * Сообщение биллинга в Telegram: крупно — что и сколько, дальше срок, период, где развёрнуто.
- * Если сервер из этой оплаты сейчас недоступен — отдельный блок: вероятно, дело в неоплате.
+ * Если нода из этой оплаты сейчас недоступна — отдельный блок: вероятно, дело в неоплате.
  */
 export function formatBillingMessage(m: BillingMessageInput): string {
   const tz = m.timeZone ?? 'Europe/Moscow';
@@ -68,7 +68,7 @@ export function formatBillingMessage(m: BillingMessageInput): string {
   ];
   if (m.domain) lines.push(`🌐 ${esc(m.domain)}`);
   if (m.servers.length > 0) {
-    const label = m.kind === 'cert' ? 'Развёрнут на' : m.servers.length > 1 ? 'Серверы' : 'Сервер';
+    const label = m.kind === 'cert' ? 'Развёрнут на' : m.servers.length > 1 ? 'Ноды' : 'Нода';
     lines.push(`🖥 ${label}: ${m.servers.map((s) => esc(s.name)).join(', ')}`);
   }
   if (m.note) lines.push(`📝 <i>${esc(m.note.slice(0, 200))}</i>`);
@@ -76,7 +76,7 @@ export function formatBillingMessage(m: BillingMessageInput): string {
   if (m.state === 'overdue' && down.length > 0)
     lines.push(
       '',
-      `⚠️ <b>${esc(down.map((s) => s.name).join(', '))} ${down.length > 1 ? 'недоступны' : 'недоступен'}</b> — вероятно, из-за неоплаты. Продлите у провайдера и отметьте продление в панели.`,
+      `⚠️ <b>${esc(down.map((s) => s.name).join(', '))} ${down.length > 1 ? 'недоступны' : 'недоступна'}</b> — вероятно, из-за неоплаты. Продлите у провайдера и отметьте продление в панели.`,
     );
   lines.push('', '<i>Биллинг · после оплаты отметьте продление в панели</i>');
   return lines.join('\n');
@@ -109,7 +109,7 @@ export function formatBillingRichMessage(m: BillingMessageInput): RichBlock[] {
   ];
   if (m.domain) rows.push([richCell('Домен', true), richCell(m.domain)]);
   if (m.servers.length > 0) {
-    const label = m.kind === 'cert' ? 'Развёрнут на' : m.servers.length > 1 ? 'Серверы' : 'Сервер';
+    const label = m.kind === 'cert' ? 'Развёрнут на' : m.servers.length > 1 ? 'Ноды' : 'Нода';
     rows.push([richCell(label, true), richCell(m.servers.map((s) => s.name).join(', '))]);
   }
   const blocks: RichBlock[] = [
@@ -138,7 +138,7 @@ export function formatBillingRichMessage(m: BillingMessageInput): RichBlock[] {
       type: 'paragraph',
       text: [
         '⚠️ ',
-        richBold(`${down.map((s) => s.name).join(', ')} ${down.length > 1 ? 'недоступны' : 'недоступен'}`),
+        richBold(`${down.map((s) => s.name).join(', ')} ${down.length > 1 ? 'недоступны' : 'недоступна'}`),
         ' — вероятно, из-за неоплаты. Продлите у провайдера и отметьте продление в панели.',
       ],
     });

@@ -1,12 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
-import {
-  APPEARANCE_DEFAULTS,
-  AUTH_PROBLEM,
-  CSRF_HEADER,
-  TERMINAL_SNIPPETS_DEFAULTS,
-} from '@nodeservice/shared';
+import { APPEARANCE_DEFAULTS, AUTH_PROBLEM, CSRF_HEADER } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import request from 'supertest';
 import TestAgent from 'supertest/lib/agent.js';
@@ -108,23 +103,5 @@ describe('settings e2e', () => {
     expect(await app.get(NotificationsService).timeZone()).toBe('Europe/Berlin');
     await db.execute(sql`delete from app_meta where key in ('settings.appearance', 'settings.telegram')`);
     expect((await svc.getAppearance()).timeZone).toBe(APPEARANCE_DEFAULTS.timeZone);
-  });
-
-  it('сниппеты терминала: пусто по умолчанию, сохраняются целиком, многострочная команда отклоняется', async () => {
-    const svc = app.get(SettingsService);
-    expect(await svc.getSnippets()).toEqual(TERMINAL_SNIPPETS_DEFAULTS);
-    const id = '11111111-1111-4111-8111-111111111111';
-    const saved = await svc.updateSnippets({ items: [{ id, name: 'Соединения', command: 'ss -s' }] });
-    expect(saved.items).toHaveLength(1);
-    expect((await svc.getSnippets()).items[0]?.command).toBe('ss -s');
-    await expect(
-      svc.updateSnippets({ items: [{ id, name: 'x', command: 'ls\nrm -rf /' }] }),
-    ).rejects.toThrow();
-    expect(await svc.updateSnippets({ items: [] })).toEqual(TERMINAL_SNIPPETS_DEFAULTS);
-  });
-
-  it('GET /api/settings/snippets без сессии → 401', async () => {
-    const res = await agent.get('/api/settings/snippets').expect(401);
-    expect(res.body.type).toBe(AUTH_PROBLEM.unauthenticated);
   });
 });

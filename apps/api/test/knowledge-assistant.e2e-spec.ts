@@ -2,7 +2,6 @@ import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import {
-  ASSISTANT_PERMISSION_KEYS,
   assistantChatResponseSchema,
   assistantStatusSchema,
   auditListResponseSchema,
@@ -297,7 +296,6 @@ describe('knowledge + assistant e2e', () => {
     const res = assistantChatResponseSchema.parse(
       (await agent.post('/api/assistant/chat').set(CSRF_HEADER, csrf).send({ message }).expect(200)).body,
     );
-    expect(res.message.proposals).toEqual([]);
     const after = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
     expect(after).toEqual(before);
     const afterDocs = await Promise.all(
@@ -321,7 +319,7 @@ describe('knowledge + assistant e2e', () => {
     const db = app.get<Db>(DB);
     await runMigrations(db);
     await db.execute(
-      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents, kb_documents, assistant_conversations cascade`,
+      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, incidents, kb_documents, assistant_conversations cascade`,
     );
     await db.execute(sql`delete from app_meta where key like 'settings.%' or key = 'panel.ssh-key'`);
     await app.get<Redis>(VALKEY).flushdb();
@@ -454,9 +452,6 @@ describe('knowledge + assistant e2e', () => {
     );
     expect(res.message.role).toBe('assistant');
     expect(res.message.content).toContain('conntrack');
-    // предложение действия — human-in-the-loop
-    // Предложение по несуществующему инциденту отклоняется, карточки нет (положительный путь: fleet-probe.e2e-spec)
-    expect(res.message.proposals).toHaveLength(0);
     // цитата на базу знаний
     expect(res.message.citations.some((c) => c.type === 'kb')).toBe(true);
 
@@ -522,7 +517,6 @@ describe('knowledge + assistant e2e', () => {
     );
     expect(res.message.content).toContain('не разрешён');
     expect(res.message.content).toContain('matched');
-    expect(res.message.reachability).toEqual([]);
   });
 
   it('глоссарий «Пояснения» есть всегда: закреплён сверху, не удаляется, не архивируется и не переименовывается', async () => {
@@ -545,10 +539,9 @@ describe('knowledge + assistant e2e', () => {
         content: '# Пояснения\n\n| Термин | Простыми словами |\n| --- | --- |\n| VPN | Защищённый канал |\n',
       })
       .expect(200);
-    // Разрешения «глоссарий» больше нет в настройках Джарвиса.
-    const status = assistantStatusSchema.parse((await agent.get('/api/assistant/status').expect(200)).body);
-    expect(Object.keys(status.permissions).sort()).toEqual([...ASSISTANT_PERMISSION_KEYS].sort());
-    expect(status.permissions).not.toHaveProperty('glossary');
+    // Разрешений у Ассистента больше нет: запись в базу знаний включена всегда.
+    const status = (await agent.get('/api/assistant/status').expect(200)).body as Record<string, unknown>;
+    expect(status).not.toHaveProperty('permissions');
   });
 
   it('ревизия базы знаний: безопасно правит статьи, снимает версию, пишет отчёт', async () => {

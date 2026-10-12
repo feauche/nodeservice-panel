@@ -30,7 +30,7 @@ describe('сообщение биллинга в Telegram', () => {
       '1 октября, 15:00</b> (UTC+6)',
     );
     expect(t).toContain('раз в месяц');
-    expect(t).not.toContain('недоступен');
+    expect(t).not.toContain('недоступна');
   });
 
   it('просрочено и сервер лежит — подсказываем причину', () => {
@@ -41,7 +41,7 @@ describe('сообщение биллинга в Telegram', () => {
       servers: [{ name: 'DE-1', down: true }],
     });
     expect(t).toContain('🔴 <b>Оплата просрочена на 1 день</b>');
-    expect(t).toContain('DE-1 недоступен</b> — вероятно, из-за неоплаты');
+    expect(t).toContain('DE-1 недоступна</b> — вероятно, из-за неоплаты');
   });
 
   it('сертификат — «Развёрнут на»', () => {
@@ -59,13 +59,13 @@ describe('сообщение биллинга в Telegram', () => {
     expect(t).toContain('Развёрнут на: DE-1, NL-2');
   });
 
-  it('расширенное оформление передаёт сумму, срок и серверы настоящей таблицей', () => {
+  it('расширенное оформление передаёт сумму, срок и ноды настоящей таблицей', () => {
     const blocks = formatBillingRichMessage({ ...base, state: 'soon', timeZone: 'Asia/Omsk' });
     expect(blocks[0]).toEqual({ type: 'heading', size: 3, text: '💳 Скоро оплата — через 2 дня' });
     const table = blocks.find((block) => block.type === 'table');
     expect(table).toMatchObject({ type: 'table', is_bordered: true, is_striped: true, is_compact: true });
     if (table?.type !== 'table') throw new Error('нет таблицы');
-    expect(table.cells.map((row) => row[0]?.text)).toEqual(['Сумма', 'Оплатить до', 'Период', 'Сервер']);
+    expect(table.cells.map((row) => row[0]?.text)).toEqual(['Сумма', 'Оплатить до', 'Период', 'Нода']);
     expect(JSON.stringify(table.cells)).toContain('€4.51');
     expect(JSON.stringify(table.cells)).toContain('1 октября, 15:00 (UTC+6)');
     expect(JSON.stringify(table.cells)).toContain('DE-1');
@@ -82,7 +82,7 @@ describe('сообщение биллинга в Telegram', () => {
       paidUntil: new Date('2026-09-28T09:00:00Z'),
       servers: [{ name: 'DE-1', down: true }],
     });
-    expect(JSON.stringify(blocks)).toContain('DE-1 недоступен');
+    expect(JSON.stringify(blocks)).toContain('DE-1 недоступна');
     expect(JSON.stringify(blocks)).toContain('вероятно, из-за неоплаты');
   });
 });

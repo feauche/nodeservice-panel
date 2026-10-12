@@ -41,7 +41,6 @@ describe('assistant current node data boundary', () => {
     expect(out.citations).toEqual([{ type: 'node', id: uuid, label: 'Нода' }]);
     expect(body.node.cpuPercent).toBeNull();
     expect(body.node.usersOnline).toBeNull();
-    expect(body.node.serverIds).toBeUndefined();
     expect(d.servers.list).not.toHaveBeenCalled();
   });
   it('does not guess ambiguous node names or convert stale snapshots into measured failure', async () => {
@@ -68,7 +67,6 @@ describe('assistant current node data boundary', () => {
     for (const name of ['run_server_check', 'inspect_processes', 'propose_change', 'get_server_detail']) {
       const out = await runTool(name, { serverId: 'legacy' }, d);
       expect(out.content).toContain('не разрешён');
-      expect(out.proposals).toEqual([]);
     }
     expect(d.servers.list).not.toHaveBeenCalled();
   });

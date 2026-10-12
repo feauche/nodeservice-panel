@@ -209,7 +209,7 @@ describe('AuditPage', () => {
     expect(csv).toHaveAttribute('href', '/api/audit/export?format=csv');
   });
 
-  it('старая ссылка с фильтром по серверу: чип с именем из записей, список только его событий, крестик снимает', async () => {
+  it('старая ссылка с фильтром по серверу: чип «Нода» с именем из записей, список только его событий, крестик снимает', async () => {
     // Окна сервера больше нет, но ссылки вида /audit?target=<id> могли остаться; имя берётся из записей Журнала.
     const server = { id: '0192f100-0000-7000-8000-000000000001', name: 'de-fra-01' };
     seedAudit(20);
@@ -220,17 +220,17 @@ describe('AuditPage', () => {
     const ServerHarness = () => <Harness initial={{ target: server.id }} />;
     renderPage(ServerHarness, '/audit');
     const chip = await screen.findByTestId('audit-target-chip');
-    await waitFor(() => expect(chip).toHaveTextContent(`Сервер: ${server.name}`));
+    await waitFor(() => expect(chip).toHaveTextContent(`Нода: ${server.name}`));
     await waitFor(() => expect(rows().length).toBe(5));
     for (const r of rows())
       expect(within(r as HTMLElement).getByText(`· ${server.name}`)).toBeInTheDocument();
     const user = userEvent.setup();
-    await user.click(within(chip).getByRole('button', { name: 'Снять фильтр по серверу' }));
+    await user.click(within(chip).getByRole('button', { name: 'Снять фильтр по ноде' }));
     await waitFor(() => expect(screen.queryByTestId('audit-target-chip')).not.toBeInTheDocument());
     await waitFor(() => expect(rows().length).toBe(20));
   });
 
-  it('старая ссылка на сервер без записей: чип говорит «удалён», список серверов не запрашивается', async () => {
+  it('старая ссылка на сервер без записей: чип говорит «удалена», список серверов не запрашивается', async () => {
     seedAudit(5);
     const paths: string[] = [];
     const onRequest = ({ request }: { request: Request }) => {
@@ -241,7 +241,8 @@ describe('AuditPage', () => {
       const Old = () => <Harness initial={{ target: '0192f100-0000-7000-8000-0000000000ff' }} />;
       renderPage(Old, '/audit');
       const chip = await screen.findByTestId('audit-target-chip');
-      await waitFor(() => expect(chip).toHaveTextContent('Сервер: удалён'));
+      await waitFor(() => expect(chip).toHaveTextContent('Нода: удалена'));
+      expect(chip).not.toHaveTextContent(/Сервер/);
       expect(paths.some((p) => p.startsWith('/api/audit'))).toBe(true);
       expect(paths.some((p) => p.startsWith('/api/servers'))).toBe(false);
     } finally {

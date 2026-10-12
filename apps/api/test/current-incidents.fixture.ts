@@ -27,9 +27,7 @@ export async function currentIncidentApp() {
   setupHttp(app as NestExpressApplication);
   const db = app.get<Db>(DB);
   await runMigrations(db);
-  await db.execute(
-    sql`truncate users, recovery_codes, trusted_devices, setup_tokens, incidents, servers cascade`,
-  );
+  await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens, incidents cascade`);
   await db.execute(sql`delete from app_meta where key like 'settings.%' or key like 'monitor.%'`);
   await app.get<Redis>(VALKEY).flushdb();
   await app.init();

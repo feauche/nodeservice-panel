@@ -41,7 +41,7 @@ export class ProvidersController {
   constructor(private readonly providers: ProvidersService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Справочник провайдеров с числом серверов' })
+  @ApiOperation({ summary: 'Справочник провайдеров' })
   @ApiOkResponse({ type: ProvidersResponseDto })
   async list(): Promise<ProvidersResponse> {
     return { items: await this.providers.list() };
@@ -71,7 +71,7 @@ export class ProvidersController {
 
   @Delete(':id')
   @HttpCode(204)
-  @ApiOperation({ summary: 'Архивировать провайдера (серверы отвязываются, история оплат сохраняется)' })
+  @ApiOperation({ summary: 'Архивировать провайдера (история оплат сохраняется)' })
   remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.providers.delete(id);
   }

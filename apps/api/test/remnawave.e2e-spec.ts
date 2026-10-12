@@ -100,7 +100,7 @@ describe('Remnawave e2e (J4)', () => {
   const fake = new FakeRemnawaveClient();
 
   const status = async (): Promise<RemnawaveStatus> =>
-    remnawaveStatusSchema.parse((await agent.get('/api/remnawave/status').expect(200)).body);
+    remnawaveStatusSchema.parse((await agent.get('/api/nodes/status').expect(200)).body);
   const auditActions = async () =>
     JSON.stringify((await agent.get('/api/audit?pageSize=50').expect(200)).body);
 
@@ -118,7 +118,7 @@ describe('Remnawave e2e (J4)', () => {
     setupHttp(app as NestExpressApplication);
     const db = app.get<Db>(DB);
     await runMigrations(db);
-    await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers cascade`);
+    await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens cascade`);
     await db.execute(sql`delete from app_meta where key like 'settings.%'`);
     await app.get<Redis>(VALKEY).flushdb();
     await app.init();
@@ -151,20 +151,17 @@ describe('Remnawave e2e (J4)', () => {
       stats: null,
       nodes: [],
       cert: null,
-      vpnProbeConfigured: false,
-      vpnProbeRoutes: null,
-      vpnProbeRouteDetails: [],
     });
   });
 
   it('без входа недоступно', async () => {
     const anon = request(app.getHttpServer());
-    await anon.get('/api/remnawave/status').expect(401);
+    await anon.get('/api/nodes/status').expect(401);
   });
 
   it('неверный токен: 400, ничего не подключается', async () => {
     const res = await agent
-      .post('/api/remnawave/connect')
+      .post('/api/nodes/connect')
       .set(CSRF_HEADER, csrf)
       .send({ domain: 'vpn-panel.example.com', apiKey: 'rw_pat_bad' })
       .expect(400);
@@ -174,7 +171,7 @@ describe('Remnawave e2e (J4)', () => {
 
   it('домен не отвечает: 502', async () => {
     await agent
-      .post('/api/remnawave/connect')
+      .post('/api/nodes/connect')
       .set(CSRF_HEADER, csrf)
       .send({ domain: 'unreachable.example.com', apiKey: 'rw_pat_good' })
       .expect(502);
@@ -182,7 +179,7 @@ describe('Remnawave e2e (J4)', () => {
 
   it('успешное подключение: домен нормализован (без протокола и хвостового слэша), сводка, нода, версия панели; запись в Журнале', async () => {
     const res = await agent
-      .post('/api/remnawave/connect')
+      .post('/api/nodes/connect')
       .set(CSRF_HEADER, csrf)
       .send({ domain: 'https://VPN-Panel.example.com/', apiKey: 'rw_pat_good' })
       .expect(200);
@@ -212,7 +209,7 @@ describe('Remnawave e2e (J4)', () => {
 
   it('обновить: свежие цифры без повторной отправки токена', async () => {
     fake.usersOnline = 55;
-    const res = await agent.post('/api/remnawave/refresh').set(CSRF_HEADER, csrf).expect(200);
+    const res = await agent.post('/api/nodes/refresh').set(CSRF_HEADER, csrf).expect(200);
     expect(remnawaveStatusSchema.parse(res.body).stats?.online.now).toBe(55);
     fake.usersOnline = 42;
   });
@@ -234,7 +231,7 @@ describe('Remnawave e2e (J4)', () => {
   });
 
   it('отключение стирает всё, запись в Журнале', async () => {
-    await agent.delete('/api/remnawave').set(CSRF_HEADER, csrf).expect(204);
+    await agent.delete('/api/nodes/connection').set(CSRF_HEADER, csrf).expect(204);
     expect(await status()).toMatchObject({ connected: false });
     expect(await auditActions()).toContain('remnawave.disconnected');
   });
@@ -242,7 +239,7 @@ describe('Remnawave e2e (J4)', () => {
   it('неверный формат запроса на подключение отклоняется 400', async () => {
     for (const bad of [{ domain: 'x' }, { apiKey: 'k' }, { domain: '', apiKey: '' }])
       expect([400, 422]).toContain(
-        (await agent.post('/api/remnawave/connect').set(CSRF_HEADER, csrf).send(bad)).status,
+        (await agent.post('/api/nodes/connect').set(CSRF_HEADER, csrf).send(bad)).status,
       );
   });
 });

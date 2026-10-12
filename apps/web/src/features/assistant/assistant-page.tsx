@@ -415,9 +415,6 @@ function AssistantChat() {
                   role: 'user',
                   content: shownPending,
                   citations: [],
-                  proposals: [],
-                  reachability: [],
-                  activity: [],
                   createdAt: '',
                 }}
               />
@@ -790,7 +787,7 @@ const CITE_META: Record<
   kb: { label: 'База знаний', icon: BookOpenIcon },
   incident: { label: 'Событие', icon: AlertTriangleIcon },
   audit: { label: 'Журнал', icon: FileClockIcon },
-  server: { label: 'Исторический сервер', icon: ServerIcon },
+  server: { label: 'Прежняя нода', icon: ServerIcon },
   node: { label: 'Нода', icon: ServerIcon },
   metric: { label: 'Метрика', icon: JarvisIcon },
 };

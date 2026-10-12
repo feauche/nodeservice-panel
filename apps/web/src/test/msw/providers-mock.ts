@@ -58,7 +58,7 @@ function make(
     iconPending: false,
     iconVersion: 1,
     note,
-    serversCount: 0,
+    nodesCount: 0,
     createdAt: '2026-09-12T10:00:00.000Z',
     updatedAt: '2026-09-12T10:00:00.000Z',
   };
@@ -75,9 +75,7 @@ export function seedProviders(): void {
 
 /** Как отдаёт API: сначала те, у кого больше привязок, потом по имени. */
 const withCounts = (): Provider[] =>
-  [...mockProviders.items].sort(
-    (a, b) => b.serversCount - a.serversCount || a.name.localeCompare(b.name, 'ru'),
-  );
+  [...mockProviders.items].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
 
 const problem = (status: number, type: string, detail: string, extra: Record<string, unknown> = {}) =>
   HttpResponse.json(

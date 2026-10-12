@@ -54,17 +54,14 @@ export function safeTopologySnapshot(topology: RemnawaveTopology): Snapshot {
         nodeUuids: [...nodeUuids].sort(),
       }),
     ),
-    nodes: sorted(topology.nodes).map(
-      ({ id, name, address, disabled, profileUuid, inboundUuids, serverIds }) => ({
-        id,
-        name,
-        address,
-        disabled,
-        profileUuid,
-        inboundUuids: [...inboundUuids].sort(),
-        serverIds: [...serverIds].sort(),
-      }),
-    ),
+    nodes: sorted(topology.nodes).map(({ id, name, address, disabled, profileUuid, inboundUuids }) => ({
+      id,
+      name,
+      address,
+      disabled,
+      profileUuid,
+      inboundUuids: [...inboundUuids].sort(),
+    })),
     routes: sorted(topology.routes).map(
       ({
         id,
@@ -147,7 +144,6 @@ const FIELD_NAMES: Record<string, string> = {
   security: 'Защита',
   nodeUuids: 'Ноды',
   inboundUuids: 'Активные inbound',
-  serverIds: 'Серверы NodeService',
   match: 'Условие routing',
   inboundTags: 'Входы правила',
   hostIds: 'Хосты',

@@ -93,10 +93,6 @@ export class AssistantService {
       role: row.role as 'user' | 'assistant',
       content: row.content,
       citations: (row.citations as AssistantCitation[]) ?? [],
-      // Карточки действий и проверок по SSH из старых бесед больше не показываются: текст остаётся.
-      proposals: [],
-      reachability: [],
-      activity: [],
       createdAt: row.createdAt.toISOString(),
     };
   }

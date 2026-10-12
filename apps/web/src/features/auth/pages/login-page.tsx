@@ -47,10 +47,8 @@ export function LoginPage() {
   });
 
   return (
-    <AuthShell foot={<span>NodeService. Панель управления серверами</span>}>
-      <AuthHeading title="Вход в панель">
-        Управление парком серверов. Вход только для администратора.
-      </AuthHeading>
+    <AuthShell foot={<span>NodeService. Панель управления нодами</span>}>
+      <AuthHeading title="Вход в панель">Управление парком нод. Вход только для администратора.</AuthHeading>
 
       <Fields onSubmit={onSubmit}>
         <Field id="l-user" label="Логин" error={errors.login?.message}>

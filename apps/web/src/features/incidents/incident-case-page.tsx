@@ -1,4 +1,4 @@
-import { actionMeta, INCIDENT_KIND_META, type Incident, type IncidentStatus } from '@nodeservice/shared';
+import { INCIDENT_KIND_META, type Incident, type IncidentStatus } from '@nodeservice/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeftIcon, CheckIcon, ServerIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
@@ -14,7 +14,7 @@ import { toast } from '@/lib/notify';
 import { plural } from '@/lib/plural';
 import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
-import { AttemptsAccordion, Timeline } from './incident-blocks';
+import { Timeline } from './incident-blocks';
 import { durationText, outcomeSentence } from './incident-format';
 import {
   useAcknowledgeIncident,
@@ -35,8 +35,8 @@ const BTN =
   'inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3.5 text-[12.5px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-default disabled:opacity-50';
 
 /**
- * Событие как страница-кейс (витрина v3, B1): шапка с действиями, слева хронология и попытки,
- * справа сигналы в момент сбоя, правило и похожие случаи.
+ * Событие как страница-кейс (витрина v3, B1): шапка с действиями, слева описание и хронология,
+ * справа сигналы в момент сбоя и похожие случаи.
  */
 export function IncidentCasePage({ id }: { id: string }) {
   const q = useIncident(id);
@@ -68,7 +68,7 @@ export function IncidentCasePage({ id }: { id: string }) {
           role="alert"
           className="rounded-[12px] border border-crit/30 bg-crit-soft px-4 py-3 text-[13px] text-crit"
         >
-          {q.error ? apiErrorMessage(q.error) : 'Событие не найден.'}
+          {q.error ? apiErrorMessage(q.error) : 'Событие не найдено.'}
         </p>
         <Link to="/incidents" className={BTN}>
           <ArrowLeftIcon className="size-3.5" aria-hidden="true" />К событиям
@@ -88,10 +88,6 @@ export function IncidentCasePage({ id }: { id: string }) {
       i.kind === inc.kind &&
       now - new Date(i.openedAt).getTime() < 7 * 86_400_000,
   );
-  const lastSimilar = similar[0];
-  const lastSimilarHelped = lastSimilar
-    ? [...lastSimilar.attempts].reverse().find((a) => a.status === 'helped')
-    : undefined;
 
   return (
     <div className="flex flex-col gap-4">
@@ -180,14 +176,6 @@ export function IncidentCasePage({ id }: { id: string }) {
               </h3>
               <Timeline events={inc.timeline} />
             </section>
-            {inc.attempts.length > 0 && (
-              <section>
-                <h3 className="mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
-                  Попытки починки · {inc.attempts.length}
-                </h3>
-                <AttemptsAccordion attempts={inc.attempts} />
-              </section>
-            )}
           </div>
 
           {/* Правая колонка: короткие значения, цепочка списком — ничего не переносится «в кашу» */}
@@ -220,12 +208,8 @@ export function IncidentCasePage({ id }: { id: string }) {
               </h3>
               <p className="text-[12.5px] leading-snug text-text-2">
                 {similar.length === 0
-                  ? 'На этом сервере за 7 дней такого не было.'
-                  : `На этом сервере ${similar.length + 1} ${plural(similar.length + 1, 'раз', 'раза', 'раз')} за 7 дней.${
-                      lastSimilarHelped
-                        ? ` В прошлый раз помогло: ${actionMeta(lastSimilarHelped.action).title.toLowerCase()}.`
-                        : ''
-                    }`}
+                  ? 'На этой ноде за 7 дней такого не было.'
+                  : `На этой ноде ${similar.length + 1} ${plural(similar.length + 1, 'раз', 'раза', 'раз')} за 7 дней.`}
               </p>
             </section>
           </aside>
@@ -243,7 +227,7 @@ export function IncidentCasePage({ id }: { id: string }) {
           try {
             await resolve.mutateAsync({ id: inc.id });
             setConfirmResolve(false);
-            toast.success('Событие закрыт.');
+            toast.success('Событие закрыто.');
           } catch (err) {
             setConfirmResolve(false);
             toast.error(apiErrorMessage(err));
@@ -257,8 +241,8 @@ export function IncidentCasePage({ id }: { id: string }) {
         title="Удалить событие?"
         description={
           inc.status === 'resolved'
-            ? 'Хронология и попытки починки по нему пропадут, статистика «помогло N из M» пересчитается. Записи Журнала остаются.'
-            : 'Идущая попытка будет прервана, хронология пропадёт. Если проблема не ушла, панель заведёт новое событие.'
+            ? 'Хронология события пропадёт, итог за 7 дней пересчитается. Записи Журнала остаются.'
+            : 'Хронология пропадёт. Если проблема не ушла, панель заведёт новое событие.'
         }
         yesLabel="Удалить"
         loading={remove.isPending}
@@ -266,7 +250,7 @@ export function IncidentCasePage({ id }: { id: string }) {
           try {
             await remove.mutateAsync(inc.id);
             setConfirmDelete(false);
-            toast.success('Событие удалён.');
+            toast.success('Событие удалено.');
             void navigate({ to: '/incidents' });
           } catch (err) {
             setConfirmDelete(false);

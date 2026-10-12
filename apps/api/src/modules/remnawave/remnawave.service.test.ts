@@ -133,9 +133,8 @@ function make() {
     store as never,
     client as never,
     { record: async (e: Record<string, unknown>) => void audit.push(e) } as never,
-    { get: () => 'http://victoriametrics:8428' } as never,
+    { get: () => undefined } as never,
     { push: async (e: Record<string, unknown>) => void notifications.push(e) } as never,
-    { status: async () => ({ configured: false, routes: null, routeDetails: [] }) } as never,
   );
   return { svc, world, audit, notifications };
 }
@@ -159,9 +158,6 @@ describe('RemnawaveService: подключение', () => {
       stats: null,
       nodes: [],
       cert: null,
-      vpnProbeConfigured: false,
-      vpnProbeRoutes: null,
-      vpnProbeRouteDetails: [],
     });
   });
 

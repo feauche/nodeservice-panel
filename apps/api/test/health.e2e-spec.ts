@@ -54,9 +54,7 @@ describe('панель следит за собой e2e', () => {
     setupHttp(app as NestExpressApplication);
     const db = app.get<Db>(DB);
     await runMigrations(db);
-    await db.execute(
-      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents, notifications cascade`,
-    );
+    await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens, incidents cascade`);
     await db.execute(
       sql`delete from app_meta where key like 'settings.%' or key like 'telegram.%' or key in ('panel.ssh-key', 'panel.alerts', 'watchdog')`,
     );
@@ -89,13 +87,12 @@ describe('панель следит за собой e2e', () => {
     throw new Error(`ждали ${n} сообщений, пришло ${tg.texts.length}`);
   };
   describe('готовность', () => {
-    it('всё работает — 200 без входа: база, Valkey, хранилище метрик и поиск инцидентов', async () => {
+    it('всё работает — 200 без входа: база, Valkey и поиск событий', async () => {
       // В сквозных тестах задачи сами не тикают — отметку поиска инцидентов ставим сами.
       app.get(PanelPulse).incidentsTick();
       const res = await request(app.getHttpServer()).get('/api/health/ready').expect(200);
       expect(res.body.status).toBe('ok');
-      for (const k of ['postgres', 'valkey', 'metrics', 'incidents'])
-        expect(res.body.checks[k].ok, k).toBe(true);
+      for (const k of ['postgres', 'valkey', 'incidents']) expect(res.body.checks[k].ok, k).toBe(true);
     });
 
     it('поиск инцидентов молчит дольше 3 минут — 503 с причиной по-русски; отработал — снова 200', async () => {

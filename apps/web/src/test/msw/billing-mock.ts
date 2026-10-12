@@ -17,12 +17,6 @@ import { HttpResponse, http } from 'msw';
 
 import { mockProviders } from './providers-mock';
 
-/** Старые серверы, к которым были привязаны оплаты: в панели их больше нет, привязка осталась в записях. */
-const OLD_SERVERS = [
-  { id: '0192f100-0000-7000-8000-000000000001' },
-  { id: '0192f100-0000-7000-8000-000000000002' },
-] as const;
-
 /** Курс «получен только что» на сегодняшнюю московскую дату — как у панели, которой ЦБ ответил. */
 function freshRates(): BillingSummary['rates'] {
   return {
@@ -71,7 +65,6 @@ function fromUpsert(b: BillingItemUpsert, base?: BillingItem): BillingItem {
     kind: b.kind,
     title: b.title,
     providerId: b.providerId,
-    serverIds: b.serverIds,
     nodeRefs: b.nodeRefs ?? base?.nodeRefs ?? [],
     domain: b.domain || null,
     amountMinor: Math.round(b.amount * 100),
@@ -115,7 +108,6 @@ export function seedBilling(): void {
   mockBilling.items = [];
   mockBilling.payments = [];
   mockBilling.rates = freshRates();
-  const [s1, s2] = OLD_SERVERS;
   const prov = (name: string) => mockProviders.items.find((p) => p.name === name)?.id ?? null;
   const now = Date.now();
   const add = (b: Omit<BillingItemUpsert, 'paidUntil'> & { at: number }) => {
@@ -130,7 +122,6 @@ export function seedBilling(): void {
     kind: 'server',
     title: 'de-fra-01 · VPS 2 ГБ',
     providerId: prov('Aéza'),
-    serverIds: [s1.id],
     amount: 9.5,
     currency: 'EUR',
     periodUnit: 'day',
@@ -142,7 +133,6 @@ export function seedBilling(): void {
     kind: 'rent',
     title: 'Вход с белым IP',
     providerId: null,
-    serverIds: [s2.id],
     amount: 1500,
     currency: 'RUB',
     periodUnit: 'month',
@@ -154,7 +144,6 @@ export function seedBilling(): void {
     kind: 'server',
     title: 'nl-ams-02 · CX22',
     providerId: prov('Hetzner'),
-    serverIds: [s2.id],
     amount: 4.51,
     currency: 'EUR',
     periodUnit: 'month',
@@ -166,7 +155,6 @@ export function seedBilling(): void {
     kind: 'other',
     title: 'Резервные копии S3',
     providerId: null,
-    serverIds: [],
     amount: 3,
     currency: 'USD',
     periodUnit: 'month',
@@ -177,7 +165,6 @@ export function seedBilling(): void {
     kind: 'cert',
     title: '*.lumaxvds.org — certwarden',
     providerId: null,
-    serverIds: [s1.id, s2.id],
     domain: 'lumaxvds.org',
     amount: 0,
     currency: 'RUB',
@@ -190,7 +177,6 @@ export function seedBilling(): void {
     kind: 'domain',
     title: 'lumaxvds.org',
     providerId: prov('Timeweb'),
-    serverIds: [],
     domain: 'lumaxvds.org',
     amount: 1290,
     currency: 'RUB',
@@ -267,21 +253,6 @@ function total(period: BillingStatPeriod): BillingTotal {
 function summary(): BillingSummary {
   const active = mockBilling.items.filter((i) => !i.archivedAt).map(fresh);
   active.sort((a, b) => Date.parse(a.paidUntil) - Date.parse(b.paidUntil));
-  const byServer: BillingSummary['byServer'] = [];
-  for (const i of active) {
-    if (i.kind !== 'server' && i.kind !== 'rent') continue;
-    for (const sid of i.serverIds)
-      if (!byServer.some((b) => b.serverId === sid))
-        byServer.push({
-          serverId: sid,
-          itemId: i.id,
-          title: i.title,
-          paidUntil: i.paidUntil,
-          dueState: i.dueState,
-          amountMinor: i.amountMinor,
-          currency: i.currency,
-        });
-  }
   const first = active[0];
   return {
     day: total('day'),
@@ -299,7 +270,6 @@ function summary(): BillingSummary {
           currency: first.currency,
         }
       : null,
-    byServer,
     rates: { ...mockBilling.rates },
   };
 }

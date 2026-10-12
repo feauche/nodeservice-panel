@@ -17,12 +17,10 @@ import { RemnaProviderAssetsService } from './remna-provider-assets.service.js';
 import { RemnaProviderCatalogController } from './remna-provider-catalog.controller.js';
 import { RemnaProvidersController } from './remna-providers.controller.js';
 import { RemnaProvidersService } from './remna-providers.service.js';
-import { RemnawaveController } from './remnawave.controller.js';
 import { RemnawaveService } from './remnawave.service.js';
 import { HttpRemnawaveClient, REMNAWAVE_CLIENT } from './remnawave-client.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
 import { RemnawaveTopologyService } from './remnawave-topology.service.js';
-import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
 
 /** J4: подключение к панели Remnawave, только чтение (домен + токен API с правами на чтение). */
 @Module({
@@ -37,7 +35,6 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
   controllers: [
     RemnaBillingProvidersController,
     NodeActionsController,
-    RemnawaveController,
     NodesController,
     RemnaProvidersController,
     RemnaProviderCatalogController,
@@ -52,18 +49,11 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
     RemnaProvidersService,
     RemnaProviderAssetsService,
     RemnawaveService,
-    RemnawaveVpnProbeService,
     RemnawaveTopologyService,
     HostAddressesService,
     { provide: REMNAWAVE_CLIENT, useClass: HttpRemnawaveClient },
     { provide: HOST_RESOLVER, useClass: DnsHostResolver },
   ],
-  exports: [
-    NodePreferencesStore,
-    RemnawaveSettingsStore,
-    RemnawaveService,
-    RemnawaveVpnProbeService,
-    RemnawaveTopologyService,
-  ],
+  exports: [NodePreferencesStore, RemnawaveSettingsStore, RemnawaveService, RemnawaveTopologyService],
 })
 export class RemnawaveModule {}

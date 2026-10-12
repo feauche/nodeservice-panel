@@ -18,12 +18,12 @@ describe('events stream lifecycle', () => {
     const session = { id: 'local-session' } as SessionRecord;
     controller.stream(session).subscribe({ next: first, complete });
     controller.stream(session).subscribe({ next: second, complete });
-    events.emit({ type: 'server', data: { id: 'node-1' } });
+    events.emit({ type: 'incident', data: { id: 'node-1' } });
     expect(first).toHaveBeenCalledOnce();
     expect(second).toHaveBeenCalledOnce();
     events.beforeApplicationShutdown();
     expect(complete).toHaveBeenCalledTimes(2);
-    events.emit({ type: 'server', data: { id: 'node-2' } });
+    events.emit({ type: 'incident', data: { id: 'node-2' } });
     expect(first).toHaveBeenCalledOnce();
     expect(second).toHaveBeenCalledOnce();
     const afterShutdown = vi.fn();

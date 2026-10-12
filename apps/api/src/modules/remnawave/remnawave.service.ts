@@ -19,7 +19,6 @@ import {
   type RemnawaveProfileKind,
 } from './remnawave-client.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
-import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
 
 const HIDDEN = '[скрыто]';
 const SECRET_FIELDS = new Set([
@@ -128,35 +127,7 @@ export class RemnawaveService {
     private readonly audit: AuditService,
     private readonly config: ConfigService<Env, true>,
     private readonly notifications: NotificationsService,
-    private readonly vpnProbe: RemnawaveVpnProbeService,
   ) {}
-
-  /**
-   * Онлайн каждой ноды — в VictoriaMetrics (раз в минуту, при каждом чтении Remnawave): из этого строится
-   * «Онлайн на нодах» в статистике парка. Недоступная VM ничего не ломает.
-   */
-  private async recordOnline(
-    nodes: Array<{ uuid: string; name: string; usersOnline: number | null }>,
-  ): Promise<void> {
-    if (process.env.NODE_ENV === 'test') return;
-    const clean = (v: string) => v.replace(/["\\\n]/g, '');
-    const lines = nodes
-      .filter((n) => n.usersOnline !== null)
-      .map(
-        (n) =>
-          `nodeservice_node_online{node_uuid="${clean(n.uuid)}",node_name="${clean(n.name)}"} ${n.usersOnline}`,
-      );
-    if (lines.length === 0) return;
-    try {
-      await fetch(`${this.config.get('VM_URL')}/api/v1/import/prometheus`, {
-        method: 'POST',
-        body: `${lines.join('\n')}\n`,
-        signal: AbortSignal.timeout(3_000),
-      });
-    } catch {
-      // Метрики — не главное: следующая минута запишет снова.
-    }
-  }
 
   /** J10: SNI и порт ноды для проверки блокировки — только когда проверка реально запускается. */
   async nodeInbound(nodeUuid: string): Promise<RemnawaveNodeInbound | null> {
@@ -177,7 +148,7 @@ export class RemnawaveService {
     if (!creds)
       return {
         connected: false,
-        error: 'Remnawave не подключена. Подключить можно в «Серверы → Remnawave».',
+        error: 'Remnawave не подключена. Подключить можно в «Ноды» → «Настроить подключение».',
       };
 
     try {
@@ -273,12 +244,8 @@ export class RemnawaveService {
         stats: null,
         nodes: [],
         cert: null,
-        vpnProbeConfigured: false,
-        vpnProbeRoutes: null,
-        vpnProbeRouteDetails: [],
       };
     const snap = await this.store.snapshot();
-    const vpnProbe = await this.vpnProbe.status();
     return {
       connected: true,
       domain,
@@ -288,9 +255,6 @@ export class RemnawaveService {
       stats: snap?.stats ?? null,
       nodes: snap?.nodes ?? [],
       cert: snap?.cert ?? null,
-      vpnProbeConfigured: vpnProbe.configured,
-      vpnProbeRoutes: vpnProbe.routes,
-      vpnProbeRouteDetails: vpnProbe.routeDetails,
     };
   }
 
@@ -377,7 +341,6 @@ export class RemnawaveService {
             severity: 'warn',
             title: 'Remnawave не отвечает',
             body: `Больше пяти минут панель не может прочитать ${creds.domain}. Онлайн нод и резкие падения сейчас не отслеживаются. Причина: ${message}`,
-            center: true,
             link: { to: '/nodes', label: 'Открыть Remnawave' },
             telegram: { event: 'panel_health' },
           })
@@ -398,7 +361,6 @@ export class RemnawaveService {
             severity: 'ok',
             title: 'Remnawave снова отвечает',
             body: `Связь с ${creds.domain} восстановлена. Онлайн нод и падения снова отслеживаются по свежим данным.`,
-            center: true,
             link: { to: '/nodes', label: 'Открыть Remnawave' },
             telegram: { event: 'panel_health' },
           })
@@ -426,7 +388,6 @@ export class RemnawaveService {
       nodes,
       cert,
     });
-    void this.recordOnline(nodes);
   }
 
   private async fetchOrThrow(domain: string, apiKey: string, timeoutMs?: number) {

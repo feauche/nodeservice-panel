@@ -20,7 +20,7 @@ const assets = {
     id: p.uuid,
     name: p.name,
     siteUrl: p.loginUrl,
-    serversCount: 0,
+    nodesCount: 0,
   }),
   icon: async () => null,
 };

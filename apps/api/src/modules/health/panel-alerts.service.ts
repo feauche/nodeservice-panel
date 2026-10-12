@@ -192,57 +192,6 @@ export class PanelAlertsService {
     });
   }
 
-  /**
-   * Панель не смогла зайти ни на один сервер, с которого должна была перепроверить доступность парка.
-   * Это один сбой наблюдения самой панели, поэтому не превращаем его в критичный инцидент каждого сервера.
-   */
-  async connectivityDown(servers: number, now = new Date()): Promise<void> {
-    const state = await this.withState((st) => {
-      const mark = st.connectivity;
-      if (mark?.open) return { send: false, skipped: mark.skipped };
-      const send = !mark || now.getTime() - Date.parse(mark.sentAt) >= PANEL_ALERT_EVERY_MS;
-      st.connectivity = {
-        sentAt: send ? now.toISOString() : mark.sentAt,
-        skipped: send ? 0 : mark.skipped + 1,
-        open: true,
-        since: now.toISOString(),
-        notified: send,
-      };
-      return { send, skipped: mark?.skipped ?? 0 };
-    });
-    if (!state.send) return;
-    await this.notifications.push({
-      severity: 'warn',
-      title: 'Панель не может перепроверить связь с серверами',
-      body: `Панель не смогла войти ни на один сервер парка, чтобы независимо проверить ${servers} ${servers === 1 ? 'сервер' : 'серверов'}, с которыми пропала связь. Пока обзор сети не восстановится, панель не будет объявлять эти серверы выключенными: причина может быть в сети самой панели. Свежие отдельные дела этой волны отменены без сообщений «Починилось».`,
-      link: { to: '/servers', label: 'Открыть серверы' },
-      telegram: { event: 'panel_health' },
-    });
-  }
-
-  /** Обзор сети восстановился после системного предупреждения. */
-  async connectivityUp(now = new Date()): Promise<void> {
-    const outage = await this.withState((st) => {
-      const mark = st.connectivity;
-      if (!mark?.open) return null;
-      const since = mark.since ? Date.parse(mark.since) : Date.parse(mark.sentAt);
-      const notified = mark.notified === true;
-      mark.open = false;
-      mark.since = null;
-      mark.notified = false;
-      return notified ? since : null;
-    });
-    if (outage === null) return;
-    await this.notifications.push({
-      severity: 'ok',
-      title: 'Панель снова видит сеть серверов',
-      body: `Независимая проверка доступности снова работает после ${outageDuration(now.getTime() - outage)}. Следующий проход уточнит состояние каждого сервера по отдельности.`,
-      center: true,
-      link: { to: '/servers', label: 'Открыть серверы' },
-      telegram: { event: 'panel_health' },
-    });
-  }
-
   /** На разделе данных сервера панели мало места: сколько свободно и что обычно его занимает. */
   async diskLow(disk: { freeBytes: number; totalBytes: number }, now = new Date()): Promise<void> {
     const g = await this.gate('disk', now);

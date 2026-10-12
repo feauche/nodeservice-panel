@@ -68,7 +68,7 @@ export class ProvidersService implements OnModuleInit {
       iconPending: row.iconPending,
       iconVersion: row.iconVersion,
       note: row.note,
-      serversCount: row.serversCount,
+      nodesCount: 0,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
@@ -162,7 +162,7 @@ export class ProvidersService implements OnModuleInit {
     await this.audit.record({
       action: 'provider.archived',
       target: { type: 'provider', id, display: row.name },
-      metadata: { serversDetached: row.serversCount, billingHistoryPreserved: true },
+      metadata: { billingHistoryPreserved: true },
     });
   }
 

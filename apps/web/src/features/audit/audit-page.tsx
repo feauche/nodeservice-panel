@@ -279,8 +279,8 @@ interface ToolbarProps {
 }
 
 /**
- * Фильтр «только этот сервер» — остался от старых ссылок из окна сервера (`?target=<id>`), снимается
- * крестиком. Имя — из записей Журнала; сервера в панели больше нет, поэтому без записей — «удалён».
+ * Фильтр «только эта нода» — остался от старых ссылок из окна сервера (`?target=<id>`), снимается
+ * крестиком. Имя — из записей Журнала; своих серверов в панели больше нет, поэтому без записей — «удалена».
  */
 function ServerChip({
   name,
@@ -297,10 +297,10 @@ function ServerChip({
       className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-brand/40 bg-surface-2 pr-1.5 pl-3 text-[12.5px] font-medium"
     >
       <ServerIcon className="size-3.5 text-text-3" aria-hidden="true" />
-      <span className="max-w-[220px] truncate">Сервер: {name ?? (loaded ? 'удалён' : '…')}</span>
+      <span className="max-w-[220px] truncate">Нода: {name ?? (loaded ? 'удалена' : '…')}</span>
       <button
         type="button"
-        aria-label="Снять фильтр по серверу"
+        aria-label="Снять фильтр по ноде"
         onClick={onClear}
         className="grid size-6 cursor-pointer place-items-center rounded-[6px] text-text-3 hover:bg-surface-3 hover:text-foreground"
       >

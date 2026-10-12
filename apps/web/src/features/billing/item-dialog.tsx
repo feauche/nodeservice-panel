@@ -76,9 +76,9 @@ const SERVERS_LABEL: Record<BillingKind, string> = {
 const SERVERS_HINT: Record<BillingKind, string> = {
   server: 'Привязка и оплата сохраняются только в NodeService. Платежи с Remnawave не синхронизируются.',
   rent: 'Выберите ноду, к которой относится аренда. Оплата остаётся только в NodeService.',
-  domain: 'Серверы, на которые смотрит домен. Для справки.',
-  cert: 'Серверы, где лежит сертификат (например, через certwarden). Ассистент подскажет, где продлевать.',
-  other: 'Если оплата относится к серверам — отметьте их.',
+  domain: 'Ноды, на которые смотрит домен. Для справки.',
+  cert: 'Ноды, где лежит сертификат (например, через certwarden). Ассистент подскажет, где продлевать.',
+  other: 'Если оплата относится к нодам — отметьте их.',
 };
 
 /**
@@ -152,12 +152,12 @@ export function ItemDialog({
       .filter((n) => !current.some((c) => c.uuid === n.uuid && c.panel === n.panel))
       .map((n) => ({ ...n, id: `${n.panel}|${n.uuid}`, host: 'Историческая привязка', providerId: null })),
   ];
-  // У «Сервера» и «Аренды» — один сервер, у сертификата, домена и прочего — несколько.
+  // У «Сервера» и «Аренды» — одна нода, у сертификата, домена и прочего — несколько.
   const single = kind === 'server' || kind === 'rent';
   const pickServer = (id: string | null) => {
     if (single) {
       setServerIds(id ? [id] : []);
-      // Название и провайдер по серверу, если их ещё не задали.
+      // Название и провайдер по ноде, если их ещё не задали.
       const s = list.find((x) => x.id === id);
       if (s && !title.trim()) setTitle(s.name);
       if (s?.providerId && !providerId) setProviderId(s.providerId);
@@ -177,7 +177,6 @@ export function ItemDialog({
       kind,
       title,
       providerId,
-      serverIds: item?.serverIds ?? [],
       nodeRefs: (single ? serverIds.slice(0, 1) : serverIds).flatMap((id) => {
         const n = list.find((n) => n.id === id);
         return n ? [{ panel: n.panel, uuid: n.uuid, name: n.name }] : [];
@@ -333,13 +332,6 @@ export function ItemDialog({
             <Label htmlFor="bill-server">
               {SERVERS_LABEL[kind]} <Opt />
             </Label>
-            {!!item?.serverIds.length && !item.nodeRefs?.length && (
-              <p className="mb-3 rounded-[10px] border border-warn/25 bg-warn-soft p-3 text-[12px] leading-5 text-text-2">
-                У записи сохранилась прежняя привязка к серверу. Выберите соответствующую ноду Remnawave
-                вручную: совпадение IP не гарантирует, что это тот же сервер. История оплат и старая привязка
-                сохранятся.
-              </p>
-            )}
             {list.length === 0 ? (
               <p className="rounded-[10px] border border-dashed border-border-2 px-3 py-2.5 text-[12.5px] text-text-3">
                 Ноды Remnawave ещё не загружены. Проверьте подключение в разделе «Ноды».
@@ -369,10 +361,10 @@ export function ItemDialog({
                           className="inline-flex h-7 items-center gap-1.5 rounded-[8px] border border-border bg-surface-2 pr-1 pl-2.5 text-[12.5px]"
                         >
                           <ServerIcon className="size-3.5 text-text-3" aria-hidden="true" />
-                          {srv?.name ?? 'сервер удалён'}
+                          {srv?.name ?? 'нода удалена'}
                           <button
                             type="button"
-                            aria-label={`Убрать ${srv?.name ?? 'сервер'}`}
+                            aria-label={`Убрать ${srv?.name ?? 'ноду'}`}
                             onClick={() => setServerIds((cur) => cur.filter((x) => x !== id))}
                             className="grid size-5 cursor-pointer place-items-center rounded-[6px] text-text-3 hover:bg-surface-3 hover:text-foreground"
                           >
@@ -385,7 +377,7 @@ export function ItemDialog({
                 )}
                 <Combobox
                   id="bill-server"
-                  ariaLabel={`${SERVERS_LABEL[kind]}: добавить сервер`}
+                  ariaLabel={`${SERVERS_LABEL[kind]}: добавить ноду`}
                   value={null}
                   onChange={pickServer}
                   options={list.filter((x) => !serverIds.includes(x.id)).map(serverOption)}

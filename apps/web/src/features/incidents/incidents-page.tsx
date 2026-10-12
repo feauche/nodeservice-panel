@@ -18,7 +18,6 @@ import {
   dayLabel,
   durationText,
   hhmm,
-  humanSeconds,
   outcomeSentence,
   titleOnly,
   type WeekStats,
@@ -49,7 +48,6 @@ import {
   toPrev,
 } from './incidents-fit';
 import { IncidentsPager } from './incidents-pager';
-import { LevelChip } from './level-chip';
 
 const FILTERS: ReadonlyArray<{ key: IncidentsFilter; label: string }> = [
   { key: 'all', label: 'Все' },
@@ -97,7 +95,6 @@ const dayGroups = (
     byDay.set(label, [...(byDay.get(label) ?? []), inc]);
   }
   return [...byDay].map(([label, list]) => {
-    const auto = list.filter((x) => x.attempts.some((a) => a.status === 'helped' && a.by === 'auto')).length;
     const n = list.length;
     const word = n === 1 ? 'сбой' : n < 5 ? 'сбоя' : 'сбоев';
     const day = closeDay(list[0] as Incident);
@@ -106,22 +103,16 @@ const dayGroups = (
     return {
       key: label,
       label,
-      note: partial
-        ? `${n} ${word} на этой странице`
-        : auto === n
-          ? `${n} ${word} · все починила панель`
-          : `${n} ${word}`,
+      note: partial ? `${n} ${word} на этой странице` : `${n} ${word}`,
       items: list,
     };
   });
 };
 
-/** Цвет полоски слева: итог события одним взглядом. */
+/** Цвет полоски слева: итог события одним взглядом — прошло само или закрыто вручную. */
 function barTone(inc: Incident): string {
   if (inc.status !== 'resolved') return inc.severity === 'crit' ? 'bg-crit' : 'bg-warn';
-  const helped = inc.attempts.some((a) => a.status === 'helped');
-  if (helped || inc.resolvedBy === 'auto') return 'bg-ok';
-  return 'bg-border-2';
+  return inc.resolvedBy === 'manual' ? 'bg-border-2' : 'bg-ok';
 }
 
 /**
@@ -137,7 +128,7 @@ interface ShownPage {
 }
 
 /**
- * «События» (витрина v3, A1): полоса итога за 7 дней и реестр по дням — время, сервер, что случилось
+ * «События» (витрина v3, A1): полоса итога за 7 дней и реестр по дням — время, нода, что случилось
  * и чем кончилось одним предложением, статус, длительность. Строка ведёт на страницу-кейс.
  * На широком экране реестр занимает высоту окна: решённых на странице столько, сколько помещается, а поле
  * под ним — как боковые (см. incidents-fit.ts).
@@ -434,7 +425,7 @@ export function IncidentsPage() {
         onOpenChange={setConfirmClear}
         kind="crit"
         title="Удалить все решённые события?"
-        description="История починок по ним пропадёт, статистика «помогло N из M» пересчитается. Открытые события останутся. Записи Журнала не трогаем."
+        description="Их хронология пропадёт, итог за 7 дней пересчитается. Открытые события останутся. Записи Журнала не трогаем."
         yesLabel="Удалить"
         loading={deleteResolved.isPending}
         onConfirm={async () => {
@@ -461,44 +452,31 @@ const STRIP_LAYOUT = 'flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl bo
 
 /**
  * Полоса итога за 7 дней: числа словами, без KPI-плиток. Без `stats` — заглушка на время загрузки: та же
- * разметка со скрытыми ячейками, поэтому и высота та же (узкое окно переносит полосу на вторую и третью
- * строку), и реестр под ней сразу посчитан по верной высоте. `withOpen` — будет ли ячейка «открыто сейчас»:
- * от неё зависит перенос. Чего заглушка знать не может — будет ли «Типичное время починки»: где полоска долей
- * стоит на отдельной строке, с ним полоса на 10px выше.
+ * разметка со скрытыми ячейками, поэтому и высота та же (узкое окно переносит полосу на следующие строки),
+ * и реестр под ней сразу посчитан по верной высоте. `withOpen` — будет ли ячейка «открыто сейчас»: от неё
+ * зависит перенос. Полоска долей — прошли сами против закрытых вручную.
  */
 function StatsStrip({ stats, withOpen }: { stats: WeekStats | null; withOpen: boolean }) {
-  const s = stats ?? {
+  const s: Pick<WeekStats, 'total' | 'self' | 'manual' | 'open'> = stats ?? {
     total: 0,
-    auto: 0,
-    waited: 0,
     self: 0,
     manual: 0,
     open: withOpen ? 1 : 0,
-    medianFixS: null,
   };
-  const resolved = s.auto + s.waited + s.self + s.manual;
+  const resolved = s.self + s.manual;
   const pct = (n: number) => (resolved > 0 ? `${(n / resolved) * 100}%` : '0%');
   const cells = (
     <>
       <Stat n={s.total} label="сбоев за 7 дней" />
       <span className="hidden h-7 w-px bg-border sm:block" aria-hidden="true" />
-      <Stat n={s.auto} label="починила панель" cls="text-ok" />
-      <Stat n={s.waited} label="по вашей команде" cls="text-warn" />
       <Stat n={s.self} label="прошли сами" cls="text-brand" />
       <Stat n={s.manual} label="закрыты вручную" />
       {s.open > 0 && <Stat n={s.open} label="открыто сейчас" cls="text-crit" />}
       <div className="flex min-w-[120px] flex-1 items-center gap-3">
         <div className="flex h-2 flex-1 overflow-hidden rounded-full bg-surface-3" aria-hidden="true">
-          <span className="h-full bg-ok" style={{ width: pct(s.auto) }} />
-          <span className="h-full bg-warn" style={{ width: pct(s.waited) }} />
           <span className="h-full bg-brand" style={{ width: pct(s.self) }} />
           <span className="h-full bg-border-2" style={{ width: pct(s.manual) }} />
         </div>
-        {s.medianFixS !== null && (
-          <span className="text-[12px] whitespace-nowrap text-text-3">
-            Типичное время починки {humanSeconds(s.medianFixS)}
-          </span>
-        )}
       </div>
     </>
   );
@@ -531,8 +509,6 @@ function Stat({ n, label, cls }: { n: number; label: string; cls?: string }) {
 /** `height` — высота строки, подогнанная под окно (см. incidents-fit.ts); нет — обычная. */
 function IncidentRow({ inc, now, height }: { inc: Incident; now: number; height?: number | undefined }) {
   const status = STATUS_PILL[inc.status];
-  // Уровень последней попытки из истории; старые предложения шага подтвердить уже нельзя — их не показываем.
-  const level = inc.attempts.find((a) => a.status === 'running')?.level ?? inc.attempts.at(-1)?.level;
   return (
     <Link
       to="/incidents/$id"
@@ -560,7 +536,6 @@ function IncidentRow({ inc, now, height }: { inc: Incident; now: number; height?
       </span>
       <span className="flex items-center gap-1.5 max-md:self-start">
         <Pill tone={status.tone}>{status.label}</Pill>
-        {level && <LevelChip level={level} />}
         <ChevronRightIcon className="size-4 text-text-3 md:hidden" aria-hidden="true" />
       </span>
       <span className="hidden text-right text-[12.5px] text-text-3 tabular-nums md:block">

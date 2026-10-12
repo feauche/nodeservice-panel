@@ -141,7 +141,7 @@ export class BillingController {
   }
 
   @Get('summary')
-  @ApiOperation({ summary: 'Итоги за день, неделю, месяц, год; ближайшая оплата; оплаты по серверам' })
+  @ApiOperation({ summary: 'Итоги за день, неделю, месяц, год; ближайшая оплата' })
   @ApiOkResponse({ type: BillingSummaryDto })
   summary(@Query() q: BillingSummaryQueryDto): Promise<BillingSummary> {
     return this.billing.summary(q.tz);

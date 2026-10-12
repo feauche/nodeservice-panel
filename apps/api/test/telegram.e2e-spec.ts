@@ -137,9 +137,7 @@ describe('telegram e2e', () => {
     setupHttp(app as NestExpressApplication);
     const db = app.get<Db>(DB);
     await runMigrations(db);
-    await db.execute(
-      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents cascade`,
-    );
+    await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens, incidents cascade`);
     await db.execute(
       sql`delete from app_meta where key like 'settings.%' or key like 'telegram.%' or key = 'panel.ssh-key'`,
     );
@@ -618,12 +616,11 @@ describe('telegram e2e', () => {
     await db.execute(sql`delete from app_meta where key = 'telegram.digest'`);
   });
 
-  it('сбои доставки видны владельцу: отметка у чата, после трёх неудач подряд — одно предупреждение в колокольчик и запись в Журнале', async () => {
+  it('сбои доставки видны владельцу: отметка у чата, после трёх неудач подряд — одна запись в Журнале', async () => {
     const goodId = await fresh();
     const db = app.get<Db>(DB);
     const tgs = app.get(TelegramService);
     const since = new Date();
-    await db.execute(sql`truncate notifications`);
     const chats = telegramSettingsSchema.parse(
       (
         await put({
@@ -638,10 +635,7 @@ describe('telegram e2e', () => {
     const idOf = (chatId: string) => chats.destinations.find((d) => d.chatId === chatId)?.id ?? '';
     const badId = idOf('-100999');
     expect(chats.destinations.map((d) => d.lastDelivery)).toEqual([null, null, null]);
-    const bell = async () =>
-      (await app.get(NotificationsRepository).list()).items.filter(
-        (n) => n.title === 'Сообщения в Telegram не доходят',
-      );
+    const failures = () => journal('settings.telegram.delivery_failed', since);
     const send = (n: number) => tgs.dispatch({ event: 'login', title: `Проверка доставки ${n}` });
     const retryNow = async () => {
       await db.execute(sql`update telegram_outbox set next_attempt_at = now() - interval '1 second'`);
@@ -660,25 +654,19 @@ describe('telegram e2e', () => {
       ok: true,
       detail: 'Доставлено',
     });
-    expect(await bell()).toHaveLength(0);
+    expect(await failures()).toHaveLength(0);
 
     // Новые вести уже не обгоняют первую: они лежат следом в outbox. Три настоящие попытки доставки
     // первой вести дают одно предупреждение на оба чата; следующие в те же сутки второго не создают.
     await send(3);
     await retryNow();
     await retryNow();
-    const warned = await bell();
-    expect(warned).toHaveLength(1);
-    expect(warned[0]?.severity).toBe('warn');
-    expect(warned[0]?.body).toContain('В чат с номером -100999 не доставлено 3 сообщения подряд.');
-    expect(warned[0]?.body).toContain('В чат с номером -1009991 не доставлено 3 сообщения подряд.');
-    expect(warned[0]?.body).toContain('Причина: Чат не найден');
-    expect(warned[0]?.body).toContain('в эти чаты тревоги не приходят');
-    expect(warned[0]).toMatchObject({ linkTo: '/settings/notifications', linkLabel: 'Открыть уведомления' });
-    await send(4);
-    expect(await bell()).toHaveLength(1);
-    const logged = await journal('settings.telegram.delivery_failed', since);
+    const logged = await failures();
     expect(logged).toHaveLength(1);
+    expect(JSON.stringify(logged)).toContain('В чат с номером -100999 не доставлено 3 сообщения подряд.');
+    expect(JSON.stringify(logged)).toContain('В чат с номером -1009991 не доставлено 3 сообщения подряд.');
+    await send(4);
+    expect(await failures()).toHaveLength(1);
     expect(logged[0]).toMatchObject({ result: 'failed', source: 'auto', actorType: 'system' });
     expect(JSON.stringify(logged)).toContain('Чат не найден');
     expect(JSON.stringify(logged)).not.toContain(TOKEN);
@@ -691,11 +679,9 @@ describe('telegram e2e', () => {
     for (const n of [5, 6, 7]) await send(n);
     await retryNow();
     await retryNow();
-    const later = await bell();
+    const later = await failures();
     expect(later).toHaveLength(2);
-    expect(later[0]?.body).toBe(
-      'В чат с номером -1009992 не доставлено 3 сообщения подряд. Причина: Чат не найден: добавьте бота в группу или проверьте id чата. Пока это не исправлено, в этот чат тревоги не приходят.',
-    );
+    expect(JSON.stringify(later)).toContain('В чат с номером -1009992 не доставлено 3 сообщения подряд.');
 
     // Ручной тест исправного чата отметку настоящей доставки не трогает — это разные отметки.
     await agent.post('/api/settings/telegram/test').set(CSRF_HEADER, csrf).send({ id: goodId }).expect(200);
@@ -787,7 +773,7 @@ describe('telegram e2e', () => {
       const blocks = blocksOf(tg.rich().at(-1));
       expect(blocks[0]).toMatchObject({ type: 'heading', text: '💳 Скоро оплата — через 2 дня' });
       const table = blocks.find((block) => block.type === 'table');
-      expect(table?.cells?.map((row) => row[0]?.text)).toEqual(['Сумма', 'Оплатить до', 'Период', 'Сервер']);
+      expect(table?.cells?.map((row) => row[0]?.text)).toEqual(['Сумма', 'Оплатить до', 'Период', 'Нода']);
     });
 
     it('Telegram не знает метода (старый сервер) — то же сообщение сразу обычным; час в этот чат — сразу обычным', async () => {

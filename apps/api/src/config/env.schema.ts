@@ -9,15 +9,12 @@ export const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   /** Публичный адрес панели (для ссылок, cookie-домена, CORS). */
   PUBLIC_URL: z.url().default('http://localhost:5173'),
-  /** VictoriaMetrics: запись онлайна нод. */
-  VM_URL: z.url().default('http://127.0.0.1:8428'),
   /** GitHub-репозиторий панели: последний стабильный Release для индикатора в шапке. */
   PANEL_REPO: z.string().default('feauche/nodeservice-panel'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),
 
   DATABASE_URL: z.url().default('postgres://nodeservice:nodeservice@localhost:5432/nodeservice'),
   VALKEY_URL: z.url().default('redis://localhost:6379'),
-  VICTORIA_URL: z.url().default('http://localhost:8428'),
 
   /** Подпись cookie / CSRF / служебных токенов. 64 hex-символа (32 байта). */
   APP_SECRET: z.string().min(32),
@@ -83,14 +80,8 @@ export const envSchema = z.object({
     .transform((v) => v === 'true'),
   /** Журнал: сколько месяцев хранить записи; старые разделы удаляются целиком (DROP PARTITION). */
   AUDIT_RETENTION_MONTHS: z.coerce.number().int().min(1).max(120).default(12),
-  /**
-   * Срок хранения остальных растущих данных (дней), чистка ночью: записи веб-терминала (до 2 МБ
-   * каждая), запуски обслуживания с логами, решённые инциденты. Журнал — отдельно, по месяцам.
-   */
-  TERMINAL_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
-  MAINTENANCE_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
+  /** Срок хранения решённых событий (дней), чистка ночью. Журнал — отдельно, по месяцам. */
   INCIDENTS_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(365),
-  NOTIFICATIONS_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
   /** Применять миграции БД при старте (в проде — да, образ самодостаточен). */
   AUTO_MIGRATE: z
     .enum(['true', 'false'])

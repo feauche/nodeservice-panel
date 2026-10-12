@@ -1,4 +1,4 @@
-import type { RemnawaveCert, RemnawaveNode, RemnawaveStats, RemnawaveStatus } from '@nodeservice/shared';
+import type { RemnawaveCert, RemnawaveNode, RemnawaveStats } from '@nodeservice/shared';
 
 /**
  * Состояние подключения Remnawave для тестов: его отдают подменённые ответы `/api/nodes/status`
@@ -13,9 +13,6 @@ export const mockRemnawave: {
   stats: RemnawaveStats | null;
   nodes: RemnawaveNode[];
   cert: RemnawaveCert | null;
-  vpnProbeConfigured: boolean;
-  vpnProbeRoutes: number | null;
-  vpnProbeRouteDetails: RemnawaveStatus['vpnProbeRouteDetails'];
 } = {
   connected: false,
   domain: null,
@@ -25,9 +22,6 @@ export const mockRemnawave: {
   stats: null,
   nodes: [],
   cert: null,
-  vpnProbeConfigured: false,
-  vpnProbeRoutes: null,
-  vpnProbeRouteDetails: [],
 };
 
 // Режим VITE_MOCK=1: управление из скриншот-сценариев.
@@ -44,8 +38,5 @@ export function seedRemnawave(): void {
     stats: null,
     nodes: [],
     cert: null,
-    vpnProbeConfigured: false,
-    vpnProbeRoutes: null,
-    vpnProbeRouteDetails: [],
   });
 }

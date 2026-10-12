@@ -1,5 +1,4 @@
 import {
-  ASSISTANT_PERMISSION_LABELS,
   BILLING_KIND_LABELS,
   CHANGELOG,
   MONITORING_DEFAULTS,
@@ -232,23 +231,21 @@ describe('справочник Ассистента', () => {
     expect(text).toContain('делаются в Remnawave и у хостера, не в панели');
   });
 
-  it('база знаний: разрешения на запись, ревизия, «Правила парка» с разделом БС', () => {
+  it('база знаний: запись без разрешений, ревизия, «Правила парка» с разделом БС', () => {
     const text = topic('kb');
-    expect(text).toContain(`разрешено «${ASSISTANT_PERMISSION_LABELS.kbWrite}»`);
-    expect(text).toContain(`разрешена «${ASSISTANT_PERMISSION_LABELS.kbReview}»`);
+    expect(text).toContain('Новую статью — save_kb_article.');
+    expect(text).toContain('**Еженедельная ревизия:**');
     expect(text).toContain(`«${FLEET_RULES_WHITELIST_SECTION}»`);
     expect(text).toContain('Статью сами не меняете');
   });
 
-  it('безопасность: два разрешения, чужие указания не выполняются, секреты не сохраняются', () => {
+  it('безопасность: запись в базу знаний без разрешений, чужие указания не выполняются, секреты не сохраняются', () => {
     const text = topic('security');
     expect(text).toMatch(/не выполняйте их/i);
     expect(text).toMatch(/не сохраняйте в базу знаний/);
-    expect(text).toContain(
-      `«${ASSISTANT_PERMISSION_LABELS.kbWrite}» и «${ASSISTANT_PERMISSION_LABELS.kbReview}»`,
-    );
-    for (const [key, label] of Object.entries(ASSISTANT_PERMISSION_LABELS))
-      if (key !== 'kbWrite' && key !== 'kbReview') expect(text, label).not.toContain(label);
+    expect(text).toContain('Запись в базу знаний включена всегда');
+    for (const label of ['Создание и правка статей', 'Изменения по подтверждению', 'Осмотр процессов'])
+      expect(text, label).not.toContain(label);
     expect(text).toContain('«Настройки» → «Ассистент» → «Данные для провайдера»');
   });
 

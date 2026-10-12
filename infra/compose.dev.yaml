@@ -1,5 +1,5 @@
 # Разработка: `docker compose -f infra/compose.dev.yaml up -d`
-# Поднимает только инфраструктуру (Postgres, Valkey, VictoriaMetrics) с портами наружу,
+# Поднимает только инфраструктуру (Postgres, Valkey) с портами наружу,
 # а api/web запускаются локально через `pnpm dev` (hot-reload). Данные — в именованных томах.
 
 name: nodeservice-dev
@@ -31,14 +31,5 @@ services:
       timeout: 3s
       retries: 12
 
-  victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.146.0
-    command: ["--retentionPeriod=7d", "--storageDataPath=/vmdata", "--httpListenAddr=:8428"]
-    ports:
-      - "127.0.0.1:8428:8428"
-    volumes:
-      - vm_dev:/vmdata
-
 volumes:
   pg_dev:
-  vm_dev:

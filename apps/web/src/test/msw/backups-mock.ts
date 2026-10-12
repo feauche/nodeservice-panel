@@ -138,7 +138,6 @@ function retain(): void {
 function startRun(sendTelegram: boolean): void {
   const stages = BACKUP_STAGES.filter(
     (s) =>
-      (s !== 'metrics' || mockBackups.settings.includeMetrics) &&
       (s !== 'files' || mockBackups.settings.extra.enabled) &&
       (s !== 'encrypt' || mockBackups.settings.passwordSet) &&
       (s !== 'telegram' || sendTelegram),
@@ -175,7 +174,7 @@ function startRun(sendTelegram: boolean): void {
         contents: {
           db: true,
           env: true,
-          metrics: mockBackups.settings.includeMetrics,
+          metrics: false,
           paths: mockBackups.settings.extra.enabled ? mockBackups.settings.extra.paths.length : 0,
         },
       });

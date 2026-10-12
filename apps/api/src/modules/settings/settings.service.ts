@@ -1,11 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type {
-  AssistantSettingsUpdate,
-  AssistantStatus,
-  AutochecksSettings,
-  AutochecksSettingsUpdate,
-  IncidentsSettings,
-} from '@nodeservice/shared';
+import type { AssistantSettingsUpdate, AssistantStatus, IncidentsSettings } from '@nodeservice/shared';
 import {
   APPEARANCE_DEFAULTS,
   type AppearanceSettings,
@@ -14,9 +8,6 @@ import {
   CUSTOM_SITES_DEFAULTS,
   type CustomSites,
   customSitesSchema,
-  TERMINAL_SNIPPETS_DEFAULTS,
-  type TerminalSnippets,
-  terminalSnippetsSchema,
 } from '@nodeservice/shared';
 import { eq } from 'drizzle-orm';
 
@@ -25,7 +16,6 @@ import { appMeta } from '../../infra/db/schema/index.js';
 import { AssistantSettingsStore } from '../assistant/assistant-settings.store.js';
 import { diffChanges } from '../audit/audit.diff.js';
 import { AuditService } from '../audit/audit.service.js';
-import { AutochecksStore } from './autochecks.store.js';
 import { type IncidentsSettingsPatch, IncidentsSettingsStore } from './incidents-settings.store.js';
 
 /**
@@ -36,7 +26,6 @@ const KEY_APPEARANCE = 'settings.appearance';
 /** Владелец сам выбрал пояс панели (в записи он есть), а не получил значение по умолчанию. */
 const timeZoneChosen = (raw: unknown): boolean =>
   typeof (raw as { timeZone?: unknown } | null | undefined)?.timeZone === 'string';
-const KEY_SNIPPETS = 'settings.snippets';
 const KEY_CUSTOM_SITES = 'settings.custom_sites';
 
 @Injectable()
@@ -46,7 +35,6 @@ export class SettingsService {
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly audit: AuditService,
-    private readonly autochecks: AutochecksStore,
     private readonly incidents: IncidentsSettingsStore,
     private readonly assistant: AssistantSettingsStore,
   ) {}
@@ -68,16 +56,6 @@ export class SettingsService {
 
   async updateIncidents(patch: IncidentsSettingsPatch): Promise<IncidentsSettings> {
     const { before, after } = await this.incidents.set(patch);
-    this.audit.extend({ changes: diffChanges(before, after) });
-    return after;
-  }
-
-  getAutochecks(): Promise<AutochecksSettings> {
-    return this.autochecks.get();
-  }
-
-  async updateAutochecks(patch: AutochecksSettingsUpdate): Promise<AutochecksSettings> {
-    const { before, after } = await this.autochecks.set(patch);
     this.audit.extend({ changes: diffChanges(before, after) });
     return after;
   }
@@ -113,31 +91,6 @@ export class SettingsService {
     // В Журнал (запись делает @Audit на контроллере) — только изменённые поля.
     this.audit.extend({ changes: diffChanges(current, next) });
     return next;
-  }
-
-  /** Сниппеты веб-терминала: именованные команды, общие для всех серверов. */
-  async getSnippets(): Promise<TerminalSnippets> {
-    const raw = await this.readJson(KEY_SNIPPETS);
-    const parsed = terminalSnippetsSchema.safeParse(raw ?? TERMINAL_SNIPPETS_DEFAULTS);
-    if (!parsed.success) {
-      this.log.warn('Сниппеты терминала повреждены, использую пустой список');
-      return TERMINAL_SNIPPETS_DEFAULTS;
-    }
-    return parsed.data;
-  }
-
-  /** Список заменяется целиком (порядок = порядок в меню); в Журнал — diff по именам. */
-  async updateSnippets(next: TerminalSnippets): Promise<TerminalSnippets> {
-    const current = await this.getSnippets();
-    const parsed = terminalSnippetsSchema.parse(next);
-    await this.writeJson(KEY_SNIPPETS, parsed);
-    this.audit.extend({
-      changes: diffChanges(
-        { snippets: current.items.map((i) => i.name).join(', ') || '—' },
-        { snippets: parsed.items.map((i) => i.name).join(', ') || '—' },
-      ),
-    });
-    return parsed;
   }
 
   /** До пяти внешних ссылок в отдельном блоке бокового меню; запись хранится в бэкапе панели. */

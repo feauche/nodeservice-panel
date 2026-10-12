@@ -1,10 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type {
-  RemnawaveCert,
-  RemnawaveNode,
-  RemnawaveStats,
-  RemnawaveVpnProbeStatus,
-} from '@nodeservice/shared';
+import type { RemnawaveCert, RemnawaveNode, RemnawaveStats } from '@nodeservice/shared';
 import { eq } from 'drizzle-orm';
 
 import { CryptoService } from '../../common/crypto/crypto.service.js';
@@ -29,9 +24,6 @@ interface Stored {
   domain: string;
   apiKeyEnc: string;
   snapshot: Snapshot | null;
-  vpnProbeUrlEnc?: string;
-  vpnProbeRoutes?: number;
-  vpnProbeRouteDetails?: RemnawaveVpnProbeStatus['routeDetails'];
 }
 
 /** Домен и токен Remnawave хранятся шифрованными (как ключ Ассистента), в app_meta. */
@@ -52,9 +44,6 @@ export class RemnawaveSettingsStore {
         domain: p.domain,
         apiKeyEnc: p.apiKeyEnc,
         snapshot: p.snapshot ?? null,
-        ...(p.vpnProbeUrlEnc ? { vpnProbeUrlEnc: p.vpnProbeUrlEnc } : {}),
-        ...(typeof p.vpnProbeRoutes === 'number' ? { vpnProbeRoutes: p.vpnProbeRoutes } : {}),
-        ...(Array.isArray(p.vpnProbeRouteDetails) ? { vpnProbeRouteDetails: p.vpnProbeRouteDetails } : {}),
       };
     } catch {
       return null;
@@ -93,14 +82,11 @@ export class RemnawaveSettingsStore {
   }
 
   async connect(domain: string, apiKey: string, snapshot: Snapshot): Promise<void> {
-    const before = await this.load();
+    const _before = await this.load();
     await this.save({
       domain,
       apiKeyEnc: this.crypto.encrypt(apiKey),
       snapshot,
-      ...(before?.vpnProbeUrlEnc ? { vpnProbeUrlEnc: before.vpnProbeUrlEnc } : {}),
-      ...(typeof before?.vpnProbeRoutes === 'number' ? { vpnProbeRoutes: before.vpnProbeRoutes } : {}),
-      ...(before?.vpnProbeRouteDetails ? { vpnProbeRouteDetails: before.vpnProbeRouteDetails } : {}),
     });
   }
 
@@ -112,47 +98,5 @@ export class RemnawaveSettingsStore {
 
   async disconnect(): Promise<void> {
     await this.save(null);
-  }
-
-  async vpnProbe(): Promise<{
-    url: string;
-    routes: number;
-    routeDetails: RemnawaveVpnProbeStatus['routeDetails'];
-  } | null> {
-    const s = await this.load();
-    if (!s?.vpnProbeUrlEnc) return null;
-    try {
-      return {
-        url: this.crypto.decrypt(s.vpnProbeUrlEnc),
-        routes: s.vpnProbeRoutes ?? 0,
-        routeDetails: s.vpnProbeRouteDetails ?? [],
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  async setVpnProbe(url: string, routeDetails: RemnawaveVpnProbeStatus['routeDetails']): Promise<void> {
-    const s = await this.load();
-    if (!s) throw new Error('Remnawave не подключена.');
-    await this.save({
-      ...s,
-      vpnProbeUrlEnc: this.crypto.encrypt(url),
-      vpnProbeRoutes: routeDetails.length,
-      vpnProbeRouteDetails: routeDetails,
-    });
-  }
-
-  async updateVpnProbeDetails(routeDetails: RemnawaveVpnProbeStatus['routeDetails']): Promise<void> {
-    const s = await this.load();
-    if (!s?.vpnProbeUrlEnc) return;
-    await this.save({ ...s, vpnProbeRoutes: routeDetails.length, vpnProbeRouteDetails: routeDetails });
-  }
-
-  async clearVpnProbe(): Promise<void> {
-    const s = await this.load();
-    if (!s) return;
-    const { vpnProbeUrlEnc: _url, vpnProbeRoutes: _routes, vpnProbeRouteDetails: _routeDetails, ...rest } = s;
-    await this.save(rest);
   }
 }

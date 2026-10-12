@@ -58,7 +58,6 @@ export const backupSettingsSchema = z.object({
   }),
   /** Пароль задан (сам пароль наружу не отдаётся никогда). */
   passwordSet: z.boolean(),
-  includeMetrics: z.boolean(),
   extra: z.object({ enabled: z.boolean(), paths: z.array(z.string()) }),
 });
 export type BackupSettings = z.infer<typeof backupSettingsSchema>;
@@ -86,7 +85,6 @@ export const BACKUP_SETTINGS_DEFAULT: BackupSettings = {
     credentialsSet: false,
   },
   passwordSet: false,
-  includeMetrics: false,
   extra: { enabled: false, paths: [] },
 };
 
@@ -133,7 +131,6 @@ export const backupSettingsUpdateSchema = z.object({
     .optional(),
   /** Новый пароль; '' или null — снять пароль; не передан — не менять. */
   password: z.string().max(200).nullable().optional(),
-  includeMetrics: z.boolean().optional(),
   extra: z
     .object({ enabled: z.boolean(), paths: z.array(pathSchema).max(BACKUP_EXTRA_PATHS_MAX) })
     .optional(),
@@ -170,7 +167,6 @@ export type BackupItem = z.infer<typeof backupItemSchema>;
 export const BACKUP_STAGES = [
   'db',
   'env',
-  'metrics',
   'files',
   'pack',
   'encrypt',
@@ -183,7 +179,6 @@ export type BackupStage = (typeof BACKUP_STAGES)[number];
 export const BACKUP_STAGE_LABELS: Record<BackupStage, string> = {
   db: 'Сохраняю базу данных',
   env: 'Беру ключи установки',
-  metrics: 'Выгружаю метрики',
   files: 'Собираю дополнительные файлы',
   pack: 'Упаковываю архив',
   encrypt: 'Шифрую паролем',

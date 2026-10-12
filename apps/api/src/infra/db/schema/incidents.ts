@@ -9,8 +9,6 @@ import type {
 import { sql } from 'drizzle-orm';
 import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
-import { servers } from './servers.js';
-
 /** Инциденты (этап 8). Таблица и частичный уникальный индекс — миграция 0011_incidents.sql. */
 export const incidents = pgTable(
   'incidents',
@@ -18,7 +16,8 @@ export const incidents = pgTable(
     id: uuid('id').primaryKey().default(sql`uuidv7()`),
     nodeUuid: uuid('node_uuid'),
     diagnostics: jsonb('diagnostics').$type<NodeTcpDiagnostics | null>(),
-    serverId: uuid('server_id').references(() => servers.id, { onDelete: 'set null' }),
+    /** Сервер прежних версий; с 0.89.0 всегда пусто — события относятся к нодам Remnawave. */
+    serverId: uuid('server_id'),
     serverName: text('server_name').notNull(),
     kind: text('kind').notNull(),
     severity: text('severity').notNull(),

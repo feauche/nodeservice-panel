@@ -54,7 +54,7 @@ export function SetupSteps({ current }: { current: 1 | 2 | 3 }) {
         })}
       </ol>
       <p className="mt-auto pt-6 text-[12px] leading-normal text-text-3 max-md:hidden">
-        Панель управляет всеми вашими серверами и хранит доступы к ним, поэтому 2FA обязательна.
+        Панель управляет всеми вашими нодами и хранит доступ к ним, поэтому 2FA обязательна.
       </p>
     </>
   );

@@ -18,10 +18,10 @@ export const BILLING_KIND_LABELS: Record<BillingKind, string> = {
   other: 'Другое',
 };
 export const BILLING_KIND_HINTS: Record<BillingKind, string> = {
-  server: 'Сервер из NodeService у хостера.',
-  rent: 'Платите провайдеру или арендодателю без своего сервера в панели — например, вход с белым IP.',
+  server: 'Сервер у хостера, на котором работает нода.',
+  rent: 'Аренда у провайдера или арендодателя — например, вход с белым IP.',
   domain: 'Регистрация домена.',
-  cert: 'Сертификат: укажите, на каком сервере он развёрнут — подскажет, где продлевать.',
+  cert: 'Сертификат: укажите, на какой ноде он развёрнут — подскажет, где продлевать.',
   other: 'Всё остальное: подписки, IP, резервные копии.',
 };
 
@@ -178,8 +178,6 @@ export const billingItemSchema = z.object({
   kind: billingKindSchema,
   title: z.string(),
   providerId: z.string().uuid().nullable(),
-  /** Сервер (для «Сервер») или серверы, где развёрнут сертификат; у аренды — необязательно. */
-  serverIds: z.array(z.string().uuid()),
   nodeRefs: z.array(billingNodeRefSchema).max(20).optional(),
   domain: z.string().nullable(),
   amountMinor: z.number().int().min(0),
@@ -213,7 +211,6 @@ export const billingItemUpsertSchema = z.object({
   kind: billingKindSchema,
   title: z.string().trim().min(1, 'Укажите название').max(120),
   providerId: z.string().uuid().nullable(),
-  serverIds: z.array(z.string().uuid()).max(20),
   nodeRefs: z.array(billingNodeRefSchema).max(20).optional(),
   domain: z.string().trim().max(253).nullable(),
   amount: amountSchema,
@@ -304,18 +301,6 @@ export const billingSummarySchema = z.object({
       currency: billingCurrencySchema,
     })
     .nullable(),
-  /** Ближайшая оплата по каждому серверу — для метки в карточке сервера. */
-  byServer: z.array(
-    z.object({
-      serverId: z.string().uuid(),
-      itemId: z.string().uuid(),
-      title: z.string(),
-      paidUntil: z.string(),
-      dueState: z.enum(BILLING_DUE_STATES),
-      amountMinor: z.number().int(),
-      currency: billingCurrencySchema,
-    }),
-  ),
   /**
    * Курс ЦБ сегодня и дата курса (если свежий получить не удалось — последний известный);
    * fetchedAt — когда панель получила этот курс у ЦБ.

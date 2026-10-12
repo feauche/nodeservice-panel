@@ -241,7 +241,7 @@ export function installEnvText(values: InstallEnv, at: Date): { text: string; mi
   };
   const lines = [
     `# Ключи установки NodeService: собраны панелью ${at.toISOString()} из её рабочих настроек. Не публиковать.`,
-    '# Без ENCRYPTION_KEY зашифрованные секреты (TOTP, доступы к серверам) не восстановить.',
+    '# Без ENCRYPTION_KEY зашифрованные секреты (TOTP, доступы к интеграциям) не восстановить.',
   ];
   for (const k of INSTALL_ENV_KEYS) {
     const v = usable(k);

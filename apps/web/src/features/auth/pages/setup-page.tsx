@@ -122,7 +122,7 @@ function Step1({ initial, onDone }: Step1Props) {
           error={errors.setupToken?.message}
           hint={
             <>
-              Потеряли токен: выполните на сервере{' '}
+              Потеряли токен: выполните на сервере панели{' '}
               <code className="rounded-[5px] bg-surface-3 px-1.5 py-px font-mono text-[11.5px] whitespace-nowrap text-text-2">
                 nodeservice cli setup-token
               </code>

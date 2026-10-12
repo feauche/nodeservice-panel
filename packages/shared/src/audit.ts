@@ -25,7 +25,7 @@ export type AuditCategory = (typeof AUDIT_CATEGORIES)[number];
 /**
  * Категория действия по префиксу ключа. По умолчанию префикс и есть категория
  * (`auth.login.success` → auth); исключения — короткие префиксы, у которых в Журнале
- * своя категория: `kb.*` → «База знаний», `incident.*` → «Серверы». Ключи не переименовываем:
+ * своя категория: `kb.*` → «База знаний», `incident.*` → «Ноды и события». Ключи не переименовываем:
  * они лежат в audit_log и в CHECK-констрейнте (миграция 0014).
  */
 export const AUDIT_PREFIX_CATEGORY: Readonly<Record<string, AuditCategory>> = {
@@ -62,7 +62,7 @@ export const AUDIT_CATEGORY_LABELS: Record<AuditCategory, string> = {
   auth: 'Вход',
   settings: 'Настройки',
   security: 'Безопасность',
-  server: 'Серверы',
+  server: 'Ноды и события',
   knowledge: 'База знаний',
   assistant: 'Ассистент',
   system: 'Система',

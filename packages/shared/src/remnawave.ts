@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-import { NODE_LINK_BY } from './servers.js';
-
 /** Ноды и метрики читаются из Remnawave. Название и ссылка провайдера сохраняются
  * обратно по его UUID только по явному действию владельца; остальные поля не изменяются. */
 
@@ -44,9 +42,6 @@ export const remnawaveNodeSchema = z.object({
   uptime: z.string().nullable().optional(),
   nodeVersion: z.string().nullable().optional(),
   xrayVersion: z.string().nullable().optional(),
-  serverIds: z.array(z.string()).optional(),
-  /** Как найдена связь с основным сервером; null — связи нет. */
-  linkedBy: z.enum(NODE_LINK_BY).nullable().optional(),
 });
 export type RemnawaveNode = z.infer<typeof remnawaveNodeSchema>;
 
@@ -108,19 +103,6 @@ export const remnawaveStatusSchema = z.object({
   stats: remnawaveStatsSchema.nullable(),
   nodes: z.array(remnawaveNodeSchema),
   cert: remnawaveCertSchema.nullable(),
-  /** Сервисная подписка для настоящих VPN-проб сохранена; сама секретная ссылка никогда не возвращается. */
-  vpnProbeConfigured: z.boolean().default(false),
-  vpnProbeRoutes: z.number().int().min(0).nullable().default(null),
-  vpnProbeRouteDetails: z
-    .array(
-      z.object({
-        name: z.string(),
-        address: z.string(),
-        port: z.number().int().min(1).max(65_535),
-        protocol: z.enum(['vless-reality', 'hysteria2']),
-      }),
-    )
-    .default([]),
 });
 export type RemnawaveStatus = z.infer<typeof remnawaveStatusSchema>;
 
@@ -134,28 +116,6 @@ export const remnawaveConnectRequestSchema = z.object({
   apiKey: z.string().trim().min(8).max(2000),
 });
 export type RemnawaveConnectRequest = z.infer<typeof remnawaveConnectRequestSchema>;
-
-export const remnawaveVpnProbeRequestSchema = z.object({
-  subscriptionUrl: z
-    .url()
-    .max(4000)
-    .refine((value) => value.startsWith('https://'), 'нужна HTTPS-ссылка'),
-});
-export type RemnawaveVpnProbeRequest = z.infer<typeof remnawaveVpnProbeRequestSchema>;
-
-export const remnawaveVpnProbeStatusSchema = z.object({
-  configured: z.boolean(),
-  routes: z.number().int().min(0).nullable(),
-  routeDetails: z.array(
-    z.object({
-      name: z.string(),
-      address: z.string(),
-      port: z.number().int().min(1).max(65_535),
-      protocol: z.enum(['vless-reality', 'hysteria2']),
-    }),
-  ),
-});
-export type RemnawaveVpnProbeStatus = z.infer<typeof remnawaveVpnProbeStatusSchema>;
 
 export const REMNAWAVE_TOPOLOGY_STATUSES = ['ok', 'warning', 'error', 'unknown'] as const;
 export const REMNAWAVE_TOPOLOGY_CONFIDENCE = ['confirmed', 'inferred', 'unknown'] as const;
@@ -188,7 +148,6 @@ export const remnawaveTopologyNodeSchema = z.object({
   usersOnline: z.number().int().min(0).nullable(),
   profileUuid: z.string().nullable(),
   inboundUuids: z.array(z.string()),
-  serverIds: z.array(z.string()),
   status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
 });
 export type RemnawaveTopologyNode = z.infer<typeof remnawaveTopologyNodeSchema>;
@@ -229,7 +188,7 @@ export const REMNAWAVE_PATH_SEGMENTS = [
 export const remnawavePathRuntimeSchema = z.object({
   status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
   checkedAt: z.iso.datetime(),
-  source: z.enum(['vpn_probe', 'remnawave', 'inventory', 'billing']),
+  source: z.enum(['remnawave']),
   label: z.string(),
   detail: z.string(),
 });
@@ -243,43 +202,9 @@ export const remnawavePathSegmentSchema = z.object({
   runtime: remnawavePathRuntimeSchema.nullable().default(null),
 });
 
-export const REMNAWAVE_PROBE_NETWORK_TYPES = ['residential', 'mobile', 'datacenter', 'unknown'] as const;
-export const remnawaveProbeNetworkTypeSchema = z.enum(REMNAWAVE_PROBE_NETWORK_TYPES);
-
-/** Безопасное описание проверяющей сети. ASN можно указать тегом сервера `as12345`. */
-export const remnawaveProbeObservationSchema = z.object({
-  from: z.string(),
-  country: z.string().nullable(),
-  networkType: remnawaveProbeNetworkTypeSchema,
-  provider: z.string().nullable(),
-  asn: z.string().nullable(),
-  ok: z.boolean(),
-  latencyMs: z.number().int().min(0).nullable(),
-  stage: z.string(),
-  detail: z.string(),
-});
-
-export const remnawaveVpnProbeSampleSchema = z.object({
-  checkedAt: z.iso.datetime(),
-  status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
-  verdict: z.enum(['unavailable', 'ok', 'regional_block', 'failed_everywhere', 'mixed']),
-  passed: z.number().int().min(0),
-  total: z.number().int().min(0),
-  observations: z.array(remnawaveProbeObservationSchema),
-});
-
-export const remnawavePathDiagnosticsSchema = z.object({
-  availability24h: z.number().min(0).max(100).nullable(),
-  availability7d: z.number().min(0).max(100).nullable(),
-  lastFailureAt: z.iso.datetime().nullable(),
-  samples: z.array(remnawaveVpnProbeSampleSchema),
-  note: z.string(),
-});
-export type RemnawavePathDiagnostics = z.infer<typeof remnawavePathDiagnosticsSchema>;
-
 /**
- * Единая модель пути, которой пользуются карта, готовность сервера, инциденты и Ассистент.
- * Техническое правило/outbound остаётся отдельным звеном и не маскируется под сервер.
+ * Единая модель пути, которой пользуются карта, сценарии и Ассистент.
+ * Техническое правило/outbound остаётся отдельным звеном и не маскируется под ноду.
  */
 export const remnawaveTopologyPathSchema = z.object({
   id: z.string(),
@@ -293,35 +218,8 @@ export const remnawaveTopologyPathSchema = z.object({
   status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
   confidence: z.enum(REMNAWAVE_TOPOLOGY_CONFIDENCE),
   segments: z.array(remnawavePathSegmentSchema),
-  diagnostics: remnawavePathDiagnosticsSchema.nullable().default(null),
 });
 export type RemnawaveTopologyPath = z.infer<typeof remnawaveTopologyPathSchema>;
-
-export const remnawaveReadinessItemSchema = z.object({
-  key: z.enum([
-    'agent',
-    'remnanode',
-    'psiphon',
-    'selfsteal',
-    'ports',
-    'profile',
-    'entry',
-    'exit',
-    'vpn',
-    'billing',
-  ]),
-  label: z.string(),
-  status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
-  detail: z.string(),
-  checkedAt: z.iso.datetime().nullable(),
-});
-export const remnawaveServerReadinessSchema = z.object({
-  serverId: z.string(),
-  serverName: z.string(),
-  status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
-  items: z.array(remnawaveReadinessItemSchema),
-});
-export type RemnawaveServerReadiness = z.infer<typeof remnawaveServerReadinessSchema>;
 
 export const remnawaveTopologyProfileSchema = z.object({
   id: z.string(),
@@ -389,7 +287,6 @@ export const remnawaveTopologySchema = z.object({
   nodes: z.array(remnawaveTopologyNodeSchema),
   routes: z.array(remnawaveTopologyRouteSchema),
   paths: z.array(remnawaveTopologyPathSchema).default([]),
-  readiness: z.array(remnawaveServerReadinessSchema).default([]),
   profiles: z.array(remnawaveTopologyProfileSchema).default([]),
   issues: z.array(remnawaveTopologyIssueSchema),
   /** Последняя сохранённая безопасная версия конфигурации и отличие от предыдущей. */

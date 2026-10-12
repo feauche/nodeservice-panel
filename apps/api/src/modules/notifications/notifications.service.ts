@@ -1,25 +1,11 @@
-import {
-  type BeforeApplicationShutdown,
-  HttpStatus,
-  Injectable,
-  Logger,
-  type OnModuleDestroy,
-} from '@nestjs/common';
-import {
-  type CreateNotificationRequest,
-  createNotificationRequestSchema,
-  type IncidentKind,
-  NOTIFICATION_BODY_MAX,
-  type Notification,
-  type NotificationLink,
-  type NotificationSeverity,
-  type NotificationsResponse,
-  type TelegramEvent,
+import { type BeforeApplicationShutdown, Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
+import type {
+  IncidentKind,
+  NotificationLink,
+  NotificationSeverity,
+  TelegramEvent,
 } from '@nodeservice/shared';
 
-import { problem } from '../../common/filters/problem-details.filter.js';
-import { clipKeepingEnd } from '../../common/text.js';
-import type { NotificationRow } from '../../infra/db/schema/index.js';
 import { EventsService } from '../events/events.service.js';
 import { NotificationsRepository, type PendingTelegram } from './notifications.repository.js';
 import { shortOutageMessage } from './telegram/telegram.format.js';
@@ -40,11 +26,9 @@ export interface PushInput {
   link?: NotificationLink | null;
   /** Про какой сервер: в title/body пишем токен `{server}`, имя подставится при показе (переименование видно сразу). */
   server?: { id: string; name: string; host?: string | null } | null;
-  /** Сохранить информационный или успешный результат в разделе отчётов. */
-  center?: boolean;
   /**
    * То же событие в Telegram (R6): тип для тумблера и инцидент, чтобы «Починилось» ушло ответом на
-   * исходное сообщение. Уходит независимо от того, попадает ли уведомление в колокольчик.
+   * исходное сообщение.
    */
   telegram?: {
     event: TelegramEvent;
@@ -113,7 +97,7 @@ export const SERVER_TOKEN = '{server}';
  * основную операцию — только в лог.
  */
 /** Уровни, которые попадают в колокольчик; ok/info показываются всплывашкой и остаются в Журнале. */
-const IMPORTANT = new Set<NotificationSeverity>(['warn', 'crit']);
+const _IMPORTANT = new Set<NotificationSeverity>(['warn', 'crit']);
 
 @Injectable()
 export class NotificationsService implements OnModuleDestroy, BeforeApplicationShutdown {
@@ -121,7 +105,7 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
 
   constructor(
     private readonly repo: NotificationsRepository,
-    private readonly events: EventsService,
+    readonly _events: EventsService,
     private readonly telegram: TelegramService,
   ) {
     // Telegram сам в колокольчик не пишет (центр уведомлений зависит от него, а не наоборот) — о том, что
@@ -151,26 +135,6 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
         setTimeout(resolve, SHUTDOWN_WAIT_MS).unref?.();
       }),
     ]);
-  }
-
-  toDto(row: NotificationRow & { serverNameNow?: string | null }): Notification {
-    // Имя сервера — актуальное из справочника; удалён — то, что было при создании.
-    const name = row.serverNameNow ?? row.serverName ?? 'сервер';
-    const fill = (t: string | null): string | null => (t === null ? null : t.replaceAll(SERVER_TOKEN, name));
-    return {
-      id: row.id,
-      severity: row.severity as NotificationSeverity,
-      title: fill(row.title) ?? row.title,
-      body: fill(row.body),
-      link: row.linkTo && row.linkLabel ? { to: row.linkTo, label: row.linkLabel } : null,
-      createdAt: row.createdAt.toISOString(),
-      readAt: row.readAt?.toISOString() ?? null,
-    };
-  }
-
-  async list(): Promise<NotificationsResponse> {
-    const { items, unread, total } = await this.repo.list();
-    return { items: items.map((r) => this.toDto(r)), unread, total };
   }
 
   /** Часовой пояс владельца для времени в сообщениях (из настроек уведомлений). */
@@ -392,7 +356,7 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
   async push(input: PushInput): Promise<void> {
     if (input.telegram) {
       const t = input.telegram;
-      const name = input.server?.name ?? 'сервер';
+      const name = input.server?.name ?? 'нода';
       const fill = (text: string) => text.replaceAll(SERVER_TOKEN, name);
       const incidentId = t.incidentId ?? null;
       const m: TelegramDispatch = {
@@ -417,51 +381,5 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
       // В фоне: медленный Telegram не должен задерживать инцидент или обслуживание.
       else void this.telegram.dispatch(m);
     }
-    // Обычные info/ok остаются в Журнале; фоновые сводки явно сохраняются в разделе отчётов.
-    if (!input.center && !IMPORTANT.has(input.severity)) return;
-    try {
-      const row = await this.repo.insert({
-        severity: input.severity,
-        title: input.title.slice(0, 200),
-        // Длинный текст дела режем в середине: вывод стоит в конце и должен остаться целым.
-        body: input.body ? clipKeepingEnd(input.body, NOTIFICATION_BODY_MAX) : null,
-        linkTo: input.link?.to ?? null,
-        linkLabel: input.link?.label ?? null,
-        serverId: input.server?.id ?? null,
-        serverName: input.server?.name ?? null,
-      });
-      this.events.emit({ type: 'notification', data: this.toDto(row) });
-    } catch (err) {
-      this.log.warn(`уведомление не записано: ${(err as Error).message}`);
-    }
-  }
-
-  /** Всплывашка с клиента — валидируем и сохраняем. */
-  async create(input: CreateNotificationRequest): Promise<Notification> {
-    const req = createNotificationRequestSchema.parse(input);
-    const row = await this.repo.insert({
-      severity: req.severity,
-      title: req.title,
-      body: req.body || null,
-      linkTo: req.link?.to ?? null,
-      linkLabel: req.link?.label ?? null,
-    });
-    const dto = this.toDto(row);
-    this.events.emit({ type: 'notification', data: dto });
-    return dto;
-  }
-
-  async markAllRead(): Promise<{ unread: number }> {
-    await this.repo.markAllRead();
-    return { unread: 0 };
-  }
-
-  async delete(id: string): Promise<void> {
-    if (!(await this.repo.delete(id)))
-      throw problem(HttpStatus.NOT_FOUND, { detail: 'Уведомление уже удалено.' });
-  }
-
-  async clear(): Promise<void> {
-    await this.repo.clear();
   }
 }

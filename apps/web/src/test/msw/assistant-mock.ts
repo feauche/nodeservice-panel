@@ -1,10 +1,8 @@
-import {
-  ASSISTANT_PERMISSIONS_DEFAULT,
-  type AssistantConversation,
-  type AssistantLevel,
-  type AssistantMessage,
-  type AssistantPermissions,
-  type AssistantProvider,
+import type {
+  AssistantConversation,
+  AssistantLevel,
+  AssistantMessage,
+  AssistantProvider,
 } from '@nodeservice/shared';
 import { delay, HttpResponse, http } from 'msw';
 
@@ -15,7 +13,6 @@ interface AssistantMock {
   provider: AssistantProvider;
   model: string;
   level: AssistantLevel;
-  permissions: AssistantPermissions;
   conversations: AssistantConversation[];
   messages: Record<string, AssistantMessage[]>;
   /** Сколько «думает» мок-сервер до ответа; в тестах ноль. */
@@ -26,7 +23,6 @@ export const mockAssistant: AssistantMock = {
   provider: 'zveno',
   model: 'anthropic/claude-sonnet-4-5',
   level: 'intermediate',
-  permissions: { ...ASSISTANT_PERMISSIONS_DEFAULT },
   conversations: [],
   messages: {},
   chatDelayMs: 0,
@@ -49,7 +45,6 @@ export function seedAssistant(): void {
   mockAssistant.enabled = false;
   mockAssistant.model = 'claude-sonnet-4-5';
   mockAssistant.level = 'intermediate';
-  mockAssistant.permissions = { ...ASSISTANT_PERMISSIONS_DEFAULT };
   mockAssistant.conversations = [];
   mockAssistant.messages = {};
   mockAssistant.chatDelayMs = 0;
@@ -71,9 +66,6 @@ function buildReply(text = ''): AssistantMessage {
       content:
         'По последней проверке Check-Host порт 443 не отвечает из России. Запустите проверку порта в окне ноды, чтобы увидеть свежий результат.',
       citations: [],
-      proposals: [],
-      reachability: [],
-      activity: [],
       createdAt: new Date().toISOString(),
     };
   const cpu = mockIncidents.items.find((i) => i.kind === 'cpu_high' && i.status !== 'resolved');
@@ -86,9 +78,6 @@ function buildReply(text = ''): AssistantMessage {
     content:
       'Сейчас на **de-fra-01** высокая нагрузка на CPU. По базе знаний помогает `перезапуск Xray` — его выполняете вы сами.',
     citations,
-    proposals: [],
-    reachability: [],
-    activity: [],
     createdAt: new Date().toISOString(),
   };
 }
@@ -102,9 +91,6 @@ function buildFleetReplies(): AssistantMessage[] {
       role: 'assistant',
       content: 'Смотрю историю событий за всё время.',
       citations: [],
-      proposals: [],
-      reachability: [],
-      activity: [],
       createdAt: now,
     },
     {
@@ -113,9 +99,6 @@ function buildFleetReplies(): AssistantMessage[] {
       content:
         '**События по серверам за всё время:**\n\n- de-fra-01 — 4 события, все закрыты\n- nl-ams-02 — 2 события, все закрыты\n\nБольше всего сбоев на первом.',
       citations: [{ type: 'server', id: MOCK_OLD_SERVER.id, label: MOCK_OLD_SERVER.name }],
-      proposals: [],
-      reachability: [],
-      activity: [],
       createdAt: now,
     },
   ];
@@ -128,7 +111,6 @@ export const assistantHandlers = [
       provider: mockAssistant.provider,
       model: mockAssistant.model,
       level: mockAssistant.level,
-      permissions: mockAssistant.permissions,
     }),
   ),
   http.get('/api/settings/assistant', () =>
@@ -137,7 +119,6 @@ export const assistantHandlers = [
       provider: mockAssistant.provider,
       model: mockAssistant.model,
       level: mockAssistant.level,
-      permissions: mockAssistant.permissions,
     }),
   ),
   http.put('/api/settings/assistant', async ({ request }) => {
@@ -147,20 +128,17 @@ export const assistantHandlers = [
       provider?: AssistantProvider;
       model?: string;
       level?: AssistantLevel;
-      permissions?: Partial<AssistantPermissions>;
     };
     if (body.clearKey) mockAssistant.enabled = false;
     else if (body.apiKey) mockAssistant.enabled = true;
     if (body.provider) mockAssistant.provider = body.provider;
     if (typeof body.model === 'string') mockAssistant.model = body.model;
     if (body.level) mockAssistant.level = body.level;
-    if (body.permissions) mockAssistant.permissions = { ...mockAssistant.permissions, ...body.permissions };
     return HttpResponse.json({
       enabled: mockAssistant.enabled,
       provider: mockAssistant.provider,
       model: mockAssistant.model,
       level: mockAssistant.level,
-      permissions: mockAssistant.permissions,
     });
   }),
   http.get('/api/assistant/conversations', () => HttpResponse.json({ items: mockAssistant.conversations })),
@@ -190,9 +168,6 @@ export const assistantHandlers = [
       role: 'user',
       content: body.message,
       citations: [],
-      proposals: [],
-      reachability: [],
-      activity: [],
       createdAt: new Date().toISOString(),
     };
     // Как на сервере: сообщение администратора сохраняется сразу, ответ приходит после раздумий.

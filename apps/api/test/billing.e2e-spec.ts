@@ -61,7 +61,7 @@ describe('billing e2e', () => {
   let db: Db;
   const rates = new FakeRates();
   const tg = new FakeTelegram();
-  let serverId = '';
+  const NODE_UUID = '0192c000-0000-7000-8000-0000000000de';
   let providerId = '';
 
   beforeAll(async () => {
@@ -76,7 +76,7 @@ describe('billing e2e', () => {
     db = app.get<Db>(DB);
     await runMigrations(db);
     await db.execute(
-      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents, providers, billing_items, billing_rates cascade`,
+      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, incidents, providers, billing_items, billing_rates cascade`,
     );
     await db.execute(sql`delete from app_meta where key like 'settings.%' or key like 'telegram.%'`);
     await app.get<Redis>(VALKEY).flushdb();
@@ -94,10 +94,6 @@ describe('billing e2e', () => {
       .set(CSRF_HEADER, csrf)
       .send({ code: await generate({ secret: start.body.totpSecret as string }) })
       .expect(200);
-    const s = await db.execute<{ id: string }>(
-      sql`insert into servers (name, host, ssh_user) values ('DE-1', '10.0.0.1', 'root') returning id`,
-    );
-    serverId = s.rows[0]?.id ?? '';
     const p = await db.execute<{ id: string }>(
       sql`insert into providers (name, site_url) values ('Hetzner', 'https://hetzner.com') returning id`,
     );
@@ -117,7 +113,6 @@ describe('billing e2e', () => {
     kind: 'server',
     title: 'DE-1 Falkenstein',
     providerId,
-    serverIds: [serverId],
     domain: null,
     amount: 4.51,
     currency: 'EUR',
@@ -131,23 +126,23 @@ describe('billing e2e', () => {
   });
   let itemId = '';
 
-  it('создание: сумма в центах, сегодняшние рубли, сервер необязателен', async () => {
+  it('создание: сумма в центах, сегодняшние рубли, нода необязательна', async () => {
     const res = await agent.post('/api/billing/items').set(CSRF_HEADER, csrf).send(body()).expect(201);
     const item = billingItemSchema.parse(res.body);
     itemId = item.id;
     expect(item.amountMinor).toBe(451);
     expect(item.dueState).toBe('ok');
-    // Сервер необязателен даже у типа «Сервер».
+    // Нода необязательна даже у типа «Сервер».
     const noServer = billingItemSchema.parse(
       (
         await agent
           .post('/api/billing/items')
           .set(CSRF_HEADER, csrf)
-          .send(body({ serverIds: [], title: 'Без сервера' }))
+          .send(body({ title: 'Без ноды' }))
           .expect(201)
       ).body,
     );
-    expect(noServer.serverIds).toEqual([]);
+    expect(noServer.nodeRefs ?? []).toEqual([]);
     await agent.delete(`/api/billing/items/${noServer.id}`).set(CSRF_HEADER, csrf).expect(204);
     const list = billingItemsResponseSchema.parse((await agent.get('/api/billing/items').expect(200)).body);
     expect(list.items).toHaveLength(1);
@@ -204,13 +199,12 @@ describe('billing e2e', () => {
       .expect(200);
   });
 
-  it('итоги: оплачено за месяц в рублях по курсу дня; метка для карточки сервера', async () => {
+  it('итоги: оплачено за месяц в рублях по курсу дня', async () => {
     const s = billingSummarySchema.parse(
       (await agent.get('/api/billing/summary?tz=Europe/Moscow').expect(200)).body,
     );
     expect(s.month.spentRubMinor).toBe(50_000);
     expect(s.year.payments).toBe(1);
-    expect(s.byServer[0]?.serverId).toBe(serverId);
     expect(s.rates.EUR).toBe(100);
     // Рядом с курсом — когда панель его получила («Обновлено 14:00» на странице биллинга).
     expect(Date.parse(s.rates.fetchedAt ?? '')).toBeGreaterThan(Date.now() - 600_000);
@@ -261,7 +255,7 @@ describe('billing e2e', () => {
     await agent.delete(`/api/billing/payments/${res.payment.id}`).set(CSRF_HEADER, csrf).expect(200);
   });
 
-  it('просрочено, сервер лежит: колокольчик, Telegram со звуком и подсказкой; повтор — не раньше суток', async () => {
+  it('просрочено, нода лежит: Telegram со звуком и подсказкой; повтор — не раньше суток', async () => {
     const svc = app.get(BillingService);
     /** Напоминание о просрочке заново, будто прошлого не было; возвращает текст сообщения в Telegram. */
     const remind = async (): Promise<string> => {
@@ -274,77 +268,47 @@ describe('billing e2e', () => {
       return String(tg.sent.at(-1)?.text);
     };
     await db.execute(
-      sql`update billing_items set paid_until = now() - interval '1 day' where id = ${itemId}`,
+      sql`update billing_items set paid_until = now() - interval '1 day', node_refs = ${JSON.stringify([{ panel: 'panel.example', uuid: NODE_UUID, name: 'DE-1' }])}::jsonb where id = ${itemId}`,
     );
-    // «SSH недоступен» — сервер работает, панель просто не может зайти: неоплатой это не объясняется.
+    // «Нода не на связи» — Remnawave её не видит, но машина может работать: неоплатой это не объясняется.
     await db.execute(
-      sql`insert into incidents (server_id, server_name, kind, severity, title) values (${serverId}, 'DE-1', 'ssh_down', 'crit', 'SSH недоступен')`,
+      sql`insert into incidents (node_uuid, server_name, kind, severity, title) values (${NODE_UUID}, 'DE-1', 'node_down', 'crit', 'Нода не на связи')`,
     );
     const working = await remind();
     expect(working).toContain('Оплата просрочена на 1 день');
     expect(working).not.toContain('из-за неоплаты');
-    // «Сервер недоступен», но само дело об оплате молчит (сбой сразу у нескольких серверов, порт с панели
-    // открыт): напоминание не должно быть увереннее дела.
+    // «Нода недоступна», но само дело об оплате молчит: напоминание не должно быть увереннее дела.
     await db.execute(
-      sql`update incidents set kind = 'server_down', title = 'Сервер недоступен · DE-1' where server_id = ${serverId}`,
+      sql`update incidents set kind = 'server_down', title = 'Нода недоступна · DE-1' where node_uuid = ${NODE_UUID}`,
     );
     expect(await remind()).not.toContain('из-за неоплаты');
     // В заголовке дела названа оплата, но в тексте панель осторожна («возможно…»: из других стран порт не
     // проверен) — напоминание не должно быть увереннее: «вероятно, из-за неоплаты» не пишем.
     await db.execute(
-      sql`update incidents set title = 'Сервер недоступен — просрочена оплата · DE-1', detail = 'Проверьте оплату: из других стран порт не проверен, а оплата просрочена — возможно, сервер отключили за неоплату.' where server_id = ${serverId}`,
+      sql`update incidents set title = 'Нода недоступна — просрочена оплата · DE-1', detail = 'Проверьте оплату: из других стран порт не проверен, а оплата просрочена — возможно, ноду отключили за неоплату.' where node_uuid = ${NODE_UUID}`,
     );
     expect(await remind()).not.toContain('из-за неоплаты');
     // Дело само называет оплату вероятной причиной — вот тогда и напоминание говорит о ней.
     await db.execute(
-      sql`update incidents set detail = 'Вероятнее всего: отключили за неоплату — продлите у провайдера или арендодателя и отметьте продление в «Биллинге».' where server_id = ${serverId}`,
+      sql`update incidents set detail = 'Вероятнее всего: отключили за неоплату — продлите у провайдера или арендодателя и отметьте продление в «Биллинге».' where node_uuid = ${NODE_UUID}`,
     );
-    // …но только для оплаты самого сервера: просроченный сертификат сервер не выключает.
+    // …но только для оплаты хостинга: просроченный сертификат ноду не выключает.
     await db.execute(sql`update billing_items set kind = 'cert' where id = ${itemId}`);
     expect(await remind()).not.toContain('из-за неоплаты');
     await db.execute(sql`update billing_items set kind = 'server' where id = ${itemId}`);
     const text = await remind();
     const msg = tg.sent.at(-1);
     expect(text).toContain('Оплата просрочена на 1 день');
-    expect(text).toContain('DE-1 недоступен</b> — вероятно, из-за неоплаты');
+    expect(text).toContain('DE-1 недоступна</b> — вероятно, из-за неоплаты');
     expect(msg?.disable_notification).toBeFalsy();
     expect(await svc.runReminders()).toBe(0);
-    // Дело возвращаем в «SSH недоступен»: по нему ниже считается доступность парка.
-    await db.execute(
-      sql`update incidents set kind = 'ssh_down', title = 'SSH недоступен' where server_id = ${serverId}`,
-    );
-    // Окно оплаты для текста инцидента и разбора: просрочка — фактом, срок — в поясе панели, а не штампом UTC.
-    const win = await svc.paymentWindowForServer(serverId);
-    expect([win.total, win.paying]).toEqual([1, 1]);
-    expect(win.dueSoon).toEqual([]);
-    expect(win.overdue).toHaveLength(1);
-    expect(win.overdue[0]).toMatchObject({ kind: 'server', when: 'просрочено на 1 день', autoCharge: false });
-    // В текст дела идёт только срок (он хранится и не должен устаревать); «просрочено на…» — отдельно.
-    expect(win.overdue[0]?.text).toMatch(
-      /^Сервер «DE-1 Falkenstein» у Hetzner: .+, оплачено до \d{1,2} [а-я]+( \d{4})?, \d{2}:\d{2} \((МСК|UTC[+-]\d+)\)$/,
-    );
-    expect(win.overdue[0]?.text).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
-    // Центр удалён; доставка Telegram проверена выше и остаётся единственным каналом.
+    // Центр уведомлений удалён; доставка Telegram проверена выше и остаётся единственным каналом.
     await agent.get('/api/notifications').expect(404);
-    // У сервера без оплат в «Биллинге» окно пустое, и панель это знает: total = 0.
-    expect(await svc.paymentWindowForServer('00000000-0000-7000-8000-000000000000')).toEqual({
-      overdue: [],
-      dueSoon: [],
-      autoRenewed: [],
-      next: null,
-      total: 0,
-      paying: 0,
-    });
-    // К серверу привязан только сертификат: оплата есть, но срока оплаты самого сервера панель не знает.
-    await db.execute(sql`update billing_items set kind = 'cert' where id = ${itemId}`);
-    const certOnly = await svc.paymentWindowForServer(serverId);
-    expect([certOnly.total, certOnly.paying]).toEqual([1, 0]);
-    await db.execute(sql`update billing_items set kind = 'server' where id = ${itemId}`);
     const forJarvis = await svc.forAssistant();
     expect(forJarvis.items[0]).toMatchObject({
       title: 'DE-1 Falkenstein',
       provider: 'Hetzner',
-      servers: ['DE-1'],
+      nodes: ['DE-1'],
     });
   });
 
@@ -358,31 +322,12 @@ describe('billing e2e', () => {
     for (let i = 0; i < 30 && tg.sent.length === n; i += 1) await new Promise((r) => setTimeout(r, 100));
     expect(String(tg.sent.at(-1)?.text)).toContain('Скоро оплата — через 2 дня');
     expect(await svc.runReminders()).toBe(0);
-    // Срок через двое суток — в окно оплаты не входит, но ближайший срок назван.
-    const far = await svc.paymentWindowForServer(serverId);
-    expect([far.overdue, far.dueSoon, far.autoRenewed]).toEqual([[], [], []]);
-    expect(far.next).toContain('через 2 дня');
-    // Срок через несколько часов — уже окно: «ещё не просрочено» неоплату не исключает.
-    await db.execute(
-      sql`update billing_items set paid_until = now() + interval '5 hours' where id = ${itemId}`,
-    );
-    const soon = await svc.paymentWindowForServer(serverId);
-    expect(soon.overdue).toEqual([]);
-    expect(soon.dueSoon).toHaveLength(1);
-    expect(soon.dueSoon[0]?.when).toMatch(/^через (4 часа|5 часов)$/);
-    expect(soon.next).toBeNull();
     await db.execute(
       sql`update billing_items set paid_until = now() - interval '1 hour', auto_charge = true where id = ${itemId}`,
     );
     expect(await svc.runAutoCharge()).toBe(1);
     const item = billingItemSchema.parse((await agent.get('/api/billing/items').expect(200)).body.items[0]);
     expect(item.dueState).not.toBe('overdue');
-    // Автоплатёж продлил срок час назад: панель не знает, прошло ли списание, — это тоже окно оплаты.
-    const auto = await svc.paymentWindowForServer(serverId);
-    expect([auto.overdue, auto.dueSoon]).toEqual([[], []]);
-    expect(auto.autoRenewed).toHaveLength(1);
-    expect(auto.autoRenewed[0]).toContain('автоплатёж, срок продлён');
-    expect(auto.autoRenewed[0]).toContain('прошло ли списание у провайдера, панель не знает');
   });
 
   it('архив и удаление', async () => {

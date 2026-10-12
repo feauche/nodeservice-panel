@@ -147,13 +147,13 @@ describe('BillingPage', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Добавить оплату' }));
     let dialog = await screen.findByRole('dialog');
-    await user.type(within(dialog).getByLabelText(/Название/), 'Без сервера');
+    await user.type(within(dialog).getByLabelText(/Название/), 'Без ноды');
     await user.type(within(dialog).getByLabelText(/Сумма/), '5');
-    // «Сервер» — выпадающий список, по умолчанию «Без сервера», сохранить можно и так.
+    // «Нода» — выпадающий список, по умолчанию «Без ноды», сохранить можно и так.
     expect(within(dialog).getByRole('combobox', { name: 'Нода' })).toHaveTextContent('Без ноды');
     await user.click(within(dialog).getByRole('button', { name: 'Добавить' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(mockBilling.items.find((i) => i.title === 'Без сервера')?.serverIds).toEqual([]);
+    expect(mockBilling.items.find((i) => i.title === 'Без ноды')?.nodeRefs ?? []).toEqual([]);
 
     await user.click(screen.getByRole('button', { name: 'Добавить оплату' }));
     dialog = await screen.findByRole('dialog');
@@ -161,8 +161,9 @@ describe('BillingPage', () => {
     await user.type(within(dialog).getByLabelText(/Сумма/), '5');
     await user.click(within(dialog).getByRole('radio', { name: 'Сертификат' }));
     expect(within(dialog).getByText('Где развёрнут')).toBeInTheDocument();
+    expect(within(dialog).getByText(/Ноды, где лежит сертификат/)).toBeInTheDocument();
     for (const name of ['de-fra-01', 'nl-ams-02']) {
-      await user.click(within(dialog).getByRole('combobox', { name: 'Где развёрнут: добавить сервер' }));
+      await user.click(within(dialog).getByRole('combobox', { name: 'Где развёрнут: добавить ноду' }));
       await user.click(await screen.findByRole('option', { name }));
     }
     const picker = within(dialog).getByTestId('billing-servers');
@@ -173,7 +174,6 @@ describe('BillingPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     const saved = mockBilling.items.find((i) => i.title === 'Новый VPS');
     expect(saved).toMatchObject({ kind: 'cert', currency: 'USD', periodUnit: 'year', amountMinor: 500 });
-    expect(saved?.serverIds).toEqual([]);
     expect(saved?.nodeRefs).toHaveLength(2);
     expect(saved?.nodeRefs?.every((n) => n.panel === 'panel.example')).toBe(true);
   });

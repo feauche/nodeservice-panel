@@ -14,7 +14,7 @@ export function explainProbeError(error: string | null): string | null {
   if (/timed?\s*out|timeout|ETIMEDOUT|after \d+ms/i.test(error))
     return 'Ответ не получен за время ожидания. Возможны фильтрация, потеря связи или недоступный порт.';
   if (/ENETUNREACH|EHOSTUNREACH|network.*unreachable|no route to host/i.test(error))
-    return 'Из этой точки нет маршрута к адресу сервера.';
+    return 'Из этой точки нет маршрута к проверяемому адресу.';
   if (/reset|ECONNRESET/i.test(error)) return 'Соединение было сброшено во время проверки.';
   if (/^[\s\S]*[А-Яа-яЁё]/.test(error)) return error;
   return 'Точка проверки сообщила об ошибке. Откройте технические детали для уточнения.';

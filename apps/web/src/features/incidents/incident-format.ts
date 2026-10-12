@@ -1,36 +1,18 @@
-import { actionMeta, type Incident, type IncidentWeekStats, incidentWeekStats } from '@nodeservice/shared';
-
-/** Порядковые для «помогло с … попытки». */
-const ORDINAL = ['первой', 'второй', 'третьей', 'четвёртой', 'пятой'];
-const attemptOrdinal = (n: number): string =>
-  n >= 1 && n <= ORDINAL.length ? `с ${ORDINAL[n - 1]} попытки` : `с попытки ${n}`;
-
-const lower = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1);
+import type { Incident, IncidentWeekStats } from '@nodeservice/shared';
 
 /**
- * Одно предложение «что происходит / чем кончилось» — строка под названием в реестре и в шапке кейса.
- * Всегда с заглавной, без обрывков. Автопочинки больше нет: попытки бывают только у старых событий,
- * и о них говорится как об истории.
+ * Одно предложение «чем кончилось» — строка под названием в реестре и в описании кейса. Всегда с заглавной,
+ * без обрывков. Автопочинки больше нет, о шагах и попытках строка не рассказывает. Старое событие, которое
+ * закрыл помогший шаг прежних версий, — «Проблема устранена», а не «Прошло само»: так было бы неправдой.
  */
-export function outcomeSentence(inc: Incident): string {
-  const fixes = inc.attempts.filter((a) => a.level !== 'T0');
-  const last = fixes.at(-1);
-  if (inc.status === 'resolved') {
-    if (last?.status === 'helped')
-      return `Помогло ${attemptOrdinal(fixes.length)}: ${lower(actionMeta(last.action).title)}, ${
-        last.by === 'auto' ? 'автоматически' : 'по вашей команде'
-      }`;
-    if (inc.resolvedBy === 'manual') return 'Закрыт администратором';
-    // Не «прошло само», если панель пыталась: проблема ушла, но не от её шагов.
-    if (fixes.length > 0) return 'Проблема ушла сама, шаги починки не помогли';
-    if (inc.attempts.length > 0) return 'Проблема ушла сама после осмотра';
-    return 'Прошло само';
-  }
-  if (last && last.status !== 'helped') return `Не помогло: ${lower(actionMeta(last.action).title)}`;
-  return 'Наблюдаем';
+export function outcomeSentence(inc: Pick<Incident, 'status' | 'resolvedBy' | 'timeline'>): string {
+  if (inc.status !== 'resolved') return 'Наблюдаем';
+  if (inc.resolvedBy === 'manual') return 'Закрыто администратором';
+  if (inc.timeline.some((e) => e.result === 'helped')) return 'Проблема устранена';
+  return 'Прошло само';
 }
 
-/** Заголовок дела без имени сервера (оно в строке отдельно): «Сервер недоступен — просрочена оплата». */
+/** Заголовок дела без имени ноды (оно в строке отдельно): «Высокая нагрузка на CPU». */
 export function titleOnly(inc: Pick<Incident, 'title'>): string {
   const i = inc.title.lastIndexOf(' · ');
   return i > 0 ? inc.title.slice(0, i) : inc.title;
@@ -80,17 +62,8 @@ export function dayLabel(iso: string, now: number): string {
 export const hhmm = (iso: string): string =>
   new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 
+/** Итог за 7 дней для полосы над реестром — готовые цифры с сервера панели. */
 export type WeekStats = IncidentWeekStats;
-
-/** Итог за 7 дней для полосы над реестром — общая функция, её же считает сервер. */
-export const weekStats = (items: Incident[], now: number): WeekStats => incidentWeekStats(items, now);
 
 /** Время закрытия для сортировки реестра; у открытого — момент открытия. */
 export const closedAtMs = (inc: Incident): number => new Date(inc.resolvedAt ?? inc.openedAt).getTime();
-
-/** «40 с», «6 мин», «9 ч 12 мин». */
-export function humanSeconds(s: number): string {
-  if (s < 60) return `${s} с`;
-  if (s < 3600) return `${Math.round(s / 60)} мин`;
-  return `${Math.floor(s / 3600)} ч ${Math.round((s % 3600) / 60)} мин`;
-}

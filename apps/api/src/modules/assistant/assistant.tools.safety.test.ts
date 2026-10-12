@@ -361,34 +361,6 @@ describe('get_remnawave_status', () => {
     });
     expect(r.note).toContain('SSH и агенты не используются');
   });
-
-  it('у ноды назван её сервер в панели и то, как панель их связала', async () => {
-    const node = (over: Record<string, unknown>) => ({
-      uuid: 'n1',
-      name: 'Нидерланды - 1',
-      address: '201.34.145.175',
-      usersOnline: 30,
-      ...over,
-    });
-    const st = {
-      connected: true,
-      nodes: [
-        node({ serverIds: ['srv-nl'], linkedBy: 'ip' }),
-        node({ uuid: 'n2', name: 'чужая', serverIds: [], linkedBy: null }),
-      ],
-    };
-    const d = {
-      ...deps(),
-      servers: { list: async () => [{ id: 'srv-nl', name: 'Нидерланды - 1 (сервер)' }] },
-      remnawave: { status: async () => st },
-    } as unknown as ToolDeps;
-    const r = JSON.parse((await runTool('get_remnawave_status', {}, d)).content);
-    expect(r.nodes[0]).toMatchObject({ uuid: 'n1', name: 'Нидерланды - 1' });
-    expect(r.nodes[0].server).toBeUndefined();
-    expect(r.nodes[1].server).toBeUndefined();
-    // Служебные идентификаторы серверов модели не нужны.
-    expect(JSON.stringify(r)).not.toContain('srv-nl');
-  });
 });
 
 describe('get_panel_status', () => {

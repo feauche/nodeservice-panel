@@ -50,9 +50,6 @@ services:
       PORT: "3000"
       DATABASE_URL: postgres://nodeservice:${POSTGRES_PASSWORD}@postgres:5432/nodeservice
       VALKEY_URL: redis://valkey:6379
-      # Код читает VM_URL (см. apps/api/src/config/env.schema.ts); VICTORIA_URL оставлен для совместимости.
-      VM_URL: http://victoriametrics:8428
-      VICTORIA_URL: http://victoriametrics:8428
       PUBLIC_URL: https://${PANEL_DOMAIN}
       # Резервные копии из панели («Настройки → Резервные копии»): та же папка, что у nodeservice backup;
       # .env установки — только на чтение (входит в копию); / — только на чтение, для «Дополнительных файлов».
@@ -79,8 +76,6 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
-      victoriametrics:
-        condition: service_started
     mem_limit: 768m
     <<: *logging
 
@@ -117,21 +112,8 @@ services:
     mem_limit: 192m
     <<: *logging
 
-  victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.146.0
-    restart: unless-stopped
-    command:
-      - "--retentionPeriod=90d"
-      - "--storageDataPath=/vmdata"
-      - "--httpListenAddr=:8428"
-    volumes:
-      - vm_data:/vmdata
-    mem_limit: 512m
-    <<: *logging
-
 volumes:
   caddy_data:
   caddy_config:
   pg_data:
   valkey_data:
-  vm_data:

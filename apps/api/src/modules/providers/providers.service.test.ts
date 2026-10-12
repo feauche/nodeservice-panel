@@ -44,7 +44,7 @@ describe('ProvidersService: безопасное архивирование', ()
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'provider.archived',
-        metadata: { serversDetached: 2, billingHistoryPreserved: true },
+        metadata: { billingHistoryPreserved: true },
       }),
     );
   });

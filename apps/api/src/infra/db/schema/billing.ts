@@ -13,7 +13,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
-import { providers } from './servers.js';
+import { providers } from './providers.js';
 
 /**
  * Биллинг (миграция 0043): что и когда оплачивать. Суммы — целые в копейках/центах.
@@ -26,7 +26,6 @@ export const billingItems = pgTable(
     kind: text('kind').$type<BillingKind>().notNull(),
     title: text('title').notNull(),
     providerId: uuid('provider_id').references(() => providers.id, { onDelete: 'set null' }),
-    serverIds: jsonb('server_ids').$type<string[]>().notNull().default([]),
     nodeRefs: jsonb('node_refs').$type<BillingNodeRef[]>().notNull().default([]),
     domain: text('domain'),
     amountMinor: bigint('amount_minor', { mode: 'number' }).notNull(),

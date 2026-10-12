@@ -19,7 +19,7 @@ import {
   formatMoney,
   formatRub,
 } from '@nodeservice/shared';
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, sql } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
@@ -32,7 +32,6 @@ import {
   billingPayments,
   incidents,
   providers,
-  servers,
 } from '../../infra/db/schema/index.js';
 import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -48,19 +47,10 @@ import {
   occurrenceDates,
   occurrencesUntil,
   periodBounds,
-  periodMs,
   timesPerYear,
   toRubMinor,
 } from './billing.logic.js';
 import { BillingRatesService } from './billing-rates.service.js';
-import {
-  buildPaymentWindow,
-  PAYMENT_WINDOW_MS,
-  type PaymentEntry,
-  type PaymentWindow,
-  SERVER_PAYMENT_KINDS,
-} from './payment-window.js';
-import { billingItemBelongsToServer } from './server-billing-identity.js';
 
 const DEFAULT_TZ = 'Europe/Moscow';
 const DAY_MS = 86_400_000;
@@ -79,13 +69,17 @@ const validTz = (tz: string | undefined): string => {
 
 const minor = (amount: number): number => Math.round(amount * 100);
 
+/** Оплаты, от которых зависит, работает ли нода: хостинг и аренда. Домен и сертификат ноду не выключают. */
+const NODE_PAYMENT_KINDS: readonly BillingKind[] = ['server', 'rent'];
+
 /** Строка биллинга для Ассистента и разбора инцидента. */
 export interface BillingBrief {
   id: string;
   kind: string;
   title: string;
   provider: string | null;
-  servers: string[];
+  /** Ноды Remnawave, к которым привязана оплата. */
+  nodes: string[];
   domain: string | null;
   amount: string;
   amountRub: string | null;
@@ -116,20 +110,13 @@ export class BillingService {
     return user?.login ?? null;
   }
 
-  private async knownServerIds(): Promise<Set<string>> {
-    const rows = await this.db.select({ id: servers.id }).from(servers);
-    return new Set(rows.map((r) => r.id));
-  }
-
-  async toDto(row: BillingItemRow, now = new Date(), known?: Set<string>): Promise<BillingItem> {
-    const ids = known ?? (await this.knownServerIds());
+  async toDto(row: BillingItemRow, now = new Date()): Promise<BillingItem> {
     const rate = await this.rates.rate(row.currency, now, { fetch: false });
     return {
       id: row.id,
       kind: row.kind,
       title: row.title,
       providerId: row.providerId,
-      serverIds: row.serverIds.filter((id) => ids.has(id)),
       nodeRefs: row.nodeRefs ?? [],
       domain: row.domain,
       amountMinor: row.amountMinor,
@@ -163,10 +150,9 @@ export class BillingService {
       .where(archived ? isNotNull(billingItems.archivedAt) : isNull(billingItems.archivedAt))
       .orderBy(archived ? desc(billingItems.archivedAt) : asc(billingItems.paidUntil));
     const now = new Date();
-    const known = await this.knownServerIds();
     // Курс берём один раз на весь список: он в кэше, но так список не ждёт ЦБ даже при пустом кэше.
     await this.rates.ratesOn(now).catch(() => null);
-    return { items: await Promise.all(rows.map((r) => this.toDto(r, now, known))) };
+    return { items: await Promise.all(rows.map((r) => this.toDto(r, now))) };
   }
 
   private async validate(
@@ -190,12 +176,6 @@ export class BillingService {
         return { panel: ref.panel, uuid: ref.uuid, name: node?.name ?? prior?.name ?? ref.name };
       });
     }
-    const known = await this.knownServerIds();
-    const unknown = body.serverIds.filter((id) => !known.has(id));
-    if (unknown.length > 0)
-      throw problem(HttpStatus.BAD_REQUEST, {
-        detail: 'Один из выбранных серверов не найден — обновите страницу.',
-      });
     if (body.providerId && body.providerId !== previousProvider) {
       const [p] = await this.db
         .select({ id: providers.id })
@@ -211,7 +191,6 @@ export class BillingService {
       kind: body.kind,
       title: body.title,
       providerId: body.providerId,
-      serverIds: [...new Set(body.serverIds)],
       ...(body.nodeRefs !== undefined ? { nodeRefs: body.nodeRefs } : {}),
       domain: body.domain || null,
       amountMinor: minor(body.amount),
@@ -595,23 +574,6 @@ export class BillingService {
         return this.total(b.from, b.to, active, now, r);
       }),
     );
-    const known = await this.knownServerIds();
-    const byServer = new Map<string, BillingSummary['byServer'][number]>();
-    for (const it of active) {
-      if (it.kind !== 'server' && it.kind !== 'rent') continue;
-      for (const sid of it.serverIds) {
-        if (!known.has(sid) || byServer.has(sid)) continue;
-        byServer.set(sid, {
-          serverId: sid,
-          itemId: it.id,
-          title: it.title,
-          paidUntil: it.paidUntil.toISOString(),
-          dueState: dueStateOf(it, now),
-          amountMinor: it.amountMinor,
-          currency: it.currency,
-        });
-      }
-    }
     const first = active[0];
     const [day, week, month, year] = totals as [BillingTotal, BillingTotal, BillingTotal, BillingTotal];
     return {
@@ -630,7 +592,6 @@ export class BillingService {
             currency: first.currency,
           }
         : null,
-      byServer: [...byServer.values()],
       rates: {
         USD: r?.usd ?? null,
         EUR: r?.eur ?? null,
@@ -790,11 +751,7 @@ export class BillingService {
   /* ─────────── Для Ассистента и разбора инцидентов ─────────── */
 
   private async briefs(rows: BillingItemRow[], now: Date): Promise<BillingBrief[]> {
-    const [srv, prov] = await Promise.all([
-      this.db.select({ id: servers.id, name: servers.name }).from(servers),
-      this.db.select({ id: providers.id, name: providers.name }).from(providers),
-    ]);
-    const sName = new Map(srv.map((s) => [s.id, s.name]));
+    const prov = await this.db.select({ id: providers.id, name: providers.name }).from(providers);
     const pName = new Map(prov.map((p) => [p.id, p.name]));
     const out: BillingBrief[] = [];
     for (const it of rows) {
@@ -804,10 +761,7 @@ export class BillingService {
         kind: BILLING_KIND_LABELS[it.kind],
         title: it.title,
         provider: it.providerId ? (pName.get(it.providerId) ?? null) : null,
-        servers: [
-          ...it.serverIds.map((id) => sName.get(id)).filter((x): x is string => Boolean(x)),
-          ...(it.nodeRefs ?? []).map((n) => n.name),
-        ],
+        nodes: (it.nodeRefs ?? []).map((n) => n.name),
         domain: it.domain,
         amount: formatMoney(it.amountMinor, it.currency),
         amountRub:
@@ -824,7 +778,7 @@ export class BillingService {
   }
 
   /** Всё про биллинг для Ассистента: активные оплаты по сроку, итоги месяца, при желании — архив. */
-  async forAssistant(opts: { archived?: boolean; serverId?: string | null } = {}): Promise<{
+  async forAssistant(opts: { archived?: boolean } = {}): Promise<{
     items: BillingBrief[];
     archived?: BillingBrief[];
     month: { spent: string; expected: string; payments: number };
@@ -841,8 +795,7 @@ export class BillingService {
     };
   }> {
     const now = new Date();
-    let active = await this.activeRows();
-    if (opts.serverId) active = active.filter((i) => i.serverIds.includes(opts.serverId as string));
+    const active = await this.activeRows();
     // Границы «месяца» и «года» — по поясу панели, как и остальное время у Ассистента.
     const tz = await this.notifications.timeZone().catch(() => DEFAULT_TZ);
     const s = await this.summary(tz);
@@ -905,81 +858,6 @@ export class BillingService {
       out.archived = await this.briefs(arch, now);
     }
     return out;
-  }
-
-  /**
-   * Окно оплаты сервера (см. payment-window.ts): что просрочено, что истекает в ближайшие сутки, где
-   * автоплатёж только что продлил срок, и ближайший срок остальных оплат. Факты идут в текст инцидента и
-   * в разбор Ассистента; сроки — в поясе панели. total = 0 — оплат этого сервера в «Биллинге» нет.
-   * Берутся оплаты всех видов: какой вид что объясняет, решает тот, кто пишет вывод (payment-hint.ts).
-   */
-  async paymentWindowForServer(
-    serverId: string,
-    now = new Date(),
-    aliases: readonly string[] = [],
-  ): Promise<PaymentWindow> {
-    const active = await this.db
-      .select()
-      .from(billingItems)
-      .where(
-        and(
-          isNull(billingItems.archivedAt),
-          or(
-            sql`${billingItems.serverIds} @> ${JSON.stringify([serverId])}::jsonb`,
-            and(eq(billingItems.kind, 'rent'), sql`jsonb_array_length(${billingItems.serverIds}) = 0`),
-          ),
-        ),
-      );
-    const timeZone = validTz(await this.notifications.timeZone().catch(() => DEFAULT_TZ));
-    const prov = await this.db.select({ id: providers.id, name: providers.name }).from(providers);
-    const pName = new Map(prov.map((p) => [p.id, p.name]));
-    const rows = active.filter((it) =>
-      billingItemBelongsToServer({
-        kind: it.kind,
-        title: it.title,
-        provider: it.providerId ? (pName.get(it.providerId) ?? null) : null,
-        serverIds: it.serverIds,
-        serverId,
-        aliases,
-      }),
-    );
-    if (rows.length === 0) return buildPaymentWindow([], [], now, timeZone);
-    const entries = new Map<string, PaymentEntry>(
-      rows.map((it) => [
-        it.id,
-        {
-          kind: it.kind,
-          kindLabel: BILLING_KIND_LABELS[it.kind],
-          title: it.title,
-          provider: it.providerId ? (pName.get(it.providerId) ?? null) : null,
-          amount: formatMoney(it.amountMinor, it.currency),
-          paidUntil: it.paidUntil,
-          autoCharge: it.autoCharge,
-          periodMs: periodMs(it.periodUnit, it.periodCount),
-        },
-      ]),
-    );
-    // Автоплатёж панель продлевает сама, не зная, прошло ли списание: недавнее продление — тоже «окно».
-    const renewed = await this.db
-      .select({ itemId: billingPayments.itemId, at: billingPayments.extendedFrom })
-      .from(billingPayments)
-      .where(
-        and(
-          inArray(billingPayments.itemId, [...entries.keys()]),
-          eq(billingPayments.actorDisplay, AUTO_CHARGE_ACTOR),
-          gte(billingPayments.extendedFrom, new Date(now.getTime() - PAYMENT_WINDOW_MS)),
-        ),
-      )
-      .orderBy(desc(billingPayments.extendedFrom));
-    const seen = new Set<string>();
-    const renewals: Array<{ entry: PaymentEntry; at: Date }> = [];
-    for (const r of renewed) {
-      const entry = entries.get(r.itemId);
-      if (!entry || seen.has(r.itemId)) continue;
-      seen.add(r.itemId);
-      renewals.push({ entry, at: r.at });
-    }
-    return buildPaymentWindow([...entries.values()], renewals, now, timeZone);
   }
 
   /* ─────────── Фоновая задача: автоплатёж, напоминания, досчёт рублей ─────────── */
@@ -1062,14 +940,15 @@ export class BillingService {
    * Только для оплат самого сервера (хостинг и аренда): сертификат, домен и «Другое» сервер не выключают.
    * «Агент не в сети», «SSH недоступен», остановленная нода и блокировка — сервер работает, оплата ни при чём.
    */
-  private async downServers(ids: string[], kind: BillingKind): Promise<Set<string>> {
-    if (ids.length === 0 || !SERVER_PAYMENT_KINDS.includes(kind)) return new Set();
+  /** Ноды оплаты, которые сейчас недоступны, и само событие говорит «вероятно, из-за неоплаты». */
+  private async downNodes(uuids: string[], kind: BillingKind): Promise<Set<string>> {
+    if (uuids.length === 0 || !NODE_PAYMENT_KINDS.includes(kind)) return new Set();
     const rows = await this.db
-      .select({ serverId: incidents.serverId })
+      .select({ nodeUuid: incidents.nodeUuid })
       .from(incidents)
       .where(
         and(
-          inArray(incidents.serverId, ids),
+          inArray(incidents.nodeUuid, uuids),
           ne(incidents.status, 'resolved'),
           eq(incidents.kind, 'server_down'),
           sql`${incidents.title} like ${'%оплат%'}`,
@@ -1078,7 +957,7 @@ export class BillingService {
           sql`${incidents.detail} like ${'%Вероятнее всего%'}`,
         ),
       );
-    return new Set(rows.map((r) => r.serverId).filter((x): x is string => Boolean(x)));
+    return new Set(rows.map((r) => r.nodeUuid).filter((x): x is string => Boolean(x)));
   }
 
   /**
@@ -1098,11 +977,7 @@ export class BillingService {
       );
     let sent = 0;
     const timeZone = await this.notifications.timeZone().catch(() => DEFAULT_TZ);
-    const [srv, prov] = await Promise.all([
-      this.db.select({ id: servers.id, name: servers.name }).from(servers),
-      this.db.select({ id: providers.id, name: providers.name }).from(providers),
-    ]);
-    const sName = new Map(srv.map((s) => [s.id, s.name]));
+    const prov = await this.db.select({ id: providers.id, name: providers.name }).from(providers);
     const pName = new Map(prov.map((p) => [p.id, p.name]));
     for (const it of rows) {
       const state = dueStateOf(it, now);
@@ -1112,8 +987,11 @@ export class BillingService {
         if (!last || now.getTime() - last.getTime() >= DAY_MS) kind = 'overdue';
       } else if ((state === 'soon' || state === 'today') && it.notifiedState === null) kind = 'soon';
       if (!kind) continue;
-      const ids = it.serverIds.filter((id) => sName.has(id));
-      const down = await this.downServers(ids, it.kind as BillingKind);
+      const nodes = it.nodeRefs ?? [];
+      const down = await this.downNodes(
+        nodes.map((n) => n.uuid),
+        it.kind as BillingKind,
+      );
       const rate = await this.rates.rate(it.currency, now);
       const message = {
         state: kind,
@@ -1127,14 +1005,14 @@ export class BillingService {
         periodUnit: it.periodUnit,
         periodCount: it.periodCount,
         paidUntil: it.paidUntil,
-        servers: ids.map((id) => ({ name: sName.get(id) ?? 'сервер', down: down.has(id) })),
+        servers: nodes.map((n) => ({ name: n.name, down: down.has(n.uuid) })),
         note: it.note,
         now,
         timeZone,
       } as const;
       const html = formatBillingMessage(message);
       const rich = formatBillingRichMessage(message);
-      const downNames = ids.filter((id) => down.has(id)).map((id) => sName.get(id));
+      const downNames = nodes.filter((n) => down.has(n.uuid)).map((n) => n.name);
       await this.notifications.push({
         severity: kind === 'overdue' ? 'crit' : 'warn',
         title:
@@ -1143,10 +1021,10 @@ export class BillingService {
             : `Скоро оплата: ${it.title} — ${dueInWords(it.paidUntil, now)}`,
         body: `${formatMoney(it.amountMinor, it.currency)} · ${billingPeriodLabel(it.periodUnit, it.periodCount)}${
           kind === 'overdue' && downNames.length > 0
-            ? `. ${downNames.join(', ')} ${downNames.length > 1 ? 'недоступны' : 'недоступен'} — вероятно, из-за неоплаты.`
+            ? `. ${downNames.join(', ')} ${downNames.length > 1 ? 'недоступны' : 'недоступна'} — вероятно, из-за неоплаты.`
             : ''
         }`,
-        // Страница биллинга — подпункт «Серверы»; ?item открывает окно «Продлить» у этой оплаты.
+        // ?item открывает окно «Продлить» у этой оплаты.
         link: { to: `/billing?item=${it.id}`, label: 'Открыть биллинг' },
         telegram: {
           event: kind === 'overdue' ? 'billing_overdue' : 'billing_soon',

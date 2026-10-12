@@ -106,9 +106,7 @@ describe('providers e2e', () => {
     setupHttp(app as NestExpressApplication);
     const db = app.get<Db>(DB);
     await runMigrations(db);
-    await db.execute(
-      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, providers cascade`,
-    );
+    await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens, providers cascade`);
     await app.get<Redis>(VALKEY).flushdb();
     await app.init();
     agent = request.agent(app.getHttpServer());
@@ -178,7 +176,7 @@ describe('providers e2e', () => {
       siteHost: '127.0.0.1',
       hasIcon: true,
       note: 'аккаунт lumax',
-      serversCount: 0,
+      nodesCount: 0,
     });
     const icon = await agent.get(`/api/providers/${p.id}/icon`).expect(200);
     expect(icon.headers['content-type']).toContain('image/png');

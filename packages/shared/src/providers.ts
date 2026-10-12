@@ -68,7 +68,8 @@ export const providerSchema = z.object({
   /** Меняется при каждом обновлении иконки — ломает кэш <img>. */
   iconVersion: z.number().int(),
   note: z.string().nullable(),
-  serversCount: z.number().int().min(0),
+  /** Сколько нод Remnawave у провайдера; у записи из локального справочника — 0. */
+  nodesCount: z.number().int().min(0),
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
 });

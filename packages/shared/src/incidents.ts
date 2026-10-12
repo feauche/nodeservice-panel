@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { reachabilityResultSchema } from './reachability.js';
-import { nodeStateSchema } from './servers.js';
 import { nodeTcpDiagnosticsSchema } from './tcp-check.js';
+
+/** Состояние контейнера ноды в снимке старых событий (его снимал агент); у новых событий — null. */
+const nodeStateSchema = z.enum(['running', 'restarting', 'stopped', 'none', 'docker_down']);
 
 /**
  * Инциденты (этап 8): панель сама замечает проблемы серверов (агент офлайн, SSH недоступен,
@@ -39,7 +40,7 @@ export const INCIDENT_KIND_META: Record<
 > = {
   agent_offline: { label: 'Агент не в сети', component: 'Связь', severity: 'crit' },
   ssh_down: { label: 'SSH недоступен', component: 'Связь', severity: 'crit' },
-  server_down: { label: 'Сервер недоступен', component: 'Связь', severity: 'crit' },
+  server_down: { label: 'Нода недоступна', component: 'Связь', severity: 'crit' },
   node_down: { label: 'Контейнер ноды не запущен', component: 'Нода', severity: 'crit' },
   cpu_high: { label: 'Высокая нагрузка на CPU', component: 'CPU', severity: 'warn' },
   mem_high: { label: 'Память на пределе', component: 'Память', severity: 'warn' },
@@ -400,8 +401,6 @@ export const incidentAnalysisSchema = z.object({
   model: z.string().nullable(),
   error: z.string().nullable(),
   thread: z.array(z.object({ question: z.string(), answer: z.string(), at: z.iso.datetime() })),
-  /** Проверка доступности снаружи, если Ассистент её делал (у старых разборов поля нет). */
-  reachability: reachabilityResultSchema.nullable().optional(),
 });
 export type IncidentAnalysis = z.infer<typeof incidentAnalysisSchema>;
 

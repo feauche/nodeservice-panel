@@ -101,7 +101,7 @@ describe('чат ассистента: устойчивость e2e', () => {
     const db = app.get<Db>(DB);
     await runMigrations(db);
     await db.execute(
-      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, servers, incidents, assistant_conversations cascade`,
+      sql`truncate users, recovery_codes, trusted_devices, setup_tokens, incidents, assistant_conversations cascade`,
     );
     await db.execute(sql`delete from app_meta where key like 'settings.%' or key = 'panel.ssh-key'`);
     await app.get<Redis>(VALKEY).flushdb();
@@ -190,9 +190,7 @@ describe('чат ассистента: устойчивость e2e', () => {
     ]);
     expect(res.message.content).toBe('Команда: uptime');
     // Вложения только у последнего; в истории беседы сообщения по порядку
-    expect(res.messages.slice(0, -1).every((m) => m.citations.length === 0 && m.proposals.length === 0)).toBe(
-      true,
-    );
+    expect(res.messages.slice(0, -1).every((m) => m.citations.length === 0)).toBe(true);
     const history = await agent.get(`/api/assistant/conversations/${res.conversationId}`).expect(200);
     const rows =
       (history.body as { items?: Array<{ role: string; content: string }> }).items ??

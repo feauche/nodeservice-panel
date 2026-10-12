@@ -40,7 +40,7 @@ export function LockPage() {
   });
 
   return (
-    <AuthShell hideLogo foot={<span>NodeService. Панель управления серверами</span>}>
+    <AuthShell hideLogo foot={<span>NodeService. Панель управления нодами</span>}>
       <div className="mb-5 flex min-w-0 items-center gap-3.5">
         <div
           aria-hidden="true"

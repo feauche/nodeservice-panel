@@ -22,7 +22,7 @@ export class EventsController {
 
   @Sse('stream')
   @Header('X-Accel-Buffering', 'no')
-  @ApiOperation({ summary: 'Живые события панели: уведомления, серверы, инциденты (SSE)' })
+  @ApiOperation({ summary: 'Живые события панели: события нод (SSE)' })
   stream(@CurrentSession() session: SessionRecord): Observable<MessageEvent> {
     const live$ = new Observable<PanelEvent>((subscriber) => this.events.on((e) => subscriber.next(e)));
     const ping$ = interval(SSE_PING_MS).pipe(map((): MessageEvent => ({ type: 'ping', data: '' })));
