@@ -24,3 +24,35 @@ export const nodeMetricsSchema = z.object({
 });
 export type NodeMetricPoint = z.infer<typeof nodeMetricPointSchema>;
 export type NodeMetrics = z.infer<typeof nodeMetricsSchema>;
+
+/** Bounded persisted history; time bounds are instants, not browser-local dates. */
+const metricValuesSchema = nodeMetricPointSchema.omit({ t: true });
+export const nodeMetricHistorySchema = z.object({
+  panel: z.string().nullable(),
+  from: z.string(),
+  to: z.string(),
+  bucketSeconds: z.number().positive(),
+  collectedSince: z.string().nullable(),
+  nodes: z.array(
+    z.object({
+      uuid: z.string(),
+      name: z.string(),
+      address: z.string(),
+      points: z.array(nodeMetricPointSchema.extend({ min: metricValuesSchema, max: metricValuesSchema })),
+    }),
+  ),
+  events: z.array(
+    z.object({
+      id: z.string(),
+      t: z.number(),
+      nodeUuid: z.string(),
+      nodeName: z.string(),
+      type: z.enum(['incident_opened', 'incident_resolved', 'tcp_check']),
+      title: z.string(),
+      summary: z.string(),
+      link: z.string().nullable(),
+    }),
+  ),
+  eventsTruncated: z.boolean(),
+});
+export type NodeMetricHistory = z.infer<typeof nodeMetricHistorySchema>;

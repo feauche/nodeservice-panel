@@ -209,11 +209,14 @@ function ConnectionCard({
           </p>
         )}
       </div>
-      <div className="border-t border-border bg-surface-2/40 px-[18px] py-3 max-md:px-4">
+      <div className="flex flex-none items-center gap-3 border-t border-border bg-bg-2 px-[18px] py-3.5 max-md:px-4 max-sm:flex-col max-sm:items-stretch">
+        <p className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">
+          Доступы хранятся в панели в зашифрованном виде.
+        </p>
         <DialogPrimaryButton
           type="submit"
           disabled={mutation.isPending}
-          className="w-full sm:w-full sm:max-w-none"
+          className="h-10 w-[180px] flex-none rounded-[10px] max-sm:w-full sm:w-[180px] sm:flex-none sm:max-w-none"
         >
           {mutation.isPending ? 'Проверяю…' : status?.connected ? 'Сохранить доступы' : 'Подключить'}
         </DialogPrimaryButton>

@@ -487,6 +487,29 @@ describe('IncidentsPage', () => {
 describe('IncidentCasePage', () => {
   beforeEach(() => resetMockState({ authenticated: true }));
 
+  it('похожие инциденты нод не смешиваются при пустом serverId', async () => {
+    const { IncidentCasePage } = await import('./incident-case-page');
+    const base = mockIncidents.items[0];
+    if (!base) throw new Error('нет мок-инцидента');
+    const current = {
+      ...base,
+      serverId: null,
+      nodeUuid: '00000000-0000-4000-8000-000000000001',
+      openedAt: new Date().toISOString(),
+    };
+    mockIncidents.items = [
+      current,
+      {
+        ...current,
+        id: '00000000-0000-4000-8000-000000000002',
+        nodeUuid: '00000000-0000-4000-8000-000000000003',
+      },
+    ];
+    const Page = () => <IncidentCasePage id={current.id} />;
+    renderPage(Page, '/incidents/$id', ['/incidents'], `/incidents/${current.id}`);
+    expect(await screen.findByText('На этом сервере за 7 дней такого не было.')).toBeInTheDocument();
+  });
+
   it('кейс: хронология и сигналы без запуска автопочинки', async () => {
     const { IncidentCasePage } = await import('./incident-case-page');
     const id = openId();

@@ -13,6 +13,7 @@ export const HOME_SECTION = '/' as const;
 export const OPEN_SECTIONS: ReadonlySet<string> = new Set<string>([
   HOME_SECTION,
   '/nodes',
+  '/metrics',
   '/integrations/dpi',
   '/integrations/dns',
   '/integrations/bschecker',

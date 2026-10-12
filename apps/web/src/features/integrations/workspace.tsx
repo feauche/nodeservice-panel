@@ -41,7 +41,7 @@ import { Toggle } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
 
 const card = 'overflow-hidden rounded-2xl border border-border bg-surface';
-const footer = 'flex flex-wrap items-center justify-between gap-3 border-t border-border px-6 py-4';
+const footer = 'flex flex-wrap items-center justify-between gap-3 border-t border-border bg-bg-2 p-4';
 function Metric({ label, value, hint }: { label: string; value: string; hint: string }) {
   return (
     <div className={`${card} p-5`}>

@@ -1,5 +1,6 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
+  ActivityIcon,
   AlertTriangleIcon,
   BookOpenIcon,
   ChevronDownIcon,
@@ -55,6 +56,7 @@ function readRail(): boolean {
 const NAV = [
   { to: '/', label: 'Обзор', icon: LayoutGridIcon },
   { to: '/nodes', label: 'Ноды', icon: ReferenceNodesIcon },
+  { to: '/metrics', label: 'История метрик', icon: ActivityIcon },
   { to: '/billing', label: 'Биллинг', icon: WalletIcon },
   { to: '/incidents', label: 'Инциденты', icon: AlertTriangleIcon },
   { to: '/settings', label: 'Настройки', icon: ReferenceSettingsIcon },
@@ -64,7 +66,9 @@ const NAV_HELP = [
   { to: '/assistant', label: 'Ассистент', icon: JarvisIcon },
   { to: '/knowledge', label: 'База знаний', icon: BookOpenIcon },
 ] as const;
-function BsCheckerIcon({className}:{className?:string}){return <img src="/integration-icons/bschecker.svg" alt="" className={className}/>;}
+function BsCheckerIcon({ className }: { className?: string }) {
+  return <img src="/integration-icons/bschecker.svg" alt="" className={className} />;
+}
 const NAV_INTEGRATIONS = [
   { to: '/integrations/dpi', label: 'DPI Checker', icon: DpiCheckerIcon },
   { to: '/integrations/dns', label: 'DNS интеграции', icon: DnsIntegrationsIcon },
@@ -292,10 +296,9 @@ function TopNavigation({ openIncidents }: { openIncidents: number | undefined })
 
   return (
     <nav data-testid="top-navigation" aria-label="Верхнее меню" className="flex min-w-0 items-center gap-0.5">
-      <TopNavLink {...NAV[0]} />
-      <TopNavLink {...NAV[1]} />
-      <TopNavLink {...NAV[2]} />
-      <TopNavLink {...NAV[3]} badge={openIncidents} />
+      {NAV.filter((item) => item.to !== '/settings').map((item) => (
+        <TopNavLink key={item.to} {...item} badge={item.to === '/incidents' ? openIncidents : undefined} />
+      ))}
       <TopNavGroup label="Помощь" icon={JarvisIcon} active={inAutomation}>
         {NAV_HELP.map((item) => {
           const Icon = item.icon;
@@ -329,7 +332,9 @@ function TopNavigation({ openIncidents }: { openIncidents: number | undefined })
         })}
       </TopNavGroup>
       <CustomSitesTopMenu />
-      <TopNavLink {...NAV[4]} />
+      {NAV.filter((item) => item.to === '/settings').map((item) => (
+        <TopNavLink key={item.to} {...item} />
+      ))}
       <TopNavLink {...NAV_BOTTOM[0]} />
     </nav>
   );

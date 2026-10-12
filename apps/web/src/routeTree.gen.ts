@@ -17,6 +17,7 @@ import { Route as IncidentsRouteImport } from './routes/incidents';
 import { Route as KnowledgeRouteImport } from './routes/knowledge';
 import { Route as LockRouteImport } from './routes/lock';
 import { Route as LoginRouteImport } from './routes/login';
+import { Route as MetricsRouteImport } from './routes/metrics';
 import { Route as NodesRouteImport } from './routes/nodes';
 import { Route as ServersRouteImport } from './routes/servers';
 import { Route as SettingsRouteImport } from './routes/settings';
@@ -77,6 +78,11 @@ const LockRoute = LockRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any);
+const MetricsRoute = MetricsRouteImport.update({
+  id: '/metrics',
+  path: '/metrics',
   getParentRoute: () => rootRouteImport,
 } as any);
 const NodesRoute = NodesRouteImport.update({
@@ -194,6 +200,7 @@ export interface FileRoutesByFullPath {
   '/knowledge': typeof KnowledgeRoute;
   '/lock': typeof LockRoute;
   '/login': typeof LoginRoute;
+  '/metrics': typeof MetricsRoute;
   '/nodes': typeof NodesRoute;
   '/servers': typeof ServersRoute;
   '/settings': typeof SettingsRouteWithChildren;
@@ -225,6 +232,7 @@ export interface FileRoutesByTo {
   '/knowledge': typeof KnowledgeRoute;
   '/lock': typeof LockRoute;
   '/login': typeof LoginRoute;
+  '/metrics': typeof MetricsRoute;
   '/nodes': typeof NodesRoute;
   '/servers': typeof ServersRoute;
   '/setup': typeof SetupRoute;
@@ -256,6 +264,7 @@ export interface FileRoutesById {
   '/knowledge': typeof KnowledgeRoute;
   '/lock': typeof LockRoute;
   '/login': typeof LoginRoute;
+  '/metrics': typeof MetricsRoute;
   '/nodes': typeof NodesRoute;
   '/servers': typeof ServersRoute;
   '/settings': typeof SettingsRouteWithChildren;
@@ -289,6 +298,7 @@ export interface FileRouteTypes {
     | '/knowledge'
     | '/lock'
     | '/login'
+    | '/metrics'
     | '/nodes'
     | '/servers'
     | '/settings'
@@ -320,6 +330,7 @@ export interface FileRouteTypes {
     | '/knowledge'
     | '/lock'
     | '/login'
+    | '/metrics'
     | '/nodes'
     | '/servers'
     | '/setup'
@@ -350,6 +361,7 @@ export interface FileRouteTypes {
     | '/knowledge'
     | '/lock'
     | '/login'
+    | '/metrics'
     | '/nodes'
     | '/servers'
     | '/settings'
@@ -382,6 +394,7 @@ export interface RootRouteChildren {
   KnowledgeRoute: typeof KnowledgeRoute;
   LockRoute: typeof LockRoute;
   LoginRoute: typeof LoginRoute;
+  MetricsRoute: typeof MetricsRoute;
   NodesRoute: typeof NodesRoute;
   ServersRoute: typeof ServersRoute;
   SettingsRoute: typeof SettingsRouteWithChildren;
@@ -453,6 +466,13 @@ declare module '@tanstack/react-router' {
       path: '/login';
       fullPath: '/login';
       preLoaderRoute: typeof LoginRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    '/metrics': {
+      id: '/metrics';
+      path: '/metrics';
+      fullPath: '/metrics';
+      preLoaderRoute: typeof MetricsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     '/nodes': {
@@ -640,6 +660,7 @@ const rootRouteChildren: RootRouteChildren = {
   KnowledgeRoute: KnowledgeRoute,
   LockRoute: LockRoute,
   LoginRoute: LoginRoute,
+  MetricsRoute: MetricsRoute,
   NodesRoute: NodesRoute,
   ServersRoute: ServersRoute,
   SettingsRoute: SettingsRouteWithChildren,

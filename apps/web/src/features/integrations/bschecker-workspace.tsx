@@ -16,9 +16,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useNodes } from '@/features/nodes/nodes-api';
 import { BarButton, CardButton, Pill } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
-
+import { explainProbeError } from '@/lib/probe-error';
 import { BsRentals } from './bs-rentals';
 
+const pointCount = (count: number) =>
+  `${count} ${count % 100 >= 11 && count % 100 <= 14 ? 'точек' : count % 10 === 1 ? 'точка' : count % 10 >= 2 && count % 10 <= 4 ? 'точки' : 'точек'}`;
 const formatDate = (value: string) =>
   new Intl.DateTimeFormat('ru-RU', {
     day: '2-digit',
@@ -336,7 +338,7 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-mono text-[13px] font-medium">{entry.target}</p>
                     <p className="mt-1 text-[11.5px] text-text-3">
-                      {formatDate(entry.createdAt)} · {entry.units} точек ·{' '}
+                      {formatDate(entry.createdAt)} · {pointCount(entry.units)} ·{' '}
                       {credits(entry.run.costCredits ?? entry.estimatedCredits)}
                     </p>
                   </div>
@@ -508,7 +510,7 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
           <DialogTitle className="pr-10">Результат проверки · {selected?.target}</DialogTitle>
           <DialogDescription>
             {selected
-              ? `${formatDate(selected.createdAt)} · ${selected.units} точек`
+              ? `${formatDate(selected.createdAt)} · ${pointCount(selected.units)}`
               : 'Сохранённые результаты'}
           </DialogDescription>
           {selected && (
@@ -560,11 +562,17 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
                 )}
                 {selected.run.rows.length > 0 && (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left text-[12.5px]">
+                    <table className="w-full min-w-[650px] table-fixed text-left text-[12.5px]">
+                      <colgroup>
+                        <col className="w-[190px]" />
+                        <col className="w-[110px]" />
+                        <col className="w-[110px]" />
+                        <col />
+                      </colgroup>
                       <thead className="text-text-3">
                         <tr>
-                          {['Оператор / регион / БС', 'TCP', 'ICMP', 'Примечание'].map((h) => (
-                            <th key={h} className="px-2 py-3 font-medium">
+                          {['Точка проверки', 'TCP', 'ICMP', 'Примечание'].map((h) => (
+                            <th key={h} className="px-2 py-3 font-medium whitespace-nowrap">
                               {h}
                             </th>
                           ))}
@@ -593,9 +601,15 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
                                 </Pill>
                               </td>
                             ))}
-                            <td className="px-2 py-3 text-text-3">
-                              {row.tcpIsTls ? 'TCP с проверкой TLS-сертификата. ' : ''}
-                              {row.error}
+                            <td className="break-words px-2 py-3 text-text-3">
+                              {row.tcpIsTls ? 'Проверка TCP с TLS. ' : ''}
+                              {explainProbeError(row.error)}
+                              {row.error && (
+                                <details className="mt-2 text-[11.5px]">
+                                  <summary className="cursor-pointer text-text-2">Технические детали</summary>
+                                  <p className="mt-1 break-all font-mono">{row.error}</p>
+                                </details>
+                              )}
                             </td>
                           </tr>
                         ))}

@@ -4,6 +4,7 @@ import { Interval } from '@nestjs/schedule';
 import { estimateNodeCapacity, type NodeMetrics, remnaTrafficSchema } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import { DB, type Db } from '../../infra/db/db.module.js';
+import { NodeMetricHistoryService, parseMetricHistoryRange } from './node-metric-history.service.js';
 import { NodePreferencesStore } from './node-preferences.store.js';
 import { RemnawaveService } from './remnawave.service.js';
 import { getJson, RemnawaveApiError } from './remnawave-client.js';
@@ -37,11 +38,9 @@ export class NodeMetricsService {
   private async record() {
     const domain = await this.store.domain();
     if (!domain) return;
-    let status = await this.remna.status();
-    if (!status.checkedAt || Date.now() - Date.parse(status.checkedAt) > 14000) {
-      await this.remna.syncQuiet();
-      status = await this.remna.status();
-    }
+    // Polling belongs to RemnawaveSyncJob and the explicit node refresh path.
+    // Persist the snapshot's actual timestamp; stale data must not become a new measurement.
+    const status = await this.remna.status();
     if (status.domain !== domain || status.error || !status.checkedAt) return;
     const t = new Date(Math.floor(Date.parse(status.checkedAt) / 60000) * 60000);
     const inserts = status.nodes.map((n) => {
@@ -170,6 +169,7 @@ export class NodeMetricsController {
     private readonly metrics: NodeMetricsService,
     private readonly remna: RemnawaveService,
     private readonly preferences: NodePreferencesStore,
+    private readonly history: NodeMetricHistoryService,
   ) {}
   @Get('capacity') async capacity() {
     const [status, local] = await Promise.all([this.remna.status(), this.metrics.localHistory(20160)]);
@@ -197,6 +197,14 @@ export class NodeMetricsController {
       }),
     );
     return { rows, calculatedAt: new Date().toISOString() };
+  }
+  @Get('metrics/history') historyRange(
+    @Query('from') from = '',
+    @Query('to') to = '',
+    @Query('nodes') nodes = '',
+    @Query('maxPoints') maxPoints = '400',
+  ) {
+    return this.history.get(parseMetricHistoryRange(from, to, nodes, maxPoints));
   }
   @Get('metrics') get(@Query('minutes') minutes = '60', @Query('days') days = '30') {
     if (![60, 1440, 10080, 43200].includes(Number(minutes)) || ![1, 7, 30, 90].includes(Number(days)))

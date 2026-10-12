@@ -436,7 +436,7 @@ function EditorForm({
           </div>
         </div>
 
-        <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-t border-border px-4 py-3">
+        <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-t border-border bg-bg-2 p-4">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 text-[12px] text-text-3 max-sm:basis-full">
             <span className={cn('whitespace-nowrap tabular-nums', tooLong && 'font-medium text-crit')}>
               {fmtCount.format(length)} из {fmtCount.format(KB_CONTENT_MAX)} знаков
@@ -458,7 +458,7 @@ function EditorForm({
               variant="outline"
               disabled={busy}
               onClick={() => (dirty ? setConfirmCancel(true) : cancel())}
-              className="h-9 rounded-[10px] border-border bg-surface-2 px-4 text-text-2 hover:bg-surface-3 hover:text-foreground"
+              className="h-10 rounded-[10px] border-border bg-surface-2 px-4 text-text-2 hover:bg-surface-3 hover:text-foreground"
             >
               Отмена
             </Button>
@@ -466,7 +466,7 @@ function EditorForm({
               type="button"
               disabled={busy || tooLong}
               onClick={() => void submit()}
-              className="h-9 rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover)"
+              className="h-10 rounded-[10px] bg-cta px-4 text-cta-foreground hover:bg-(--ns-cta-hover)"
             >
               {busy ? 'Сохраняю…' : 'Сохранить'}
             </Button>

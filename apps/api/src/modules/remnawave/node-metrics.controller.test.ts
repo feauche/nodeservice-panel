@@ -1,3 +1,4 @@
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NodeMetricsController, NodeMetricsService } from './node-metrics.controller.js';
 
@@ -6,6 +7,54 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('node metric history', () => {
+  it('persists a stale snapshot at its original minute without forcing an external poll', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-12T04:00:00Z'));
+    const execute = vi.fn().mockResolvedValue({ rows: [] });
+    const syncQuiet = vi.fn();
+    const status = vi.fn().mockResolvedValue({
+      domain: 'panel.example',
+      checkedAt: '2026-10-12T03:00:23Z',
+      error: null,
+      nodes: [{ uuid: 'node', isConnected: true, isDisabled: false, usersOnline: 42, rxBytesPerSec: 0 }],
+    });
+    const service = new NodeMetricsService(
+      { execute } as never,
+      { domain: async () => 'panel.example' } as never,
+      { status, syncQuiet } as never,
+    );
+    await service.collect();
+    vi.setSystemTime(new Date('2026-10-12T04:01:00Z'));
+    await service.collect();
+    expect(syncQuiet).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledTimes(2);
+    const dialect = new PgDialect();
+    const first = dialect.sqlToQuery(execute.mock.calls[0][0]);
+    const repeated = dialect.sqlToQuery(execute.mock.calls[2][0]);
+    expect(first.sql).toContain('ON CONFLICT DO NOTHING');
+    expect(repeated.params).toEqual(first.params);
+    expect(first.params).toEqual([
+      'panel.example',
+      'node',
+      '2026-10-12T03:00:00.000Z',
+      JSON.stringify({ cpu: null, ram: null, load: null, rx: 0, tx: null, online: 42 }),
+    ]);
+  });
+  it.each([
+    { checkedAt: null, error: null },
+    { checkedAt: '2026-10-12T03:00:00Z', error: 'API unavailable' },
+  ])('does not invent samples for an unmeasured or failed snapshot: %j', async (snapshot) => {
+    const execute = vi.fn();
+    const syncQuiet = vi.fn();
+    const service = new NodeMetricsService(
+      { execute } as never,
+      { domain: async () => 'panel.example' } as never,
+      { status: async () => ({ domain: 'panel.example', nodes: [], ...snapshot }), syncQuiet } as never,
+    );
+    await service.collect();
+    expect(execute).not.toHaveBeenCalled();
+    expect(syncQuiet).not.toHaveBeenCalled();
+  });
   it('fills missing/offline minutes with null, preserves measured zero and caches aggregation', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-11T08:02:00Z'));
@@ -44,7 +93,7 @@ describe('node metric history', () => {
   });
   it('validates request ranges before querying storage or remote API', () => {
     const get = vi.fn();
-    const controller = new NodeMetricsController({ get } as never, {} as never, {} as never);
+    const controller = new NodeMetricsController({ get } as never, {} as never, {} as never, {} as never);
     expect(() => controller.get('129600', '90')).toThrow();
     expect(get).not.toHaveBeenCalled();
     controller.get('10080', '7');

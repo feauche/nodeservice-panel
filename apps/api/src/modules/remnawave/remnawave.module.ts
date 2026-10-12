@@ -1,17 +1,18 @@
-import {NodeTcpHistoryService} from './node-tcp-history.service.js';
-import {CheckHostModule} from '../incidents/check-host.module.js';
-import { SettingsModule } from '../settings/settings.module.js';
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module.js';
 import { BillingModule } from '../billing/billing.module.js';
+import { CheckHostModule } from '../incidents/check-host.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ProvidersModule } from '../providers/providers.module.js';
 import { ServersModule } from '../servers/servers.module.js';
+import { SettingsModule } from '../settings/settings.module.js';
 import { NodeActionsController } from './node-actions.controller.js';
 import { NodeLayoutStore } from './node-layout.store.js';
 import { DnsHostResolver, HOST_RESOLVER, NodeLinkService } from './node-link.service.js';
+import { NodeMetricHistoryService } from './node-metric-history.service.js';
 import { NodeMetricsController, NodeMetricsService } from './node-metrics.controller.js';
 import { NodePreferencesStore } from './node-preferences.store.js';
+import { NodeTcpHistoryService } from './node-tcp-history.service.js';
 import { NodesController } from './nodes.controller.js';
 import { RemnaBillingProvidersController } from './remna-billing-providers.controller.js';
 import { RemnaPermissionsService } from './remna-permissions.service.js';
@@ -29,7 +30,15 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
 
 /** J4: подключение к панели Remnawave, только чтение (домен + токен API с правами на чтение). */
 @Module({
-  imports: [CheckHostModule,SettingsModule,AuditModule, BillingModule, ServersModule, NotificationsModule, ProvidersModule],
+  imports: [
+    CheckHostModule,
+    SettingsModule,
+    AuditModule,
+    BillingModule,
+    ServersModule,
+    NotificationsModule,
+    ProvidersModule,
+  ],
   controllers: [
     NodeMetricsController,
     RemnaBillingProvidersController,
@@ -39,7 +48,9 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
     RemnaProvidersController,
     RemnaProviderCatalogController,
   ],
-  providers: [NodeTcpHistoryService,
+  providers: [
+    NodeTcpHistoryService,
+    NodeMetricHistoryService,
     NodeMetricsService,
     RemnaProviderCatalogController,
     NodeLayoutStore,

@@ -1,10 +1,5 @@
-import {TcpResults} from '@/features/nodes/tcp-results';
-import {
-  actionMeta,
-  INCIDENT_KIND_META,
-  type Incident,
-  type IncidentStatus,
-} from '@nodeservice/shared';
+import { TcpResults } from '@/features/nodes/tcp-results';
+import { actionMeta, INCIDENT_KIND_META, type Incident, type IncidentStatus } from '@nodeservice/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeftIcon, CheckIcon, ServerIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
@@ -88,7 +83,7 @@ export function IncidentCasePage({ id }: { id: string }) {
   const similar = (all.data?.items ?? []).filter(
     (i) =>
       i.id !== inc.id &&
-      i.serverId === inc.serverId &&
+      (inc.nodeUuid ? i.nodeUuid === inc.nodeUuid : inc.serverId !== null && i.serverId === inc.serverId) &&
       i.kind === inc.kind &&
       now - new Date(i.openedAt).getTime() < 7 * 86_400_000,
   );
@@ -96,7 +91,6 @@ export function IncidentCasePage({ id }: { id: string }) {
   const lastSimilarHelped = lastSimilar
     ? [...lastSimilar.attempts].reverse().find((a) => a.status === 'helped')
     : undefined;
-
 
   return (
     <div className="flex flex-col gap-4">
@@ -174,7 +168,11 @@ export function IncidentCasePage({ id }: { id: string }) {
           {/* Основная колонка */}
           <div className="flex flex-col gap-4 px-5 py-4 md:border-r md:border-border">
             {/* Текст бывает блоками по строкам (падение онлайна: откуда проверяли, вывод) — строки сохраняем. */}
-            {inc.diagnostics ? <TcpResults report={inc.diagnostics.report} online={inc.diagnostics.online}/> : <LegacyIncidentDetail detail={inc.detail} outcome={outcomeSentence(inc,now)}/>}
+            {inc.diagnostics ? (
+              <TcpResults report={inc.diagnostics.report} online={inc.diagnostics.online} />
+            ) : (
+              <LegacyIncidentDetail detail={inc.detail} outcome={outcomeSentence(inc, now)} />
+            )}
             <section>
               <h3 className="mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
                 Что происходило
@@ -189,7 +187,6 @@ export function IncidentCasePage({ id }: { id: string }) {
                 <AttemptsAccordion attempts={inc.attempts} />
               </section>
             )}
-
           </div>
 
           {/* Правая колонка: короткие значения, цепочка списком — ничего не переносится «в кашу» */}
@@ -216,7 +213,8 @@ export function IncidentCasePage({ id }: { id: string }) {
                 </dl>
               ) : (
                 <p className="text-[12.5px] leading-snug text-text-3">
-                  Отдельный снимок ресурсов отсутствует. Данные TCP-проверки показаны в описании, если проверка выполнялась.
+                  Отдельный снимок ресурсов отсутствует. Данные TCP-проверки показаны в описании, если
+                  проверка выполнялась.
                 </p>
               )}
             </section>
@@ -358,9 +356,35 @@ function Kv({ k, v, crit }: { k: string; v: string; crit?: boolean }) {
   );
 }
 
-function LegacyIncidentDetail({detail,outcome}:{detail:string;outcome:string}){
- const lines=detail.split('\n'),report=lines.find(l=>/^https:\/\/check-host\.net\/check-report\/[a-zA-Z0-9_-]+$/.test(l));
- if(!report)return <p className="text-[13.5px] leading-normal whitespace-pre-line"><DetailText text={detail}/><span className="mt-3 block text-text-3">{outcome}.</span></p>;
- const target=lines.find(l=>/^[\d.:[\]a-fA-F]+:\d+$/.test(l));
- return <section className="space-y-3"><div className="rounded-[12px] border border-border bg-surface-2 p-4"><h3 className="font-heading text-[15px] font-semibold">Результат проверки доступности</h3>{target&&<p className="mt-2 font-mono text-[14px]">{target}</p>}<p className="mt-2 text-[13px] leading-5 text-text-2">{lines.filter(l=>l!==report&&l!==target).join(' ')}</p><a href={report} target="_blank" rel="noreferrer" className="mt-3 inline-flex h-9 items-center rounded-[9px] border border-border bg-surface px-3 text-[12.5px] text-brand hover:bg-surface-3">Открыть отчёт Check-Host ↗</a></div><p className="text-[12px] text-text-3">{outcome}.</p></section>;
+function LegacyIncidentDetail({ detail, outcome }: { detail: string; outcome: string }) {
+  const lines = detail.split('\n'),
+    report = lines.find((l) => /^https:\/\/check-host\.net\/check-report\/[a-zA-Z0-9_-]+$/.test(l));
+  if (!report)
+    return (
+      <p className="text-[13.5px] leading-normal whitespace-pre-line">
+        <DetailText text={detail} />
+        <span className="mt-3 block text-text-3">{outcome}.</span>
+      </p>
+    );
+  const target = lines.find((l) => /^[\d.:[\]a-fA-F]+:\d+$/.test(l));
+  return (
+    <section className="space-y-3">
+      <div className="rounded-[12px] border border-border bg-surface-2 p-4">
+        <h3 className="font-heading text-[15px] font-semibold">Результат проверки доступности</h3>
+        {target && <p className="mt-2 font-mono text-[14px]">{target}</p>}
+        <p className="mt-2 text-[13px] leading-5 text-text-2">
+          {lines.filter((l) => l !== report && l !== target).join(' ')}
+        </p>
+        <a
+          href={report}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 inline-flex h-9 items-center rounded-[9px] border border-border bg-surface px-3 text-[12.5px] text-brand hover:bg-surface-3"
+        >
+          Открыть отчёт Check-Host ↗
+        </a>
+      </div>
+      <p className="text-[12px] text-text-3">{outcome}.</p>
+    </section>
+  );
 }

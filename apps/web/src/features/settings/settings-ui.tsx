@@ -57,7 +57,7 @@ export function SettingsCard({
       </div>
       <div className="px-[18px] pt-1 pb-1.5 max-md:px-4">{children}</div>
       {footer && (
-        <div className="flex flex-wrap items-center justify-end gap-2.5 border-t border-border bg-surface-2/60 px-[18px] py-3 max-md:px-4">
+        <div className="flex flex-wrap items-center justify-end gap-2.5 border-t border-border bg-bg-2 p-4 [&>button]:h-10">
           {footer}
         </div>
       )}
@@ -216,11 +216,11 @@ export function SaveBar({
     // Без правок панель стоит в конце раздела; есть правки — прилипает к низу экрана, «Сохранить» под рукой.
     <div
       className={cn(
-        'z-10 mt-1 flex flex-wrap items-center justify-end gap-2.5 rounded-[13px] border border-border bg-surface/95 py-2.5 pr-3 pl-4 backdrop-blur',
+        'z-10 mt-1 flex flex-wrap items-center justify-end gap-2.5 rounded-[13px] border border-border bg-bg-2 p-4',
         dirty && 'sticky bottom-3 shadow-pop',
       )}
     >
-      <span className="min-w-[200px] flex-1 text-[12.5px] text-text-3" aria-live="polite">
+      <span className="min-w-0 flex-1 text-[12.5px] text-text-3" aria-live="polite">
         {error ? (
           <span className="text-crit">{error}</span>
         ) : dirty ? (
@@ -232,14 +232,14 @@ export function SaveBar({
           note
         )}
       </span>
-      <span className="flex flex-none flex-wrap items-center justify-end gap-2.5">
+      <span className="flex flex-none flex-wrap items-center justify-end gap-2.5 [&>button]:h-10 max-sm:w-full max-sm:[&>button]:flex-1">
         {extra}
         {dirty && onReset && (
           <button
             type="button"
             disabled={pending}
             onClick={onReset}
-            className="inline-flex h-[34px] min-w-[128px] cursor-pointer items-center justify-center rounded-[9px] border border-border bg-surface-2 px-3.5 text-[13px] font-medium text-text-2 transition-colors hover:text-foreground disabled:opacity-50"
+            className="inline-flex h-10 min-w-[128px] cursor-pointer items-center justify-center rounded-[9px] border border-border bg-surface-2 px-3.5 text-[13px] font-medium text-text-2 transition-colors hover:text-foreground disabled:opacity-50"
           >
             Отменить
           </button>
@@ -248,7 +248,7 @@ export function SaveBar({
           type="button"
           disabled={pending || !dirty || Boolean(error)}
           onClick={onSave}
-          className="inline-flex h-[34px] min-w-[128px] cursor-pointer items-center justify-center rounded-[9px] border border-transparent bg-cta px-3.5 text-[13px] font-semibold text-cta-foreground transition-colors hover:bg-(--ns-cta-hover) disabled:cursor-default disabled:opacity-50"
+          className="inline-flex h-10 min-w-[128px] cursor-pointer items-center justify-center rounded-[9px] border border-transparent bg-cta px-3.5 text-[13px] font-semibold text-cta-foreground transition-colors hover:bg-(--ns-cta-hover) disabled:cursor-default disabled:opacity-50"
         >
           {pending ? 'Сохраняю…' : saveLabel}
         </button>

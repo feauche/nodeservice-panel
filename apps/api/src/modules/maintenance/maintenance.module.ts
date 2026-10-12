@@ -5,13 +5,12 @@ import { AgentReleasesService } from './agent-releases.service.js';
 import { MaintenanceController } from './maintenance.controller.js';
 import { MaintenanceRepository } from './maintenance.repository.js';
 import { MaintenanceService } from './maintenance.service.js';
-import { MaintenanceCheckJob } from './maintenance-check.job.js';
 
-/** R1.8: обслуживание сервера — чек-лист раз в сутки и действия по SSH с живым логом. */
+/** Исторические данные и ручные API обслуживания; автоматические SSH/агентские задачи отключены. */
 @Module({
   imports: [ServersModule],
   controllers: [MaintenanceController],
-  providers: [MaintenanceRepository, MaintenanceService, AgentReleasesService, MaintenanceCheckJob],
+  providers: [MaintenanceRepository, MaintenanceService, AgentReleasesService],
   exports: [MaintenanceService],
 })
 export class MaintenanceModule {}

@@ -18,6 +18,7 @@ import { useNodes } from '@/features/nodes/nodes-api';
 import { formatDate } from '@/features/security/security-format';
 import { BarButton, CardButton, Pill, RowButton, SettingsRow } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
+import { explainProbeError } from '@/lib/probe-error';
 
 const stateNames: Record<string, string> = {
   active: 'Активна',
@@ -176,8 +177,14 @@ export function BsRentals() {
                         <p className="mt-1 text-[12px] text-text-3">
                           {row.backup ? 'Резервный выход' : 'Основной выход'}
                           {row.rtt_ms !== null && row.rtt_ms !== undefined ? ` · ${row.rtt_ms} мс` : ''}
-                          {row.err ? ` · ${row.err}` : ''}
+                          {row.err ? ` · ${explainProbeError(row.err)}` : ''}
                         </p>
+                        {row.err && (
+                          <details className="mt-2 text-[12px] text-text-3">
+                            <summary className="cursor-pointer text-text-2">Технические детали</summary>
+                            <p className="mt-1 break-all font-mono">{row.err}</p>
+                          </details>
+                        )}
                       </div>
                       <Pill tone={row.ok === null ? 'muted' : row.ok ? 'ok' : 'crit'}>
                         {row.ok === null ? 'Нет результата' : row.ok ? 'Доступен' : 'Не отвечает'}

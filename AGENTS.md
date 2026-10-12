@@ -14,6 +14,8 @@
 
 ## Owner design preferences
 
+- Эталон оформления — существующий стиль этой панели, а не новый внешний дизайн. Для форм сохранения использовать тёмную полосу `bg-bg-2`, как в добавлении записи биллинга: симметричные отступы, основные действия одинаковой высоты 40 px. Компактные панели инструментов не увеличивать глобально. Цвета брать из токенов текущей темы.
+
 - Preserve symmetry: equal input heights, aligned labels, consistent gaps and full available page width.
 - Node dialogs keep a fixed outer size across tabs; scroll inside. Verify dropdowns and folder menus at desktop/mobile sizes without clipping or layout shifts.
 
