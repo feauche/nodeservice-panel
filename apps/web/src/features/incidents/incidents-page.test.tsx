@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { delay, http } from 'msw';
+import { delay, HttpResponse, http } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetMockState } from '@/test/msw/handlers';
@@ -26,8 +26,13 @@ describe('IncidentsPage', () => {
     expect(stats).toHaveTextContent('прошли сами');
     // группа «Сейчас» для открытых
     expect(screen.getByRole('region', { name: 'Сейчас' })).toBeInTheDocument();
-    // предложение читается предложением с заглавной
-    expect(screen.getByText(/Ждёт подтверждения: перезапустить контейнер ноды/)).toBeInTheDocument();
+    // открытое событие со старым предложением шага: подтверждать нечего, строка без обещаний автопочинки
+    expect(screen.queryByText(/Ждёт подтверждения/)).not.toBeInTheDocument();
+    const cpuRow = rows.find((r) => within(r).queryByText('Высокая нагрузка на CPU'));
+    if (!cpuRow) throw new Error('нет строки CPU');
+    expect(within(cpuRow).getByText('Наблюдаем')).toBeInTheDocument();
+    // уровень старого предложения (T2) в строке больше не показывается
+    expect(within(cpuRow).queryByText('T2')).not.toBeInTheDocument();
     // решённый: «Помогло с первой попытки»
     expect(screen.getByText(/Помогло с первой попытки: освободить диск, автоматически/)).toBeInTheDocument();
   });
@@ -88,7 +93,7 @@ describe('IncidentsPage', () => {
     expect(await screen.findByText('Пока спокойно')).toBeInTheDocument();
   });
 
-  it('свежий событие: «Ждём ещё N с — возможно, поднимется само»', async () => {
+  it('свежее событие: без отсчёта автопочинки — просто «Наблюдаем»', async () => {
     const [base] = mockIncidents.items;
     if (!base) throw new Error('нет мок-события');
     mockIncidents.items = [
@@ -106,7 +111,8 @@ describe('IncidentsPage', () => {
       },
     ];
     renderPage(IncidentsPage, '/incidents', ['/incidents/$id', '/incidents/autofix']);
-    expect(await screen.findByText(/Ждём ещё \d+ с — возможно, поднимется само/)).toBeInTheDocument();
+    expect(await screen.findByText('Наблюдаем')).toBeInTheDocument();
+    expect(screen.queryByText(/Ждём ещё/)).not.toBeInTheDocument();
   });
 
   it('решённые режутся постранично; «Сейчас» с открытым видно на любой странице', async () => {
@@ -510,43 +516,102 @@ describe('IncidentCasePage', () => {
     expect(await screen.findByText('На этом сервере за 7 дней такого не было.')).toBeInTheDocument();
   });
 
-  it('кейс: хронология и сигналы без запуска автопочинки', async () => {
+  /** Нода Remnawave события: подключение и пустые метрики, чтобы окно ноды открылось без лишних запросов. */
+  const NODE = {
+    uuid: '0192f200-0000-7000-8000-000000000001',
+    name: 'de-fra-01',
+    address: '203.0.113.7',
+    countryCode: 'DE',
+    isConnected: true,
+    isDisabled: false,
+    isConnecting: false,
+    lastStatusMessage: null,
+    usersOnline: 42,
+    trafficUsedBytes: 0,
+    trafficLimitBytes: null,
+  };
+  const withNode = () =>
+    server.use(
+      http.get('/api/nodes/status', () =>
+        HttpResponse.json({
+          connected: true,
+          domain: 'panel.example.com',
+          checkedAt: new Date().toISOString(),
+          error: null,
+          stats: null,
+          nodes: [NODE],
+          cert: null,
+        }),
+      ),
+      http.get('/api/nodes/metrics', () =>
+        HttpResponse.json({
+          panel: 'panel.example.com',
+          history: [],
+          traffic: null,
+          trafficError: null,
+          collectedSince: null,
+        }),
+      ),
+      http.get('/api/nodes/:uuid/preferences', () =>
+        HttpResponse.json({
+          channelMbps: null,
+          note: '',
+          cpuWarningPercent: null,
+          memoryWarningPercent: null,
+        }),
+      ),
+    );
+
+  it('кейс: кнопка «Нода» открывает окно ноды события поверх страницы; хронология и сигналы без автопочинки', async () => {
     const { IncidentCasePage } = await import('./incident-case-page');
     const id = openId();
-    const { ServerModalHost } = await import('@/features/servers/server-modal-host');
-    const { useServerModalStore } = await import('@/features/servers/server-modal-store');
-    useServerModalStore.getState().close();
-    // Как в приложении: карточку сервера показывает хозяин из AppShell
-    const Page = () => (
-      <>
-        <IncidentCasePage id={id} />
-        <ServerModalHost />
-      </>
-    );
+    const inc = mockIncidents.items.find((i) => i.id === id);
+    if (!inc) throw new Error('нет мок-события');
+    inc.nodeUuid = NODE.uuid;
+    withNode();
+    const Page = () => <IncidentCasePage id={id} />;
     const { router } = renderPage(
       Page,
       '/incidents/$id',
-      ['/incidents', '/incidents/autofix', '/servers'],
+      ['/incidents', '/incidents/autofix'],
       `/incidents/${id}`,
     );
     expect(await screen.findByText('Высокая нагрузка на CPU · de-fra-01')).toBeInTheDocument();
-    // B2: кнопка «Сервер» открывает карточку сервера этого события поверх страницы, без перехода
-    const user0 = userEvent.setup();
-    await user0.click(screen.getByRole('button', { name: 'Сервер' }));
-    const serverDialog = await screen.findByRole('dialog', { name: 'de-fra-01' });
+    // Окна сервера больше нет: кнопка ведёт к ноде Remnawave этого события, без перехода.
+    expect(screen.queryByRole('button', { name: 'Сервер' })).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Нода' }));
+    expect(await screen.findByRole('dialog', { name: NODE.name })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe(`/incidents/${id}`);
-    await user0.click(within(serverDialog).getByRole('button', { name: 'Закрыть' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'de-fra-01' })).not.toBeInTheDocument());
-    // правая колонка: сигналы
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: NODE.name })).not.toBeInTheDocument());
+    // правая колонка: сигналы без строки агента
     expect(screen.getByText('Сигналы в момент сбоя')).toBeInTheDocument();
     expect(screen.getByText('Контейнер ноды')).toBeInTheDocument();
+    expect(screen.queryByText('Агент')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Подтвердить:/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /терминал/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('switch', { name: 'Автопочинка' })).not.toBeInTheDocument();
   });
 
-  it('кейс: закрытие «Контейнер ноды не запущен» с галочкой выключает слежение', async () => {
+  it('кейс старого события без ноды Remnawave: кнопки окна нет', async () => {
     const { IncidentCasePage } = await import('./incident-case-page');
-    const { mockServers } = await import('@/test/msw/servers-mock');
+    const id = openId();
+    const inc = mockIncidents.items.find((i) => i.id === id);
+    if (!inc) throw new Error('нет мок-события');
+    expect(inc.serverId).not.toBeNull();
+    inc.nodeUuid = null;
+    withNode();
+    const Page = () => <IncidentCasePage id={id} />;
+    renderPage(Page, '/incidents/$id', ['/incidents', '/incidents/autofix'], `/incidents/${id}`);
+    expect(await screen.findByText('Высокая нагрузка на CPU · de-fra-01')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Закрыть' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Нода' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Сервер' })).not.toBeInTheDocument();
+  });
+
+  it('кейс: закрытие «Контейнер ноды не запущен» — без галочки слежения за сервером', async () => {
+    const { IncidentCasePage } = await import('./incident-case-page');
     const [base] = mockIncidents.items;
     if (!base) throw new Error('нет мок-события');
     const inc = {
@@ -561,13 +626,22 @@ describe('IncidentCasePage', () => {
       proposal: null,
     };
     mockIncidents.items = [inc];
+    let sent: unknown = null;
+    server.use(
+      http.post('/api/incidents/:id/resolve', async ({ request }) => {
+        sent = await request.clone().json();
+      }),
+    );
     const Page = () => <IncidentCasePage id={inc.id} />;
     renderPage(Page, '/incidents/$id', ['/incidents', '/incidents/autofix'], `/incidents/${inc.id}`);
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: 'Закрыть' }));
-    await user.click(await screen.findByRole('checkbox', { name: /Больше не следить/ }));
-    await user.click(await screen.findByRole('button', { name: 'Закрыть' }));
-    await waitFor(() => expect(mockServers.items.find((s) => s.id === inc.serverId)?.nodeWatch).toBe('off'));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/Больше не следить/)).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Закрыть' }));
+    await waitFor(() => expect(mockIncidents.items[0]?.status).toBe('resolved'));
+    expect(sent).toEqual({});
   });
 });
 

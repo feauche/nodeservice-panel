@@ -15,14 +15,12 @@ import {
   type IncidentsListResponse,
   type IncidentWeekStats,
   incidentWeekStats,
-  type ResolveIncidentRequest,
 } from '@nodeservice/shared';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
 import type { IncidentRow } from '../../infra/db/schema/index.js';
 import { AuditService } from '../audit/audit.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
-import { ServersRepository } from '../servers/servers.repository.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { IncidentRunnerService } from './incident-runner.service.js';
@@ -47,7 +45,6 @@ const ev = (by: 'auto' | 'manual', action: string, result: IncidentEvent['result
 export class IncidentsService {
   constructor(
     private readonly repo: IncidentsRepository,
-    private readonly serversRepo: ServersRepository,
     private readonly settings: IncidentsSettingsStore,
     private readonly settingsService: SettingsService,
     private readonly audit: AuditService,
@@ -163,33 +160,26 @@ export class IncidentsService {
   }
 
   /** Ручное закрытие администратором. */
-  async resolveManual(id: string, opts: ResolveIncidentRequest = {}): Promise<Incident> {
+  async resolveManual(id: string): Promise<Incident> {
     const row0 = await this.repo.findById(id);
     if (!row0) throw problem(HttpStatus.NOT_FOUND, { detail: 'Событие не найдено.' });
     if (row0.status === 'resolved') return this.toDto(row0);
     // Идущую попытку обрываем (она дописывает хронологию) и перечитываем, чтобы не затереть.
     await this.runner.cancelRunning(id, 'Прервано: инцидент закрыт администратором');
     const row = (await this.repo.findById(id)) ?? row0;
-    // «Больше не следить за нодой на этом сервере»: без этого тот же инцидент откроется снова.
-    const stopWatch = opts.stopNodeWatch === true && row.kind === 'node_down' && row.serverId !== null;
-    if (stopWatch && row.serverId) await this.serversRepo.update(row.serverId, { nodeWatch: 'off' });
     const updated = await this.repo.update(id, {
       status: 'resolved',
       resolvedAt: new Date(),
       resolvedBy: 'manual',
       proposal: null,
-      timeline: [
-        ...row.timeline,
-        ...(stopWatch ? [ev('manual', 'Слежение за нодой на этом сервере выключено', 'notify')] : []),
-        ev('manual', 'Закрыт администратором', 'resolved'),
-      ],
+      timeline: [...row.timeline, ev('manual', 'Закрыт администратором', 'resolved')],
     });
     // Тревога в Telegram могла ещё ждать разбора: дело закрыто в панели — присылать её уже незачем.
     await this.notifications.dropDeferred(id);
     await this.audit.record({
       action: 'incident.resolved',
       target: { type: 'incident', id, display: row.title },
-      metadata: { by: 'manual', ...(stopWatch ? { stopNodeWatch: true, server: row.serverName } : {}) },
+      metadata: { by: 'manual' },
     });
     return this.toDto(updated ?? row);
   }

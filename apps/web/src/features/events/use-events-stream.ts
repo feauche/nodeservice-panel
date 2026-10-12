@@ -1,8 +1,5 @@
-import type { AssistantActivity } from '@nodeservice/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
-
-import { useActivityStore } from '@/features/assistant/activity';
 
 import { incidentsKeys } from '@/features/incidents/incidents-api';
 import { API_BASE } from '@/lib/api';
@@ -13,7 +10,7 @@ const RECONNECT_MAX_MS = 15_000;
 
 /**
  * Живой поток панели (SSE): сервер шлёт событие только при изменении, браузер перечитывает лишь
- * затронутое — серверы, события или уведомления. Опрос остаётся страховкой раз в минуту.
+ * затронутое — события. Опрос остаётся страховкой раз в минуту.
  * Переподключение контролируем сами: после восстановления API перечитываем актуальное состояние,
  * поэтому открытая страница не остаётся со старыми данными. В тестовых моках поток выключен.
  */
@@ -39,8 +36,6 @@ export function useEventsStream(enabled = true): void {
       );
     };
     const refreshAfterReconnect = () => {
-      void qc.invalidateQueries({ queryKey: ['servers'] });
-      void qc.invalidateQueries({ queryKey: ['metrics', 'overview'] });
       void qc.invalidateQueries({ queryKey: incidentsKeys.all });
     };
     const connect = () => {
@@ -60,26 +55,6 @@ export function useEventsStream(enabled = true): void {
         reconnectAttempt += 1;
         reconnectTimer = setTimeout(connect, delay);
       };
-      stream.addEventListener('server', () =>
-        later('server', () => {
-          void qc.invalidateQueries({ queryKey: ['servers'] });
-          void qc.invalidateQueries({ queryKey: ['metrics', 'overview'] });
-        }),
-      );
-      // Переименовали сервер: новое имя нужно и в списках событий, и в уведомлениях.
-      stream.addEventListener('rename', () => later('rename', refreshAfterReconnect));
-      // Ассистент делает что-то долгое (проверка сервера): живая строка в чате, без перечитывания.
-      stream.addEventListener('assistant', (ev) => {
-        try {
-          const d = JSON.parse((ev as MessageEvent).data) as {
-            conversationId: string;
-            activity: AssistantActivity;
-          };
-          useActivityStore.getState().upsert(d.conversationId, d.activity);
-        } catch {
-          /* битое событие — просто пропускаем */
-        }
-      });
       stream.addEventListener('incident', () =>
         later('incident', () => void qc.invalidateQueries({ queryKey: incidentsKeys.all })),
       );

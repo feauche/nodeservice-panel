@@ -41,7 +41,6 @@ describe('инциденты нод и сохранность прежней и�
     const detail = incidentSchema.parse((await ctx.agent.get(`/api/incidents/${row.id}`).expect(200)).body);
     expect(detail).toMatchObject({ nodeUuid: row.nodeUuid, diagnostics: report, serverId: null });
     expect((await list()).items[0]?.id).toBe(row.id);
-    expect(ctx.ssh.connect).not.toHaveBeenCalled();
   });
   it('acknowledge и ручное resolve идемпотентны, добавляют хронологию и Журнал', async () => {
     const row = await ctx.seed();
@@ -97,7 +96,6 @@ describe('инциденты нод и сохранность прежней и�
     });
     expect(detail.attempts[0]?.finishedAt).not.toBeNull();
     expect(detail.timeline.at(-1)?.action).toContain('Автопочинка удалена');
-    expect(ctx.ssh.connect).not.toHaveBeenCalled();
   });
   it('старые action/policy/settings HTTP пути отсутствуют, compatibility runner отклоняет исполнение410', async () => {
     const row = await ctx.seed();
@@ -111,7 +109,6 @@ describe('инциденты нод и сохранность прежней и�
     await expect(
       ctx.app.get(IncidentRunnerService).start(row.id, 'restart_node', 'manual'),
     ).rejects.toMatchObject({ status: 410 });
-    expect(ctx.ssh.connect).not.toHaveBeenCalled();
   });
   it('постраничная история и статистика недели остаются доступными', async () => {
     for (let i = 0; i < 11; i++) await ctx.seed();

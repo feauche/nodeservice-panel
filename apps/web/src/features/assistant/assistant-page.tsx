@@ -38,12 +38,10 @@ import { Markdown, NodeLinkContext } from '@/features/knowledge/markdown';
 import { nodeState } from '@/features/nodes/node-card';
 import { NodeDialog } from '@/features/nodes/node-dialog';
 import { useNodes } from '@/features/nodes/nodes-api';
-import { openServer } from '@/features/servers/server-modal-store';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useMediaQuery } from '@/lib/use-media';
 import { cn } from '@/lib/utils';
-import { ActivityRow, useActivityStore, useLiveActivity } from './activity';
 import {
   ASSISTANT_DRAFT_KEY,
   LAST_CONV_KEY,
@@ -53,10 +51,7 @@ import {
   usePendingChats,
   useSendMessage,
 } from './assistant-api';
-import { ChangeCard } from './change-card';
-import { linkifyNodes, linkifyServers } from './link-servers';
-import { ProposalCard } from './proposal-card';
-import { ReachabilityCard } from './reachability-card';
+import { linkifyNodes } from './link-nodes';
 
 // Помним последнюю открытую беседу, чтобы вернуться и продолжить после ухода со страницы.
 
@@ -186,16 +181,6 @@ function AssistantChat() {
   // запрос всё ещё идёт, и индикатор должен остаться, а когда ответ готов, исчезнуть.
   const pendingHere = usePendingChats().filter((v) => (v.conversationId ?? null) === conversationId);
   const busy = pendingHere.length > 0;
-  // Живые строки «Идёт проверка…»: с момента отправки; ответ пришёл — они уже сохранены в самом ответе.
-  // Без состояния (лишняя перерисовка ломает показ вопроса, пока идёт ответ): отметка во время рендера.
-  const busySinceRef = useRef(0);
-  if (busy && busySinceRef.current === 0) busySinceRef.current = Date.now() - 1000;
-  if (!busy) busySinceRef.current = 0;
-  const busySince = busySinceRef.current;
-  useEffect(() => {
-    if (!busy) useActivityStore.getState().clear();
-  }, [busy]);
-  const live = useLiveActivity(conversationId, busySince);
   const isNewChat = conversationId === null;
 
   // Считаем по обрезанной длине, ровно как проверит сервер, и не даём отправить переполненное поле
@@ -436,16 +421,6 @@ function AssistantChat() {
                   createdAt: '',
                 }}
               />
-            )}
-            {busy && live.length > 0 && (
-              <div className="flex max-w-[92%] gap-3">
-                <span className="size-8 flex-none" aria-hidden="true" />
-                <div className="flex min-w-0 flex-1 flex-col gap-2">
-                  {live.map((a) => (
-                    <ActivityRow key={a.id} activity={a} />
-                  ))}
-                </div>
-              </div>
             )}
             {busy && <TypingRow />}
           </NodeLinkContext.Provider>
@@ -707,7 +682,7 @@ function EmptyChat() {
         </span>
         <p className="text-[14px] font-semibold">Спросите о нодах, метриках или сохранённых событиях</p>
         <p className="max-w-[380px] text-[12.5px] text-text-3">
-          Ассистент смотрит метрики, Журнал и базу знаний. Действия он только предлагает, запускаете их вы.
+          Ассистент смотрит метрики, Журнал и базу знаний.
         </p>
       </div>
     </div>
@@ -796,34 +771,13 @@ function MessageRow({
     >
       {grouped ? <span className="size-8 flex-none" aria-hidden="true" /> : <Avatar />}
       <div className={cn('min-w-0 flex-1', grouped && !interim && 'border-t border-border pt-2.5')}>
-        {message.activity.length > 0 && (
-          <div className="mb-2.5 flex flex-col gap-2">
-            {message.activity.map((a) => (
-              <ActivityRow key={a.id} activity={a} />
-            ))}
-          </div>
-        )}
+        {/* В старых беседах у ответа бывают карточки действий, проверок и хода работы: их больше нет,
+            остаётся текст ответа и источники. */}
         <Markdown
-          content={linkifyNodes(
-            linkifyServers(
-              message.content,
-              message.citations.filter((c) => c.type === 'server').map((c) => ({ id: c.id, name: c.label })),
-            ),
-            nodes.data?.nodes ?? [],
-          )}
+          content={linkifyNodes(message.content, nodes.data?.nodes ?? [])}
           className={cn('-my-1 text-[13.5px]', interim && '[&_p]:text-text-3')}
         />
         {message.citations.length > 0 && <Sources citations={message.citations} />}
-        {message.reachability.map((r) => (
-          <ReachabilityCard key={`${r.target.name}:${r.ports.map((p) => p.port).join(',')}`} result={r} />
-        ))}
-        {message.proposals.map((p) =>
-          p.kind === 'change' ? (
-            <ChangeCard key={p.changeId} proposal={p} />
-          ) : (
-            <ProposalCard key={`${p.incidentId}:${p.preset}`} proposal={p} createdAt={message.createdAt} />
-          ),
-        )}
       </div>
     </div>
   );
@@ -891,17 +845,7 @@ function SourceChip({ citation }: { citation: AssistantCitation }) {
         {inner}
       </button>
     );
-  if (citation.type === 'server')
-    return (
-      <button
-        type="button"
-        title={title}
-        onClick={() => openServer(citation.id)}
-        className={cn(base, interactive)}
-      >
-        {inner}
-      </button>
-    );
+  // Старые серверы, метрики и журнал — простая метка без перехода.
   return (
     <span title={title} className={base}>
       {inner}

@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { pageItems } from '@/components/pagination';
 import { mockAudit, pushAuditEntry, seedAudit } from '@/test/msw/audit-mock';
 import { resetMockState } from '@/test/msw/handlers';
-import { mockServers, seedServers } from '@/test/msw/servers-mock';
+import { server as mswServer } from '@/test/msw/server';
 import { renderPage } from '@/test/render';
 import { AuditPage } from './audit-page';
 import { type AuditSearch, matchesSearch, periodFrom } from './audit-search';
@@ -209,9 +209,9 @@ describe('AuditPage', () => {
     expect(csv).toHaveAttribute('href', '/api/audit/export?format=csv');
   });
 
-  it('фильтр по серверу из окна сервера: чип с именем, список только его событий, крестик снимает', async () => {
-    seedServers();
-    const server = mockServers.items[0] as NonNullable<(typeof mockServers.items)[0]>;
+  it('старая ссылка с фильтром по серверу: чип с именем из записей, список только его событий, крестик снимает', async () => {
+    // Окна сервера больше нет, но ссылки вида /audit?target=<id> могли остаться; имя берётся из записей Журнала.
+    const server = { id: '0192f100-0000-7000-8000-000000000001', name: 'de-fra-01' };
     seedAudit(20);
     for (const [i, e] of mockAudit.entries.entries()) {
       if (i % 4 === 0)
@@ -228,6 +228,25 @@ describe('AuditPage', () => {
     await user.click(within(chip).getByRole('button', { name: 'Снять фильтр по серверу' }));
     await waitFor(() => expect(screen.queryByTestId('audit-target-chip')).not.toBeInTheDocument());
     await waitFor(() => expect(rows().length).toBe(20));
+  });
+
+  it('старая ссылка на сервер без записей: чип говорит «удалён», список серверов не запрашивается', async () => {
+    seedAudit(5);
+    const paths: string[] = [];
+    const onRequest = ({ request }: { request: Request }) => {
+      paths.push(new URL(request.url).pathname);
+    };
+    mswServer.events.on('request:start', onRequest);
+    try {
+      const Old = () => <Harness initial={{ target: '0192f100-0000-7000-8000-0000000000ff' }} />;
+      renderPage(Old, '/audit');
+      const chip = await screen.findByTestId('audit-target-chip');
+      await waitFor(() => expect(chip).toHaveTextContent('Сервер: удалён'));
+      expect(paths.some((p) => p.startsWith('/api/audit'))).toBe(true);
+      expect(paths.some((p) => p.startsWith('/api/servers'))).toBe(false);
+    } finally {
+      mswServer.events.removeListener('request:start', onRequest);
+    }
   });
 
   it('утилиты: номера страниц с многоточием, период, совпадение live-записи с фильтрами', () => {

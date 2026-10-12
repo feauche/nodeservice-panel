@@ -1,8 +1,6 @@
 import { type Provider, providerSiteHost } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
 
-import { mockServers } from './servers-mock';
-
 /** Мок справочника провайдеров: состояние в памяти, иконка «находится» у сайтов с известным хостом. */
 export const mockProviders: { items: Provider[]; iconHosts: Set<string>; iconDelayMs: number } = {
   items: [],
@@ -75,13 +73,11 @@ export function seedProviders(): void {
   ];
 }
 
+/** Как отдаёт API: сначала те, у кого больше привязок, потом по имени. */
 const withCounts = (): Provider[] =>
-  mockProviders.items
-    .map((p) => ({
-      ...p,
-      serversCount: mockServers.items.filter((s) => s.providerId === p.id).length,
-    }))
-    .sort((a, b) => b.serversCount - a.serversCount || a.name.localeCompare(b.name, 'ru'));
+  [...mockProviders.items].sort(
+    (a, b) => b.serversCount - a.serversCount || a.name.localeCompare(b.name, 'ru'),
+  );
 
 const problem = (status: number, type: string, detail: string, extra: Record<string, unknown> = {}) =>
   HttpResponse.json(
@@ -167,7 +163,6 @@ export const providersHandlers = [
     const i = mockProviders.items.findIndex((x) => x.id === params.id);
     if (i < 0) return problem(404, 'urn:nodeservice:problem:provider-not-found', 'Провайдер не найден');
     mockProviders.items.splice(i, 1);
-    for (const s of mockServers.items) if (s.providerId === params.id) s.providerId = null;
     return new HttpResponse(null, { status: 204 });
   }),
   http.post('/api/providers/:id/icon/refresh', ({ params }) => {
@@ -178,11 +173,6 @@ export const providersHandlers = [
     p.iconVersion += 1;
     return HttpResponse.json(withCounts().find((x) => x.id === p.id));
   }),
-  http.get('/api/providers/:id/servers', ({ params }) =>
-    HttpResponse.json(
-      mockServers.items.filter((s) => s.providerId === params.id).map((s) => ({ id: s.id, name: s.name })),
-    ),
-  ),
   http.get('/api/providers/:id/icon', ({ params }) => {
     const p = mockProviders.items.find((x) => x.id === params.id);
     if (!p?.hasIcon) return new HttpResponse(null, { status: 404 });

@@ -37,7 +37,7 @@ function errMsg(err: unknown): string {
  * Еженедельная ревизия базы знаний (этап D). Раз в неделю проходит по активным статьям,
  * безопасно причёсывает их (модель + косметика) и пишет отчёт в Журнал. Каждое изменение
  * снимается в историю версий (revertable). Деструктив (удаление, крупная переписка) не делает.
- * Гейтится разрешением kbReview и наличием ключа модели.
+ * Работает, когда у Ассистента задан ключ модели.
  */
 @Injectable()
 export class KbReviewService {
@@ -75,7 +75,6 @@ export class KbReviewService {
   async runReview(): Promise<{ reviewed: number; changed: number; skipped: string | null }> {
     const cfg = await this.settings.config();
     if (!cfg) return { reviewed: 0, changed: 0, skipped: 'Ассистент выключен' };
-    if (!cfg.permissions.kbReview) return { reviewed: 0, changed: 0, skipped: 'нет разрешения kbReview' };
 
     const docs = (await this.repo.list(undefined, false)).filter(
       (d) => !d.pinned && !SKIP_TITLES.has(d.title),

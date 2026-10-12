@@ -41,6 +41,5 @@ describe('удалённый автоматический разбор и сох
         .send({ question: 'Что произошло?' })
         .expect(404);
     expect(ctx.llm.run).not.toHaveBeenCalled();
-    expect(ctx.ssh.connect).not.toHaveBeenCalled();
   });
 });

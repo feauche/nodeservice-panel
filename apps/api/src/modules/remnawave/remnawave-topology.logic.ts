@@ -8,7 +8,7 @@ import type {
   RemnawaveTopologyRoute,
 } from '@nodeservice/shared';
 
-import { normalizeAddress } from '../servers/addresses.js';
+import { normalizeAddress } from '../../common/net/address.js';
 import type { RemnawaveTopologySource } from './remnawave-client.js';
 
 type Row = Record<string, unknown>;

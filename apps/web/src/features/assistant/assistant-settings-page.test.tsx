@@ -59,7 +59,8 @@ describe('AssistantSettingsPage', () => {
     await go(router, 'privacy');
     expect(screen.getByText(/Метрики, состояние серверов и их названия/)).toBeInTheDocument();
     expect(screen.getByText(/Сохранённые метрики нод, результаты прошлых проверок/)).toBeInTheDocument();
-    expect(screen.getByText('Ассистент не запускает проверки, SSH-команды и изменения.')).toBeInTheDocument();
+    expect(screen.getByText('Ассистент не запускает проверки и изменения.')).toBeInTheDocument();
+    expect(screen.queryByText(/SSH/)).not.toBeInTheDocument();
     expect(screen.queryByText('Автоматический разбор')).not.toBeInTheDocument();
     expect(screen.queryByRole('switch')).not.toBeInTheDocument();
   });

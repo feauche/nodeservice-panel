@@ -1,6 +1,6 @@
 import { AUDIT_ACTIONS, type AuditEntry } from '@nodeservice/shared';
 
-import { maskSecrets } from './terminal-hint.logic.js';
+import { maskSecrets } from './mask-secrets.js';
 
 /** Из деталей записи берём только понятные человеку поля; остальное (технические id и вложенное) не нужно. */
 const DETAIL_KEYS = [
@@ -16,6 +16,8 @@ const DETAIL_KEYS = [
   'error',
   'message',
   'glossaryImport',
+  'verdict',
+  'ports',
 ] as const;
 const DETAIL_CLIP = 240;
 const CHANGE_CLIP = 60;

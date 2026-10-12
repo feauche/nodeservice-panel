@@ -1,30 +1,5 @@
 import { z } from 'zod';
 
-const httpUrl = z.url().refine((value) => /^https?:\/\//i.test(value), 'ожидается HTTP(S)-адрес');
-
-const urlList = z
-  .string()
-  .optional()
-  .transform((raw, ctx): string[] => {
-    if (!raw?.trim()) return [];
-    const values = [
-      ...new Set(
-        raw
-          .split(',')
-          .map((value) => value.trim())
-          .filter(Boolean),
-      ),
-    ];
-    if (values.length > 3)
-      ctx.addIssue({ code: 'custom', message: 'допускается не больше трёх запасных адресов' });
-    for (const value of values) {
-      const parsed = z.url().safeParse(value);
-      if (!parsed.success || !/^https?:\/\//i.test(value))
-        ctx.addIssue({ code: 'custom', message: `некорректный HTTP(S)-адрес «${value}»` });
-    }
-    return values.slice(0, 3);
-  });
-
 /**
  * Схема переменных окружения. Приложение не стартует, если что-то не так —
  * лучше упасть при запуске с понятной ошибкой, чем на первом запросе.
@@ -34,17 +9,8 @@ export const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   /** Публичный адрес панели (для ссылок, cookie-домена, CORS). */
   PUBLIC_URL: z.url().default('http://localhost:5173'),
-  /**
-   * Отдельный внешний вход для агентов. Полезен, когда часть серверов не может выйти к стране панели:
-   * адрес должен проксировать /api/agent/v1/* в тот же API.
-   */
-  AGENT_PUBLIC_URL: httpUrl.optional(),
-  /** Запасные входы агентов через другие страны/сети, через запятую. */
-  AGENT_FALLBACK_URLS: urlList,
-  /** VictoriaMetrics: приём метрик агентов (import) и чтение (PromQL). */
+  /** VictoriaMetrics: запись онлайна нод. */
   VM_URL: z.url().default('http://127.0.0.1:8428'),
-  /** GitHub-репозиторий агента: релизы с бинарями и install.sh. */
-  AGENT_REPO: z.string().default('feauche/nodeservice-agent'),
   /** GitHub-репозиторий панели: последний стабильный Release для индикатора в шапке. */
   PANEL_REPO: z.string().default('feauche/nodeservice-panel'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),

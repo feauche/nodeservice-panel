@@ -1,14 +1,7 @@
 import type { Incident } from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
 
-import {
-  closedAtMs,
-  humanSeconds,
-  listSubtitle,
-  outcomeSentence,
-  titleOnly,
-  weekStats,
-} from './incident-format';
+import { closedAtMs, humanSeconds, outcomeSentence, titleOnly, weekStats } from './incident-format';
 
 const NOW = Date.parse('2026-09-25T12:00:00Z');
 const iso = (minAgo: number) => new Date(NOW - minAgo * 60_000).toISOString();
@@ -48,14 +41,14 @@ const attempt = (status: 'helped' | 'not_helped', by: 'auto' | 'manual', level: 
 describe('outcomeSentence', () => {
   it('не врёт «прошло само», если шаги починки пробовали и не помогли', () => {
     const inc = base({ attempts: [attempt('not_helped', 'manual')] });
-    expect(outcomeSentence(inc, NOW)).toBe('Проблема ушла сама, шаги починки не помогли');
+    expect(outcomeSentence(inc)).toBe('Проблема ушла сама, шаги починки не помогли');
   });
   it('чистое «прошло само» — когда шагов не было', () => {
-    expect(outcomeSentence(base({}), NOW)).toBe('Прошло само, починка не потребовалась');
+    expect(outcomeSentence(base({}))).toBe('Прошло само');
   });
   it('после одного осмотра', () => {
     const inc = base({ attempts: [{ ...attempt('not_helped', 'auto', 'T0'), status: 'done' as never }] });
-    expect(outcomeSentence(inc, NOW)).toBe('Проблема ушла сама после осмотра');
+    expect(outcomeSentence(inc)).toBe('Проблема ушла сама после осмотра');
   });
 });
 
@@ -101,34 +94,31 @@ describe('строка в списке событий', () => {
     );
   });
 
-  it('готовый разбор Ассистента — вместо «Автопочинки нет»; ждущий подтверждения шаг важнее', () => {
-    const analysis = {
-      status: 'done',
-      startedAt: iso(5),
-      finishedAt: iso(4),
-      steps: [],
-      verdict: 'Оплата аренды просрочена на 15 часов — вероятно, отключили за неоплату. Остальное вторично.',
-      confidence: 'high',
-      evidence: [],
-      unknown: null,
-      nextAction: null,
-      basedOn: { attempts: 0, resolved: false },
-      model: 'm',
-      error: null,
-      thread: [],
-    } as unknown as Incident['analysis'];
-    const inc = base({ kind: 'server_down', status: 'open', resolvedAt: null, resolvedBy: null, analysis });
-    expect(listSubtitle(inc, NOW)).toBe(
-      'Ассистент: Оплата аренды просрочена на 15 часов — вероятно, отключили за неоплату.',
-    );
-    const waiting = base({
-      kind: 'agent_offline',
+  it('у открытого события нет обещаний автопочинки, ожидания шага и разбора Ассистента', () => {
+    const open = { status: 'open' as const, resolvedAt: null, resolvedBy: null };
+    // Свежее событие вида с бывшей цепочкой: раньше «Ждём ещё N с», теперь просто наблюдаем.
+    expect(outcomeSentence(base({ ...open, kind: 'node_down', openedAt: iso(0) }))).toBe('Наблюдаем');
+    // Вид без цепочки: раньше «Автопочинки нет, только уведомление».
+    expect(outcomeSentence(base({ ...open, kind: 'node_blocked' }))).toBe('Наблюдаем');
+    // Старое предложение шага подтвердить уже нельзя — о нём не пишем.
+    const proposal = {
+      action: 'free_disk',
+      level: 'T1',
+      reason: 'x',
+      proposedAt: iso(1),
+    } as Incident['proposal'];
+    expect(outcomeSentence(base({ ...open, proposal }))).toBe('Наблюдаем');
+    // Старый разбор Ассистента в строку не попадает.
+    const analysis = { status: 'done', verdict: 'Оплата просрочена.' } as unknown as Incident['analysis'];
+    expect(outcomeSentence(base({ ...open, analysis }))).toBe('Наблюдаем');
+  });
+  it('старая неудачная попытка у открытого события — история без «шагов цепочки»', () => {
+    const inc = base({
       status: 'open',
       resolvedAt: null,
       resolvedBy: null,
-      analysis,
-      proposal: { action: 'agent_reinstall', level: 'T2', reason: 'x', proposedAt: iso(1) },
+      attempts: [attempt('not_helped', 'manual')],
     });
-    expect(listSubtitle(waiting, NOW)).toMatch(/Ждёт подтверждения/);
+    expect(outcomeSentence(inc)).toBe('Не помогло: освободить диск');
   });
 });

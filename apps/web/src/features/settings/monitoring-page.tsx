@@ -62,7 +62,7 @@ const sections: Record<'checks' | 'incidents', { title: string; hint?: string; f
     },
     {
       title: 'Доступность из РФ · Check-Host',
-      hint: 'TCP-проверка из нескольких точек в РФ и других странах. Без SSH-входа на ноды.',
+      hint: 'TCP-проверка из нескольких точек в РФ и других странах.',
       fields: [
         {
           key: 'checkHostEnabled',

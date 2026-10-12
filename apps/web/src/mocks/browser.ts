@@ -1,13 +1,8 @@
 import { setupWorker } from 'msw/browser';
-import { mockAnalysis } from '@/test/msw/analysis-mock';
 import { mockAssistant } from '@/test/msw/assistant-mock';
 import { handlers, resetMockState } from '@/test/msw/handlers';
 import { mockIncidents } from '@/test/msw/incidents-mock';
-import { mockMaintenance } from '@/test/msw/maintenance-mock';
 import { mockProviders } from '@/test/msw/providers-mock';
-import { mockServerChecks, seedServerChecks } from '@/test/msw/server-checks-mock';
-import { mockServers } from '@/test/msw/servers-mock';
-import { installMockTerminalSocket } from './terminal-ws';
 
 /**
  * Dev без бэкенда: VITE_MOCK=1 pnpm dev.
@@ -16,22 +11,9 @@ import { installMockTerminalSocket } from './terminal-ws';
  */
 export async function startMockWorker(): Promise<void> {
   resetMockState({ setupRequired: import.meta.env.VITE_MOCK_SETUP === '1' });
-  // В браузере шаги обслуживания идут «как на живом» — видно прогресс.
-  mockMaintenance.speedMs = 1400;
   mockProviders.iconDelayMs = 2500;
-  // Попытка починки в браузере идёт как на живой ноде — по шагу в секунду с небольшим.
-  mockIncidents.stepMs = 1200;
-  mockAnalysis.stepMs = 1500;
-  // Проверки: у первого сервера уже есть суточные результаты; ручной запуск печатает вывод по строке.
-  mockServerChecks.speedMs = 900;
-  for (const s of mockServers.items.slice(0, 1)) seedServerChecks(s.id);
-  (window as unknown as { __nsMockAnalysis: typeof mockAnalysis }).__nsMockAnalysis = mockAnalysis;
   (window as unknown as { __nsMockAssistant: typeof mockAssistant }).__nsMockAssistant = mockAssistant;
   (window as unknown as { __nsMockIncidents: typeof mockIncidents }).__nsMockIncidents = mockIncidents;
-  (window as unknown as { __nsMockMaintenance: typeof mockMaintenance }).__nsMockMaintenance =
-    mockMaintenance;
-  (window as unknown as { __nsMockServers: typeof mockServers }).__nsMockServers = mockServers;
-  installMockTerminalSocket();
   const worker = setupWorker(...handlers);
   await worker.start({ onUnhandledRequest: 'bypass', quiet: false });
 }

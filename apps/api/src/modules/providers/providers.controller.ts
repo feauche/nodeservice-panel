@@ -84,12 +84,6 @@ export class ProvidersController {
     return this.providers.refreshIcon(id);
   }
 
-  @Get(':id/servers')
-  @ApiOperation({ summary: 'Серверы провайдера (id и имя)' })
-  servers(@Param('id', ParseUUIDPipe) id: string): Promise<Array<{ id: string; name: string }>> {
-    return this.providers.serversOf(id);
-  }
-
   @Get(':id/icon')
   @ApiOperation({ summary: 'Иконка провайдера (картинка); 404 — не нашли' })
   async icon(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response): Promise<void> {

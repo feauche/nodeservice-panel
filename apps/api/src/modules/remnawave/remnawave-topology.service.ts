@@ -1,23 +1,12 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import {
-  blockCheckResultSchema,
-  REMNAWAVE_PROBLEM,
-  type RemnawavePathDiagnostics,
-  type RemnawaveServerReadiness,
-  type RemnawaveTopology,
-  type Server,
-} from '@nodeservice/shared';
-import { desc, eq, sql } from 'drizzle-orm';
+import { REMNAWAVE_PROBLEM, type RemnawaveTopology } from '@nodeservice/shared';
+import { desc, sql } from 'drizzle-orm';
 
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
-import { remnawaveConfigSnapshots, serverChecks } from '../../infra/db/schema/index.js';
-import { BillingService } from '../billing/billing.service.js';
-import { billingItemBelongsToServer, serverBillingAliases } from '../billing/server-billing-identity.js';
-import { ProvidersService } from '../providers/providers.service.js';
-import { ServersService } from '../servers/servers.service.js';
-import { NodeLinkService } from './node-link.service.js';
-import { REMNAWAVE_CLIENT, type RemnawaveClient, type RemnawaveTopologySource } from './remnawave-client.js';
+import { remnawaveConfigSnapshots } from '../../infra/db/schema/index.js';
+import { HostAddressesService } from './host-addresses.service.js';
+import { REMNAWAVE_CLIENT, type RemnawaveClient } from './remnawave-client.js';
 import {
   diffTopologySnapshots,
   safeTopologySnapshot,
@@ -35,10 +24,7 @@ export class RemnawaveTopologyService {
   constructor(
     private readonly store: RemnawaveSettingsStore,
     @Inject(REMNAWAVE_CLIENT) private readonly client: RemnawaveClient,
-    private readonly servers: ServersService,
-    private readonly links: NodeLinkService,
-    private readonly billing: BillingService,
-    private readonly providers: ProvidersService,
+    private readonly addresses: HostAddressesService,
     @Inject(DB) private readonly db: Db,
   ) {}
 
@@ -51,14 +37,10 @@ export class RemnawaveTopologyService {
         detail: 'Remnawave не подключена.',
       });
     const source = await this.client.readTopology(creds.domain, creds.apiKey);
-    const fleet = await this.servers.list();
-    const [linked, resolvedAddresses] = await Promise.all([
-      this.linkedServers(source, fleet),
-      this.links.resolveAddresses(topologyAddresses(source)),
-    ]);
-    const value = buildRemnawaveTopology(source, linked, resolvedAddresses);
+    const resolvedAddresses = await this.addresses.resolveAddresses(topologyAddresses(source));
+    const value = buildRemnawaveTopology(source, new Map(), resolvedAddresses);
     value.configSnapshot = await this.captureConfigSnapshot(value);
-    await this.addRuntime(value, fleet);
+    addRuntime(value);
     this.cache = { at: Date.now(), value };
     return value;
   }
@@ -130,348 +112,33 @@ export class RemnawaveTopologyService {
   clear(): void {
     this.cache = null;
   }
+}
 
-  private async linkedServers(
-    source: RemnawaveTopologySource,
-    fleet: Server[],
-  ): Promise<Map<string, readonly string[]>> {
-    const nodes = source.nodes.map((node) => ({
-      uuid: typeof node.uuid === 'string' ? node.uuid : '',
-      name: typeof node.name === 'string' ? node.name : '',
-      address: typeof node.address === 'string' ? node.address : '',
-    }));
-    const links = await this.links.resolve(fleet, nodes);
-    return new Map(nodes.map((node) => [node.uuid, links.serverIdsOf(node.uuid)]));
-  }
-
-  private async addRuntime(topology: RemnawaveTopology, fleet: Server[]): Promise<void> {
-    const [checks, billing, providers] = await Promise.all([
-      this.db
-        .select()
-        .from(serverChecks)
-        .where(eq(serverChecks.check, 'russia_access'))
-        .orderBy(desc(serverChecks.startedAt)),
-      this.billing.list(false).catch(() => ({ items: [] })),
-      this.providers.list().catch(() => []),
-    ]);
-    const serverById = new Map(fleet.map((server) => [server.id, server]));
-    const serverByName = new Map(fleet.map((server) => [server.name, server]));
-    const providerById = new Map(providers.map((provider) => [provider.id, provider.name]));
-    const checksByServer = new Map<string, typeof checks>();
-    for (const check of checks) {
-      const rows = checksByServer.get(check.serverId) ?? [];
-      if (rows.length < 48) rows.push(check);
-      checksByServer.set(check.serverId, rows);
+/** Состояние звеньев пути по данным Remnawave: входная и выходная ноды на связи или нет. */
+function addRuntime(topology: RemnawaveTopology): void {
+  const nodeById = new Map(topology.nodes.map((node) => [node.id, node]));
+  for (const path of topology.paths) {
+    const entry = path.entryNodeUuid ? nodeById.get(path.entryNodeUuid) : undefined;
+    const exit = path.exitNodeUuid ? nodeById.get(path.exitNodeUuid) : undefined;
+    for (const segment of path.segments) {
+      if (segment.kind === 'inbound_entry' && entry)
+        segment.runtime = {
+          status: entry.status,
+          checkedAt: topology.generatedAt,
+          source: 'remnawave',
+          label: 'Входная нода',
+          detail: entry.connected ? 'Remnawave видит ноду на связи.' : 'Remnawave не видит ноду на связи.',
+        };
+      else if (segment.kind === 'outbound_exit' && exit)
+        segment.runtime = {
+          status: exit.status,
+          checkedAt: topology.generatedAt,
+          source: 'remnawave',
+          label: 'Выходная нода',
+          detail: exit.connected
+            ? `На связи · ${exit.usersOnline ?? 0} онлайн`
+            : 'Remnawave не видит ноду на связи.',
+        };
     }
-    const checkByServer = new Map(
-      [...checksByServer.entries()].flatMap(([serverId, rows]) =>
-        rows[0] ? [[serverId, rows[0]] as const] : [],
-      ),
-    );
-    const nodeById = new Map(topology.nodes.map((node) => [node.id, node]));
-    const routeById = new Map(topology.routes.map((route) => [route.id, route]));
-
-    const component = (server: Server | undefined, key: 'remnanode' | 'selfsteal' | 'psiphon') =>
-      server?.inventory?.components?.find((item) => item.key === key);
-    const componentStatus = (item: ReturnType<typeof component>) =>
-      !item
-        ? ('unknown' as const)
-        : !item.installed
-          ? ('error' as const)
-          : item.running === false
-            ? ('warning' as const)
-            : ('ok' as const);
-    const checkResult = (serverId: string | undefined) => {
-      const row = serverId ? checkByServer.get(serverId) : undefined;
-      if (!row?.output) return null;
-      try {
-        const parsed = blockCheckResultSchema.safeParse(JSON.parse(row.output));
-        return parsed.success ? { row, result: parsed.data } : null;
-      } catch {
-        return null;
-      }
-    };
-    const vpnStatus = (verdict: string | undefined) =>
-      verdict === 'ok'
-        ? ('ok' as const)
-        : verdict === 'mixed'
-          ? ('warning' as const)
-          : verdict === 'regional_block' || verdict === 'failed_everywhere'
-            ? ('error' as const)
-            : ('unknown' as const);
-    const probeNetwork = (server: Server | undefined) => {
-      const tags = new Set(server?.tags.map((tag) => tag.toLowerCase()) ?? []);
-      const mobile = [...tags].some((tag) => /^(?:lte|mobile|cellular|мобильн)/u.test(tag));
-      const residential = [...tags].some((tag) => /^(?:home|residential|домашн)/u.test(tag));
-      const datacenter = [...tags].some((tag) => /^(?:dc|vps|datacenter|датацентр)/u.test(tag));
-      const asnTag = [...tags].find((tag) => /^asn?\d{2,10}$/i.test(tag));
-      return {
-        networkType: mobile
-          ? ('mobile' as const)
-          : residential
-            ? ('residential' as const)
-            : datacenter || server?.providerId
-              ? ('datacenter' as const)
-              : ('unknown' as const),
-        provider: server?.providerId ? (providerById.get(server.providerId) ?? null) : null,
-        asn: asnTag ? `AS${asnTag.replace(/^asn?/i, '')}` : null,
-      };
-    };
-    const diagnostics = (serverId: string | undefined): RemnawavePathDiagnostics | null => {
-      if (!serverId) return null;
-      const samples = (checksByServer.get(serverId) ?? []).flatMap((row) => {
-        const measured = checkResult(row.serverId);
-        let result = measured?.row.id === row.id ? measured.result : null;
-        if (!result && row.output) {
-          try {
-            const parsed = blockCheckResultSchema.safeParse(JSON.parse(row.output));
-            result = parsed.success ? parsed.data : null;
-          } catch {
-            result = null;
-          }
-        }
-        if (!result) return [];
-        const observations = [...(result.vpnProbes ?? []), ...(result.vpnForeign ?? [])].map((probe) => ({
-          ...probeNetwork(serverByName.get(probe.from)),
-          from: probe.from,
-          country: probe.country,
-          ok: probe.ok,
-          latencyMs: probe.latencyMs,
-          stage: probe.stage,
-          detail: probe.detail,
-        }));
-        const passed = observations.filter((probe) => probe.ok).length;
-        return [
-          {
-            checkedAt: (row.finishedAt ?? row.startedAt).toISOString(),
-            status: vpnStatus(result.vpnVerdict),
-            verdict: result.vpnVerdict ?? ('unavailable' as const),
-            passed,
-            total: observations.length,
-            observations,
-          },
-        ];
-      });
-      const availability = (since: number) => {
-        const recent = samples.filter((sample) => Date.parse(sample.checkedAt) >= since && sample.total > 0);
-        const total = recent.reduce((sum, sample) => sum + sample.total, 0);
-        const passed = recent.reduce((sum, sample) => sum + sample.passed, 0);
-        return total ? Math.round((passed / total) * 10_000) / 100 : null;
-      };
-      const lastFailure = samples.find((sample) => sample.total > sample.passed);
-      return {
-        availability24h: availability(Date.now() - 24 * 60 * 60_000),
-        availability7d: availability(Date.now() - 7 * 24 * 60 * 60_000),
-        lastFailureAt: lastFailure?.checkedAt ?? null,
-        samples,
-        note: 'ТСПУ подтверждается только повторяемым расхождением минимум в двух независимых домашних или мобильных сетях РФ при успешном зарубежном контроле.',
-      };
-    };
-
-    for (const path of topology.paths) {
-      const entry = path.entryNodeUuid ? nodeById.get(path.entryNodeUuid) : undefined;
-      const exit = path.exitNodeUuid ? nodeById.get(path.exitNodeUuid) : undefined;
-      const serverId = entry?.serverIds[0];
-      const server = serverId ? serverById.get(serverId) : undefined;
-      const route = path.routeId ? routeById.get(path.routeId) : undefined;
-      const measured = checkResult(serverId);
-      path.diagnostics = diagnostics(serverId);
-      for (const segment of path.segments) {
-        if (segment.kind === 'host_inbound') {
-          const item = component(server, 'selfsteal');
-          if (item && server?.inventory)
-            segment.runtime = {
-              status: componentStatus(item),
-              checkedAt: server.inventory.at,
-              source: 'inventory',
-              label: 'Selfsteal',
-              detail: item.detail,
-            };
-        } else if (segment.kind === 'inbound_entry' && entry) {
-          const item = component(server, 'remnanode');
-          segment.runtime = {
-            status: item ? componentStatus(item) : entry.status,
-            checkedAt: server?.inventory?.at ?? topology.generatedAt,
-            source: item ? 'inventory' : 'remnawave',
-            label: 'Входная нода',
-            detail:
-              item?.detail ??
-              (entry.connected ? 'Remnawave видит ноду на связи.' : 'Remnawave не видит ноду на связи.'),
-          };
-        } else if (
-          segment.kind === 'entry_outbound' &&
-          /psiphon/i.test(`${route?.targetLabel} ${route?.outboundTag}`)
-        ) {
-          const item = component(server, 'psiphon');
-          if (item && server?.inventory)
-            segment.runtime = {
-              status: componentStatus(item),
-              checkedAt: server.inventory.at,
-              source: 'inventory',
-              label: 'Psiphon',
-              detail: item.detail,
-            };
-        } else if (segment.kind === 'outbound_exit' && exit) {
-          segment.runtime = {
-            status: exit.status,
-            checkedAt: topology.generatedAt,
-            source: 'remnawave',
-            label: 'Выходная нода',
-            detail: exit.connected
-              ? `На связи · ${exit.usersOnline ?? 0} онлайн`
-              : 'Remnawave не видит ноду на связи.',
-          };
-        } else if (segment.kind === 'exit_internet' && measured) {
-          const result = measured.result;
-          const count = [...(result.vpnProbes ?? []), ...(result.vpnForeign ?? [])];
-          segment.runtime = {
-            status: vpnStatus(result.vpnVerdict),
-            checkedAt: measured.row.finishedAt?.toISOString() ?? measured.row.startedAt.toISOString(),
-            source: 'vpn_probe',
-            label: 'Настоящий VPN-трафик',
-            detail:
-              result.vpnUnchecked ??
-              (count.length
-                ? `${count.filter((probe) => probe.ok).length} из ${count.length} проб прошли.`
-                : 'Проба ещё не выполнялась.'),
-          };
-        }
-      }
-    }
-
-    const rank = { ok: 0, unknown: 1, warning: 2, error: 3 } as const;
-    topology.readiness = fleet.map((server): RemnawaveServerReadiness => {
-      const linkedNodes = topology.nodes.filter((node) => node.serverIds.includes(server.id));
-      const paths = topology.paths.filter(
-        (path) => path.entryNodeUuid && linkedNodes.some((node) => node.id === path.entryNodeUuid),
-      );
-      const inventoryAt = server.inventory?.at ?? null;
-      const item = (
-        key: RemnawaveServerReadiness['items'][number]['key'],
-        label: string,
-        status: RemnawaveServerReadiness['status'],
-        detail: string,
-        checkedAt: string | null = null,
-      ) => ({ key, label, status, detail, checkedAt });
-      const billingItems = billing.items.filter((payment) =>
-        billingItemBelongsToServer({
-          ...payment,
-          provider: null,
-          serverId: server.id,
-          aliases: serverBillingAliases(server),
-        }),
-      );
-      const due = billingItems.find(
-        (payment) => payment.dueState === 'overdue' || payment.dueState === 'today',
-      );
-      const remnanode = component(server, 'remnanode');
-      const psiphon = component(server, 'psiphon');
-      const selfsteal = component(server, 'selfsteal');
-      const items = [
-        item(
-          'agent',
-          'Агент',
-          server.agentStatus === 'online' ? 'ok' : 'error',
-          server.agentStatus === 'online'
-            ? `На связи · ${server.agentVersion ?? 'версия не указана'}`
-            : 'Агент не на связи.',
-          server.agentLastSeenAt,
-        ),
-        item(
-          'remnanode',
-          'Remnanode',
-          componentStatus(remnanode),
-          remnanode?.detail ?? 'Нет свежего снимка установки.',
-          inventoryAt,
-        ),
-        item(
-          'psiphon',
-          'Psiphon',
-          componentStatus(psiphon),
-          psiphon?.detail ?? 'Нет свежего снимка установки.',
-          inventoryAt,
-        ),
-        item(
-          'selfsteal',
-          'Selfsteal',
-          componentStatus(selfsteal),
-          selfsteal?.detail ?? 'Нет свежего снимка установки.',
-          inventoryAt,
-        ),
-        item(
-          'ports',
-          'Порты',
-          server.drift.some((drift) => drift.kind === 'port_not_listening')
-            ? 'error'
-            : server.inventory
-              ? 'ok'
-              : 'unknown',
-          server.drift.find((drift) => drift.kind === 'port_not_listening')?.detail ??
-            (server.inventory ? 'Ожидаемые порты слушаются.' : 'Инвентарь ещё не собран.'),
-          inventoryAt,
-        ),
-        item(
-          'profile',
-          'Профиль и хост',
-          paths.length ? 'ok' : 'warning',
-          paths.length
-            ? `Найдено путей: ${paths.length}.`
-            : 'Для сервера не найден клиентский путь Remnawave.',
-          topology.generatedAt,
-        ),
-        item(
-          'entry',
-          'Входная нода',
-          linkedNodes.some((node) => node.status === 'ok') ? 'ok' : linkedNodes.length ? 'error' : 'unknown',
-          linkedNodes.length
-            ? linkedNodes.map((node) => node.name).join(', ')
-            : 'Нода Remnawave не связана с сервером.',
-          topology.generatedAt,
-        ),
-        item(
-          'exit',
-          'Выход',
-          paths.some((path) => path.destination !== 'unknown' && path.status !== 'error')
-            ? 'ok'
-            : paths.length
-              ? 'error'
-              : 'unknown',
-          paths.length
-            ? `${paths.filter((path) => path.destination !== 'unknown').length} маршрутов с понятным назначением.`
-            : 'Маршрут не найден.',
-          topology.generatedAt,
-        ),
-        item(
-          'vpn',
-          'Настоящий VPN',
-          paths.some((path) => path.diagnostics?.samples[0]?.status === 'error')
-            ? 'error'
-            : paths.some((path) => path.diagnostics?.samples[0]?.status === 'warning')
-              ? 'warning'
-              : paths.some((path) => path.diagnostics?.samples[0]?.status === 'ok')
-                ? 'ok'
-                : 'unknown',
-          paths.some((path) => path.diagnostics?.samples[0])
-            ? `Последняя проба: ${paths.find((path) => path.diagnostics?.samples[0])?.diagnostics?.samples[0]?.passed ?? 0} из ${paths.find((path) => path.diagnostics?.samples[0])?.diagnostics?.samples[0]?.total ?? 0} точек.`
-            : 'Настоящая VPN-проба ещё не выполнялась.',
-          paths.find((path) => path.diagnostics?.samples[0])?.diagnostics?.samples[0]?.checkedAt ?? null,
-        ),
-        item(
-          'billing',
-          'Оплата',
-          due ? 'error' : billingItems.length ? 'ok' : 'unknown',
-          due
-            ? `${due.title}: срок оплаты прошёл.`
-            : billingItems.length
-              ? `Активных оплат: ${billingItems.length}.`
-              : 'Связанная оплата не найдена.',
-        ),
-      ];
-      const status = items.reduce<RemnawaveServerReadiness['status']>(
-        (worst, current) => (rank[current.status] > rank[worst] ? current.status : worst),
-        'ok',
-      );
-      return { serverId: server.id, serverName: server.name, status, items };
-    });
   }
 }

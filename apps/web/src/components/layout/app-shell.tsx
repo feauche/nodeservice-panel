@@ -547,8 +547,8 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
           )}
           <div className="animate-fade">{children}</div>
         </main>
-        {/* Запрос пароля, веб-терминал и окно сервера — не здесь, а в корневом маршруте (SessionHosts):
-            этот каркас каждый раздел рисует заново, и переход по меню обрывал бы SSH-сессию. */}
+        {/* Запрос пароля — не здесь, а в корневом маршруте (SessionHosts): этот каркас каждый раздел
+            рисует заново, и переход по меню пересоздавал бы окно. */}
       </div>
     </div>
   );

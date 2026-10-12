@@ -1,13 +1,11 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
-  type AssistantActivity,
   type AssistantChatResponse,
   type AssistantCitation,
   type AssistantMessage,
-  type AssistantProposal,
   type AssistantStatus,
-  type ReachabilityResult,
+  brandNamePlain,
 } from '@nodeservice/shared';
 import { problem } from '../../common/filters/problem-details.filter.js';
 import type { Env } from '../../config/env.schema.js';
@@ -16,32 +14,21 @@ import { AuditRepository } from '../audit/audit.repository.js';
 import { AuditService } from '../audit/audit.service.js';
 import { BackupsService } from '../backups/backups.service.js';
 import { BillingService } from '../billing/billing.service.js';
-import { CapacityService } from '../capacity/capacity.service.js';
-import { EventsService } from '../events/events.service.js';
-import { FleetStatsService } from '../fleet-stats/fleet-stats.service.js';
-import { IncidentMetricsService } from '../incidents/incident-metrics.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
-import { resolveUpstreamTarget } from '../incidents/upstream-target.js';
+import { IntegrationsService } from '../integrations/integrations.service.js';
 import { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
 import { KnowledgeService } from '../knowledge/knowledge.service.js';
-import { MaintenanceService } from '../maintenance/maintenance.service.js';
-import { VmReaderService } from '../metrics/vm-reader.service.js';
 import { NodeMetricsService } from '../node-metrics/node-metrics.controller.js';
-import { ProvidersService } from '../providers/providers.service.js';
-import { NodeLinkService } from '../remnawave/node-link.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { RemnawaveTopologyService } from '../remnawave/remnawave-topology.service.js';
-import { ServerChecksService } from '../server-checks/server-checks.service.js';
-import { ServersService } from '../servers/servers.service.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
+import { SettingsService } from '../settings/settings.service.js';
 import { buildSystem } from './assistant.prompt.js';
 import { AssistantRepository } from './assistant.repository.js';
-import { PASSIVE_ASSISTANT_TOOLS, runPassiveTool, type ToolDeps } from './assistant.tools.js';
+import { ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
-import { ChangesService } from './changes/changes.service.js';
-import { mergeReach, sameReachTarget } from './fleet-probe.logic.js';
-import { FleetProbeService } from './fleet-probe.service.js';
 import {
   describeLlmError,
   LLM_PROVIDER,
@@ -53,26 +40,23 @@ import {
 } from './llm.provider.js';
 
 const MAX_TOOL_ROUNDS = 8;
-/** Сколько карточек изменений Ассистент может выдать за один ответ. */
-const MAX_CHANGE_CARDS = 3;
 /** Сколько раз за ход можно «подтолкнуть» модель, если она ответила пустотой или пообещала вызов без вызова. */
 const MAX_NUDGES = 2;
 const PROMISE_RE =
   /(?:сейчас|сразу|теперь|далее|щас|давайте)\s+(?:вызову|вызываю|проверю|посмотрю|запрошу|получу|запущу|выясню|уточню)|(?:вызову|вызываю)\s+(?:инструмент|функцию)|нужно\s+(?:было\s+)?вызвать/i;
 const NUDGE_PROMISE =
   'Вы написали, что вызовете инструмент, но не вызвали. Вызовите нужный инструмент прямо сейчас, а затем дайте ответ по его результату.';
-/** «Добавил», «сохранил статью» без единого вызова инструмента: на деле ничего не записано. */
+/** «Добавил», «сохранил статью», а инструмент записи в этом ходе не вызывался: на деле ничего не записано. */
 const CLAIM_RE =
   /(?:^|[.!?\n]\s*)(?:я\s+)?(?:[А-Яа-яЁё]+\s+){0,4}(?:добавил|сохранил|создал|записал)(?![а-яё])[^."\n{}:]{0,80}(?:глоссар|стать|баз[а-я]{1,2} знаний|«?пояснени)/i;
 const NUDGE_CLAIM =
-  'Запись в базу знаний в этом режиме запрещена. Ничего не сохранено. Исправьте утверждение о сохранении и дайте объяснение без обещания записи.';
-const CLAIM_WARNING =
-  'Внимание: Ассистент работает только с сохранёнными данными. В базе знаний ничего не сохранено.';
+  'Вы написали, что сохранили в базу знаний, но инструмент записи не вызывали: ничего не сохранено. Если запись нужна, вызовите save_kb_article или add_glossary_terms; иначе исправьте утверждение.';
+const CLAIM_WARNING = 'Внимание: в базе знаний ничего не сохранено — Ассистент не вызывал запись.';
 const NUDGE_EMPTY = 'Ответ пустой. Вызовите нужный инструмент или ответьте текстом по уже имеющимся данным.';
 const NUDGE_FINAL =
   'Дайте итоговый ответ администратору по уже полученным данным. Инструменты больше недоступны, ничего не обещайте вызвать.';
 
-/** Ассистент: цикл tool-use, предложения действий (human-in-the-loop), беседы в БД. */
+/** Ассистент: цикл tool-use по данным панели, запись только в базу знаний, беседы в БД. */
 @Injectable()
 export class AssistantService {
   private readonly log = new Logger(AssistantService.name);
@@ -80,31 +64,22 @@ export class AssistantService {
   constructor(
     private readonly settings: AssistantSettingsStore,
     private readonly repo: AssistantRepository,
-    private readonly servers: ServersService,
     private readonly incidents: IncidentsService,
-    private readonly metrics: VmReaderService,
-    private readonly incidentMetrics: IncidentMetricsService,
-    private readonly providers: ProvidersService,
-    private readonly maintenance: MaintenanceService,
-    private readonly checks: ServerChecksService,
     private readonly billing: BillingService,
-    private readonly fleetStats: FleetStatsService,
-    private readonly capacity: CapacityService,
     private readonly backups: BackupsService,
-    private readonly probe: FleetProbeService,
     private readonly kb: KnowledgeRepository,
     private readonly knowledge: KnowledgeService,
     private readonly auditRepo: AuditRepository,
     private readonly audit: AuditService,
     private readonly monitoring: MonitoringStore,
     private readonly incidentSettings: IncidentsSettingsStore,
-    private readonly changes: ChangesService,
     private readonly remnawave: RemnawaveService,
     private readonly nodeMetrics: NodeMetricsService,
     private readonly remnawaveTopology: RemnawaveTopologyService,
-    private readonly events: EventsService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
-    private readonly links: NodeLinkService,
+    private readonly integrations: IntegrationsService,
+    private readonly panelSettings: SettingsService,
+    private readonly notifications: NotificationsService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -118,9 +93,10 @@ export class AssistantService {
       role: row.role as 'user' | 'assistant',
       content: row.content,
       citations: (row.citations as AssistantCitation[]) ?? [],
-      proposals: (row.proposals as AssistantProposal[]) ?? [],
-      reachability: (row.reachability as ReachabilityResult[]) ?? [],
-      activity: (row.activity as AssistantActivity[]) ?? [],
+      // Карточки действий и проверок по SSH из старых бесед больше не показываются: текст остаётся.
+      proposals: [],
+      reachability: [],
+      activity: [],
       createdAt: row.createdAt.toISOString(),
     };
   }
@@ -158,13 +134,40 @@ export class AssistantService {
       throw problem(HttpStatus.CONFLICT, {
         detail: 'Ассистент выключен: задай провайдера, ключ и модель в Настройки → Ассистент.',
       });
-    const { apiKey, model, level, permissions } = cfg;
+    const { apiKey, model, level } = cfg;
 
     const existing = conversationId ? await this.repo.findConversation(conversationId) : undefined;
     const conv = existing ?? (await this.repo.createConversation(message.slice(0, 60)));
-    // Правила парка пишет владелец; ошибка чтения не должна ронять чат.
-    const fleetRules = await this.knowledge.fleetRules().catch(() => null);
-    const system = buildSystem(level, permissions, { fleetRules, panelUrl: this.config.get('PUBLIC_URL') });
+    // Что Ассистент знает о панели помимо инструментов. Ошибка любого чтения не должна ронять чат.
+    const [fleetRules, appearance, zone, integrations, sites] = await Promise.all([
+      this.knowledge.fleetRules().catch(() => null),
+      this.panelSettings.getAppearance().catch(() => null),
+      this.notifications.timeZone().catch(() => null),
+      this.integrations
+        .list()
+        .then((r) => r.items)
+        .catch(() => undefined),
+      this.panelSettings
+        .getCustomSites()
+        .then((r) => r.items)
+        .catch(() => undefined),
+    ]);
+    const system = buildSystem(level, {
+      fleetRules,
+      panelUrl: this.config.get('PUBLIC_URL'),
+      brandName: appearance ? brandNamePlain(appearance.brandName) : null,
+      timeZone: appearance?.timeZone ?? zone,
+      ...(integrations
+        ? {
+            integrations: integrations.map((i) => ({
+              provider: i.provider,
+              connected: i.connected,
+              balance: i.balance,
+            })),
+          }
+        : {}),
+      ...(sites ? { customSites: sites.map((site) => ({ name: site.name })) } : {}),
+    });
 
     await this.repo.addMessage({ conversationId: conv.id, role: 'user', content: message });
 
@@ -177,19 +180,9 @@ export class AssistantService {
         content: [{ type: 'text', text: m.content }],
       }));
 
-    let changeCards = 0;
     const deps: ToolDeps = {
-      servers: this.servers,
       incidents: this.incidents,
-      metrics: this.metrics,
-      incidentMetrics: this.incidentMetrics,
-      providers: this.providers,
-      maintenance: this.maintenance,
-      checks: this.checks,
-      probe: this.probe,
       billing: this.billing,
-      fleetStats: this.fleetStats,
-      capacity: this.capacity,
       remnawaveProfiles: this.remnawave,
       remnawaveTopology: this.remnawaveTopology,
       kb: this.kb,
@@ -200,11 +193,6 @@ export class AssistantService {
       incidentSettings: this.incidentSettings,
       assistant: { level },
       lastBackup: () => this.backups.lastBackup(),
-      permissions,
-      progress: (a) =>
-        this.events.emit({ type: 'assistant', data: { conversationId: conv.id, activity: a } }),
-      upstreamTarget: (server, all) =>
-        resolveUpstreamTarget(server, all, this.remnawave, this.links).catch(() => null),
       nodeMetrics: async (minutes, uuid) => {
         const data = await this.nodeMetrics.localHistory(minutes);
         const status = await this.remnawave.status();
@@ -216,16 +204,6 @@ export class AssistantService {
         };
       },
       remnawave: this.remnawave,
-      changes: {
-        propose: async (operation, args, reason) => {
-          changeCards += 1;
-          if (changeCards > MAX_CHANGE_CARDS)
-            return {
-              problem: `В одном ответе не больше ${MAX_CHANGE_CARDS} карточек изменений: остальные предложите следующим сообщением.`,
-            };
-          return this.changes.propose({ operation, args, reason, conversationId: conv.id });
-        },
-      },
       saveArticle: async (a) => {
         const doc = await this.knowledge.create(
           { title: a.title, content: a.content, tags: a.tags, source: 'ai' },
@@ -236,14 +214,11 @@ export class AssistantService {
       addGlossary: (terms) => this.knowledge.appendGlossary(terms, { auditSource: 'auto' }),
     };
     const citations: AssistantCitation[] = [];
-    const proposals: AssistantProposal[] = [];
-    const reachability: ReachabilityResult[] = [];
-    const activity: AssistantActivity[] = [];
     /** Реплики по ходу работы («Смотрю данные…»): каждая идёт отдельным сообщением. */
     const interim: string[] = [];
     let answer = '';
     let toolCalls = 0;
-    let blockedTools = false;
+    let kbWrites = 0;
     let nudges = 0;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
@@ -252,7 +227,7 @@ export class AssistantService {
         model,
         system,
         messages,
-        tools: PASSIVE_ASSISTANT_TOOLS,
+        tools: ASSISTANT_TOOLS,
       });
       const text = textOf(res.blocks);
       const uses = res.blocks.filter(
@@ -261,7 +236,7 @@ export class AssistantService {
       if (uses.length === 0) {
         // Пустой ответ или обещание вызвать инструмент без вызова: один-два толчка вместо «Не удалось сформировать ответ».
         const promised = PROMISE_RE.test(text);
-        const claimed = CLAIM_RE.test(text);
+        const claimed = kbWrites === 0 && CLAIM_RE.test(text);
         if (nudges < MAX_NUDGES && round < MAX_TOOL_ROUNDS - 1 && (!text || promised || claimed)) {
           nudges += 1;
           if (text) messages.push({ role: 'assistant', content: res.blocks });
@@ -278,19 +253,9 @@ export class AssistantService {
       for (const use of uses) {
         toolCalls += 1;
         try {
-          if (!PASSIVE_ASSISTANT_TOOLS.some((tool) => tool.name === use.name)) blockedTools = true;
-          const outcome = await runPassiveTool(use.name, use.input, deps);
+          const outcome = await runTool(use.name, use.input, deps);
+          if (outcome.kbWritten) kbWrites += 1;
           citations.push(...outcome.citations);
-          activity.push(...(outcome.activity ?? []));
-          // Повторные проверки той же цели (с другого сервера, по другому порту) — в одну таблицу:
-          // иначе под ответом «проверил с шести серверов» осталась бы только последняя проверка.
-          for (const r of outcome.reachability ?? []) {
-            const at = reachability.findIndex((x) => sameReachTarget(x, r));
-            if (at >= 0) reachability[at] = mergeReach(reachability[at] as ReachabilityResult, r);
-            else reachability.push(r);
-          }
-          for (const p of outcome.proposals)
-            if (!proposals.some((x) => proposalKey(x) === proposalKey(p))) proposals.push(p);
           results.push({ type: 'tool_result', tool_use_id: use.id, content: outcome.content });
         } catch (err) {
           // Падение одного инструмента не должно ронять весь чат: логируем и даём модели
@@ -316,11 +281,8 @@ export class AssistantService {
     }
 
     let finalText = answer || 'Не удалось получить ответ. Повторите вопрос.';
-    // Модель заявила «сохранил», а инструменты так и не вызвала: честно говорим, что записи нет.
-    if (CLAIM_RE.test(finalText)) finalText = `${finalText}\n\n${CLAIM_WARNING}`;
-    if (blockedTools)
-      finalText +=
-        '\n\nАссистент не выполнял проверки или изменения: этот запрос недоступен в режиме чтения.';
+    // Модель заявила «сохранил», а инструмент записи так и не вызвала: честно говорим, что записи нет.
+    if (kbWrites === 0 && CLAIM_RE.test(finalText)) finalText = `${finalText}\n\n${CLAIM_WARNING}`;
     // Ответ можно разбить на несколько сообщений строкой «===»: вывод, затем инструкция, затем команды.
     const parts = finalText
       .split(/\n[ \t]*={3,}[ \t]*\n/)
@@ -337,9 +299,6 @@ export class AssistantService {
           content,
           // Вложения относятся к итогу, а не к промежуточным репликам.
           citations: last ? dedupe(citations) : [],
-          proposals: last ? proposals : [],
-          reachability: last ? reachability : [],
-          activity: last ? activity : [],
         }),
       );
     }
@@ -353,16 +312,13 @@ export class AssistantService {
         model,
         toolCalls,
         messages: texts.length,
-        proposals: proposals.length,
+        kbWrites,
       },
     });
     const out = saved.map((r) => this.toMessage(r));
     return { conversationId: conv.id, message: out[out.length - 1] as AssistantMessage, messages: out };
   }
 }
-
-const proposalKey = (p: AssistantProposal): string =>
-  p.kind === 'autofix' ? `autofix:${p.incidentId}:${p.preset}` : `change:${p.changeId}`;
 
 const textOf = (blocks: LlmBlock[]): string =>
   blocks

@@ -1,17 +1,13 @@
 import {
   ATTEMPT_STATUS_LABELS,
   actionMeta,
-  type Incident,
   type IncidentAttempt,
   type IncidentEvent,
 } from '@nodeservice/shared';
-import { CheckIcon, ChevronDownIcon, CopyIcon, Loader2Icon, TerminalIcon, WrenchIcon } from 'lucide-react';
+import { ChevronDownIcon, Loader2Icon } from 'lucide-react';
 import { useState } from 'react';
 
 import { formatWhen } from '@/features/audit/audit-format';
-import { useServers } from '@/features/servers/servers-api';
-import { useTerminalStore } from '@/features/terminal/terminal-store';
-import { toast } from '@/lib/notify';
 import { useNow } from '@/lib/use-now';
 import { capFirst, cn } from '@/lib/utils';
 import { LevelChip } from './level-chip';
@@ -240,114 +236,6 @@ function AttemptRow({
             )}
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-/** Предложенный следующий шаг: T2/T1 — подтверждение без пароля; T3 — команда для терминала. */
-export function ProposalBlock({
-  incident,
-  onRun,
-  busy,
-}: {
-  incident: Incident;
-  onRun: () => void;
-  busy: boolean;
-}) {
-  const proposal = incident.proposal;
-  const servers = useServers();
-  const openTerminal = useTerminalStore((st) => st.open);
-  if (!proposal) return null;
-  const action = actionMeta(proposal.action);
-  const server = servers.data?.items.find((s) => s.id === incident.serverId);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(action.summary);
-      toast.success('Команда скопирована.');
-    } catch {
-      toast.error('Не удалось скопировать — выделите команду вручную.');
-    }
-  };
-  return (
-    <div
-      data-testid="proposal-block"
-      className={cn(
-        'rounded-[12px] border p-3.5',
-        proposal.level === 'T3'
-          ? 'border-crit/30 bg-surface'
-          : 'border-warn/40 bg-[linear-gradient(180deg,var(--ns-warn-soft),transparent_70%)]',
-      )}
-    >
-      <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold">
-        <WrenchIcon className="size-4 text-warn" aria-hidden="true" />
-        {proposal.level === 'T3'
-          ? 'Следующий шаг только вручную'
-          : proposal.autoAfterPause
-            ? 'Следующий шаг панель запустит сама после паузы'
-            : 'Следующий шаг требует подтверждения'}
-        <LevelChip level={proposal.level} />
-      </div>
-      <p className="mt-1.5 text-[13px] leading-normal">
-        <b>{action.title}</b>
-        {action.consequence && <span className="text-text-2"> — {action.consequence}</span>}. Причина:{' '}
-        {proposal.reason}.
-      </p>
-      {proposal.level !== 'T3' && (
-        <ul className="mt-2 flex flex-col gap-1 text-[12px] text-text-2">
-          <li>Перед запуском проверим: {action.preconditions.join(', ')}.</li>
-          <li>После: {action.postcheck}.</li>
-          <li>Откат: {action.rollbackNote ?? 'нет'}.</li>
-        </ul>
-      )}
-      <div className="mt-2.5 rounded-[9px] bg-bg-2 px-3 py-2 font-mono text-[12px] break-all text-text-2">
-        {action.summary}
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {proposal.level === 'T3' ? (
-          <>
-            <button
-              type="button"
-              onClick={() => void copy()}
-              className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 hover:bg-surface-3 hover:text-foreground"
-            >
-              <CopyIcon className="size-3.5" aria-hidden="true" />
-              Копировать команду
-            </button>
-            {server && (
-              <button
-                type="button"
-                onClick={() =>
-                  openTerminal({
-                    id: server.id,
-                    name: server.name,
-                    host: server.host,
-                    port: server.port,
-                    sshUser: server.sshUser,
-                  })
-                }
-                className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] bg-cta px-3 text-[12.5px] font-semibold text-cta-foreground hover:bg-(--ns-cta-hover)"
-              >
-                <TerminalIcon className="size-3.5" aria-hidden="true" />
-                Открыть терминал
-              </button>
-            )}
-          </>
-        ) : (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onRun}
-            className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] bg-cta px-3.5 text-[12.5px] font-semibold text-cta-foreground hover:bg-(--ns-cta-hover) disabled:opacity-50"
-          >
-            {busy ? (
-              <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />
-            ) : (
-              <CheckIcon className="size-3.5" aria-hidden="true" />
-            )}
-            {proposal.autoAfterPause ? 'Запустить сейчас' : 'Подтвердить'}: {action.title.toLowerCase()}
-          </button>
-        )}
       </div>
     </div>
   );

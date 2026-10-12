@@ -2,75 +2,39 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module.js';
 import { BackupsModule } from '../backups/backups.module.js';
 import { BillingModule } from '../billing/billing.module.js';
-import { CapacityModule } from '../capacity/capacity.module.js';
-import { FleetStatsModule } from '../fleet-stats/fleet-stats.module.js';
 import { IncidentsModule } from '../incidents/incidents.module.js';
+import { IntegrationConnectionsModule } from '../integrations/integration-connections.module.js';
 import { KnowledgeModule } from '../knowledge/knowledge.module.js';
-import { MaintenanceModule } from '../maintenance/maintenance.module.js';
-import { MetricsModule } from '../metrics/metrics.module.js';
 import { NodeMetricsModule } from '../node-metrics/node-metrics.module.js';
-import { ProvidersModule } from '../providers/providers.module.js';
 import { RemnawaveModule } from '../remnawave/remnawave.module.js';
-import { ServerChecksModule } from '../server-checks/server-checks.module.js';
-import { ServersModule } from '../servers/servers.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { AssistantController } from './assistant.controller.js';
 import { AssistantRepository } from './assistant.repository.js';
 import { AssistantService } from './assistant.service.js';
-import { ReadDepsService } from './assistant-read-deps.service.js';
 import { AssistantSettingsModule } from './assistant-settings.module.js';
-import { ChangesController } from './changes/changes.controller.js';
-import { ChangesRepository } from './changes/changes.repository.js';
-import { ChangesService } from './changes/changes.service.js';
-import { CheckExplainController } from './check-explain.controller.js';
-import { CheckExplainService } from './check-explain.service.js';
-import { FleetInventoryController } from './fleet-inventory.controller.js';
-import { FleetInventoryService } from './fleet-inventory.service.js';
-import { FleetProbeService } from './fleet-probe.service.js';
 import { KbReviewService } from './kb-review.service.js';
 import { LLM_PROVIDER } from './llm.provider.js';
-import { TerminalHintController } from './terminal-hint.controller.js';
-import { TerminalHintService } from './terminal-hint.service.js';
 import { ZvenoProvider } from './zveno.provider.js';
 
-/** Этап 9: Ассистент. Провайдер LLM за токеном — в тестах подменяется фейком. */
+/** Ассистент: читает панель и Remnawave, пишет только в базу знаний. Провайдер LLM за токеном — в тестах подменяется фейком. */
 @Module({
   imports: [
     NodeMetricsModule,
-    ServersModule,
     IncidentsModule,
+    IntegrationConnectionsModule,
     KnowledgeModule,
-    MetricsModule,
-    MaintenanceModule,
-    ServerChecksModule,
     BillingModule,
-    FleetStatsModule,
-    CapacityModule,
     BackupsModule,
-    ProvidersModule,
     RemnawaveModule,
     AuditModule,
     AssistantSettingsModule,
     SettingsModule,
   ],
-  controllers: [
-    AssistantController,
-    TerminalHintController,
-    CheckExplainController,
-    FleetInventoryController,
-    ChangesController,
-  ],
+  controllers: [AssistantController],
   providers: [
     AssistantService,
-    FleetProbeService,
-    FleetInventoryService,
-    ReadDepsService,
-    TerminalHintService,
-    CheckExplainService,
     AssistantRepository,
     KbReviewService,
-    ChangesRepository,
-    ChangesService,
     { provide: LLM_PROVIDER, useClass: ZvenoProvider },
   ],
 })

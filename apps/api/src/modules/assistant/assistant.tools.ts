@@ -1,17 +1,11 @@
 import {
-  type AssistantActivity,
   type AssistantCitation,
   type AssistantProposal,
   AUDIT_CATEGORIES,
   type AuditCategory,
   type AuditResult,
-  actionMeta,
-  CHANGE_OPERATIONS,
-  INCIDENT_CHAINS,
-  type Incident,
   KB_SOURCE_LABELS,
   type KbSource,
-  type ReachabilityResult,
   SHARED_VERSION,
 } from '@nodeservice/shared';
 
@@ -21,14 +15,13 @@ import { auditBrief } from './assistant.audit-brief.js';
 import { searchPastMessages, searchWords } from './assistant.conversation-search.js';
 import { READ_TOOL_DEFS, type ReadDeps, runReadTool } from './assistant.read-tools.js';
 import type { AssistantRepository } from './assistant.repository.js';
-import type { ProposeOutcome } from './changes/changes.service.js';
 import { isGlossaryArticle } from './glossary-import.js';
 import type { LlmToolDef } from './llm.provider.js';
 
 /** Сколько последних сообщений просматриваем при поиске по прошлым беседам. */
 const PAST_SCAN = 3000;
 
-/** Определения инструментов для модели (read-only + propose_action). */
+/** Инструменты модели: чтение панели и запись в базу знаний. Ничего другого Ассистент не меняет. */
 export const ASSISTANT_TOOLS: LlmToolDef[] = [
   ...READ_TOOL_DEFS,
   {
@@ -104,7 +97,7 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   {
     name: 'save_kb_article',
     description:
-      'Создать статью в базе знаний (метка AI ставится сама). Используй в режиме «Анализ» и когда пользователь просит сохранить инструкцию. Требует разрешения kbWrite (проверь get_settings, если не уверен). Тело — в Markdown: заголовки, списки, блоки кода с языком, таблицы.',
+      'Создать статью в базе знаний (метка AI ставится сама). Используй, когда пользователь просит сохранить инструкцию, разбор или решение. Тело — в Markdown: заголовки, списки, блоки кода с языком, таблицы.',
     input_schema: {
       type: 'object',
       properties: {
@@ -142,76 +135,7 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
       required: ['terms'],
     },
   },
-  {
-    name: 'propose_action',
-    description:
-      'Предложить администратору шаг для инцидента: появится карточка с кнопкой, нажимает её администратор, вы ничего не запускаете. preset — ключ шага из цепочки правил ЭТОГО инцидента (поле chain в get_incident). T0 и T1 безопасны; T2 меняет состояние сервера, в reason объясните почему именно он; T3 (перезагрузка и подобное) карточкой не предлагается: напишите команду и последствия текстом. Название и последствия карточка берёт из реестра сама.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        incidentId: { type: 'string' },
-        preset: { type: 'string', description: 'ключ шага из chain инцидента' },
-        reason: { type: 'string', description: 'Коротко, почему именно этот шаг (до 300 знаков)' },
-      },
-      required: ['incidentId', 'preset', 'reason'],
-    },
-  },
-  {
-    name: 'propose_change',
-    description:
-      'Предложить ИЗМЕНЕНИЕ в панели: появится карточка «было → станет» с кнопкой «Применить», нажимает её администратор, ты ничего не меняешь сам. Вызывай, когда просят что-то изменить, или когда обоснованно видишь правку (например, заполнить профиль сервера по данным снимка состояния). Операции и их args: server.provider {server, provider|null} (сменить провайдера; провайдера берите из списка провайдеров, нового так не создать); server.tags {server, add?: [..], remove?: [..]}; server.notes {server, notes|null}; server.rename {server, name}; server.nodeWatch {server, mode: auto|on|off}; server.country {server, country: код страны ISO из двух букв (PL, NL) или «auto» для автоопределения по IP} (страна сервера; отвечай кодом, а не названием); server.profile {server, roles?, importance?, maintenanceWindow?, expectedContainers?, expectedPorts?} (списки заменяются целиком: передавай полный итоговый список; roles: массив из entry (принимает клиентов), exit (выпускает трафик в интернет), bridge (мост), panel (панель Remnawave), other; importance: critical|normal|low); incident.resolve {incidentId} (закрыть инцидент вручную, необратимо); autofix.pause {minutes: 0–1440} (поставить автопочинку на паузу, 0 снимает паузу); autofix.policy {kind: agent_offline|ssh_down|node_down|cpu_high|mem_high|disk_high, policy: auto|ask|watch} (режим автопочинки для вида инцидента; auto значит «панель сама делает безопасные шаги», это T2, и доступно не для каждого вида); server.check {server, check: iperf3_ru|yabs} (тяжёлая проверка сервера — скорость до России или полный замер; только карточкой, запускает администратор; лёгкие запускай сам через run_server_check); maintenance.run {server, kind: check|agent_update|cleanup|unattended_enable} (запуск обслуживания в фоне: проверка сервера, обновление агента, очистка диска от 70 %, автообновления безопасности; перед agent_update, cleanup и unattended_enable нужны данные проверки, иначе сначала предложи check; обновление системы apt так не запускается); kb.runbook {incidentId, title, content} (записать в базу знаний решённый инцидент: что было и что реально помогло, только по УЖЕ закрытому инциденту; если ничего конкретного не помогло и он закрылся сам — так и напиши в content, не выдумывай действие; content — обычный текст статьи, без выдуманных подробностей сверх того, что видно по делу инцидента). server — имя или id сервера. reason — коротко, почему именно это (до 300 знаков). Не предлагай то, что уже стоит нужным образом: инструмент откажет. После вызова скажи, что изменение вступит в силу после нажатия «Применить» на карточке; пиши «предложил», а не «изменил». Не больше трёх карточек за ответ. Всё остальное (перезагрузка, обновление системы apt, удаление, SSH-ключи, разрешения, правка уже существующих статей) карточкой не предлагается.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        operation: { type: 'string', enum: [...CHANGE_OPERATIONS] },
-        args: { type: 'object', description: 'Аргументы операции, см. описание инструмента' },
-        reason: { type: 'string', description: 'Коротко, почему именно это (до 300 знаков)' },
-      },
-      required: ['operation', 'args', 'reason'],
-    },
-  },
 ];
-
-/** Только пассивное чтение уже имеющихся данных. Эти инструменты не запускают SSH, проверки и изменения. */
-const PASSIVE_TOOL_NAMES = new Set([
-  'get_remnawave_profiles',
-  'get_remnawave_topology',
-  'list_incidents',
-  'get_incident',
-  'get_playbook',
-  'get_reference',
-  'get_billing',
-  'get_settings',
-  'get_panel_status',
-  'get_node_metrics',
-  'get_remnawave_status',
-  'get_node_detail',
-  'search_audit',
-  'search_conversations',
-  'search_kb',
-]);
-export const PASSIVE_ASSISTANT_TOOLS: LlmToolDef[] = ASSISTANT_TOOLS.filter((tool) =>
-  PASSIVE_TOOL_NAMES.has(tool.name),
-).map((tool) =>
-  tool.name === 'list_incidents'
-    ? {
-        ...tool,
-        description:
-          'Сохранённые инциденты Remnawave. status: open|resolved|all; nodeUuid — необязательный фильтр ноды; limit до25. Возвращает факты и сохранённые результаты TCP, ничего не проверяет и не исправляет.',
-        input_schema: {
-          type: 'object',
-          properties: { status: { type: 'string' }, nodeUuid: { type: 'string' }, limit: { type: 'number' } },
-        },
-      }
-    : tool.name === 'get_billing'
-      ? {
-          ...tool,
-          description:
-            'Сохранённые оплаты, сроки и связи с нодами; без изменений. Исторические серверные записи сохраняются, но не описывают текущую доступность нод.',
-          input_schema: { type: 'object', properties: { archived: { type: 'boolean' } } },
-        }
-      : tool,
-);
 
 export interface ToolDeps extends ReadDeps {
   nodeMetrics?: (minutes: number, nodeUuid?: string) => Promise<unknown>;
@@ -225,11 +149,9 @@ export interface ToolDeps extends ReadDeps {
   incidentSettings: { get: () => Promise<unknown> };
   /** Снимок настроек самого агента — уровень и разрешения (только чтение). */
   assistant: { level: string };
-  /** Что делал автоматический разбор инцидентов с момента запуска панели. */
-  autoAnalysis?: () => { lastRunAt: string | null; startedLastHour: number; limitPerHour: number };
   /** Последняя резервная копия панели («Настройки → Резервные копии»). */
   lastBackup?: () => Promise<{ at: string; kind: string; size: string; verified: boolean | null } | null>;
-  /** Создание статьи в БЗ (метка AI). Гейтится разрешением kbWrite в самом инструменте. */
+  /** Создание статьи в БЗ (метка AI): единственное, кроме «Пояснений», что Ассистент записывает сам. */
   saveArticle: (a: {
     title: string;
     content: string;
@@ -237,8 +159,6 @@ export interface ToolDeps extends ReadDeps {
   }) => Promise<{ id: string; title: string }>;
   /** Статус Remnawave (J4), если владелец её подключил; нет — инструмент честно говорит «не подключена». */
   remnawave?: { status: () => Promise<import('@nodeservice/shared').RemnawaveStatus> };
-  /** Предложение изменения (J5): создаёт карточку, ничего не меняет. Гейтится разрешением changes в самом инструменте. */
-  changes?: { propose: (operation: string, args: unknown, reason: string | null) => Promise<ProposeOutcome> };
   /** Пополнение глоссария «Пояснения». Работает всегда, отдельного разрешения нет. */
   addGlossary: (
     terms: Array<{ term: string; explain: string; update?: boolean }>,
@@ -250,10 +170,8 @@ export interface ToolOutcome {
   content: string;
   citations: AssistantCitation[];
   proposals: AssistantProposal[];
-  /** Проверки доступности, которые нужно показать матрицей под ответом. */
-  reachability?: ReachabilityResult[];
-  /** Долгие действия (проверка сервера) — строками над ответом. */
-  activity?: AssistantActivity[];
+  /** Запись в базу знаний действительно прошла: только тогда Ассистент вправе сказать «сохранил». */
+  kbWritten?: boolean;
 }
 
 /** Выполнить инструмент из аллоулиста. Неизвестный инструмент — явная ошибка (не молчим). */
@@ -277,15 +195,6 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
         monitoring,
         assistant: {
           level: deps.assistant.level,
-          permissions: deps.permissions,
-          ...(deps.autoAnalysis
-            ? {
-                autoAnalysisStatus: {
-                  ...deps.autoAnalysis(),
-                  note: 'Счётчики с момента запуска панели. Разбор берёт открытые инциденты без разбора старше 60 секунд и младше 6 часов, только при включённых «Разборе по кнопке» и «Автоматическом разборе».',
-                },
-              }
-            : {}),
         },
       }),
       citations: [],
@@ -386,7 +295,6 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
         },
         incidents: { open: open.counts.open, critical: open.counts.crit, warning: open.counts.warn },
         auditLastHour: { failedOrDenied: failed.total, latest: failed.items.slice(0, 5).map(auditBrief) },
-        ...(deps.autoAnalysis ? { autoAnalysis: deps.autoAnalysis() } : {}),
         ...(deps.lastBackup
           ? {
               lastBackup: (await deps.lastBackup().catch(() => null)) ?? {
@@ -471,12 +379,6 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
   }
 
   if (name === 'save_kb_article') {
-    if (!deps.permissions.kbWrite)
-      return {
-        ...empty,
-        content:
-          'Нет разрешения на создание статей (kbWrite отключён). Сообщи пользователю, что включается это в «Настройки → Ассистент → Разрешения», и предложи готовый текст статьи прямо в ответе.',
-      };
     const title = String(arg.title ?? '').trim();
     if (!title) return { ...empty, content: 'Не задан заголовок статьи — сохранить не могу.' };
     const content = String(arg.content ?? '');
@@ -503,6 +405,7 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
       content: `Статья сохранена в базе знаний: «${saved.title}» (метка AI).`,
       citations: [{ type: 'kb', id: saved.id, label: saved.title }],
       proposals: [],
+      kbWritten: true,
     };
   }
 
@@ -533,114 +436,10 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
         .join(' '),
       citations: [{ type: 'kb', id: res.id, label: 'Пояснения' }],
       proposals: [],
-    };
-  }
-
-  if (name === 'propose_action') {
-    if (!deps.permissions.proposals)
-      return {
-        ...empty,
-        content:
-          'Карточки предложений выключены в разрешениях (proposals). Карточки не будет: назовите шаг текстом и скажите, что включить карточки можно в «Настройки → Ассистент → Разрешения».',
-      };
-    const preset = String(arg.preset ?? '');
-    let inc: Incident;
-    try {
-      inc = await deps.incidents.get(String(arg.incidentId ?? ''));
-    } catch {
-      return {
-        ...empty,
-        content: 'Инцидент с таким id не найден. Возьмите id из list_incidents. Карточка не создана.',
-      };
-    }
-    if (inc.status === 'resolved')
-      return { ...empty, content: 'Инцидент уже закрыт: предлагать нечего. Карточка не создана.' };
-    if (!inc.serverId)
-      return {
-        ...empty,
-        content: 'Сервера этого инцидента больше нет: действие выполнять не на чем. Карточка не создана.',
-      };
-    const chain = INCIDENT_CHAINS[inc.kind] as readonly string[];
-    if (!chain.includes(preset))
-      return {
-        ...empty,
-        content: `Шага «${preset}» нет в цепочке правил этого инцидента. Доступные: ${chain.join(', ') || 'нет'}. Карточка не создана.`,
-      };
-    if (inc.attempts.some((a) => a.status === 'running'))
-      return {
-        ...empty,
-        content: 'Сейчас уже идёт попытка починки: дождитесь результата. Карточка не создана.',
-      };
-    const meta = actionMeta(preset);
-    if (meta.level === 'T3' || meta.terminal)
-      return {
-        ...empty,
-        content: `«${meta.title}» (T3) выполняется только вручную, карточки не будет. Напишите администратору команду текстом и последствия. Команда: ${meta.summary}.${meta.consequence ? ` Последствия: ${meta.consequence}.` : ''}`,
-      };
-    const reason = String(arg.reason ?? '')
-      .trim()
-      .slice(0, 300);
-    const proposal: AssistantProposal = {
-      kind: 'autofix',
-      incidentId: inc.id,
-      preset,
-      level: meta.level,
-      reason: reason || undefined,
-      title: meta.title,
-      description:
-        [reason, meta.consequence ? `Последствия: ${meta.consequence}.` : null].filter(Boolean).join(' ') ||
-        meta.summary,
-    };
-    return {
-      content: `Карточка «${meta.title}» (${meta.level}) показана администратору. Запустит её он сам.`,
-      citations: [],
-      proposals: [proposal],
-    };
-  }
-
-  if (name === 'propose_change') {
-    if (!deps.permissions.changes)
-      return {
-        ...empty,
-        content:
-          'Изменения по подтверждению выключены в разрешениях (changes). Карточки не будет: скажите, что именно изменить и где (путь по интерфейсу), и что включить карточки можно в «Настройки → Ассистент → Разрешения».',
-      };
-    if (!deps.changes) return { ...empty, content: 'Предложение изменений сейчас недоступно.' };
-    if (arg.operation === 'server.check' && !deps.permissions.checksHeavy)
-      return {
-        ...empty,
-        content:
-          'Предложение тяжёлых проверок выключено в разрешениях (checksHeavy). Скажите администратору, что запустить её можно самому во вкладке «Проверки» сервера, а включить карточки — в «Настройки → Ассистент → Разрешения».',
-      };
-    const out = await deps.changes.propose(
-      String(arg.operation ?? ''),
-      arg.args ?? {},
-      typeof arg.reason === 'string' ? arg.reason : null,
-    );
-    if ('problem' in out) return { ...empty, content: out.problem };
-    const c = out.change;
-    return {
-      content: out.reused
-        ? `Такая карточка «${c.title}» уже ждёт решения в этой беседе, новая не создана.`
-        : `Карточка «${c.title}» (${c.level}) для «${c.target.label}» показана администратору: ${c.rows.map((r) => `${r.label}: ${r.before} → ${r.after}`).join('; ')}. До нажатия «Применить» ничего не изменено. Не пиши, что изменение сделано: напиши, что предложил и что нужно нажать кнопку.`,
-      citations: [],
-      proposals: out.reused
-        ? []
-        : [{ kind: 'change', changeId: c.id, operation: c.operation, title: c.title, level: c.level }],
+      kbWritten: res.added + res.updated.length > 0,
     };
   }
 
   // Инструмент вне аллоулиста — модель не должна вызвать, но на всякий случай явно отклоняем.
   return { ...empty, content: `Инструмент «${name}» не разрешён.` };
-}
-
-/** Enforce the actual chat boundary, even when a provider returns an unadvertised tool name. */
-export async function runPassiveTool(name: string, input: unknown, deps: ToolDeps): Promise<ToolOutcome> {
-  if (!PASSIVE_TOOL_NAMES.has(name))
-    return {
-      content: 'Этот инструмент недоступен: Ассистент работает только с сохранёнными данными.',
-      citations: [],
-      proposals: [],
-    };
-  return runTool(name, input, deps);
 }

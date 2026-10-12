@@ -1,6 +1,5 @@
-import { type BlockProbeResult, maskTelegramUrl, parseTelegramUrl } from '@nodeservice/shared';
+import { maskTelegramUrl, parseTelegramUrl } from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
-import { describeAnomaly } from '../../incidents/block-check.logic.js';
 import { describeTelegramError } from './telegram.client.js';
 import {
   esc,
@@ -72,51 +71,6 @@ describe('сообщение блоками (1A)', () => {
     expect(t).toContain('\n• Мост: 12 мс:\n');
     expect(t).toContain('См. https://example.com:');
     expect(t).not.toContain('<b>См.');
-  });
-});
-
-describe('текст падения онлайна', () => {
-  const probe = (from: string, verdict: BlockProbeResult['verdict'], detail: string): BlockProbeResult => ({
-    from,
-    verdict,
-    detail,
-    stalledAtKb: null,
-    error: null,
-  });
-  it('сервер недоступен отовсюду: блоки, без двойных точек, арендованный — подсказка про оплату', () => {
-    const r = describeAnomaly({
-      nodeName: 'vk (Аренда)',
-      before: 605,
-      after: 0,
-      windowMin: 5,
-      portKnown: true,
-      result: {
-        nodeName: 'vk (Аренда)',
-        address: '1.2.3.4',
-        sniUsed: 'site.ru',
-        verdict: 'unreachable',
-        probes: [probe('Мост', 'unreachable', 'Порт не отвечает совсем.')],
-        foreign: [probe('Нидерланды - 2', 'unreachable', 'Порт не отвечает совсем.')],
-      },
-    });
-    expect(r.title).toBe('Сервер недоступен · vk (Аренда)');
-    expect(r.confirmed).toBe(true);
-    expect(r.kind).toBe('server_down');
-    expect(r.detail).toBe(
-      [
-        'Онлайн: 605 → 0 (−100 %) за 5 минут',
-        '',
-        'Из России:',
-        '• Мост — порт не отвечает совсем',
-        'Из-за рубежа:',
-        '• Нидерланды - 2 — порт не отвечает совсем',
-        '',
-        'Похоже: сервер выключен, отключён хостером или арендодателем, либо закрыт firewall.',
-        // Ноды нет среди серверов панели — «Биллинг» спросить не о чем, и панель так и говорит.
-        'Сервер арендован: если он недоступен целиком, возможно, не оплачена аренда (оплату в «Биллинге» панель проверить не смогла).',
-      ].join('\n'),
-    );
-    expect(r.detail).not.toContain('..');
   });
 });
 

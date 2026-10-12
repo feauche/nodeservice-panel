@@ -15,17 +15,13 @@ import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { LLM_PROVIDER } from '../src/modules/assistant/llm.provider.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
 import { IncidentsRepository } from '../src/modules/incidents/incidents.repository.js';
-import { SshService } from '../src/modules/servers/ssh.service.js';
 
 export async function currentIncidentApp() {
   if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test')) throw new Error('Только nodeservice_test');
   const llm = { run: vi.fn() };
-  const ssh = { connect: vi.fn() };
   const module = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(LLM_PROVIDER)
     .useValue(llm)
-    .overrideProvider(SshService)
-    .useValue(ssh)
     .compile();
   const app: INestApplication = module.createNestApplication<NestExpressApplication>({ logger: false });
   setupHttp(app as NestExpressApplication);
@@ -70,5 +66,5 @@ export async function currentIncidentApp() {
     if (!row) throw new Error('Не удалось создать fixture');
     return row;
   };
-  return { app, db, agent, csrf, repo, seed, llm, ssh };
+  return { app, db, agent, csrf, repo, seed, llm };
 }

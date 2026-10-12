@@ -1,27 +1,19 @@
 import {
   type ActionKey,
-  type AutofixPolicy,
-  actionByKey,
   actionMeta,
-  DEFAULT_AUTOFIX_POLICY,
-  INCIDENT_ACTIONS,
-  INCIDENT_CHAINS,
-  INCIDENT_KIND_META,
-  INCIDENT_KINDS,
   INCIDENTS_SETTINGS_DEFAULTS,
   type Incident,
   type IncidentAttempt,
   type IncidentEvent,
-  type IncidentKind,
-  type IncidentPolicyResponse,
   type IncidentsSettings,
-  incidentPolicyUpdateSchema,
   incidentsSettingsUpdateSchema,
   incidentWeekStats,
-  resolveIncidentRequestSchema,
 } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
-import { mockServers } from './servers-mock';
+
+/** Старые серверы, к которым привязаны события из истории: самих серверов в панели больше нет. */
+const OLD_SERVER_FRA = '0192f100-0000-7000-8000-000000000001';
+const OLD_SERVER_AMS = '0192f100-0000-7000-8000-000000000002';
 
 const iso = (minAgo: number) => new Date(Date.now() - minAgo * 60_000).toISOString();
 const ev = (
@@ -35,23 +27,10 @@ const ev = (
 interface IncidentsMock {
   items: Incident[];
   settings: IncidentsSettings;
-  /** Сколько длится каждый шаг попытки в моке: в тестах быстро, в браузере — как на живой ноде. */
-  stepMs: number;
-  /** Какие действия «помогают» в моке (остальные — не помогают → предложение следующего шага). */
-  helps: Set<ActionKey>;
 }
 export const mockIncidents: IncidentsMock = {
   items: [],
   settings: { ...INCIDENTS_SETTINGS_DEFAULTS },
-  stepMs: 30,
-  helps: new Set<ActionKey>([
-    'free_disk',
-    'restart_node',
-    'node_up',
-    'agent_reinstall',
-    'apt_clean',
-    'tmp_clean',
-  ]),
 };
 
 let seq = 0;
@@ -118,8 +97,8 @@ const finishedAttempt = (
 
 export function seedIncidents(): void {
   seq = 0;
-  const s0 = mockServers.items[0]?.id ?? null;
-  const s1 = mockServers.items[1]?.id ?? null;
+  const s0 = OLD_SERVER_FRA;
+  const s1 = OLD_SERVER_AMS;
   mockIncidents.settings = { ...INCIDENTS_SETTINGS_DEFAULTS };
   mockIncidents.items = [
     {
@@ -340,155 +319,6 @@ function counts() {
 const problem = (status: number, detail: string) =>
   HttpResponse.json({ type: 'about:blank', title: detail, status, detail }, { status });
 
-/** Имитация исполнителя: шаги идут по таймеру, исход — по mockIncidents.helps. */
-function runAttempt(inc: Incident, action: ActionKey, by: 'auto' | 'manual'): void {
-  const a = actionMeta(action);
-  const attempt: IncidentAttempt = {
-    id: uid(),
-    action,
-    level: a.level,
-    by,
-    status: 'running',
-    startedAt: iso(0),
-    finishedAt: null,
-    steps: [
-      {
-        key: 'precheck',
-        label: 'Пред-проверка',
-        status: 'running',
-        startedAt: iso(0),
-        finishedAt: null,
-        note: null,
-      },
-      { key: 'action', label: a.title, status: 'pending', startedAt: null, finishedAt: null, note: null },
-      {
-        key: 'postcheck',
-        label: 'Пост-проверка',
-        status: 'pending',
-        startedAt: null,
-        finishedAt: null,
-        note: null,
-      },
-      { key: 'rollback', label: 'Откат', status: 'pending', startedAt: null, finishedAt: null, note: null },
-    ],
-    log: '',
-  };
-  inc.attempts = [...inc.attempts, attempt];
-  inc.proposal = null;
-  if (inc.status === 'open' && by === 'manual') inc.status = 'acknowledged';
-  const step = (i: number, patch: Partial<IncidentAttempt['steps'][number]>) => {
-    const s = attempt.steps[i];
-    if (s) attempt.steps[i] = { ...s, ...patch };
-  };
-  const t = mockIncidents.stepMs;
-  setTimeout(() => {
-    step(0, { status: 'ok', finishedAt: iso(0), note: 'агент в сети, нода свободна' });
-    step(1, { status: 'running', startedAt: iso(0) });
-    attempt.log += `$ ${a.summary}\n`;
-  }, t);
-  setTimeout(() => {
-    step(1, { status: 'ok', finishedAt: iso(0), note: 'выполнено за 1.2 с' });
-    attempt.log += 'ok\n';
-    step(2, { status: 'running', startedAt: iso(0) });
-    inc.timeline = [...inc.timeline, ev(0, by, `Выполнено: ${a.title}`, 'applied', a.level)];
-  }, t * 2);
-  setTimeout(() => {
-    const helped = mockIncidents.helps.has(action);
-    step(2, {
-      status: helped ? 'ok' : 'failed',
-      finishedAt: iso(0),
-      note: helped ? 'метрика ниже порога' : 'метрика не ниже порога',
-    });
-    step(3, { status: 'skipped', note: a.rollbackNote ?? 'не потребовался' });
-    attempt.status = helped ? 'helped' : 'not_helped';
-    attempt.finishedAt = iso(0);
-    if (helped) {
-      inc.timeline = [
-        ...inc.timeline,
-        ev(0, by, 'Пост-проверка: метрика ниже порога — помогло', 'helped', a.level),
-        ev(0, by, 'Проблема устранена — событие закрыт', 'resolved'),
-      ];
-      inc.status = 'resolved';
-      inc.resolvedAt = iso(0);
-      inc.resolvedBy = by;
-    } else {
-      inc.timeline = [
-        ...inc.timeline,
-        ev(0, by, 'Пост-проверка: метрика не ниже порога — не помогло', 'failed', a.level),
-      ];
-      const chain = INCIDENT_CHAINS[inc.kind as IncidentKind];
-      const next = chain[chain.indexOf(action) + 1];
-      if (next) {
-        const n = actionMeta(next);
-        inc.proposal = {
-          action: next,
-          level: n.level,
-          reason: `«${a.title}» не помогло`,
-          proposedAt: iso(0),
-        };
-        inc.timeline = [
-          ...inc.timeline,
-          ev(
-            0,
-            'auto',
-            n.level === 'T3'
-              ? `Следующий шаг только вручную: ${n.title}`
-              : `Предложено: ${n.title} — ждёт подтверждения`,
-            'escalate',
-            n.level,
-          ),
-        ];
-      } else {
-        inc.timeline = [
-          ...inc.timeline,
-          ev(0, 'auto', 'Шаги цепочки исчерпаны — нужно разбираться вручную', 'escalate'),
-        ];
-      }
-    }
-  }, t * 3);
-}
-
-function policyResponse(): IncidentPolicyResponse {
-  const since = Date.now() - 30 * 86_400_000;
-  const paused =
-    mockIncidents.settings.pausedUntil && new Date(mockIncidents.settings.pausedUntil).getTime() > Date.now()
-      ? mockIncidents.settings.pausedUntil
-      : null;
-  return {
-    autofixEnabled: mockIncidents.settings.autofixEnabled,
-    pausedUntil: paused,
-    cooldownMinutes: mockIncidents.settings.autofixCooldownMinutes,
-    items: INCIDENT_KINDS.map((kind) => {
-      const attempts = mockIncidents.items
-        .filter((i) => i.kind === kind)
-        .flatMap((i) => i.attempts)
-        .filter((at) => new Date(at.startedAt).getTime() > since);
-      const chain = INCIDENT_CHAINS[kind].map((key) => {
-        const a = actionByKey(key);
-        return { key, title: a.title, level: a.level };
-      });
-      return {
-        kind,
-        label: INCIDENT_KIND_META[kind].label,
-        component: INCIDENT_KIND_META[kind].component,
-        policy: (mockIncidents.settings.policy[kind] as AutofixPolicy | undefined) ?? DEFAULT_AUTOFIX_POLICY,
-        autoAvailable: chain.some((c) => c.level === 'T1'),
-        chain,
-        stats: {
-          runs: attempts.length,
-          helped: attempts.filter((r) => r.status === 'helped').length,
-          lastAt: attempts.length
-            ? (attempts
-                .map((r) => r.startedAt)
-                .sort()
-                .at(-1) ?? null)
-            : null,
-        },
-      };
-    }),
-  };
-}
-
 export const incidentsHandlers = [
   http.get('/api/incidents', ({ request }) => {
     const url = new URL(request.url);
@@ -533,21 +363,6 @@ export const incidentsHandlers = [
   http.get('/api/incidents/week-stats', () =>
     HttpResponse.json(incidentWeekStats(mockIncidents.items, Date.now())),
   ),
-  http.get('/api/incidents/policy', () => HttpResponse.json(policyResponse())),
-  http.patch('/api/incidents/policy', async ({ request }) => {
-    const parsed = incidentPolicyUpdateSchema.safeParse(await request.json());
-    if (!parsed.success) return problem(400, 'Данные не прошли проверку');
-    if (parsed.data.autofixEnabled !== undefined)
-      mockIncidents.settings.autofixEnabled = parsed.data.autofixEnabled;
-    for (const [k, v] of Object.entries(parsed.data.policy ?? {}))
-      mockIncidents.settings.policy[k] = v as AutofixPolicy;
-    if (parsed.data.pauseMinutes !== undefined)
-      mockIncidents.settings.pausedUntil =
-        parsed.data.pauseMinutes > 0
-          ? new Date(Date.now() + parsed.data.pauseMinutes * 60_000).toISOString()
-          : null;
-    return HttpResponse.json(policyResponse());
-  }),
   http.delete('/api/incidents/resolved', () => {
     const before = mockIncidents.items.length;
     mockIncidents.items = mockIncidents.items.filter((i) => i.status !== 'resolved');
@@ -572,42 +387,15 @@ export const incidentsHandlers = [
     }
     return HttpResponse.json(inc);
   }),
-  http.post('/api/incidents/:id/resolve', async ({ params, request }) => {
+  http.post('/api/incidents/:id/resolve', ({ params }) => {
     const inc = mockIncidents.items.find((i) => i.id === params.id);
     if (!inc) return problem(404, 'Событие не найден.');
-    const body = resolveIncidentRequestSchema.safeParse(await request.json().catch(() => ({})));
-    const stopWatch = body.success && body.data.stopNodeWatch === true && inc.kind === 'node_down';
-    if (stopWatch) {
-      const srv = mockServers.items.find((s) => s.id === inc.serverId);
-      if (srv) {
-        srv.nodeWatch = 'off';
-        srv.node = null;
-      }
-      inc.timeline = [
-        ...inc.timeline,
-        ev(0, 'manual', 'Слежение за нодой на этом сервере выключено', 'notify'),
-      ];
-    }
     inc.status = 'resolved';
     inc.resolvedAt = iso(0);
     inc.resolvedBy = 'manual';
     inc.proposal = null;
     inc.timeline = [...inc.timeline, ev(0, 'manual', 'Закрыт администратором', 'resolved')];
     return HttpResponse.json(inc);
-  }),
-  http.post('/api/incidents/:id/actions/:action/run', ({ params }) => {
-    const inc = mockIncidents.items.find((i) => i.id === params.id);
-    if (!inc) return problem(404, 'Событие не найден.');
-    if (inc.status === 'resolved') return problem(409, 'Событие уже закрыт.');
-    const key = String(params.action) as ActionKey;
-    const a = INCIDENT_ACTIONS.find((x) => x.key === key);
-    if (!a?.kinds.includes(inc.kind)) return problem(400, 'Это действие не подходит к событию.');
-    if (a.terminal)
-      return problem(400, 'Действие уровня T3 панель не выполняет — только вручную в терминале.');
-    if (inc.attempts.some((x) => x.status === 'running'))
-      return problem(409, 'По событию уже идёт действие — дождись его конца.');
-    runAttempt(inc, key, 'manual');
-    return HttpResponse.json(inc, { status: 202 });
   }),
   http.get('/api/settings/incidents', () => HttpResponse.json(mockIncidents.settings)),
   http.put('/api/settings/incidents', async ({ request }) => {

@@ -110,13 +110,4 @@ export class ProvidersRepository {
       return rows.length > 0;
     });
   }
-
-  /** Серверы провайдера — для карточки в справочнике. */
-  async serversOf(id: string): Promise<Array<{ id: string; name: string }>> {
-    return this.db
-      .select({ id: servers.id, name: servers.name })
-      .from(servers)
-      .where(eq(servers.providerId, id))
-      .orderBy(asc(servers.sortOrder), asc(servers.name));
-  }
 }

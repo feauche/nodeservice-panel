@@ -18,7 +18,6 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { NodeDialog } from '@/features/nodes/node-dialog';
 import { useNodes } from '@/features/nodes/nodes-api';
-import { openServer } from '@/features/servers/server-modal-store';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { plural } from '@/lib/plural';
@@ -273,7 +272,8 @@ function ProviderCard({
 }) {
   const remote = useProviderApiBase() !== '/providers';
   const [nodeId, setNodeId] = useState<string | null>(null);
-  const servers = useProviderServers(provider.id);
+  // Ноды провайдера есть только в справочнике Remnawave; своих серверов у панели больше нет.
+  const nodes = useProviderServers(remote ? provider.id : null);
   const update = useUpdateProvider();
   const [note, setNote] = useState(provider.note ?? '');
   useEffect(() => setNote(provider.note ?? ''), [provider.note]);
@@ -351,35 +351,33 @@ function ProviderCard({
         </div>
       </div>
       <div className="flex flex-col gap-5 px-5 py-4">
-        <div>
-          <div className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
-            {remote ? 'Ноды' : 'Серверы'}
+        {remote && (
+          <div>
+            <div className="text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">Ноды</div>
+            {nodes.isPending ? (
+              <Skeleton className="mt-2 h-10 rounded-[10px]" />
+            ) : (nodes.data?.length ?? 0) === 0 ? (
+              <p className="mt-2 rounded-[10px] border border-dashed border-border-2 px-4 py-4 text-center text-[12.5px] text-text-3">
+                У этого провайдера пока нет привязанных нод в Remnawave.
+              </p>
+            ) : (
+              <ul className="mt-2 overflow-hidden rounded-[10px] border border-border">
+                {nodes.data?.map((n) => (
+                  <li key={n.id} className="border-t border-border first:border-t-0">
+                    <button
+                      type="button"
+                      onClick={() => setNodeId(n.id)}
+                      className="flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left text-[13px] transition-colors hover:bg-surface-2"
+                    >
+                      <span className="min-w-0 flex-1 truncate font-medium">{n.name}</span>
+                      <span className="text-[12px] text-text-3">открыть →</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          {servers.isPending ? (
-            <Skeleton className="mt-2 h-10 rounded-[10px]" />
-          ) : (servers.data?.length ?? 0) === 0 ? (
-            <p className="mt-2 rounded-[10px] border border-dashed border-border-2 px-4 py-4 text-center text-[12.5px] text-text-3">
-              {remote
-                ? 'У этого провайдера пока нет привязанных нод в Remnawave.'
-                : 'Серверов у этого провайдера пока нет. Провайдер выбирается в окне сервера, вкладка «Подключение».'}
-            </p>
-          ) : (
-            <ul className="mt-2 overflow-hidden rounded-[10px] border border-border">
-              {servers.data?.map((s) => (
-                <li key={s.id} className="border-t border-border first:border-t-0">
-                  <button
-                    type="button"
-                    onClick={() => (remote ? setNodeId(s.id) : openServer(s.id))}
-                    className="flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left text-[13px] transition-colors hover:bg-surface-2"
-                  >
-                    <span className="min-w-0 flex-1 truncate font-medium">{s.name}</span>
-                    <span className="text-[12px] text-text-3">открыть →</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        )}
         <div>
           <label
             htmlFor="provider-note"

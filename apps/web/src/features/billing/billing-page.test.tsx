@@ -16,12 +16,23 @@ function Page() {
 
 const cards = () => screen.getAllByTestId('billing-card');
 
+/** Сертификат из мока развёрнут на старых серверах; привязываем к нему ноду Remnawave, как сейчас делает редактор. */
+const linkCertToNode = () => {
+  const cert = mockBilling.items.find((i) => i.kind === 'cert');
+  if (!cert) throw new Error('нет сертификата в моке');
+  cert.nodeRefs = [
+    { panel: 'panel.example', uuid: '0192f200-0000-7000-8000-000000000001', name: 'nl-node-7' },
+  ];
+  return cert;
+};
+
 describe('BillingPage', () => {
   beforeEach(() => {
     resetMockState({ authenticated: true });
   });
 
   it('итоги за периоды и карточки по ближайшему сроку с маячком', async () => {
+    linkCertToNode();
     renderPage(Page, '/billing', ['/servers']);
     await waitFor(() => expect(cards().length).toBe(6));
     // Просроченная аренда — первой, с маячком «Просрочено».
@@ -30,14 +41,37 @@ describe('BillingPage', () => {
     expect(within(first).getByText('Вход с белым IP')).toBeInTheDocument();
     expect(within(first).getByRole('img', { name: 'Просрочено' })).toBeInTheDocument();
     expect(within(first).getByText(/просрочено на 1 день/)).toBeInTheDocument();
-    // Сертификат показывает, где развёрнут.
+    // Сертификат показывает, на какой ноде развёрнут; старые серверы из карточки пропали.
     const cert = cards().find((c) => within(c).queryByText('*.lumaxvds.org — certwarden'));
-    expect(cert && within(cert).getByRole('button', { name: /de-fra-01/ })).toBeTruthy();
+    if (!cert) throw new Error('нет карточки сертификата');
+    expect(within(cert).getByRole('link', { name: /nl-node-7/ })).toBeInTheDocument();
+    expect(within(cert).queryByRole('button', { name: /de-fra-01|nl-ams-02/ })).not.toBeInTheDocument();
+    expect(within(cert).queryByTitle(/карточку сервера/)).not.toBeInTheDocument();
     expect(await screen.findByTestId('billing-stat-month')).toHaveTextContent(/₽/);
     // Фильтр по типу.
     const user = userEvent.setup();
     await user.click(screen.getByRole('radio', { name: /Сертификат 1/ }));
     expect(cards()).toHaveLength(1);
+  });
+
+  it('поиск находит оплату по имени привязанной ноды; список серверов не запрашивается', async () => {
+    linkCertToNode();
+    const paths: string[] = [];
+    const onRequest = ({ request }: { request: Request }) => {
+      paths.push(new URL(request.url).pathname);
+    };
+    server.events.on('request:start', onRequest);
+    try {
+      renderPage(Page, '/billing', ['/servers']);
+      await waitFor(() => expect(cards().length).toBe(6));
+      const user = userEvent.setup();
+      await user.type(screen.getByLabelText('Поиск по оплатам'), 'nl-node');
+      await waitFor(() => expect(cards()).toHaveLength(1));
+      expect(within(cards()[0] as HTMLElement).getByText('*.lumaxvds.org — certwarden')).toBeInTheDocument();
+      expect(paths.some((p) => p.startsWith('/api/servers'))).toBe(false);
+    } finally {
+      server.events.removeListener('request:start', onRequest);
+    }
   });
 
   it('«Продлить»: быстрая кнопка продлевает сразу, галочка снимается, отмена возвращает дату', async () => {

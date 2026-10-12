@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
-import { CSRF_HEADER, providerSchema, providersResponseSchema, serverSchema } from '@nodeservice/shared';
+import { CSRF_HEADER, providerSchema } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import type { Redis } from 'ioredis';
 import { generate } from 'otplib';
@@ -316,59 +316,14 @@ describe('providers e2e', () => {
     expect(icon.headers['content-security-policy']).toContain('sandbox');
   });
 
-  it('сервер с провайдером: создание, смена, счётчик; несуществующий провайдер — 422', async () => {
-    const created = await agent
-      .post('/api/servers')
-      .set(CSRF_HEADER, csrf)
-      .send({
-        name: 'prov-host',
-        host: '203.0.113.9',
-        port: 22,
-        sshUser: 'root',
-        auth: { method: 'panel-key' },
-        verify: false,
-        providerId,
-      })
-      .expect(201);
-    const srv = serverSchema.parse(created.body);
-    expect(srv.providerId).toBe(providerId);
-    const list = providersResponseSchema.parse((await agent.get('/api/providers').expect(200)).body);
-    expect(list.items.find((p) => p.id === providerId)?.serversCount).toBe(1);
-    const servers = (await agent.get(`/api/providers/${providerId}/servers`).expect(200)).body as Array<{
-      name: string;
-    }>;
-    expect(servers.map((s) => s.name)).toEqual(['prov-host']);
-    const bad = await agent
-      .patch(`/api/servers/${srv.id}`)
-      .set(CSRF_HEADER, csrf)
-      .send({ providerId: '00000000-0000-4000-8000-000000000000' })
-      .expect(422);
-    expect(bad.body.errors?.[0]?.path).toBe('providerId');
-    const cleared = serverSchema.parse(
-      (
-        await agent
-          .patch(`/api/servers/${srv.id}`)
-          .set(CSRF_HEADER, csrf)
-          .send({ providerId: null })
-          .expect(200)
-      ).body,
-    );
-    expect(cleared.providerId).toBeNull();
-    await agent.patch(`/api/servers/${srv.id}`).set(CSRF_HEADER, csrf).send({ providerId }).expect(200);
-  });
-
-  it('удаление провайдера: у сервера провайдер сбрасывается, иконка 404, Журнал', async () => {
+  it('удаление провайдера: иконка 404, история оплат сохраняется, запись в Журнале', async () => {
     await agent.delete(`/api/providers/${providerId}`).set(CSRF_HEADER, csrf).expect(204);
     await agent.get(`/api/providers/${providerId}/icon`).expect(404);
-    const servers = (await agent.get('/api/servers').expect(200)).body as {
-      items: Array<{ name: string; providerId: string | null }>;
-    };
-    expect(servers.items.find((s) => s.name === 'prov-host')?.providerId).toBeNull();
     const audit = (await agent.get('/api/audit?category=server').expect(200)).body as {
       items: Array<{ action: string; metadata: Record<string, unknown> }>;
     };
     expect(audit.items.find((e) => e.action === 'provider.archived')?.metadata).toMatchObject({
-      serversDetached: 1,
+      billingHistoryPreserved: true,
     });
   });
 });

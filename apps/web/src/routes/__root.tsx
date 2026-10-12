@@ -27,7 +27,7 @@ function RootLayout() {
   return (
     <TooltipProvider delayDuration={250}>
       <Outlet />
-      {/* Терминал, окно сервера и запрос пароля — над разделами: переход по меню их не пересоздаёт */}
+      {/* Запрос пароля — над разделами: переход по меню его не пересоздаёт */}
       <SessionHosts />
       <Toaster position="bottom-right" richColors theme={theme === 'light' ? 'light' : 'dark'} />
     </TooltipProvider>

@@ -58,9 +58,38 @@ describe('useEventsStream', () => {
     act(() => vi.advanceTimersByTime(1_000));
     expect(EventSourceStub.instances).toHaveLength(2);
     act(() => EventSourceStub.instances[1]?.onopen?.());
-    expect(invalidate).toHaveBeenCalledTimes(3);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['incidents'] });
 
     hook.unmount();
     expect(EventSourceStub.instances[1]?.closed).toBe(true);
+  });
+});
+
+describe('useEventsStream: только события', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    EventSourceStub.instances = [];
+    vi.stubGlobal('EventSource', EventSourceStub);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('слушает только «incident»: серверов, переименований и хода Ассистента больше нет', () => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, 'invalidateQueries').mockResolvedValue();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const hook = renderHook(() => useEventsStream(), { wrapper });
+    const stream = EventSourceStub.instances[0];
+    expect([...(stream?.listeners.keys() ?? [])]).toEqual(['incident']);
+    act(() => stream?.listeners.get('incident')?.(new Event('incident')));
+    act(() => vi.advanceTimersByTime(300));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['incidents'] });
+    hook.unmount();
   });
 });

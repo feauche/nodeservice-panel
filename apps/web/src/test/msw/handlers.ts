@@ -6,25 +6,16 @@ import {
   monitoringSettingsUpdateSchema,
 } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
-import { analysisHandlers, seedAnalysis } from './analysis-mock';
 import { assistantHandlers, seedAssistant } from './assistant-mock';
 import { auditHandlers, mockAudit, seedAudit } from './audit-mock';
-import { autochecksHandlers, seedAutochecks } from './autochecks-mock';
 import { backupsHandlers, seedBackups } from './backups-mock';
 import { billingHandlers, seedBilling } from './billing-mock';
-import { capacityHandlers, resetCapacity } from './capacity-mock';
-import { egressHandlers, resetEgress } from './egress-mock';
-import { fleetStatsHandlers, resetFleetStats } from './fleet-stats-mock';
 import { incidentsHandlers, seedIncidents } from './incidents-mock';
 import { knowledgeHandlers, seedKnowledge } from './knowledge-mock';
-import { maintenanceHandlers } from './maintenance-mock';
-import { metricsHandlers, seedMetrics } from './metrics-mock';
 import { notificationsHandlers, seedNotifications } from './notifications-mock';
 import { providersHandlers, seedProviders } from './providers-mock';
-import { remnawaveHandlers, seedRemnawave } from './remnawave-mock';
+import { seedRemnawave } from './remnawave-mock';
 import { mockSecurity, securityHandlers, seedSecurity } from './security-mock';
-import { resetServerChecks, serverChecksHandlers } from './server-checks-mock';
-import { seedServers, serversHandlers, terminalHistoryHandlers } from './servers-mock';
 import { mockTelegram, resetTelegram, telegramHandlers } from './telegram-mock';
 
 /**
@@ -57,7 +48,6 @@ export interface MockState {
 }
 
 export const mockMonitoring = { value: { ...MONITORING_DEFAULTS } };
-export const mockSnippets: { items: Array<{ id: string; name: string; command: string }> } = { items: [] };
 export const mockCustomSites: { items: Array<{ id: string; name: string; url: string }> } = { items: [] };
 
 export const mockAppearance: { logoUrl: string | null; brandName: string; timeZone: string } = {
@@ -84,25 +74,16 @@ seedAudit();
 export function resetMockState(patch: Partial<MockState> = {}): void {
   seedAudit();
   mockMonitoring.value = { ...MONITORING_DEFAULTS };
-  seedAutochecks();
   seedSecurity();
-  seedServers();
   seedProviders();
   seedBilling();
   seedBackups();
-  resetCapacity();
-  resetEgress();
-  resetFleetStats();
   seedRemnawave();
-  seedMetrics();
   seedIncidents();
   seedNotifications();
   seedKnowledge();
   seedAssistant();
-  seedAnalysis();
-  resetServerChecks();
   resetTelegram();
-  mockSnippets.items = [];
   mockCustomSites.items = [];
   Object.assign(mockState, {
     setupRequired: false,
@@ -203,7 +184,6 @@ export const handlers = [
     }),
   ),
   ...auditHandlers,
-  ...autochecksHandlers,
   http.get('/api/settings/monitoring', () => HttpResponse.json(mockMonitoring.value)),
   http.put('/api/settings/monitoring', async ({ request }) => {
     const p = monitoringSettingsUpdateSchema.safeParse(await request.json());
@@ -212,20 +192,10 @@ export const handlers = [
     return HttpResponse.json(mockMonitoring.value);
   }),
   ...securityHandlers,
-  ...serversHandlers,
-  ...terminalHistoryHandlers,
-  ...maintenanceHandlers,
-  ...serverChecksHandlers,
   ...telegramHandlers,
   ...providersHandlers,
   ...billingHandlers,
   ...backupsHandlers,
-  ...capacityHandlers,
-  ...egressHandlers,
-  ...fleetStatsHandlers,
-  ...remnawaveHandlers,
-  ...metricsHandlers,
-  ...analysisHandlers,
   ...incidentsHandlers,
   ...notificationsHandlers,
   ...knowledgeHandlers,
@@ -244,16 +214,6 @@ export const handlers = [
       },
     }),
   ),
-  http.get('/api/settings/snippets', () => {
-    if (!mockState.authenticated) return problem(401, AUTH_PROBLEM.unauthenticated, 'Требуется вход');
-    return HttpResponse.json(mockSnippets);
-  }),
-  http.put('/api/settings/snippets', async ({ request }) => {
-    if (!mockState.authenticated) return problem(401, AUTH_PROBLEM.unauthenticated, 'Требуется вход');
-    const body = (await request.json()) as typeof mockSnippets;
-    mockSnippets.items = body.items;
-    return HttpResponse.json(mockSnippets);
-  }),
   http.get('/api/settings/custom-sites', () => {
     if (!mockState.authenticated) return problem(401, AUTH_PROBLEM.unauthenticated, 'Требуется вход');
     return HttpResponse.json(mockCustomSites);

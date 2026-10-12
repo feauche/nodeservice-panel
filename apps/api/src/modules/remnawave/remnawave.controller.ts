@@ -9,8 +9,6 @@ import {
 } from '@nodeservice/shared';
 import { createZodDto } from 'nestjs-zod';
 
-import { ServersService } from '../servers/servers.service.js';
-import { NodeLinkService } from './node-link.service.js';
 import { RemnawaveService } from './remnawave.service.js';
 import { RemnawaveTopologyService } from './remnawave-topology.service.js';
 import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
@@ -27,23 +25,15 @@ export class RemnawaveTopologyDto extends createZodDto(remnawaveTopologySchema) 
 export class RemnawaveController {
   constructor(
     private readonly remnawave: RemnawaveService,
-    private readonly servers: ServersService,
-    private readonly links: NodeLinkService,
     private readonly vpnProbe: RemnawaveVpnProbeService,
     private readonly topologyService: RemnawaveTopologyService,
   ) {}
-
-  /** К каждой ноде — серверы панели, на которых она работает: веб сам адреса не сверяет. */
-  private async linked(status: RemnawaveStatusDto): Promise<RemnawaveStatusDto> {
-    if (status.nodes.length === 0) return status;
-    return { ...status, nodes: await this.links.annotate(await this.servers.list(), status.nodes) };
-  }
 
   @Get('status')
   @ApiOperation({ summary: 'Подключение к Remnawave: сводка, ноды, сертификат панели' })
   @ApiOkResponse({ type: RemnawaveStatusDto })
   async status(): Promise<RemnawaveStatusDto> {
-    return this.linked(await this.remnawave.status());
+    return this.remnawave.status();
   }
 
   @Post('connect')
@@ -52,7 +42,7 @@ export class RemnawaveController {
   @ApiOkResponse({ type: RemnawaveStatusDto })
   async connect(@Body() body: RemnawaveConnectRequestDto): Promise<RemnawaveStatusDto> {
     this.topologyService.clear();
-    return this.linked(await this.remnawave.connect(body));
+    return this.remnawave.connect(body);
   }
 
   @Post('refresh')
@@ -61,7 +51,7 @@ export class RemnawaveController {
   @ApiOkResponse({ type: RemnawaveStatusDto })
   async refresh(): Promise<RemnawaveStatusDto> {
     this.topologyService.clear();
-    return this.linked(await this.remnawave.refresh());
+    return this.remnawave.refresh();
   }
 
   @Get('topology')

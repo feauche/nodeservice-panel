@@ -47,8 +47,6 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': { target: process.env.VITE_API_TARGET ?? 'http://localhost:3000', changeOrigin: true },
-      // Веб-терминал ходит по WebSocket — проксируем на API с ws:true.
-      '/ws': { target: process.env.VITE_API_TARGET ?? 'http://localhost:3000', ws: true },
     },
   },
 });

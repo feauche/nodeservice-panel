@@ -16,7 +16,12 @@ import {
 import { HttpResponse, http } from 'msw';
 
 import { mockProviders } from './providers-mock';
-import { mockServers } from './servers-mock';
+
+/** Старые серверы, к которым были привязаны оплаты: в панели их больше нет, привязка осталась в записях. */
+const OLD_SERVERS = [
+  { id: '0192f100-0000-7000-8000-000000000001' },
+  { id: '0192f100-0000-7000-8000-000000000002' },
+] as const;
 
 /** Курс «получен только что» на сегодняшнюю московскую дату — как у панели, которой ЦБ ответил. */
 function freshRates(): BillingSummary['rates'] {
@@ -110,7 +115,7 @@ export function seedBilling(): void {
   mockBilling.items = [];
   mockBilling.payments = [];
   mockBilling.rates = freshRates();
-  const [s1, s2] = mockServers.items;
+  const [s1, s2] = OLD_SERVERS;
   const prov = (name: string) => mockProviders.items.find((p) => p.name === name)?.id ?? null;
   const now = Date.now();
   const add = (b: Omit<BillingItemUpsert, 'paidUntil'> & { at: number }) => {
@@ -125,7 +130,7 @@ export function seedBilling(): void {
     kind: 'server',
     title: 'de-fra-01 · VPS 2 ГБ',
     providerId: prov('Aéza'),
-    serverIds: s1 ? [s1.id] : [],
+    serverIds: [s1.id],
     amount: 9.5,
     currency: 'EUR',
     periodUnit: 'day',
@@ -137,7 +142,7 @@ export function seedBilling(): void {
     kind: 'rent',
     title: 'Вход с белым IP',
     providerId: null,
-    serverIds: s2 ? [s2.id] : [],
+    serverIds: [s2.id],
     amount: 1500,
     currency: 'RUB',
     periodUnit: 'month',
@@ -149,7 +154,7 @@ export function seedBilling(): void {
     kind: 'server',
     title: 'nl-ams-02 · CX22',
     providerId: prov('Hetzner'),
-    serverIds: s2 ? [s2.id] : [],
+    serverIds: [s2.id],
     amount: 4.51,
     currency: 'EUR',
     periodUnit: 'month',
@@ -172,7 +177,7 @@ export function seedBilling(): void {
     kind: 'cert',
     title: '*.lumaxvds.org — certwarden',
     providerId: null,
-    serverIds: [s1, s2].filter(Boolean).map((s) => s?.id ?? ''),
+    serverIds: [s1.id, s2.id],
     domain: 'lumaxvds.org',
     amount: 0,
     currency: 'RUB',

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { runPassiveTool, type ToolDeps } from './assistant.tools.js';
+import { runTool, type ToolDeps } from './assistant.tools.js';
 
 const uuid = '0192f200-0000-7000-8000-000000000001';
 const node = {
@@ -36,7 +36,7 @@ function deps(nodes = [node]) {
 describe('assistant current node data boundary', () => {
   it('reads node snapshots without legacy inventory and returns explicit node citations, unknown metrics stay null', async () => {
     const d = deps(),
-      out = await runPassiveTool('get_node_detail', { node: uuid }, d),
+      out = await runTool('get_node_detail', { node: uuid }, d),
       body = JSON.parse(out.content);
     expect(out.citations).toEqual([{ type: 'node', id: uuid, label: 'Нода' }]);
     expect(body.node.cpuPercent).toBeNull();
@@ -46,7 +46,7 @@ describe('assistant current node data boundary', () => {
   });
   it('does not guess ambiguous node names or convert stale snapshots into measured failure', async () => {
     const d = deps([node, { ...node, uuid: 'other' }]);
-    expect((await runPassiveTool('get_node_detail', { node: 'Нода' }, d)).citations).toEqual([]);
+    expect((await runTool('get_node_detail', { node: 'Нода' }, d)).citations).toEqual([]);
     d.remnawave = {
       status: async () =>
         ({
@@ -59,21 +59,15 @@ describe('assistant current node data boundary', () => {
           cert: null,
         }) as never,
     };
-    const body = JSON.parse((await runPassiveTool('get_remnawave_status', {}, d)).content);
+    const body = JSON.parse((await runTool('get_remnawave_status', {}, d)).content);
     expect(body.fresh).toBe(false);
     expect(body.nodes[0].usersOnline).toBeNull();
   });
-  it('rejects unsolicited hidden tools before SSH, legacy query or writes', async () => {
+  it('rejects removed SSH, server and action tools without touching legacy data', async () => {
     const d = deps();
-    for (const name of [
-      'run_server_check',
-      'inspect_processes',
-      'propose_change',
-      'save_kb_article',
-      'get_server_detail',
-    ]) {
-      const out = await runPassiveTool(name, { serverId: 'legacy' }, d);
-      expect(out.content).toContain('недоступен');
+    for (const name of ['run_server_check', 'inspect_processes', 'propose_change', 'get_server_detail']) {
+      const out = await runTool(name, { serverId: 'legacy' }, d);
+      expect(out.content).toContain('не разрешён');
       expect(out.proposals).toEqual([]);
     }
     expect(d.servers.list).not.toHaveBeenCalled();
@@ -89,8 +83,7 @@ it('settings uses the current monitoring store without reading retired SSH setti
     }),
   };
   d.assistant = { level: 'intermediate' };
-  d.permissions = {} as never;
-  const body = JSON.parse((await runPassiveTool('get_settings', {}, d)).content);
+  const body = JSON.parse((await runTool('get_settings', {}, d)).content);
   expect(body.monitoring.pollSeconds).toBe(60);
   expect(body.autochecks).toBeUndefined();
   expect(d.autochecks.get).not.toHaveBeenCalled();

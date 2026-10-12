@@ -91,3 +91,13 @@ it('node links use current UUID context and absent nodes are inert', async () =>
   expect(open).toHaveBeenCalledWith(uuid);
   expect(screen.getByRole('button', { name: 'Старая' })).toBeDisabled();
 });
+
+it('ссылка на старый сервер — простое имя без кнопки и без адреса', () => {
+  const { container } = render(
+    <Markdown content="Сбой был на [de-fra-01](server:11111111-1111-4111-8111-111111111111) вчера." />,
+  );
+  expect(container.textContent).toContain('Сбой был на de-fra-01 вчера.');
+  expect(container.textContent).not.toContain('server:');
+  expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  expect(screen.queryByRole('link')).not.toBeInTheDocument();
+});

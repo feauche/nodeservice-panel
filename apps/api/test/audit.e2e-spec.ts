@@ -81,11 +81,11 @@ describe('audit e2e', () => {
     const anon = request.agent(app.getHttpServer());
     const anonCsrf = (await anon.get('/api/auth/csrf').expect(200)).body.token as string;
     await anon
-      .post('/api/servers/00000000-0000-4000-8000-000000000000/check')
+      .post('/api/incidents/00000000-0000-4000-8000-000000000000/acknowledge')
       .set(CSRF_HEADER, anonCsrf)
       .expect(401);
     // GET без сессии — 401, но в Журнал не пишем (опросы протухшей вкладки).
-    await anon.get('/api/servers').expect(401);
+    await anon.get('/api/incidents').expect(401);
     await new Promise((r) => setTimeout(r, 300));
     const body = auditListResponseSchema.parse(
       (await agent.get('/api/audit?result=denied').expect(200)).body,

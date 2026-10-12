@@ -29,7 +29,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ProviderIcon } from '@/features/providers/provider-icon';
-import { openServer } from '@/features/servers/server-modal-store';
 import { cn } from '@/lib/utils';
 import { DUE_DOT, DUE_LABEL, DUE_TEXT, dueWords, formatDue, money, rubHint } from './billing-format';
 
@@ -81,7 +80,6 @@ export function DueDot({ state, className }: { state: BillingItem['dueState']; c
 interface CardProps {
   item: BillingItem;
   provider: Provider | null;
-  servers: ReadonlyArray<{ id: string; name: string }>;
   now: number;
   onExtend: () => void;
   onEdit: () => void;
@@ -92,12 +90,11 @@ interface CardProps {
 
 /**
  * Карточка оплаты (витрина `billing-variants.html`, 2A, с правками): маячок срока в углу вместо полосы,
- * три ряда — кто и что; когда и сколько; серверы и «Продлить».
+ * три ряда — кто и что; когда и сколько; привязанные ноды и «Продлить».
  */
 export function BillingCard({
   item,
   provider,
-  servers,
   now,
   onExtend,
   onEdit,
@@ -106,9 +103,6 @@ export function BillingCard({
   onDelete,
 }: CardProps) {
   const archived = item.archivedAt !== null;
-  const linked = item.serverIds
-    .map((id) => servers.find((s) => s.id === id))
-    .filter((s): s is { id: string; name: string } => Boolean(s));
   const rub = rubHint(item);
   return (
     <article
@@ -189,22 +183,6 @@ export function BillingCard({
               <ServerIcon className="size-3" />
               <span className="truncate">{n.name}</span>
             </a>
-          ))}
-          {linked.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => openServer(s.id)}
-              title={
-                item.kind === 'cert'
-                  ? 'Сертификат развёрнут здесь — открыть карточку сервера'
-                  : 'Открыть карточку сервера'
-              }
-              className="inline-flex h-[22px] max-w-full cursor-pointer items-center gap-1 truncate rounded-[6px] bg-surface-3 px-2 text-[11.5px] text-text-2 transition-colors hover:text-foreground"
-            >
-              <ServerIcon className="size-3 flex-none" aria-hidden="true" />
-              <span className="truncate">{s.name}</span>
-            </button>
           ))}
           {item.autoCharge && (
             <span className="inline-flex h-[22px] items-center gap-1 rounded-[6px] bg-ok-soft px-2 text-[11.5px] text-ok">

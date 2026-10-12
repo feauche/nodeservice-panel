@@ -1,7 +1,7 @@
 {
   "name": "web",
   "private": true,
-  "version": "0.87.1",
+  "version": "0.88.0",
   "type": "module",
   "scripts": {
     "dev": "NODE_ENV=production tsr generate && vite",
@@ -30,9 +30,6 @@
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-query": "^5.102.8",
     "@tanstack/react-router": "^1.170.32",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/addon-web-links": "^0.12.0",
-    "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "country-flag-icons": "^1.6.20",
@@ -45,7 +42,6 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-hook-form": "^7.86.0",
-    "react-rnd": "^10.5.3",
     "recharts": "^3.10.1",
     "shadcn": "^4.19.0",
     "sonner": "^2.0.8",

@@ -15,7 +15,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useProviders } from '@/features/providers/providers-api';
-import { useServers } from '@/features/servers/servers-api';
 import { Segmented } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -107,7 +106,6 @@ export function BillingPage({
   const archiveCount = useBillingItems(true).data?.items.length;
   const summary = useBillingSummary();
   const providers = useProviders();
-  const servers = useServers();
   const archive = useArchiveBillingItem();
   const remove = useDeleteBillingItem();
   const now = useNow(true, 60_000);
@@ -122,10 +120,6 @@ export function BillingPage({
 
   const list = items.data?.items ?? [];
   const provList = providers.data?.items ?? [];
-  const srvList = useMemo(
-    () => (servers.data?.items ?? []).map((s) => ({ id: s.id, name: s.name })),
-    [servers.data],
-  );
   const providerOf = (id: string | null) => provList.find((p) => p.id === id) ?? null;
 
   useEffect(() => {
@@ -146,10 +140,11 @@ export function BillingPage({
       if (kind !== 'all' && i.kind !== kind) return false;
       if (!needle) return true;
       const prov = provList.find((p) => p.id === i.providerId)?.name ?? '';
-      const srv = i.serverIds.map((id) => srvList.find((s) => s.id === id)?.name ?? '').join(' ');
-      return `${i.title} ${prov} ${srv} ${i.domain ?? ''} ${i.note ?? ''}`.toLowerCase().includes(needle);
+      // Привязанные ноды Remnawave — по их именам из записи.
+      const nodes = (i.nodeRefs ?? []).map((n) => n.name).join(' ');
+      return `${i.title} ${prov} ${nodes} ${i.domain ?? ''} ${i.note ?? ''}`.toLowerCase().includes(needle);
     });
-  }, [list, q, kind, provList, srvList]);
+  }, [list, q, kind, provList]);
 
   const doArchive = async (i: BillingItem) => {
     try {
@@ -386,7 +381,6 @@ export function BillingPage({
                   key={i.id}
                   item={i}
                   provider={providerOf(i.providerId)}
-                  servers={srvList}
                   now={now}
                   onExtend={() => setExtending(i)}
                   onEdit={() => setEditing(i)}

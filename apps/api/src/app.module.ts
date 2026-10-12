@@ -12,8 +12,6 @@ import { HttpModule } from './common/http/http.module.js';
 import { ConfigModule } from './config/config.module.js';
 import { DbModule } from './infra/db/db.module.js';
 import { ValkeyModule } from './infra/valkey/valkey.module.js';
-import { WsModule } from './infra/ws/ws.module.js';
-import { AgentModule } from './modules/agent/agent.module.js';
 import { AssistantModule } from './modules/assistant/assistant.module.js';
 import { CLS_REQUEST, requestInfo } from './modules/audit/audit.context.js';
 import { AuditModule } from './modules/audit/audit.module.js';
@@ -21,16 +19,12 @@ import { AuthModule } from './modules/auth/auth.module.js';
 import { incomingRequestId } from './modules/auth/request-context.js';
 import { BackupsModule } from './modules/backups/backups.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
-import { CapacityModule } from './modules/capacity/capacity.module.js';
 import { EventsModule } from './modules/events/events.module.js';
-import { FleetStatsModule } from './modules/fleet-stats/fleet-stats.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { HousekeepingModule } from './modules/housekeeping/housekeeping.module.js';
 import { IncidentsModule } from './modules/incidents/incidents.module.js';
 import { IntegrationsModule } from './modules/integrations/integrations.module.js';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module.js';
-import { MaintenanceModule } from './modules/maintenance/maintenance.module.js';
-import { MetricsModule } from './modules/metrics/metrics.module.js';
 import { NodeEventsModule } from './modules/node-events/node-events.module.js';
 import { NodeMetricsModule } from './modules/node-metrics/node-metrics.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
@@ -38,10 +32,7 @@ import { ProvidersModule } from './modules/providers/providers.module.js';
 import { RemnawaveModule } from './modules/remnawave/remnawave.module.js';
 import { ScenariosModule } from './modules/scenarios/scenarios.module.js';
 import { SecurityModule } from './modules/security/security.module.js';
-import { ServerChecksModule } from './modules/server-checks/server-checks.module.js';
-import { ServersModule } from './modules/servers/servers.module.js';
 import { SettingsModule } from './modules/settings/settings.module.js';
-import { TerminalModule } from './modules/terminal/terminal.module.js';
 
 @Module({
   imports: [
@@ -90,7 +81,6 @@ import { TerminalModule } from './modules/terminal/terminal.module.js';
       },
     }),
     ScheduleModule.forRoot(),
-    WsModule,
     DbModule,
     ValkeyModule,
     CryptoModule,
@@ -100,18 +90,10 @@ import { TerminalModule } from './modules/terminal/terminal.module.js';
     SettingsModule,
     AuthModule,
     SecurityModule,
-    ServersModule,
     ProvidersModule,
     RemnawaveModule,
     IntegrationsModule,
-    AgentModule,
-    MetricsModule,
-    TerminalModule,
-    MaintenanceModule,
-    ServerChecksModule,
     BillingModule,
-    FleetStatsModule,
-    CapacityModule,
     BackupsModule,
     IncidentsModule,
     HousekeepingModule,

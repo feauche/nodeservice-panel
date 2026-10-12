@@ -30,28 +30,5 @@ describe('validateEnv', () => {
   it('не принимает кривые URL и порт вне диапазона', () => {
     expect(() => validateEnv({ ...valid, DATABASE_URL: 'not a url' })).toThrow();
     expect(() => validateEnv({ ...valid, PORT: '70000' })).toThrow();
-    expect(() => validateEnv({ ...valid, AGENT_PUBLIC_URL: 'not a url' })).toThrow();
-    expect(() => validateEnv({ ...valid, AGENT_FALLBACK_URLS: 'https://one.test,not-a-url' })).toThrow();
-    expect(() =>
-      validateEnv({
-        ...valid,
-        AGENT_FALLBACK_URLS: 'https://1.test,https://2.test,https://3.test,https://4.test',
-      }),
-    ).toThrow(/не больше трёх/);
-  });
-
-  it('принимает отдельный внешний адрес агентов', () => {
-    expect(validateEnv({ ...valid, AGENT_PUBLIC_URL: 'https://agents.example.net' }).AGENT_PUBLIC_URL).toBe(
-      'https://agents.example.net',
-    );
-  });
-
-  it('разбирает запасные адреса, убирает пробелы и повторы', () => {
-    expect(
-      validateEnv({
-        ...valid,
-        AGENT_FALLBACK_URLS: ' https://one.test,https://two.test/, https://one.test ',
-      }).AGENT_FALLBACK_URLS,
-    ).toEqual(['https://one.test', 'https://two.test/']);
   });
 });

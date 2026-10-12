@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import type { Server as HttpServer } from 'node:http';
 import { join } from 'node:path';
 import { Logger as NestLogger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -13,8 +12,8 @@ import { apiReference } from '@scalar/nestjs-api-reference';
 process.on('unhandledRejection', (reason) => {
   new NestLogger('process').error(`необработанный reject: ${(reason as Error)?.stack ?? String(reason)}`);
 });
-// Исключение мимо try/catch. Обрыв сети (событие 'error' без слушателя у ssh2, WebSocket, сокета) после
-// запуска переживаем: падение процесса обрывает терминалы, обслуживание и починки на всех серверах сразу.
+// Исключение мимо try/catch. Обрыв сети (событие 'error' без слушателя у сокета) после запуска переживаем:
+// падение процесса обрывает опросы Remnawave, проверки и отправку уведомлений.
 // Любая другая ошибка и любая ошибка до запуска — выходим, как раньше: Docker перезапустит панель.
 let started = false;
 process.on('uncaughtException', (err) => {
@@ -37,10 +36,7 @@ import { isNetworkNoise } from './common/net/network-noise.js';
 import type { Env } from './config/env.schema.js';
 import { DB, type Db } from './infra/db/db.module.js';
 import { runMigrations } from './infra/db/migrate.js';
-import { WsUpgradeService } from './infra/ws/ws-upgrade.service.js';
-import { AgentGateway } from './modules/agent/agent.gateway.js';
 import { PanelLifecycleService } from './modules/health/panel-lifecycle.service.js';
-import { TerminalGateway } from './modules/terminal/terminal.gateway.js';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -92,7 +88,7 @@ async function bootstrap(): Promise<void> {
       }),
     );
     app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-      if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/ws')) return next();
+      if (req.method !== 'GET' || req.path.startsWith('/api')) return next();
       res.sendFile(join(publicDir, 'index.html'), { headers: { 'Cache-Control': 'no-cache' } });
     });
   }
@@ -101,10 +97,6 @@ async function bootstrap(): Promise<void> {
 
   const port = config.get('PORT');
   await app.listen(port, '0.0.0.0');
-  // WebSocket на том же HTTP-сервере: агент (/api/agent/v1/ws) и терминал (/ws/terminal).
-  app.get(AgentGateway).register();
-  app.get(TerminalGateway).register();
-  app.get(WsUpgradeService).attach(app.getHttpServer() as HttpServer);
   started = true;
   new NestLogger('Bootstrap').log(`NodeService API слушает :${port} (${config.get('NODE_ENV')})`);
   await app.get(PanelLifecycleService).started();

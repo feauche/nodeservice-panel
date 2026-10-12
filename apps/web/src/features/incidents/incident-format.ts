@@ -1,11 +1,4 @@
-import {
-  AUTOFIX_GRACE_SECONDS,
-  actionMeta,
-  INCIDENT_CHAINS,
-  type Incident,
-  type IncidentWeekStats,
-  incidentWeekStats,
-} from '@nodeservice/shared';
+import { actionMeta, type Incident, type IncidentWeekStats, incidentWeekStats } from '@nodeservice/shared';
 
 /** Порядковые для «помогло с … попытки». */
 const ORDINAL = ['первой', 'второй', 'третьей', 'четвёртой', 'пятой'];
@@ -14,21 +7,12 @@ const attemptOrdinal = (n: number): string =>
 
 const lower = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1);
 
-/** Сколько секунд автопочинка ещё выжидает по свежему событию; null — пауза не идёт. */
-export function graceLeftS(inc: Incident, now: number): number | null {
-  if (inc.status === 'resolved' || inc.attempts.length > 0 || inc.proposal) return null;
-  if (INCIDENT_CHAINS[inc.kind].length === 0) return null;
-  const left = Math.ceil((new Date(inc.openedAt).getTime() + AUTOFIX_GRACE_SECONDS * 1000 - now) / 1000);
-  return left > 0 ? left : null;
-}
-
 /**
  * Одно предложение «что происходит / чем кончилось» — строка под названием в реестре и в шапке кейса.
- * Всегда с заглавной, без обрывков.
+ * Всегда с заглавной, без обрывков. Автопочинки больше нет: попытки бывают только у старых событий,
+ * и о них говорится как об истории.
  */
-export function outcomeSentence(inc: Incident, now: number): string {
-  const running = inc.attempts.find((a) => a.status === 'running');
-  if (running) return `Выполняется: ${lower(actionMeta(running.action).title)}`;
+export function outcomeSentence(inc: Incident): string {
   const fixes = inc.attempts.filter((a) => a.level !== 'T0');
   const last = fixes.at(-1);
   if (inc.status === 'resolved') {
@@ -37,23 +21,12 @@ export function outcomeSentence(inc: Incident, now: number): string {
         last.by === 'auto' ? 'автоматически' : 'по вашей команде'
       }`;
     if (inc.resolvedBy === 'manual') return 'Закрыт администратором';
-    // Не «прошло само, починка не потребовалась», если панель пыталась: проблема ушла, но не от её шагов.
+    // Не «прошло само», если панель пыталась: проблема ушла, но не от её шагов.
     if (fixes.length > 0) return 'Проблема ушла сама, шаги починки не помогли';
     if (inc.attempts.length > 0) return 'Проблема ушла сама после осмотра';
-    return 'Прошло само, починка не потребовалась';
+    return 'Прошло само';
   }
-  const failed =
-    last && last.status !== 'helped' ? `Не помогло: ${lower(actionMeta(last.action).title)}. ` : '';
-  if (inc.proposal) {
-    const title = lower(actionMeta(inc.proposal.action).title);
-    return inc.proposal.level === 'T3'
-      ? `${failed}Следующий шаг только вручную: ${title}`
-      : `${failed}Ждёт подтверждения: ${title}`;
-  }
-  if (failed) return `${failed}Шаги цепочки исчерпаны`;
-  const wait = graceLeftS(inc, now);
-  if (wait !== null) return `Ждём ещё ${wait} с — возможно, поднимется само`;
-  if (INCIDENT_CHAINS[inc.kind].length === 0) return 'Автопочинки нет, только уведомление';
+  if (last && last.status !== 'helped') return `Не помогло: ${lower(actionMeta(last.action).title)}`;
   return 'Наблюдаем';
 }
 
@@ -61,20 +34,6 @@ export function outcomeSentence(inc: Incident, now: number): string {
 export function titleOnly(inc: Pick<Incident, 'title'>): string {
   const i = inc.title.lastIndexOf(' · ');
   return i > 0 ? inc.title.slice(0, i) : inc.title;
-}
-
-/**
- * Вторая строка в списке: готовый разбор Ассистента важнее «Автопочинки нет» — он называет причину. Шаг,
- * который ждёт подтверждения, и ход починки остаются главными.
- */
-export function listSubtitle(inc: Incident, now: number): string {
-  const a = inc.analysis;
-  const waitingStep = inc.status !== 'resolved' && (inc.proposal || graceLeftS(inc, now) !== null);
-  if (!waitingStep && a?.status === 'done' && a.verdict) {
-    const first = a.verdict.split(/(?<=[.!?])\s/)[0] ?? a.verdict;
-    return `Ассистент: ${first.length > 160 ? `${first.slice(0, 159)}…` : first}`;
-  }
-  return outcomeSentence(inc, now);
 }
 
 /** Длительность: «38 с», «6 мин», «1 ч 12 мин»; для открытого — с многоточием. */

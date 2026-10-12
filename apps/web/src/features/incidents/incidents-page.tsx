@@ -19,7 +19,7 @@ import {
   durationText,
   hhmm,
   humanSeconds,
-  listSubtitle,
+  outcomeSentence,
   titleOnly,
   type WeekStats,
 } from './incident-format';
@@ -531,10 +531,8 @@ function Stat({ n, label, cls }: { n: number; label: string; cls?: string }) {
 /** `height` — высота строки, подогнанная под окно (см. incidents-fit.ts); нет — обычная. */
 function IncidentRow({ inc, now, height }: { inc: Incident; now: number; height?: number | undefined }) {
   const status = STATUS_PILL[inc.status];
-  const level =
-    inc.attempts.find((a) => a.status === 'running')?.level ??
-    inc.proposal?.level ??
-    inc.attempts.at(-1)?.level;
+  // Уровень последней попытки из истории; старые предложения шага подтвердить уже нельзя — их не показываем.
+  const level = inc.attempts.find((a) => a.status === 'running')?.level ?? inc.attempts.at(-1)?.level;
   return (
     <Link
       to="/incidents/$id"
@@ -557,7 +555,7 @@ function IncidentRow({ inc, now, height }: { inc: Incident; now: number; height?
         </span>
         <span className="block text-[12.5px] text-text-3 md:hidden">{inc.serverName}</span>
         <span className="block text-[12.5px] text-text-2 max-md:line-clamp-2 md:truncate">
-          {listSubtitle(inc, now)}
+          {outcomeSentence(inc)}
         </span>
       </span>
       <span className="flex items-center gap-1.5 max-md:self-start">

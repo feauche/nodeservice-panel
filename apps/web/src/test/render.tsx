@@ -21,7 +21,7 @@ export function renderPage(
   Page: FunctionComponent,
   path: string,
   extraPaths: string[] = [],
-  /** Реальный адрес для маршрутов с параметрами: renderPage(Page, '/servers/$serverId', [], '/servers/<id>'). */
+  /** Реальный адрес для маршрутов с параметрами: renderPage(Page, '/incidents/$id', [], '/incidents/<id>'). */
   initialUrl: string = path,
   /** Настоящие страницы на дополнительных путях (вместо пустышек) — например, чтобы AppShell пересоздавался при переходе. */
   extraPages: Record<string, FunctionComponent> = {},

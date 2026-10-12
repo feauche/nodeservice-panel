@@ -110,12 +110,12 @@ if [[ -n "$RESTORE_FILE" ]]; then
     tar -C "$RESTORE_WORK" -xzf "$RESTORE_FILE" env meta 2>/dev/null || die "Это не бэкап панели (ожидается nodeservice-backup-*.tar.gz от nodeservice backup)."
     RESTORE_ENV="$RESTORE_WORK/env"
     [[ -f "$RESTORE_WORK/meta" ]] && { info "Бэкап:"; sed 's/^/     /' "$RESTORE_WORK/meta"; }
-    # Домен по умолчанию — прежний: тогда агенты на нодах подключатся к новой панели сами.
+    # Домен по умолчанию — прежний: закладки и ссылки на панель продолжат открываться.
     old_domain=$(grep -E '^PANEL_DOMAIN=' "$RESTORE_ENV" | cut -d= -f2- || true)
     old_email=$(grep -E '^ACME_EMAIL=' "$RESTORE_ENV" | cut -d= -f2- || true)
-    PANEL_DOMAIN=$(ask "Домен панели (прежний — агенты на нодах переподключатся сами)" "${old_domain:-}")
+    PANEL_DOMAIN=$(ask "Домен панели (по умолчанию — прежний)" "${old_domain:-}")
     [[ "$PANEL_DOMAIN" =~ ^[a-z0-9.-]+\.[a-z]{2,}$ ]] || die "Некорректный домен: '$PANEL_DOMAIN'"
-    [[ -n "$old_domain" && "$PANEL_DOMAIN" != "$old_domain" ]] && warn "Домен меняется: агентам на нодах нужно будет переустановиться (Серверы → Установить агента)."
+    [[ -n "$old_domain" && "$PANEL_DOMAIN" != "$old_domain" ]] && warn "Домен меняется: старые закладки и ссылки на панель перестанут открываться."
     ACME_EMAIL=$(ask "E-mail для Let's Encrypt" "${old_email:-admin@${PANEL_DOMAIN#*.}}")
 elif [[ -f "$ENV_FILE" ]]; then
     # shellcheck disable=SC1090
@@ -275,7 +275,7 @@ if [[ -n "$RESTORE_FILE" ]]; then
     bash "$APP_DIR/infra/scripts/restore.sh" "$RESTORE_FILE" --yes || die "Восстановление не удалось — лог выше. Стек запущен с пустой БД."
     step "Готово"
     echo -e "Панель восстановлена: ${G}https://${PANEL_DOMAIN}${N} — вход прежним паролем и кодом из приложения."
-    echo "Переключи A-запись $PANEL_DOMAIN на этот сервер; сертификат выпустится сам, агенты на нодах переподключатся."
+    echo "Переключи A-запись $PANEL_DOMAIN на этот сервер; сертификат выпустится сам."
     echo ""
     echo "Команды: nodeservice status | logs | update | rollback | backup | restore <файл> | cli <команда>"
     exit 0

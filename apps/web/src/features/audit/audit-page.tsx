@@ -9,7 +9,6 @@ import {
   type AuditListResponse,
   type AuditResult,
   type AuditSource,
-  type Server,
 } from '@nodeservice/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -38,7 +37,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useServers } from '@/features/servers/servers-api';
 import { apiErrorMessage } from '@/lib/api';
 import { useMediaQuery } from '@/lib/use-media';
 import { capFirst, cn } from '@/lib/utils';
@@ -111,6 +109,10 @@ export function AuditPage({ search, onSearch }: AuditPageProps) {
   const data = list.data;
   const filter = toFilter(search);
   const filtered = hasFilters(search);
+  // Имя объекта фильтра берём из самих записей Журнала: отдельного списка серверов больше нет.
+  const targetName = search.target
+    ? (data?.items.find((e) => e.targetId === search.target)?.targetDisplay ?? null)
+    : null;
 
   return (
     // Оболочка (main) резервирует снизу 60px паддинга, который расчёт числа строк не учитывает (число
@@ -126,6 +128,8 @@ export function AuditPage({ search, onSearch }: AuditPageProps) {
         live={live}
         streamStatus={streamStatus}
         exportFilter={filter}
+        targetName={targetName}
+        loaded={data !== undefined}
       />
 
       {missed > 0 && (
@@ -268,20 +272,32 @@ interface ToolbarProps {
   live: boolean;
   streamStatus: ReturnType<typeof useAuditStream>;
   exportFilter: ReturnType<typeof toFilter>;
+  /** Имя объекта из фильтра `?target=` — по записям Журнала; null — записей с ним на странице нет. */
+  targetName: string | null;
+  /** Записи уже загружены: можно сказать, что объекта нет, а не «загружаю». */
+  loaded: boolean;
 }
 
-/** Фильтр «только этот сервер» — приходит из окна сервера ссылкой, снимается крестиком. */
-function ServerChip({ id, servers, onClear }: { id: string; servers: Server[]; onClear: () => void }) {
-  const server = servers.find((s) => s.id === id);
+/**
+ * Фильтр «только этот сервер» — остался от старых ссылок из окна сервера (`?target=<id>`), снимается
+ * крестиком. Имя — из записей Журнала; сервера в панели больше нет, поэтому без записей — «удалён».
+ */
+function ServerChip({
+  name,
+  loaded,
+  onClear,
+}: {
+  name: string | null;
+  loaded: boolean;
+  onClear: () => void;
+}) {
   return (
     <span
       data-testid="audit-target-chip"
       className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-brand/40 bg-surface-2 pr-1.5 pl-3 text-[12.5px] font-medium"
     >
       <ServerIcon className="size-3.5 text-text-3" aria-hidden="true" />
-      <span className="max-w-[220px] truncate">
-        Сервер: {server?.name ?? (servers.length ? 'удалён' : '…')}
-      </span>
+      <span className="max-w-[220px] truncate">Сервер: {name ?? (loaded ? 'удалён' : '…')}</span>
       <button
         type="button"
         aria-label="Снять фильтр по серверу"
@@ -294,8 +310,7 @@ function ServerChip({ id, servers, onClear }: { id: string; servers: Server[]; o
   );
 }
 
-function Toolbar({ search, onSearch, live, streamStatus, exportFilter }: ToolbarProps) {
-  const servers = useServers();
+function Toolbar({ search, onSearch, live, streamStatus, exportFilter, targetName, loaded }: ToolbarProps) {
   const [q, setQ] = useState(search.q ?? '');
   useEffect(() => setQ(search.q ?? ''), [search.q]);
   useEffect(() => {
@@ -429,8 +444,8 @@ function Toolbar({ search, onSearch, live, streamStatus, exportFilter }: Toolbar
 
       {search.target && (
         <ServerChip
-          id={search.target}
-          servers={servers.data?.items ?? []}
+          name={targetName}
+          loaded={loaded}
           onClear={() => onSearch({ target: undefined, page: undefined })}
         />
       )}

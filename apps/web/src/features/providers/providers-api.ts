@@ -29,7 +29,6 @@ function useSourceApi() {
       };
 }
 
-import { serversKeys } from '@/features/servers/servers-api';
 import { API_BASE, api, request } from '@/lib/api';
 
 /** /api/providers — справочник хостеров по контракту packages/shared/src/providers.ts. */
@@ -100,8 +99,6 @@ function useInvalidate() {
     void qc.invalidateQueries({ queryKey: ['providers'] });
     void qc.invalidateQueries({ queryKey: ['remna-providers'] });
     void qc.invalidateQueries({ queryKey: ['nodes'] });
-    // У серверов меняется providerId/иконка — список серверов тоже перечитываем.
-    void qc.invalidateQueries({ queryKey: serversKeys.all });
   };
 }
 

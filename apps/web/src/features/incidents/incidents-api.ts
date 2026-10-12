@@ -1,11 +1,7 @@
 import {
-  type ActionKey,
   type Incident,
-  type IncidentPolicyResponse,
-  type IncidentPolicyUpdate,
   type IncidentsListResponse,
   type IncidentWeekStats,
-  incidentPolicyResponseSchema,
   incidentSchema,
   incidentsListResponseSchema,
   incidentWeekStatsSchema,
@@ -51,13 +47,6 @@ export const incidentsApi = {
   remove: (id: string): Promise<void> => request(`/incidents/${id}`, { method: 'DELETE' }),
   removeResolved: (): Promise<{ deleted: number }> =>
     request('/incidents/resolved', { method: 'DELETE', schema: z.object({ deleted: z.number().int() }) }),
-  /** Запуск действия реестра (T1/T2): попытка идёт в фоне, событие перечитывается, пока она идёт. */
-  run: (id: string, action: ActionKey): Promise<Incident> =>
-    api.post(`/incidents/${id}/actions/${action}/run`, {}, incidentSchema),
-  policy: (signal?: AbortSignal): Promise<IncidentPolicyResponse> =>
-    api.get('/incidents/policy', incidentPolicyResponseSchema, signal),
-  updatePolicy: (body: IncidentPolicyUpdate): Promise<IncidentPolicyResponse> =>
-    request('/incidents/policy', { method: 'PATCH', body, schema: incidentPolicyResponseSchema }),
 };
 
 export const incidentsKeys = {
@@ -67,15 +56,8 @@ export const incidentsKeys = {
   list: (status: IncidentsFilter, params?: IncidentsListParams) =>
     params ? (['incidents', 'list', status, params] as const) : (['incidents', 'list', status] as const),
   item: (id: string) => ['incidents', 'item', id] as const,
-  policy: ['incidents', 'policy'] as const,
   weekStats: ['incidents', 'week-stats'] as const,
 };
-
-/** Идёт ли по какому-то событию попытка или разбор Ассистента — тогда данные перечитываются часто. */
-export const hasRunningAttempt = (items: Incident[] | undefined): boolean =>
-  Boolean(
-    items?.some((i) => i.analysis?.status === 'running' || i.attempts.some((a) => a.status === 'running')),
-  );
 
 export function useIncidents(status: IncidentsFilter, params?: IncidentsListParams & { enabled?: boolean }) {
   const { enabled = true, ...listParams } = params ?? {};
@@ -87,8 +69,8 @@ export function useIncidents(status: IncidentsFilter, params?: IncidentsListPara
     // Листание и смена размера страницы (реестр подстраивается под высоту окна): прежняя страница остаётся
     // на экране, пока не пришла новая, — без мигания заглушкой.
     ...(hasParams ? { placeholderData: keepPreviousData } : {}),
-    // Живой поток приносит изменения сразу; опрос — страховка. Пока идёт попытка — чаще.
-    refetchInterval: (q) => (hasRunningAttempt(q.state.data?.items) ? 2_000 : 60_000),
+    // Живой поток приносит изменения сразу; опрос — страховка.
+    refetchInterval: 60_000,
   });
 }
 
@@ -106,7 +88,7 @@ export function useIncident(id: string) {
   return useQuery({
     queryKey: incidentsKeys.item(id),
     queryFn: ({ signal }) => incidentsApi.get(id, signal),
-    refetchInterval: (q) => (hasRunningAttempt(q.state.data ? [q.state.data] : undefined) ? 2_000 : 60_000),
+    refetchInterval: 60_000,
   });
 }
 
@@ -165,42 +147,11 @@ export function useAcknowledgeIncident() {
   });
 }
 
-/** Ручное закрытие; с «больше не следить за нодой» меняется и сервер — перечитываем и его. */
+/** Ручное закрытие события. */
 export function useResolveIncident() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string } & ResolveIncidentRequest) => incidentsApi.resolve(id, body),
-    onSuccess: (_d, vars) => {
-      void qc.invalidateQueries({ queryKey: incidentsKeys.all });
-      if (vars.stopNodeWatch) void qc.invalidateQueries({ queryKey: ['servers'] });
-    },
-  });
-}
-
-/** Подтверждение предложения или ручной запуск действия. Пароль не спрашивается — решение владельца. */
-export function useRunAction() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, action }: { id: string; action: ActionKey }) => incidentsApi.run(id, action),
     onSuccess: () => void qc.invalidateQueries({ queryKey: incidentsKeys.all }),
-  });
-}
-
-export function useIncidentPolicy() {
-  return useQuery({
-    queryKey: incidentsKeys.policy,
-    queryFn: ({ signal }) => incidentsApi.policy(signal),
-    staleTime: 15_000,
-  });
-}
-
-export function useUpdateIncidentPolicy() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: incidentsApi.updatePolicy,
-    onSuccess: (data) => {
-      qc.setQueryData(incidentsKeys.policy, data);
-      void qc.invalidateQueries({ queryKey: ['settings', 'incidents'] });
-    },
   });
 }

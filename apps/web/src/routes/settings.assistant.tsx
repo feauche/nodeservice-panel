@@ -4,7 +4,7 @@ import { AssistantSettingsPage } from '@/features/assistant/assistant-settings-p
 import { requireAuth } from '@/features/auth/guards';
 
 export const Route = createFileRoute('/settings/assistant')({
-  // Подраздел в адресе (`?s=permissions`): на него ведут ссылки в рейке настроек.
+  // Подраздел в адресе (`?s=connection`, `behavior` или `privacy`): на него ведут ссылки в рейке настроек.
   validateSearch: (raw: Record<string, unknown>): { s?: AssistantSectionKey } =>
     raw.s === undefined ? {} : { s: assistantSectionOf(raw.s) },
   beforeLoad: ({ context }) => requireAuth(context),

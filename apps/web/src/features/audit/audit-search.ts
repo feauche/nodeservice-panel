@@ -26,7 +26,7 @@ export const auditSearchSchema = z.object({
   result: z.array(z.enum(AUDIT_RESULTS)).min(1).optional().catch(undefined),
   source: z.enum(AUDIT_SOURCES).optional().catch(undefined),
   period: z.enum(AUDIT_PERIODS).optional().catch(undefined),
-  /** Только события одного сервера (id) — так из окна сервера открывается «его» Журнал. */
+  /** Только события одного объекта (id) — так открывались старые ссылки из окна сервера. */
   target: z.uuid().optional().catch(undefined),
   /** Live-лента включена по умолчанию; в URL попадает только выключение (live=false). */
   live: z.boolean().optional().catch(undefined),

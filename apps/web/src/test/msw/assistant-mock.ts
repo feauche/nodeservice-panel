@@ -1,7 +1,5 @@
 import {
   ASSISTANT_PERMISSIONS_DEFAULT,
-  type AssistantChange,
-  type AssistantChangeProposal,
   type AssistantConversation,
   type AssistantLevel,
   type AssistantMessage,
@@ -10,10 +8,7 @@ import {
 } from '@nodeservice/shared';
 import { delay, HttpResponse, http } from 'msw';
 
-import { pushAuditEntry } from './audit-mock';
 import { mockIncidents } from './incidents-mock';
-import { sampleReach } from './reach-sample';
-import { mockServers } from './servers-mock';
 
 interface AssistantMock {
   enabled: boolean;
@@ -25,10 +20,6 @@ interface AssistantMock {
   messages: Record<string, AssistantMessage[]>;
   /** Сколько «думает» мок-сервер до ответа; в тестах ноль. */
   chatDelayMs: number;
-  /** Изменения по предложению Ассистента (J5) по id. */
-  changes: Record<string, AssistantChange>;
-  /** Карточки, которые при применении отвечают «состояние изменилось» или «ошибка»: так видны эти состояния. */
-  applyOutcome: Record<string, 'stale' | 'failed'>;
 }
 export const mockAssistant: AssistantMock = {
   enabled: false,
@@ -39,9 +30,10 @@ export const mockAssistant: AssistantMock = {
   conversations: [],
   messages: {},
   chatDelayMs: 0,
-  changes: {},
-  applyOutcome: {},
 };
+
+/** Старый сервер из прежних ответов: такие цитаты остались только в истории бесед. */
+export const MOCK_OLD_SERVER = { id: '0192f100-0000-7000-8000-000000000001', name: 'de-fra-01' } as const;
 
 let seq = 0;
 const uid = () => {
@@ -61,8 +53,6 @@ export function seedAssistant(): void {
   mockAssistant.conversations = [];
   mockAssistant.messages = {};
   mockAssistant.chatDelayMs = 0;
-  mockAssistant.changes = {};
-  mockAssistant.applyOutcome = {};
 }
 
 function aProblem(status: number, detail: string) {
@@ -72,302 +62,40 @@ function aProblem(status: number, detail: string) {
   );
 }
 
-type ChangeKind =
-  | 'provider'
-  | 'tags'
-  | 'profile'
-  | 'notes'
-  | 'rename'
-  | 'close'
-  | 'pause'
-  | 'cleanup'
-  | 'policy'
-  | 'heavy'
-  | 'expired';
-
-/** Готовые изменения для демонстрации: те же тексты, что строит сервер (превью «было → станет»). */
-function makeChange(kind: ChangeKind): AssistantChangeProposal {
-  const server = mockServers.items[0]?.name ?? 'de-fra-01';
-  const openIncident = mockIncidents.items.find((i) => i.status !== 'resolved');
-  const now = new Date();
-  const base = {
-    id: uid(),
-    conversationId: null,
-    live: false,
-    status: 'proposed' as const,
-    note: null,
-    decidedAt: null,
-    decidedBy: null,
-    createdAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + 24 * 3_600_000).toISOString(),
-  };
-  const serverTarget = { type: 'server' as const, id: null, label: server };
-  const defs: Record<ChangeKind, Omit<AssistantChange, keyof typeof base>> = {
-    provider: {
-      operation: 'server.provider',
-      title: 'Сменить провайдера',
-      level: 'T1',
-      target: serverTarget,
-      reason: `В панели у ${server} указан Hetzner, а вы сказали, что он у Aéza.`,
-      rows: [{ label: 'Провайдер', before: 'Hetzner', after: 'Aéza' }],
-      consequence: 'Провайдер только помечает сервер и на его работу не влияет.',
-      reversible: true,
-    },
-    tags: {
-      operation: 'server.tags',
-      title: 'Изменить теги',
-      level: 'T1',
-      target: serverTarget,
-      reason: 'Вы просили убрать «test» и пометить сервер как «vip».',
-      rows: [
-        {
-          label: 'Теги',
-          before: 'prod, de, test',
-          after: 'prod, de, vip',
-          added: ['vip'],
-          removed: ['test'],
-        },
-      ],
-      consequence: null,
-      reversible: true,
-    },
-    profile: {
-      operation: 'server.profile',
-      title: 'Изменить профиль сервера',
-      level: 'T1',
-      target: serverTarget,
-      reason: 'По снимку работают remnanode и nginx, слушаются порты 22 и 443: похоже на вход для клиентов.',
-      rows: [
-        { label: 'Функции сервера', before: '—', after: 'Вход', added: ['Вход'] },
-        { label: 'Важность', before: 'Обычный', after: 'Критичный' },
-        { label: 'Окно обслуживания', before: '—', after: 'ночью по Москве, 03:00–05:00' },
-        {
-          label: 'Ожидаемые контейнеры',
-          before: '—',
-          after: 'nginx, remnanode',
-          added: ['nginx', 'remnanode'],
-        },
-        { label: 'Ожидаемые порты', before: '—', after: '22, 443', added: ['22', '443'] },
-      ],
-      consequence:
-        'Для критичного сервера Ассистент будет называть последствия и окно обслуживания. Панель начнёт сверять ожидаемое со снимком состояния и показывать расхождения.',
-      reversible: true,
-    },
-    notes: {
-      operation: 'server.notes',
-      title: 'Изменить заметку',
-      level: 'T1',
-      target: serverTarget,
-      reason: 'Вы просили записать, кто оплачивает сервер.',
-      rows: [
-        { label: 'Заметка', before: '—', after: 'Оплачивает Lumax, аккаунт в личном кабинете хостера.' },
-      ],
-      consequence: null,
-      reversible: true,
-    },
-    rename: {
-      operation: 'server.rename',
-      title: 'Переименовать сервер',
-      level: 'T1',
-      target: serverTarget,
-      reason: 'Вы просили привести названия к единому виду.',
-      rows: [{ label: 'Название', before: server, after: 'ru-entry-9' }],
-      consequence:
-        'Новое название появится в списке серверов и в событиях; в прежних записях Журнала останется старое.',
-      reversible: true,
-    },
-    close: {
-      operation: 'incident.resolve',
-      title: 'Закрыть событие',
-      level: 'T2',
-      target: {
-        type: 'incident',
-        id: openIncident?.id ?? null,
-        label: openIncident?.title ?? 'Нода остановлена',
-      },
-      reason: 'Нода снова работает: контейнер remnanode запущен, порт 443 слушается.',
-      rows: [{ label: 'Статус', before: 'Открыт', after: 'Закрыт вручную' }],
-      consequence: 'Если проблема осталась, панель заведёт новый событие. Закрытие кнопкой не отменяется.',
-      reversible: false,
-    },
-    pause: {
-      operation: 'autofix.pause',
-      title: 'Поставить автопочинку на паузу',
-      level: 'T1',
-      target: { type: 'settings', id: 'incidents', label: 'Автопочинка' },
-      reason: `Вы собираетесь обновлять ${server} и не хотите, чтобы панель сама перезапускала службы.`,
-      rows: [{ label: 'Автопочинка', before: 'Работает', after: 'На паузе на 1 ч' }],
-      consequence: 'Пока пауза, панель сама ничего не чинит; события по-прежнему заводятся и видны.',
-      reversible: true,
-    },
-    cleanup: {
-      operation: 'maintenance.run',
-      title: 'Очистить диск',
-      level: 'T2',
-      target: serverTarget,
-      reason: 'Диск заполнен на 82 %, по проверке есть что убрать.',
-      rows: [
-        {
-          label: 'Диск',
-          before: 'Занято 82\u00A0%',
-          after: 'Уберём ненужные пакеты, старые ядра, кеш apt, журнал сожмём до 200 МБ',
-        },
-      ],
-      consequence:
-        'Данные и настройки не трогаем. Старые ядра удаляются, поэтому очистку кнопкой не отменить.',
-      reversible: false,
-    },
-    heavy: {
-      operation: 'server.check',
-      title: `Запустить «Скорость до России» на «${server}»?`,
-      level: 'T2',
-      target: serverTarget,
-      reason: 'Вы спросили, нормальная ли скорость до России, — свежего замера нет.',
-      rows: [{ label: 'Скорость до России', before: 'Ещё не запускалась', after: 'Запустится сейчас' }],
-      consequence:
-        'Тяжёлая проверка: 5–10 минут, гоняет сотни мегабайт трафика. Пока идёт, у пользователей этого сервера может просесть скорость. Остановить из панели нельзя — закончится сама.',
-      reversible: false,
-    },
-    policy: {
-      operation: 'autofix.policy',
-      title: 'Изменить режим автопочинки',
-      level: 'T2',
-      target: { type: 'settings', id: 'incidents', label: 'Автопочинка: Диск заполняется' },
-      reason: 'Очистка диска помогала в трёх случаях из трёх.',
-      rows: [{ label: 'Режим для «Диск заполняется»', before: 'Спросить', after: 'Само' }],
-      consequence:
-        'Панель сама выполнит безопасные шаги (T1) при этом виде события, без вашего нажатия. Шаги с подтверждением (T2) по-прежнему только по вашему решению.',
-      reversible: true,
-    },
-    expired: {
-      operation: 'server.provider',
-      title: 'Сменить провайдера',
-      level: 'T1',
-      target: serverTarget,
-      reason: 'Предложение было вчера.',
-      rows: [{ label: 'Провайдер', before: 'Hetzner', after: 'Aéza' }],
-      consequence: null,
-      reversible: true,
-    },
-  };
-  const change: AssistantChange = { ...base, ...defs[kind] };
-  if (kind === 'notes') mockAssistant.applyOutcome[change.id] = 'stale';
-  if (kind === 'rename') mockAssistant.applyOutcome[change.id] = 'failed';
-  if (kind === 'expired') {
-    change.status = 'expired';
-    change.note =
-      'Предложение не применили за 24 ч: состояние могло измениться. Попросите Ассистента предложить заново.';
-    change.createdAt = new Date(now.getTime() - 25 * 3_600_000).toISOString();
-    change.expiresAt = new Date(now.getTime() - 3_600_000).toISOString();
-  }
-  mockAssistant.changes[change.id] = change;
-  return {
-    kind: 'change',
-    changeId: change.id,
-    operation: change.operation,
-    title: change.title,
-    level: change.level,
-  };
-}
-
-/** Запись Журнала о решении по изменению, как её пишет сервер. */
-function auditChange(change: AssistantChange, kind: 'applied' | 'reverted' | 'rejected' | 'failed'): void {
-  pushAuditEntry({
-    action: `assistant.change.${kind}`,
-    category: 'assistant',
-    result: kind === 'failed' ? 'failed' : 'ok',
-    severity: kind === 'failed' ? 'warn' : 'info',
-    targetType: change.target.type,
-    targetId: change.target.id,
-    targetDisplay: change.target.label,
-    metadata: {
-      changeId: change.id,
-      operation: change.operation,
-      title: change.title,
-      reason: change.reason,
-      rows: change.rows.map((r) => ({ label: r.label, before: r.before, after: r.after })),
-      ...(change.note ? { note: change.note } : {}),
-    },
-  });
-}
-
-const CHANGE_TRIGGERS: Array<[RegExp, ChangeKind[]]> = [
-  [/предложи изменения/i, ['provider', 'tags', 'profile']],
-  [/провайдер/i, ['provider']],
-  [/тег/i, ['tags']],
-  [/профил/i, ['profile']],
-  [/заметк/i, ['notes']],
-  [/переименуй/i, ['rename']],
-  [/закр[ойы]\S* событие/i, ['close']],
-  [/пауз/i, ['pause']],
-  [/очист/i, ['cleanup']],
-  [/режим автопочинки/i, ['policy']],
-  [/скорост/i, ['heavy']],
-  [/просроч/i, ['expired']],
-];
-
-/** Демо-ответ Ассистента: цитаты (база знаний + событие) и предложение автопочинки. */
+/** Демо-ответ Ассистента: текст и цитаты (база знаний + событие). Действий Ассистент не предлагает. */
 function buildReply(text = ''): AssistantMessage {
-  const kinds = CHANGE_TRIGGERS.find(([re]) => re.test(text))?.[1];
-  if (kinds && mockAssistant.permissions.changes)
-    return {
-      id: uid(),
-      role: 'assistant',
-      content:
-        kinds.length > 1
-          ? 'Предложил три изменения. Пока вы не нажмёте «Применить» на карточке, ничего не изменится.'
-          : 'Предложил изменение. Пока вы не нажмёте «Применить» на карточке, ничего не изменится.',
-      citations: [],
-      proposals: kinds.map(makeChange),
-      reachability: [],
-      activity: [],
-      createdAt: new Date().toISOString(),
-    };
   if (/доступ|снаружи/i.test(text))
     return {
       id: uid(),
       role: 'assistant',
       content:
-        'Порт SSH открыт со всех проверяющих, а порт 443 закрыт. Похоже, сервис не слушает 443 или его закрывает фильтр.',
+        'По последней проверке Check-Host порт 443 не отвечает из России. Запустите проверку порта в окне ноды, чтобы увидеть свежий результат.',
       citations: [],
       proposals: [],
-      reachability: [sampleReach('de-fra-01', 'closed443')],
+      reachability: [],
       activity: [],
       createdAt: new Date().toISOString(),
     };
   const cpu = mockIncidents.items.find((i) => i.kind === 'cpu_high' && i.status !== 'resolved');
   const kb = { type: 'kb' as const, id: '0192e000-0000-7000-8000-000000000001', label: 'Лимит conntrack' };
   const citations: AssistantMessage['citations'] = [kb];
-  const proposals: AssistantMessage['proposals'] = [];
-  if (cpu) {
-    citations.push({ type: 'incident', id: cpu.id, label: cpu.title });
-    proposals.push({
-      kind: 'autofix',
-      incidentId: cpu.id,
-      preset: 'restart_node',
-      title: 'Перезапустить контейнер ноды',
-      description: 'Снимет пиковую нагрузку на CPU на de-fra-01.',
-      level: 'T2',
-      reason: 'CPU держится выше порога, а по базе знаний помогает перезапуск.',
-    });
-  }
+  if (cpu) citations.push({ type: 'incident', id: cpu.id, label: cpu.title });
   return {
     id: uid(),
     role: 'assistant',
     content:
-      'Сейчас на **de-fra-01** высокая нагрузка на CPU. По базе знаний помогает `перезапуск Xray`. Могу предложить безопасное действие: вы подтвердите, и оно запустится.',
+      'Сейчас на **de-fra-01** высокая нагрузка на CPU. По базе знаний помогает `перезапуск Xray` — его выполняете вы сами.',
     citations,
-    proposals,
+    proposals: [],
     reachability: [],
     activity: [],
     createdAt: new Date().toISOString(),
   };
 }
 
-/** Ответ в двух сообщениях: «сейчас посмотрю» и итог с именами серверов и одной ссылкой-источником. */
+/** Ответ в двух сообщениях: «сейчас посмотрю» и итог с именами серверов и цитатой старого сервера. */
 function buildFleetReplies(): AssistantMessage[] {
   const now = new Date().toISOString();
-  const fra = mockServers.items.find((x) => x.name === 'de-fra-01');
   return [
     {
       id: uid(),
@@ -384,7 +112,7 @@ function buildFleetReplies(): AssistantMessage[] {
       role: 'assistant',
       content:
         '**События по серверам за всё время:**\n\n- de-fra-01 — 4 события, все закрыты\n- nl-ams-02 — 2 события, все закрыты\n\nБольше всего сбоев на первом.',
-      citations: fra ? [{ type: 'server', id: fra.id, label: fra.name }] : [],
+      citations: [{ type: 'server', id: MOCK_OLD_SERVER.id, label: MOCK_OLD_SERVER.name }],
       proposals: [],
       reachability: [],
       activity: [],
@@ -393,136 +121,7 @@ function buildFleetReplies(): AssistantMessage[] {
   ];
 }
 
-const changeOr404 = (id: unknown) => mockAssistant.changes[String(id)] ?? null;
-
-/** Итог решения человека по изменению: те же переходы и тексты, что у сервера. */
-function decide(change: AssistantChange, action: 'apply' | 'reject' | 'revert') {
-  const at = new Date().toISOString();
-  if (action === 'reject') {
-    if (change.status === 'rejected') return HttpResponse.json(change);
-    if (change.status !== 'proposed')
-      return aProblem(409, `Предложение уже в состоянии «${change.status}»: отклонить его нельзя.`);
-    Object.assign(change, { status: 'rejected', decidedAt: at, decidedBy: 'admin' });
-    auditChange(change, 'rejected');
-    return HttpResponse.json(change);
-  }
-  if (action === 'revert') {
-    if (change.status === 'reverted') return HttpResponse.json(change);
-    if (change.status !== 'applied' || !change.reversible)
-      return aProblem(
-        409,
-        change.reversible
-          ? 'Отменить можно только применённое изменение.'
-          : 'Это изменение кнопкой не отменяется.',
-      );
-    Object.assign(change, {
-      status: 'reverted',
-      decidedAt: at,
-      decidedBy: 'admin',
-      note: `Возвращено прежнее значение: ${change.rows.map((r) => `${r.label}: ${r.before}`).join('; ')}.`,
-    });
-    auditChange(change, 'reverted');
-    return HttpResponse.json(change);
-  }
-  if (change.status === 'applied' || change.status === 'expired') return HttpResponse.json(change);
-  if (change.status !== 'proposed')
-    return aProblem(409, `Это предложение уже в состоянии «${change.status}»: применить его нельзя.`);
-  const outcome = mockAssistant.applyOutcome[change.id];
-  if (outcome === 'stale')
-    Object.assign(change, {
-      status: 'stale',
-      note: 'Состояние изменилось после предложения, ничего не применено. Сейчас: Заметка: Проверка связи. Попросите Ассистента предложить заново.',
-    });
-  else if (outcome === 'failed')
-    Object.assign(change, { status: 'failed', note: 'Название «ru-entry-9» уже занято другим сервером.' });
-  else if (change.operation === 'maintenance.run')
-    Object.assign(change, {
-      status: 'applied',
-      live: true,
-      decidedAt: at,
-      decidedBy: 'admin',
-      note: `Запущено: ${change.title}. Идёт: Подключение по SSH.`,
-    });
-  else
-    Object.assign(change, {
-      status: 'applied',
-      decidedAt: at,
-      decidedBy: 'admin',
-      note: `Проверено: ${change.rows.map((r) => `${r.label}: ${r.after}`).join('; ')}.`,
-    });
-  auditChange(change, outcome ? 'failed' : 'applied');
-  return HttpResponse.json(change);
-}
-
 export const assistantHandlers = [
-  http.get('/api/assistant/changes/summary', () => {
-    const all = Object.values(mockAssistant.changes);
-    const n = (s: string) => all.filter((c) => c.status === s).length;
-    return HttpResponse.json({
-      days: 7,
-      applied: n('applied'),
-      reverted: n('reverted'),
-      rejected: n('rejected'),
-      pending: n('proposed'),
-    });
-  }),
-  http.get('/api/assistant/changes/:id', ({ params }) => {
-    const change = changeOr404(params.id);
-    if (!change) return aProblem(404, 'Изменение не найдено.');
-    // Фоновое обслуживание в моке заканчивается через несколько секунд после запуска.
-    if (change.live && change.decidedAt && Date.now() - Date.parse(change.decidedAt) > 6_000)
-      Object.assign(change, {
-        live: false,
-        note: `${change.title}: готово за 14 с. Подробности: вкладка «Обслуживание» сервера.`,
-      });
-    return HttpResponse.json(change);
-  }),
-  http.post('/api/assistant/changes/:id/:action', ({ params }) => {
-    const change = changeOr404(params.id);
-    if (!change) return aProblem(404, 'Изменение не найдено.');
-    const action = String(params.action);
-    if (action !== 'apply' && action !== 'reject' && action !== 'revert')
-      return aProblem(404, 'Такого действия нет.');
-    return decide(change, action);
-  }),
-  http.post('/api/servers/:id/terminal/hint', async ({ request }) => {
-    if (!mockAssistant.enabled)
-      return aProblem(
-        409,
-        'Ассистент выключен: задайте провайдера, ключ и модель в «Настройки → Ассистент».',
-      );
-    const body = (await request.json().catch(() => ({}))) as { text?: string; question?: string };
-    const text = (body.text ?? '').trim();
-    if (!text) return aProblem(400, 'В терминале пока нет вывода: подсказывать нечего.');
-    const masked = (text.match(/password|token|secret|\b\d{1,3}(?:\.\d{1,3}){3}\b/gi) ?? []).length;
-    const conntrack = /conntrack/i.test(text);
-    return HttpResponse.json({
-      title: conntrack ? 'Упёрся conntrack' : 'Вывод выглядит обычно',
-      explanation: conntrack
-        ? 'В ядре переполнена таблица соединений, поэтому новые соединения отбрасываются. Сервис жив, но часть пользователей не подключается.'
-        : `Ничего тревожного в последних строках не видно.${body.question ? ` Вы спросили: «${body.question}».` : ''}`,
-      commands: conntrack
-        ? [
-            {
-              command: 'cat /proc/sys/net/netfilter/nf_conntrack_max',
-              note: 'Какой сейчас предел',
-              risk: 'read',
-            },
-            {
-              command: 'sysctl net.netfilter.nf_conntrack_count',
-              note: 'Сколько записей занято',
-              risk: 'read',
-            },
-            {
-              command: 'sysctl -w net.netfilter.nf_conntrack_max=1048576',
-              note: 'Поднять предел, учтите объём памяти',
-              risk: 'change',
-            },
-          ]
-        : [{ command: 'uptime', note: 'Посмотреть нагрузку', risk: 'read' }],
-      masked,
-    });
-  }),
   http.get('/api/assistant/status', () =>
     HttpResponse.json({
       enabled: mockAssistant.enabled,

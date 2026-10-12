@@ -71,7 +71,9 @@ class FakeLlm implements LlmProvider {
       if (!done) {
         const t = userText.includes('CPU')
           ? { term: 'CPU', explain: 'Процессор — считает всё на сервере' }
-          : { term: 'SSH', explain: 'Безопасный удалённый доступ к серверу' };
+          : userText.includes('XTLS')
+            ? { term: 'XTLS', explain: 'Шифрование трафика в Xray без двойной обёртки' }
+            : { term: 'SSH', explain: 'Безопасный удалённый доступ к серверу' };
         return {
           stopReason: 'tool_use',
           blocks: [{ type: 'tool_use', id: 'g1', name: 'add_glossary_terms', input: { terms: [t] } }],
@@ -470,32 +472,45 @@ describe('knowledge + assistant e2e', () => {
     expect(chatEvent?.category).toBe('assistant');
   });
 
-  it('присланный мануал не создаёт статью даже при старом разрешении kbWrite', async () => {
-    const res = await assertPassiveKnowledge('Вот скопированная страница про Reality… МАНУАЛ');
-    expect(res.message.citations.filter((c) => c.type === 'kb')).toEqual([]);
-    expect(res.message.content).toContain('ничего не сохранено');
+  it('присланный мануал сохраняется статьёй с меткой AI при разрешении «Создание и правка статей»', async () => {
+    const res = assistantChatResponseSchema.parse(
+      (
+        await agent
+          .post('/api/assistant/chat')
+          .set(CSRF_HEADER, csrf)
+          .send({ message: 'Вот скопированная страница про Reality… МАНУАЛ' })
+          .expect(200)
+      ).body,
+    );
+    const cited = res.message.citations.find((c) => c.type === 'kb');
+    expect(cited?.label).toBe('Разбор: настройка Reality');
+    // Запись прошла — предупреждения «ничего не сохранено» нет.
+    expect(res.message.content).toBe('Собрал и сохранил статью.');
+    const doc = kbDocSchema.parse((await agent.get(`/api/knowledge/${cited?.id}`).expect(200)).body);
+    expect(doc.source).toBe('ai');
+    // Убираем за собой: следующие проверки сравнивают базу знаний до и после.
+    await agent.delete(`/api/knowledge/${cited?.id}`).set(CSRF_HEADER, csrf).expect(204);
   });
 
-  it('присланный мануал: без разрешения kbWrite статья не создаётся', async () => {
-    await agent
-      .put('/api/settings/assistant')
-      .set(CSRF_HEADER, csrf)
-      .send({ permissions: { kbWrite: false } })
-      .expect(200);
-    await assertPassiveKnowledge('Ещё одна страница про Reality… МАНУАЛ');
-    await agent
-      .put('/api/settings/assistant')
-      .set(CSRF_HEADER, csrf)
-      .send({ permissions: { kbWrite: true } })
-      .expect(200);
+  it('чат пополняет «Пояснения»: новый термин добавляется, повтор не дублируется и не выдаётся за запись', async () => {
+    const chat = async (message: string) =>
+      assistantChatResponseSchema.parse(
+        (await agent.post('/api/assistant/chat').set(CSRF_HEADER, csrf).send({ message }).expect(200)).body,
+      );
+    const glossary = async () => {
+      const list = kbListResponseSchema.parse((await agent.get('/api/knowledge').expect(200)).body);
+      const id = list.items.find((d) => d.title === 'Пояснения')?.id;
+      return kbDocSchema.parse((await agent.get(`/api/knowledge/${id}`).expect(200)).body).content;
+    };
+    expect(await glossary()).not.toContain('XTLS');
+    expect((await chat('Объясни XTLS — ГЛОССАРИЙ')).message.content).toBe('Добавил в глоссарий.');
+    expect((await glossary()).match(/XTLS/g)).toHaveLength(1);
+    // Повтор ничего не добавил: Ассистент не вправе сказать «добавил» без оговорки.
+    expect((await chat('Опять XTLS — ГЛОССАРИЙ')).message.content).toContain('ничего не сохранено');
+    expect((await glossary()).match(/XTLS/g)).toHaveLength(1);
   });
 
-  it('чат не дописывает глоссарий: существующие термины и версии сохраняются', async () => {
-    for (const message of ['Объясни SSH — ГЛОССАРИЙ', 'Объясни CPU — ГЛОССАРИЙ', 'Опять SSH — ГЛОССАРИЙ'])
-      await assertPassiveKnowledge(message);
-  });
-
-  it('активный чат читает инциденты и отклоняет старые серверные инструменты', async () => {
+  it('чат читает события и отклоняет удалённые инструменты старых серверов', async () => {
     const res = assistantChatResponseSchema.parse(
       (
         await agent
@@ -505,7 +520,7 @@ describe('knowledge + assistant e2e', () => {
           .expect(200)
       ).body,
     );
-    expect(res.message.content).toContain('недоступен');
+    expect(res.message.content).toContain('не разрешён');
     expect(res.message.content).toContain('matched');
     expect(res.message.reachability).toEqual([]);
   });
@@ -624,14 +639,14 @@ describe('knowledge + assistant e2e', () => {
     });
   });
 
-  it('неожиданный save_kb_article отклоняется, словарь не записывается', async () => {
+  it('словарь отдельной статьёй не сохраняется: термины идут только в «Пояснения»', async () => {
     const res = await assertPassiveKnowledge('Собери статью, СЛОВАРЬ-СТАТЬЯ');
-    expect(res.message.content).toContain('недоступен');
+    expect(res.message.content).toContain('Статья-глоссарий не создана');
   });
 
-  it('пассивный запрет записи не зависит от названия предлагаемой статьи', async () => {
+  it('запрет статьи-словаря не зависит от её названия', async () => {
     const res = await assertPassiveKnowledge('Собери статью, СЛОВАРЬ-ОСНОВЫ');
-    expect(res.message.content).toContain('недоступен');
+    expect(res.message.content).toContain('Статья-глоссарий не создана');
   });
 
   it('ложное заявление модели о записи не приводит к записи после подсказки', async () => {

@@ -162,14 +162,14 @@ describe('чат ассистента: устойчивость e2e', () => {
       'Причина: нужно было вызвать list_incidents. Сейчас вызываю инструмент, чтобы дать ответ.',
     );
     expect(JSON.stringify(fake.calls[1]?.messages)).toContain('не вызвали');
-    // Сводка по серверам пришла модели числами, а вложений-«инцидентов» под ответом нет.
+    // Сводка по нодам пришла модели числами, а вложений-«событий» под ответом нет.
     const toolResult = fake.calls
       .at(-1)
       ?.messages.flatMap((m) => m.content)
       .find((b) => b.type === 'tool_result');
     const payload = JSON.parse(toolResult?.type === 'tool_result' ? toolResult.content : '{}');
-    expect(payload.byServer[0]).toMatchObject({ server: 'ru-bridge', total: 2 });
-    expect(payload.byServer[1]).toMatchObject({ server: 'nl', total: 1 });
+    expect(payload.byNode[0]).toMatchObject({ node: 'ru-bridge', total: 2 });
+    expect(payload.byNode[1]).toMatchObject({ node: 'nl', total: 1 });
     expect(res.message.citations).toEqual([]);
   });
 

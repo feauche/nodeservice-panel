@@ -4,8 +4,6 @@ import nginx from 'highlight.js/lib/languages/nginx';
 import { CheckIcon, CopyIcon } from 'lucide-react';
 import { createContext, Fragment, type ReactNode, useContext, useState } from 'react';
 import { CountryFlag } from '@/components/country-flag';
-import { HEALTH_COLORS, HEALTH_LABELS, type ServerHealth } from '@/features/servers/server-health';
-import { openServer } from '@/features/servers/server-modal-store';
 import { cn } from '@/lib/utils';
 
 /** Ячейки строки markdown-таблицы: делим по «|», отбрасываем крайние пустые от обрамляющих труб. */
@@ -126,12 +124,10 @@ function CodeBlock({ code, lang, copyable }: { code: string; lang: string; copya
   );
 }
 
-/** Состояние серверов по id: у ссылки на сервер в тексте появляется цветная точка. Без провайдера точки нет. */
-export const ServerHealthContext = createContext<Record<string, ServerHealth>>({});
-/** Страна сервера по id (из карточки сервера): флаг перед названием, чтобы «Мост» было видно, чей он. */
-export const ServerCountryContext = createContext<Record<string, string>>({});
-
-/** Current Remnawave node links; historical server links retain their own namespace. */
+/**
+ * Ссылки на текущие ноды Remnawave: точка состояния, флаг страны и окно ноды по нажатию. Старые ссылки
+ * на удалённые серверы (`server:<id>`) показываются простым текстом.
+ */
 export const NodeLinkContext = createContext<{
   nodes: Record<string, { country: string | null; state: string; tone: 'ok' | 'warn' | 'crit' | 'muted' }>;
   open: (uuid: string) => void;
@@ -165,32 +161,6 @@ function NodeLink({ id, children }: { id: string; children: ReactNode }) {
       )}
       {node?.country && (
         <CountryFlag code={node.country} size="sm" decorative className="mr-1.5 inline-block align-[-1px]" />
-      )}
-      {children}
-    </button>
-  );
-}
-
-function ServerLink({ id, children }: { id: string; children: ReactNode }) {
-  const health = useContext(ServerHealthContext)[id];
-  const country = useContext(ServerCountryContext)[id];
-  return (
-    <button
-      type="button"
-      title={health ? HEALTH_LABELS[health] : undefined}
-      onClick={() => openServer(id)}
-      className="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-semibold text-brand underline decoration-dotted decoration-1 underline-offset-[3px] hover:decoration-solid focus-visible:decoration-solid"
-    >
-      {health && (
-        <span
-          aria-hidden="true"
-          data-health={health}
-          className="mr-1.5 inline-block size-[7px] rounded-full align-middle"
-          style={{ background: HEALTH_COLORS[health] }}
-        />
-      )}
-      {country && (
-        <CountryFlag code={country} size="sm" decorative className="mr-1.5 inline-block align-[-1px]" />
       )}
       {children}
     </button>
@@ -235,13 +205,8 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
         </NodeLink>,
       );
     } else if (m[3] !== undefined && m[4]?.startsWith('server:')) {
-      // Имя сервера: карточка открывается поверх текущей страницы, без перехода.
-      const serverId = m[4].slice('server:'.length);
-      nodes.push(
-        <ServerLink key={`${keyBase}-s${i}`} id={serverId}>
-          {m[3]}
-        </ServerLink>,
-      );
+      // Старый сервер: окна сервера больше нет, остаётся одно имя без перехода.
+      nodes.push(<Fragment key={`${keyBase}-s${i}`}>{m[3]}</Fragment>);
     } else if (m[3] !== undefined && m[4] !== undefined) {
       nodes.push(
         <a

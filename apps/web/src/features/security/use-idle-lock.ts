@@ -10,7 +10,7 @@ const CHECK_EVERY_MS = 15_000;
 /**
  * Автоблокировка при бездействии в браузере (политика lockAfterMinutes) — дублирует серверную:
  * сервер блокирует сессию по паузе между запросами, клиент — по отсутствию мыши/клавиатуры.
- * Сессия и терминалы живут; серверный idle-таймаут (idleMinutes) — отдельно.
+ * Сессия живёт; серверный idle-таймаут (idleMinutes) — отдельно.
  */
 export function useIdleLock(minutes: number): void {
   const navigate = useNavigate();

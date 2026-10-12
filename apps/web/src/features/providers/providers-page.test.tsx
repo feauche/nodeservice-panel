@@ -1,42 +1,40 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { HttpResponse, http } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetMockState } from '@/test/msw/handlers';
 import { mockProviders } from '@/test/msw/providers-mock';
-import { mockServers, seedServers } from '@/test/msw/servers-mock';
+import { server } from '@/test/msw/server';
 import { renderPage } from '@/test/render';
+import { ProvidersSourceContext } from './providers-api';
 import { ProvidersPage } from './providers-page';
 
 describe('ProvidersPage', () => {
   beforeEach(() => {
     resetMockState({ authenticated: true });
-    seedServers();
   });
 
-  it('две панели: список слева, карточка выбранного с сайтом, серверами и заметкой', async () => {
-    const aeza = mockProviders.items[0];
-    if (!aeza || !mockServers.items[0]) throw new Error('seed');
-    mockServers.items[0].providerId = aeza.id;
-    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
+  it('две панели: список слева, карточка выбранного с сайтом и заметкой, строк своих серверов нет', async () => {
+    renderPage(ProvidersPage, '/billing/providers');
     const list = await screen.findByRole('list', { name: 'Провайдеры' });
     expect(within(list).getAllByRole('button')).toHaveLength(3);
     expect(within(list).getByRole('button', { name: /Aéza/ })).toHaveAttribute('aria-pressed', 'true');
-    expect(await within(list).findByText('1 сервер')).toBeInTheDocument();
 
     const card = screen.getByTestId('provider-card');
     expect(within(card).getByRole('heading', { name: 'Aéza' })).toBeInTheDocument();
     expect(within(card).getByRole('link', { name: /aeza\.net/ })).toHaveAttribute('href', 'https://aeza.net');
-    // сервер провайдера — кнопка: карточка открывается поверх страницы, без перехода в «Серверы»
-    expect(await within(card).findByRole('button', { name: /de-fra-01/ })).toBeInTheDocument();
     expect(within(card).getByLabelText('Заметка')).toHaveValue('аккаунт lumax@…, оплата до 5 октября');
+    // Своих серверов у панели больше нет: в карточке ни списка, ни ссылки на окно сервера.
+    expect(within(card).queryByText('Серверы')).not.toBeInTheDocument();
+    expect(within(card).queryByText(/открыть →/)).not.toBeInTheDocument();
+    expect(within(card).queryByText(/окне сервера/)).not.toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.click(within(list).getByRole('button', { name: /Hetzner/ }));
     expect(
       within(screen.getByTestId('provider-card')).getByRole('heading', { name: 'Hetzner' }),
     ).toBeInTheDocument();
-    expect(await screen.findByText(/Серверов у этого провайдера пока нет/)).toBeInTheDocument();
 
     // поиск по названию и сайту
     await user.type(screen.getByLabelText('Поиск по провайдерам'), 'timeweb.cl');
@@ -44,7 +42,7 @@ describe('ProvidersPage', () => {
   });
 
   it('добавление: превью иконки по адресу сайта, новый провайдер становится выбранным', async () => {
-    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers');
     await screen.findByRole('list', { name: 'Провайдеры' });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Добавить провайдера' }));
@@ -79,10 +77,7 @@ describe('ProvidersPage', () => {
   });
 
   it('заметка сохраняется, «Изменить» открывает форму с данными, удаление — после подтверждения', async () => {
-    const aeza = mockProviders.items[0];
-    if (!aeza || !mockServers.items[0]) throw new Error('seed');
-    mockServers.items[0].providerId = aeza.id;
-    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers');
     const card = await screen.findByTestId('provider-card');
     const user = userEvent.setup();
     const note = within(card).getByLabelText('Заметка');
@@ -104,14 +99,13 @@ describe('ProvidersPage', () => {
     expect(within(confirm).getByText(/название сохранится во всей истории оплат/)).toBeInTheDocument();
     await user.click(within(confirm).getByRole('button', { name: 'В архив' }));
     await waitFor(() => expect(mockProviders.items.map((p) => p.name)).not.toContain('Aéza'));
-    expect(mockServers.items[0]?.providerId).toBeNull();
     expect(
       within(await screen.findByRole('list', { name: 'Провайдеры' })).getAllByRole('button'),
     ).toHaveLength(2);
   });
 
   it('ручная ссылка на иконку: превью по ней, сохраняется; в «Изменить» поле заполнено источником', async () => {
-    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers');
     await screen.findByRole('list', { name: 'Провайдеры' });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Добавить провайдера' }));
@@ -161,7 +155,7 @@ describe('ProvidersPage', () => {
   });
 
   it('«Изменить» у провайдера с найденной иконкой показывает адрес источника, без правок режим не меняется', async () => {
-    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers');
     const card = await screen.findByTestId('provider-card');
     expect(within(card).getByText(/Иконка с сайта: aeza\.net\/favicon\.ico/)).toBeInTheDocument();
     const user = userEvent.setup();
@@ -175,7 +169,7 @@ describe('ProvidersPage', () => {
   });
 
   it('сайт за защитой: иконка из кэша Google, подписи в форме и на карточке', async () => {
-    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers');
     await screen.findByRole('list', { name: 'Провайдеры' });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Добавить провайдера' }));
@@ -199,8 +193,84 @@ describe('ProvidersPage', () => {
 
   it('пустой справочник: подсказка и кнопка добавления', async () => {
     mockProviders.items = [];
-    renderPage(ProvidersPage, '/billing/providers', ['/servers']);
+    renderPage(ProvidersPage, '/billing/providers');
     expect(await screen.findByText('Провайдеров пока нет')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Добавить первого провайдера' })).toBeInTheDocument();
+  });
+
+  it('справочник Remnawave: ноды провайдера открывают окно ноды поверх страницы', async () => {
+    const node = {
+      uuid: '0192f200-0000-7000-8000-000000000001',
+      name: 'de-fra-01',
+      address: '203.0.113.7',
+      countryCode: 'DE',
+      isConnected: true,
+      isDisabled: false,
+      isConnecting: false,
+      lastStatusMessage: null,
+      usersOnline: 12,
+      trafficUsedBytes: 0,
+      trafficLimitBytes: null,
+    };
+    const provider = {
+      id: '0192c000-2222-7000-8000-000000000001',
+      name: 'Aéza',
+      siteUrl: 'https://aeza.net',
+      siteHost: 'aeza.net',
+      hasIcon: false,
+      iconUrl: null,
+      iconSourceUrl: null,
+      iconPending: false,
+      iconVersion: 1,
+      note: null,
+      serversCount: 1,
+      createdAt: '2026-09-12T10:00:00.000Z',
+      updatedAt: '2026-09-12T10:00:00.000Z',
+    };
+    server.use(
+      http.get('/api/nodes/providers/catalog', () => HttpResponse.json({ items: [provider] })),
+      http.get('/api/nodes/providers/catalog/:id/servers', () =>
+        HttpResponse.json([{ id: node.uuid, name: node.name }]),
+      ),
+      http.get('/api/nodes/status', () =>
+        HttpResponse.json({
+          connected: true,
+          domain: 'panel.example.com',
+          checkedAt: new Date().toISOString(),
+          error: null,
+          stats: null,
+          nodes: [node],
+          cert: null,
+        }),
+      ),
+      http.get('/api/nodes/metrics', () =>
+        HttpResponse.json({
+          panel: 'panel.example.com',
+          history: [],
+          traffic: null,
+          trafficError: null,
+          collectedSince: null,
+        }),
+      ),
+      http.get('/api/nodes/:uuid/preferences', () =>
+        HttpResponse.json({
+          channelMbps: null,
+          note: '',
+          cpuWarningPercent: null,
+          memoryWarningPercent: null,
+        }),
+      ),
+    );
+    const Remote = () => (
+      <ProvidersSourceContext.Provider value="/nodes/providers/catalog">
+        <ProvidersPage />
+      </ProvidersSourceContext.Provider>
+    );
+    renderPage(Remote, '/billing/providers');
+    const card = await screen.findByTestId('provider-card');
+    expect(within(card).getByText('Ноды')).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(await within(card).findByRole('button', { name: /de-fra-01/ }));
+    expect(await screen.findByRole('dialog', { name: node.name })).toBeInTheDocument();
   });
 });

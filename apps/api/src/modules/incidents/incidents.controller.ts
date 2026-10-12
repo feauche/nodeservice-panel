@@ -79,7 +79,8 @@ export class IncidentsController {
   @ApiOperation({ summary: 'Завершить событие вручную' })
   @ApiOkResponse({ type: IncidentDto })
   resolve(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown): Promise<IncidentDto> {
-    // Тело необязательно: без него — обычное закрытие.
-    return this.incidents.resolveManual(id, resolveIncidentRequestSchema.parse(body ?? {}));
+    // Тело необязательно; старый признак «не следить за нодой на сервере» принимается и ничего не меняет.
+    resolveIncidentRequestSchema.parse(body ?? {});
+    return this.incidents.resolveManual(id);
   }
 }

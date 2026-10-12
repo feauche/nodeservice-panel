@@ -442,7 +442,7 @@ describe('login guard e2e', () => {
     await awayFromMinuteEdge();
     const c = await newClient('198.51.100.31');
     for (let i = 0; i < 4; i++)
-      await c.post('/api/servers/00000000-0000-4000-8000-000000000000/check').expect(401);
+      await c.post('/api/incidents/00000000-0000-4000-8000-000000000000/acknowledge').expect(401);
     for (let i = 0; i < 4; i++)
       await request(base).post('/api/settings/appearance').set('X-Forwarded-For', c.ip).send({}).expect(403);
     const denied = await journal('auth.request.denied');
@@ -501,7 +501,7 @@ describe('login guard e2e', () => {
     // Запрос без входа доходит до Журнала вместе с идентификатором — мусор из заголовка туда не попадает.
     const c = await newClient('198.51.100.32');
     const junk = await c
-      .post('/api/servers/00000000-0000-4000-8000-000000000000/check')
+      .post('/api/incidents/00000000-0000-4000-8000-000000000000/acknowledge')
       .set('X-Request-Id', 'x'.repeat(4000))
       .expect(401);
     expect(junk.body.requestId).toMatch(UUID);

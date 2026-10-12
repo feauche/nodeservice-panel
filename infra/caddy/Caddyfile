@@ -16,16 +16,13 @@
 		-Server
 	}
 
-	# API, WebSocket (агенты, терминал) и SSE (live-лента журнала) — всё в api.
+	# API и SSE (живая лента журнала) — всё в api.
 	# flush_interval -1 отключает буферизацию, иначе SSE «слипается».
 	handle /api/* {
 		reverse_proxy api:3000 {
 			flush_interval -1
 			header_up X-Real-IP {remote_host}
 		}
-	}
-	handle /ws/* {
-		reverse_proxy api:3000
 	}
 
 	# Статика SPA отдаётся тем же образом api (dist/public), fallback на index.html внутри.

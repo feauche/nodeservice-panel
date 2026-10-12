@@ -226,8 +226,4 @@ export class ProvidersService implements OnModuleInit {
       reason: icon ? null : reason,
     };
   }
-
-  async serversOf(id: string): Promise<Array<{ id: string; name: string }>> {
-    return this.repo.serversOf(id);
-  }
 }

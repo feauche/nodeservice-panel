@@ -4,11 +4,10 @@ import { BillingModule } from '../billing/billing.module.js';
 import { CheckHostModule } from '../incidents/check-host.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ProvidersModule } from '../providers/providers.module.js';
-import { ServersModule } from '../servers/servers.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
+import { DnsHostResolver, HOST_RESOLVER, HostAddressesService } from './host-addresses.service.js';
 import { NodeActionsController } from './node-actions.controller.js';
 import { NodeLayoutStore } from './node-layout.store.js';
-import { DnsHostResolver, HOST_RESOLVER, NodeLinkService } from './node-link.service.js';
 import { NodePreferencesStore } from './node-preferences.store.js';
 import { NodeTcpHistoryService } from './node-tcp-history.service.js';
 import { NodesController } from './nodes.controller.js';
@@ -32,7 +31,6 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
     SettingsModule,
     AuditModule,
     BillingModule,
-    ServersModule,
     NotificationsModule,
     ProvidersModule,
   ],
@@ -56,7 +54,7 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
     RemnawaveService,
     RemnawaveVpnProbeService,
     RemnawaveTopologyService,
-    NodeLinkService,
+    HostAddressesService,
     { provide: REMNAWAVE_CLIENT, useClass: HttpRemnawaveClient },
     { provide: HOST_RESOLVER, useClass: DnsHostResolver },
   ],
@@ -64,7 +62,6 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
     NodePreferencesStore,
     RemnawaveSettingsStore,
     RemnawaveService,
-    NodeLinkService,
     RemnawaveVpnProbeService,
     RemnawaveTopologyService,
   ],

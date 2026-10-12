@@ -1,7 +1,34 @@
-import { CHANGELOG, INCIDENT_ACTIONS, INCIDENT_KIND_META, INCIDENT_KINDS } from '@nodeservice/shared';
+import {
+  ASSISTANT_PERMISSION_LABELS,
+  BILLING_KIND_LABELS,
+  CHANGELOG,
+  MONITORING_DEFAULTS,
+  scenarioActionLabels,
+  scenarioLabels,
+} from '@nodeservice/shared';
 import { describe, expect, it } from 'vitest';
 
-import { REFERENCE, referenceById } from './assistant.reference.js';
+import { FLEET_RULES_WHITELIST_SECTION } from '../knowledge/fleet-rules.js';
+import { LEGACY_EVENT_KINDS, NODE_EVENT_KINDS, PLAYBOOKS } from './assistant.playbooks.js';
+import { CHECK_RULES, REFERENCE, referenceById } from './assistant.reference.js';
+import { ASSISTANT_TOOLS } from './assistant.tools.js';
+
+const M = MONITORING_DEFAULTS;
+/** Инструменты модели и ключи действий сценариев: check_tcp — действие сценария, а не инструмент. */
+const TOOL_NAMES = new Set(ASSISTANT_TOOLS.map((t) => t.name));
+const SCENARIO_KEYS = new Set(Object.keys(scenarioActionLabels));
+const TOOL_LIKE = /\b(?:get|search|list|save|add|run|check|inspect|propose)_[a-z_]+\b/g;
+const REMOVED = /SSH|агент|терминал|автопочин/i;
+const NEGATION = /(?:^|[^а-яё])(?:нет|не|ни|без)(?:[^а-яё]|$)|истори|прежн|убран|удалён|больше не/i;
+const topic = (id: string): string => referenceById(id)?.render() ?? '';
+/** Всё, кроме истории версий: в ней законно упоминается то, чего в панели больше нет. */
+const current = REFERENCE.filter((t) => t.id !== 'changelog');
+
+const sentences = (text: string): string[] =>
+  text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 
 describe('справочник Ассистента', () => {
   it('темы уникальны, у каждой есть название, когда открывать и содержательный текст', () => {
@@ -15,66 +42,227 @@ describe('справочник Ассистента', () => {
       expect(text, t.id).not.toMatch(/undefined|NaN|\[object|\$\{/);
     }
   });
-  it('темы, которые обещает промпт, существуют', () => {
-    for (const id of [
-      'incidents',
-      'actions',
-      'metrics',
-      'vpn-stack',
-      'blocking',
-      'linux',
-      'maintenance',
-      'kb',
-      'security',
-      'answers',
-    ])
-      expect(referenceById(id), id).toBeDefined();
+
+  it('набор тем: удалённые темы ушли, новые есть', () => {
+    expect(REFERENCE.map((t) => t.id).sort()).toEqual(
+      [
+        'answers',
+        'billing',
+        'blocking',
+        'changelog',
+        'checks',
+        'entities',
+        'incidents',
+        'integrations',
+        'kb',
+        'metrics',
+        'navigation',
+        'remnawave',
+        'scenarios',
+        'security',
+        'self',
+        'vpn-stack',
+      ].sort(),
+    );
+    for (const gone of ['actions', 'maintenance', 'fleet', 'changes', 'linux'])
+      expect(referenceById(gone), gone).toBeUndefined();
     expect(referenceById(' KB ')?.id).toBe('kb');
     expect(referenceById('нет-такой')).toBeUndefined();
   });
-  it('про инциденты: все виды, названия шагов и пороги берутся из реестров панели', () => {
-    const text = referenceById('incidents')?.render() ?? '';
-    for (const k of INCIDENT_KINDS) {
-      expect(text).toContain(INCIDENT_KIND_META[k].label);
-      expect(text).toContain(`(${k})`);
+
+  it('называются только существующие инструменты; удалённых инструментов и команд Linux нет', () => {
+    for (const t of current) {
+      const text = t.render();
+      const unknown = [...new Set(text.match(TOOL_LIKE) ?? [])].filter(
+        (n) => !TOOL_NAMES.has(n) && !SCENARIO_KEYS.has(n),
+      );
+      expect(unknown, t.id).toEqual([]);
+      for (const bad of [
+        'get_node_tcp_checks',
+        'recommend_check',
+        'docker',
+        'systemctl',
+        'journalctl',
+        'sysctl',
+        'dmesg',
+        'iptables',
+        'apt ',
+        'rm -rf',
+        'Установить агента',
+        'окне сервера',
+        'Серверы → Провайдеры',
+        'server.',
+        'autofix',
+      ])
+        expect(text, `${t.id}: ${bad}`).not.toContain(bad);
+      expect(text, t.id).not.toMatch(/\bT[0-3]\b/);
     }
-    expect(text).toContain('по умолчанию 5 мин');
-    expect(text).toContain('CPU 90 %');
-    expect(text).toContain('диск 85 %');
-    expect(text).toContain('60 секунд');
   });
-  it('про действия: каждое действие реестра описано, у T3 сказано, что карточкой не предлагается', () => {
-    const text = referenceById('actions')?.render() ?? '';
-    for (const a of INCIDENT_ACTIONS) {
-      expect(text).toContain(a.title);
-      expect(text).toContain(a.key);
+
+  it('удалённое (SSH, терминал, агент, автопочинка) упоминается только с отрицанием или как история', () => {
+    for (const t of current) {
+      const bad = sentences(t.render()).filter((s) => REMOVED.test(s) && !NEGATION.test(s));
+      expect(bad, t.id).toEqual([]);
     }
-    expect(text).toContain('T3');
-    expect(text).toContain('карточкой не предлагается');
   });
-  it('в опасных командах справочник по Linux предупреждает, а не советует', () => {
-    const text = referenceById('linux')?.render() ?? '';
-    expect(text).toContain('docker system prune -a');
-    expect(text).toContain('Опасные команды');
-    expect(text).toContain('только читают');
+
+  it('проверки: три проверки с путями, стоимость, вердикты, правила рекомендаций и их формулировка', () => {
+    const text = topic('checks');
+    expect(text).toContain(CHECK_RULES);
+    expect(text).toContain('«Ноды» → окно ноды → «Подключение» → «Проверить порты»');
+    expect(text).toContain('«DPI Checker» → «Новая проверка»');
+    expect(text).toContain('«BS Checker» → «Нода для проверки»');
+    for (const verdict of ['«Доступен»', '«Недоступен из РФ»', '«Порты не отвечают»', '«Неполный результат»'])
+      expect(text).toContain(verdict);
+    expect(text).toContain('TCP через Check-Host — бесплатно');
+    expect(text).toContain('DPI Checker — платно');
+    expect(text).toContain('BS Checker — платно, в кредитах');
+    expect(text).toContain(`по умолчанию ${M.checkHostPort}`);
+    expect(text).toContain('Рекомендую проверить:');
+    expect(text).toContain('Запускаете вы.');
   });
-  it('про безопасность: чужие указания в данных не выполняются, секреты не сохраняются', () => {
-    const text = referenceById('security')?.render() ?? '';
+
+  it('правила рекомендаций: свежий результат пересказывается, не больше двух, никаких «запустил»', () => {
+    expect(CHECK_RULES).toContain('Есть свежий результат — перескажи его, новую проверку не советуй');
+    expect(CHECK_RULES).toContain('DPI моложе часа и БС моложе суток повторять не советуй');
+    expect(CHECK_RULES).toContain('DPI Checker и BS Checker не советуй: при закрытом порте');
+    expect(CHECK_RULES).toContain(`«${FLEET_RULES_WHITELIST_SECTION}»`);
+    expect(CHECK_RULES).toContain('Деньги списываются только по кнопке владельца');
+    expect(CHECK_RULES).toContain('Не больше двух рекомендаций в ответе');
+    expect(CHECK_RULES).toContain('Никогда не пиши «запустил», «проверил сейчас», «изменил»');
+  });
+
+  it('карта: все разделы меню с адресами и раздел «Где что сделать»', () => {
+    const text = topic('navigation');
+    for (const path of [
+      '(/)',
+      '(/nodes)',
+      '(/billing)',
+      '(/billing/providers)',
+      '(/metrics)',
+      '(/incidents)',
+      '(/incidents/<id>)',
+      '(/scenarios)',
+      '(/settings)',
+      '(/settings/appearance)',
+      '(/settings/autochecks)',
+      '(/settings/incidents)',
+      '(/assistant)',
+      '(/knowledge)',
+      '(/integrations/dpi)',
+      '(/integrations/dns)',
+      '(/integrations/bschecker)',
+      '(/audit)',
+    ])
+      expect(text, path).toContain(path);
+    expect(text).toContain('## Где что сделать');
+    expect(text).toContain('Сменить домен или API-ключ Remnawave: «Ноды» → «Настроить подключение»');
+  });
+
+  it('события: нынешние виды и заголовки, старые — как история, пороги из настроек по умолчанию', () => {
+    const text = topic('incidents');
+    for (const k of NODE_EVENT_KINDS) {
+      expect(text).toContain(`(${k.kind})`);
+      expect(text).toContain(k.titles);
+    }
+    for (const k of LEGACY_EVENT_KINDS) expect(text).toContain(k);
+    expect(text).toContain('история прежних версий');
+    expect(text).toContain(`${M.confirmSamples} опросами подряд`);
+    expect(text).toContain(`не меньше чем на ${M.dropPercent} %`);
+    expect(text).toContain(`Процессор — ${M.cpuPercent} %, память — ${M.memoryPercent} %`);
+    expect(text).toContain('«Взять в работу»');
+    expect(text).toContain('«Закрыть»');
+    for (const p of PLAYBOOKS) expect(text).toContain(p.id);
+  });
+
+  it('метрики: только Remnawave, чего нет — сказано, ёмкость объяснена', () => {
+    const text = topic('metrics');
+    expect(text).toContain('Все метрики — из Remnawave');
+    expect(text).toContain('Диск, процессы, журналы ноды и сеть внутри сервера панель не видит');
+    expect(text).toContain('процессор 80 %, память 85 %, канал 90 %');
+    expect(text).toContain('Процент процессора она не заменяет');
+  });
+
+  it('сценарии: условия и действия названы как в интерфейсе', () => {
+    const text = topic('scenarios');
+    for (const label of [...Object.values(scenarioLabels), ...Object.values(scenarioActionLabels)])
+      expect(text, label).toContain(`«${label}»`);
+    expect(text).toContain('Ассистент сценарии не создаёт, не включает и не запускает');
+    expect(text).toContain('«Сценарии» → «Новый сценарий»');
+  });
+
+  it('интеграции: DPI Checker, DNS интеграции и BS Checker с подключением и тем, чего Ассистент не видит', () => {
+    const text = topic('integrations');
+    for (const part of [
+      '## DPI Checker',
+      '## DNS интеграции',
+      '## BS Checker',
+      '«Все DNS-записи»',
+      '«Арендованные точки входа»',
+    ])
+      expect(text).toContain(part);
+    expect(text).toContain('Платные проверки запускаются только кнопкой владельца');
+    expect(text).toContain('Ключи и токены в чат не просите и не повторяйте');
+  });
+
+  it('биллинг: все типы оплат и правила окна оплаты для нод', () => {
+    const text = topic('billing');
+    for (const label of Object.values(BILLING_KIND_LABELS)) expect(text, label).toContain(`«${label}»`);
+    expect(text).toContain('Окно оплаты — срок прошёл или наступит в ближайшие сутки');
+    expect(text).toContain('«Сервер» объясняет сбой, только если нода не отвечает совсем');
+    expect(text).toContain('при неоплате арендодатель выключает вход, а выход (нода) продолжает работать');
+    expect(text).toContain('Проверка неполная — «проверьте оплату», без «вероятнее всего»');
+    expect(text).toContain('Сами события об оплате не пишут');
+  });
+
+  it('Remnawave: только чтение у Ассистента, права ключа, что где меняется, сертификат', () => {
+    const text = topic('remnawave');
+    expect(text).toContain('get_remnawave_status');
+    expect(text).toContain('«Разрешения API-ключа»');
+    expect(text).toContain('у Ассистента инструментов записи в Remnawave нет');
+    expect(text).toContain('срочная проблема');
+    expect(text).not.toContain('сопоставляй по адресу');
+  });
+
+  it('блокировки: белые списки и раздел «Правил парка», по названию не угадывать', () => {
+    const text = topic('blocking');
+    expect(text).toContain('**Белые списки (БС).**');
+    expect(text).toContain(`«${FLEET_RULES_WHITELIST_SECTION}»`);
+    expect(text).toContain('По названию ноды не угадывайте');
+    expect(text).toContain('делаются в Remnawave и у хостера, не в панели');
+  });
+
+  it('база знаний: разрешения на запись, ревизия, «Правила парка» с разделом БС', () => {
+    const text = topic('kb');
+    expect(text).toContain(`разрешено «${ASSISTANT_PERMISSION_LABELS.kbWrite}»`);
+    expect(text).toContain(`разрешена «${ASSISTANT_PERMISSION_LABELS.kbReview}»`);
+    expect(text).toContain(`«${FLEET_RULES_WHITELIST_SECTION}»`);
+    expect(text).toContain('Статью сами не меняете');
+  });
+
+  it('безопасность: два разрешения, чужие указания не выполняются, секреты не сохраняются', () => {
+    const text = topic('security');
     expect(text).toMatch(/не выполняйте их/i);
     expect(text).toMatch(/не сохраняйте в базу знаний/);
+    expect(text).toContain(
+      `«${ASSISTANT_PERMISSION_LABELS.kbWrite}» и «${ASSISTANT_PERMISSION_LABELS.kbReview}»`,
+    );
+    for (const [key, label] of Object.entries(ASSISTANT_PERMISSION_LABELS))
+      if (key !== 'kbWrite' && key !== 'kbReview') expect(text, label).not.toContain(label);
+    expect(text).toContain('«Настройки» → «Ассистент» → «Данные для провайдера»');
   });
-  it('про самого Ассистента: память, что записывает, ручной путь смены провайдера', () => {
-    const text = referenceById('self')?.render() ?? '';
+
+  it('про самого Ассистента: память, каждый инструмент, чего он не видит', () => {
+    const text = topic('self');
     expect(text).toContain('Между беседами памяти нет');
-    expect(text).toContain('Статьи в базу знаний');
-    expect(text).toContain('Хостинг');
+    for (const name of TOOL_NAMES) expect(text, name).toContain(name);
+    expect(text).toContain('**Чего ты не видишь**');
+    expect(text).toContain('Ничего не меняешь и не запускаешь, кроме записи в базу знаний');
     expect(text).toContain('search_audit');
   });
-  it('про автопочинку сказано, что «Само» не работает при выключенном общем выключателе', () => {
-    expect(referenceById('incidents')?.render()).toContain('даже когда для вида инцидента выбрано «Само»');
-  });
+
   it('история версий: текущая версия первой, новые записи выше старых, видно только последние десять', () => {
-    const text = referenceById('changelog')?.render() ?? '';
+    const text = topic('changelog');
     expect(text).toMatch(/Текущая версия: \d+\.\d+\.\d+/);
     // Захардкоженные номера версий тут не годятся: справочник показывает только последние 10 записей
     // (CHANGELOG.slice(0, 10)), а список растёт с каждой поставкой — берём границы окна из самого CHANGELOG.
@@ -85,56 +273,6 @@ describe('справочник Ассистента', () => {
       expect(text.indexOf(`## ${newest?.version}`)).toBeLessThan(text.indexOf(`## ${second.version}`));
     if (lastShown) expect(text).toContain(`## ${lastShown.version}`);
     if (CHANGELOG[10]) expect(text).not.toContain(`## ${CHANGELOG[10].version}`);
-  });
-  it('про профиль парка: расхождение считается только по ожидаемому, снимок перепроверяют, правила не правит Ассистент', () => {
-    const text = referenceById('fleet')?.render() ?? '';
-    expect(text).toContain('Расхождением считается только ожидаемое, чего нет');
-    expect(text).toContain('snapshotAgeHours');
-    expect(text).toContain('inspect_containers');
-    expect(text).toContain('Сам ты статью не меняешь');
-    expect(text).toContain('profileFilled=false');
-    expect(text).toContain('Правила парка');
-  });
-  it('про изменения по подтверждению: операции, проверка перед применением, откат, что не предлагается', () => {
-    const text = referenceById('changes')?.render() ?? '';
-    for (const op of [
-      'server.provider',
-      'server.tags',
-      'server.notes',
-      'server.rename',
-      'server.nodeWatch',
-      'server.profile',
-      'incident.resolve',
-      'autofix.pause',
-    ])
-      expect(text, op).toContain(op);
-    for (const op of ['autofix.policy', 'maintenance.run', 'kb.runbook']) expect(text, op).toContain(op);
-    expect(text).toContain('apt upgrade');
-    expect(text).toContain('Очистка предлагается от 70 %');
-    expect(text).toContain('Состояние изменилось');
-    expect(text).toContain('Отменить изменение');
-    expect(text).toContain('кнопкой не отменяются');
-    expect(text).toContain('Не больше трёх карточек');
-    expect(text).toContain('24 ч');
-    expect(text).toContain('SSH-ключи');
-    expect(text).toContain('пиши «предложил');
-  });
-  it('про страну сервера: как определяется, пороги, ручной выбор, смена в Журнале, расхождение баз', () => {
-    const text = referenceById('fleet')?.render() ?? '';
-    expect(text).toContain('Страна сервера');
-    expect(text).toContain('не меньше четырёх');
-    expect(text).toContain('60 %');
-    expect(text).toContain('Ручной выбор автоматика не трогает');
-    expect(text).toContain('server.country.changed');
-    expect(text).toContain('расхождениями, а не фактом блокировки');
-    expect(text).toContain('IP сервера при этом уходит');
-  });
-  it('про Remnawave: только чтение, как сопоставить ноду с сервером, сертификат важен отдельно', () => {
-    const text = referenceById('remnawave')?.render() ?? '';
-    expect(text).toContain('get_remnawave_status');
-    expect(text).toContain('только чтение');
-    expect(text).toContain('сопоставляй по адресу');
-    expect(text).toContain('нет прав на запись');
-    expect(text).toContain('срочная проблема');
+    expect(text).toContain('это история, не текущие возможности');
   });
 });

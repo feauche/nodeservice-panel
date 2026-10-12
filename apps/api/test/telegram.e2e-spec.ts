@@ -3,7 +3,6 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import {
   CSRF_HEADER,
-  serverSchema,
   TELEGRAM_DELIVERY_DEFAULT,
   TELEGRAM_EVENTS,
   TELEGRAM_QUIET_DEFAULT,
@@ -31,7 +30,6 @@ import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications
 import { TelegramService } from '../src/modules/notifications/telegram/telegram.service.js';
 import { TelegramSettingsStore } from '../src/modules/notifications/telegram/telegram-settings.store.js';
 import { SettingsService } from '../src/modules/settings/settings.service.js';
-import { FakeSsh, SSH_PASSWORD, SSH_USER } from './fake-ssh.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: DATABASE_URL должен указывать на nodeservice_test');
@@ -126,11 +124,11 @@ describe('telegram e2e', () => {
   const tg = new FakeTelegram();
   let agent: InstanceType<typeof TestAgent>;
   let csrf: string;
-  const ssh = new FakeSsh();
-  let serverId = '';
+  // События нод приходят из мониторинга Remnawave: у них нет сервера в панели, есть UUID ноды.
+  const NODE_UUID = '0192c000-0000-7000-8000-0000000000aa';
+  const serverId = `node:${NODE_UUID}`;
 
   beforeAll(async () => {
-    await ssh.start();
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(TELEGRAM_CLIENT)
       .useValue(tg)
@@ -160,23 +158,10 @@ describe('telegram e2e', () => {
       .set(CSRF_HEADER, csrf)
       .send({ code: await generate({ secret: start.body.totpSecret as string }) })
       .expect(200);
-    const created = await agent
-      .post('/api/servers')
-      .set(CSRF_HEADER, csrf)
-      .send({
-        name: 'tg-host',
-        host: '127.0.0.1',
-        port: ssh.port,
-        sshUser: SSH_USER,
-        auth: { method: 'password', password: SSH_PASSWORD },
-      })
-      .expect(201);
-    serverId = serverSchema.parse(created.body).id;
   }, 60_000);
 
   afterAll(async () => {
     await app?.close();
-    await ssh.stop();
   });
 
   const put = (body: unknown, expected = 200) =>
@@ -234,7 +219,8 @@ describe('telegram e2e', () => {
     const before = tg.sent().length;
     const tgs = app.get(TelegramService);
     const row = await app.get(IncidentsRepository).open({
-      serverId,
+      serverId: null,
+      nodeUuid: NODE_UUID,
       serverName: 'tg-host',
       kind: 'node_down',
       severity: 'crit',
@@ -320,7 +306,8 @@ describe('telegram e2e', () => {
     const tgs = app.get(TelegramService);
     const open = async (kind: 'node_down' | 'server_down' | 'cpu_high', severity: 'crit' | 'warn') => {
       const row = await repo.open({
-        serverId,
+        serverId: null,
+        nodeUuid: NODE_UUID,
         serverName: 'tg-host',
         kind,
         severity,
@@ -467,7 +454,6 @@ describe('telegram e2e', () => {
     await db.execute(sql`update incidents set status = 'resolved' where status <> 'resolved'`);
     await db.execute(sql`delete from telegram_pending`);
     await db.execute(sql`delete from telegram_outbox`);
-    await db.execute(sql`update servers set agent_status = 'online', ssh_ok = true where id = ${serverId}`);
     await db.execute(sql`delete from app_meta where key = 'telegram.digest'`);
     const s = telegramSettingsSchema.parse(
       (
@@ -489,7 +475,8 @@ describe('telegram e2e', () => {
     severity: 'crit' | 'warn',
   ) => {
     const row = await app.get(IncidentsRepository).open({
-      serverId,
+      serverId: null,
+      nodeUuid: NODE_UUID,
       serverName: 'tg-host',
       kind,
       severity,
@@ -1051,7 +1038,8 @@ describe('telegram e2e', () => {
   it('историческая отложенная тревога агента после обновления не отправляется', async () => {
     await fresh();
     const row = await app.get(IncidentsRepository).open({
-      serverId,
+      serverId: null,
+      nodeUuid: NODE_UUID,
       serverName: 'tg-host',
       kind: 'agent_offline',
       severity: 'crit',

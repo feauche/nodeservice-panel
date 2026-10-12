@@ -1,16 +1,11 @@
 import {
   type AppearanceSettings,
   type AppearanceSettingsUpdate,
-  type AutochecksSettings,
-  type AutochecksSettingsUpdate,
   appearanceSettingsSchema,
-  autochecksSettingsSchema,
   type CustomSites,
   customSitesSchema,
   type MonitoringSettings,
   monitoringSettingsSchema,
-  type TerminalSnippets,
-  terminalSnippetsSchema,
 } from '@nodeservice/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -22,14 +17,6 @@ export const settingsApi = {
     api.get('/settings/appearance', appearanceSettingsSchema, signal),
   updateAppearance: (body: AppearanceSettingsUpdate): Promise<AppearanceSettings> =>
     api.put('/settings/appearance', body, appearanceSettingsSchema),
-  autochecks: (signal?: AbortSignal): Promise<AutochecksSettings> =>
-    api.get('/settings/autochecks', autochecksSettingsSchema, signal),
-  updateAutochecks: (body: AutochecksSettingsUpdate): Promise<AutochecksSettings> =>
-    api.put('/settings/autochecks', body, autochecksSettingsSchema),
-  snippets: (signal?: AbortSignal): Promise<TerminalSnippets> =>
-    api.get('/settings/snippets', terminalSnippetsSchema, signal),
-  updateSnippets: (body: TerminalSnippets): Promise<TerminalSnippets> =>
-    api.put('/settings/snippets', body, terminalSnippetsSchema),
   customSites: (signal?: AbortSignal): Promise<CustomSites> =>
     api.get('/settings/custom-sites', customSitesSchema, signal),
   updateCustomSites: (body: CustomSites): Promise<CustomSites> =>
@@ -51,45 +38,6 @@ export function useUpdateCustomSites() {
   return useMutation({
     mutationFn: settingsApi.updateCustomSites,
     onSuccess: (data) => qc.setQueryData(customSitesQuery.queryKey, data),
-  });
-}
-
-export const snippetsQuery = {
-  queryKey: ['settings', 'snippets'] as const,
-  queryFn: ({ signal }: { signal?: AbortSignal }) => settingsApi.snippets(signal),
-  staleTime: 60_000,
-};
-
-/** Сниппеты веб-терминала — общие для всех серверов. */
-export function useSnippets() {
-  return useQuery(snippetsQuery);
-}
-
-export function useUpdateSnippets() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: settingsApi.updateSnippets,
-    onSuccess: (data) => qc.setQueryData(snippetsQuery.queryKey, data),
-  });
-}
-
-export const autochecksQuery = {
-  queryKey: ['settings', 'autochecks'] as const,
-  queryFn: ({ signal }: { signal?: AbortSignal }) => settingsApi.autochecks(signal),
-  staleTime: 30_000,
-};
-
-export function useAutochecks() {
-  return useQuery(autochecksQuery);
-}
-
-export function useUpdateAutochecks() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: settingsApi.updateAutochecks,
-    onSuccess: (data) => {
-      qc.setQueryData(autochecksQuery.queryKey, data);
-    },
   });
 }
 

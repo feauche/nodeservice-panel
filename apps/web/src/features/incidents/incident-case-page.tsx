@@ -3,18 +3,17 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeftIcon, CheckIcon, ServerIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatWhen } from '@/features/audit/audit-format';
+import { NodeDialog } from '@/features/nodes/node-dialog';
+import { useNodes } from '@/features/nodes/nodes-api';
 import { TcpResults } from '@/features/nodes/tcp-results';
-import { openServer } from '@/features/servers/server-modal-store';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { plural } from '@/lib/plural';
 import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
-import { DetailText } from './detail-text';
 import { AttemptsAccordion, Timeline } from './incident-blocks';
 import { durationText, outcomeSentence } from './incident-format';
 import {
@@ -42,6 +41,7 @@ const BTN =
 export function IncidentCasePage({ id }: { id: string }) {
   const q = useIncident(id);
   const all = useIncidents('all');
+  const nodes = useNodes();
 
   const navigate = useNavigate();
   const ack = useAcknowledgeIncident();
@@ -49,8 +49,8 @@ export function IncidentCasePage({ id }: { id: string }) {
   const remove = useDeleteIncident();
 
   const [confirmResolve, setConfirmResolve] = useState(false);
-  const [stopNodeWatch, setStopNodeWatch] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [nodeOpen, setNodeOpen] = useState(false);
   const inc = q.data;
   const now = useNow(Boolean(inc && inc.status !== 'resolved'));
 
@@ -78,7 +78,8 @@ export function IncidentCasePage({ id }: { id: string }) {
 
   const meta = INCIDENT_KIND_META[inc.kind];
   const status = STATUS_PILL[inc.status];
-  const canStopNodeWatch = inc.kind === 'node_down' && inc.serverId !== null;
+  // Нода Remnawave этого события, если она ещё есть в подключении: её окно открывается поверх страницы.
+  const node = inc.nodeUuid ? nodes.data?.nodes.find((n) => n.uuid === inc.nodeUuid) : undefined;
 
   const similar = (all.data?.items ?? []).filter(
     (i) =>
@@ -125,10 +126,10 @@ export function IncidentCasePage({ id }: { id: string }) {
             </p>
           </div>
           <div className="flex max-w-full flex-wrap items-center gap-2">
-            {inc.serverId && (
-              <button type="button" onClick={() => openServer(inc.serverId ?? '')} className={BTN}>
+            {node && (
+              <button type="button" onClick={() => setNodeOpen(true)} className={BTN}>
                 <ServerIcon className="size-3.5" aria-hidden="true" />
-                Сервер
+                Нода
               </button>
             )}
             {inc.status === 'open' && (
@@ -171,7 +172,7 @@ export function IncidentCasePage({ id }: { id: string }) {
             {inc.diagnostics ? (
               <TcpResults report={inc.diagnostics.report} online={inc.diagnostics.online} />
             ) : (
-              <LegacyIncidentDetail detail={inc.detail} outcome={outcomeSentence(inc, now)} />
+              <LegacyIncidentDetail detail={inc.detail} outcome={outcomeSentence(inc)} />
             )}
             <section>
               <h3 className="mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
@@ -201,11 +202,6 @@ export function IncidentCasePage({ id }: { id: string }) {
                     k="Контейнер ноды"
                     v={nodeShort(inc.snapshot.node)}
                     crit={['stopped', 'restarting', 'docker_down'].includes(inc.snapshot.node ?? '')}
-                  />
-                  <Kv
-                    k="Агент"
-                    v={agentText(inc.snapshot.agentStatus, inc.snapshot.agentVersion)}
-                    crit={inc.snapshot.agentStatus === 'offline'}
                   />
                   <Kv k="CPU" v={pct(inc.snapshot.cpu)} />
                   <Kv k="Память" v={pct(inc.snapshot.mem)} />
@@ -238,49 +234,16 @@ export function IncidentCasePage({ id }: { id: string }) {
 
       <ConfirmDialog
         open={confirmResolve}
-        onOpenChange={(o) => {
-          setConfirmResolve(o);
-          if (!o) setStopNodeWatch(false);
-        }}
+        onOpenChange={setConfirmResolve}
         title="Закрыть событие?"
-        description={
-          <>
-            Событие будет завершено вручную. Если проблема вернётся — панель создаст новое.
-            {canStopNodeWatch && (
-              <label
-                htmlFor="inc-stop-node-watch"
-                className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-[10px] border border-border bg-surface-2/60 px-3 py-2.5 text-left text-[12.5px] leading-snug text-text-2"
-              >
-                <Checkbox
-                  id="inc-stop-node-watch"
-                  checked={stopNodeWatch}
-                  onCheckedChange={(v) => setStopNodeWatch(v === true)}
-                  className="mt-0.5"
-                  aria-label="Больше не следить за нодой на этом сервере"
-                />
-                <span>
-                  <span className="font-medium text-foreground">
-                    Больше не следить за нодой на этом сервере
-                  </span>
-                  <br />
-                  Для серверов без ноды или когда нода выключена намеренно. Вернуть можно в карточке сервера.
-                </span>
-              </label>
-            )}
-          </>
-        }
+        description="Событие будет завершено вручную. Если проблема вернётся — панель создаст новое."
         yesLabel="Закрыть"
         loading={resolve.isPending}
         onConfirm={async () => {
           try {
-            await resolve.mutateAsync({ id: inc.id, ...(stopNodeWatch ? { stopNodeWatch: true } : {}) });
+            await resolve.mutateAsync({ id: inc.id });
             setConfirmResolve(false);
-            setStopNodeWatch(false);
-            toast.success(
-              stopNodeWatch
-                ? 'Событие завершено, за нодой на этом сервере больше не следим.'
-                : 'Событие закрыт.',
-            );
+            toast.success('Событие закрыт.');
           } catch (err) {
             setConfirmResolve(false);
             toast.error(apiErrorMessage(err));
@@ -311,6 +274,9 @@ export function IncidentCasePage({ id }: { id: string }) {
           }
         }}
       />
+      {nodeOpen && node && (
+        <NodeDialog node={node} stale={Boolean(nodes.data?.error)} onClose={() => setNodeOpen(false)} />
+      )}
     </div>
   );
 }
@@ -329,20 +295,6 @@ const nodeShort = (v: 'running' | 'restarting' | 'stopped' | 'docker_down' | 'no
           : v === 'none'
             ? 'Не найден'
             : '—';
-const agentText = (status: string | null, version: string | null) => {
-  if (!status) return '—';
-  const label =
-    status === 'online'
-      ? 'в сети'
-      : status === 'offline'
-        ? 'не в сети'
-        : status === 'installing'
-          ? 'устанавливается'
-          : status === 'pending'
-            ? 'ожидает'
-            : 'не установлен';
-  return version ? `${label} · v${version.replace(/^v/, '')}` : label;
-};
 
 function Kv({ k, v, crit }: { k: string; v: string; crit?: boolean }) {
   return (
@@ -361,7 +313,7 @@ function LegacyIncidentDetail({ detail, outcome }: { detail: string; outcome: st
   if (!report)
     return (
       <p className="text-[13.5px] leading-normal whitespace-pre-line">
-        <DetailText text={detail} />
+        {detail}
         <span className="mt-3 block text-text-3">{outcome}.</span>
       </p>
     );

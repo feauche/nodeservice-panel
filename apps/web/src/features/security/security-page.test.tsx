@@ -71,13 +71,16 @@ describe('SecurityPage', () => {
     expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled(); // сохранено — не dirty
   });
 
-  it('политика: подсказка к сроку сессии не обещает, что SSH-терминал её продлевает, и говорит, что будет на деле', async () => {
+  it('политика: подсказка к сроку сессии говорит, что будет на деле, и не упоминает терминалы', async () => {
     renderPage(SecurityPage, '/settings/security');
     await screen.findByText('Включена');
-    // Сессию продлевают только запросы к панели; ввод и вывод терминала её не продлевают.
+    // Сессию продлевают только запросы к панели.
     expect(screen.queryByText(/считается активностью/)).toBeNull();
-    expect(screen.getByText(/вход заново, а открытые SSH-терминалы закроются/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Без запросов к панели дольше этого времени — вход заново\./),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Пока панель открыта на экране, она сама продлевает сессию/)).toBeInTheDocument();
+    expect(screen.queryByText(/терминал/i)).toBeNull();
   });
 
   it('отмена step-up не меняет ничего', async () => {

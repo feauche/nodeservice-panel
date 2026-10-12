@@ -10,7 +10,6 @@ import {
   billingStatsSchema,
   billingSummarySchema,
   CSRF_HEADER,
-  fleetStatsSchema,
 } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import type { Redis } from 'ioredis';
@@ -384,20 +383,6 @@ describe('billing e2e', () => {
     expect(auto.autoRenewed).toHaveLength(1);
     expect(auto.autoRenewed[0]).toContain('автоплатёж, срок продлён');
     expect(auto.autoRenewed[0]).toContain('прошло ли списание у провайдера, панель не знает');
-  });
-
-  it('статистика парка: доступность по инцидентам, стоимость из биллинга; без хранилища метрик — честно vmOk=false', async () => {
-    // SSH-инцидент открыт 3 дня назад и не закрыт: из 30 дней сервер 3 дня не на связи — 90 %.
-    await db.execute(sql`update incidents set opened_at = now() - interval '3 days' where kind = 'ssh_down'`);
-    const st = fleetStatsSchema.parse((await agent.get('/api/fleet/stats?period=month').expect(200)).body);
-    expect(st.servers.map((x) => x.name)).toEqual(['DE-1']);
-    expect(st.availability.incidents).toBeGreaterThanOrEqual(1);
-    expect(st.availability.pct).toBe(90);
-    expect(st.servers[0]?.uptimePct).toBe(90);
-    expect(st.incidentsByKind[0]).toMatchObject({ kind: 'ssh_down', label: expect.any(String) });
-    expect(st.cost.spentRubMinor).toBeGreaterThan(0);
-    if (!st.vmOk) expect(st.traffic.rxBytes).toBeNull();
-    await agent.get('/api/fleet/stats?period=year').expect(400);
   });
 
   it('архив и удаление', async () => {

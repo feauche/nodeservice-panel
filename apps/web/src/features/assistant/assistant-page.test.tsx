@@ -3,12 +3,10 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { useServerModalStore } from '@/features/servers/server-modal-store';
-import { mockAssistant } from '@/test/msw/assistant-mock';
+import { MOCK_OLD_SERVER, mockAssistant } from '@/test/msw/assistant-mock';
 import { resetMockState } from '@/test/msw/handlers';
 import { mockRemnawave } from '@/test/msw/remnawave-mock';
 import { server } from '@/test/msw/server';
-import { mockServers } from '@/test/msw/servers-mock';
 import { renderPage } from '@/test/render';
 import { LAST_CONV_KEY } from './assistant-api';
 import { AssistantPage } from './assistant-page';
@@ -23,63 +21,102 @@ describe('AssistantPage', () => {
     expect(screen.getByRole('link', { name: /Настройки → Ассистент/ })).toBeInTheDocument();
   });
 
-  it('с ключом: сообщение получает ответ с цитатой и предложением', async () => {
+  it('с ключом: сообщение получает ответ с цитатами и без карточек действий', async () => {
     mockAssistant.enabled = true;
     renderPage(AssistantPage, '/assistant');
     const user = userEvent.setup();
     const input = await screen.findByLabelText('Сообщение Ассистенту');
     await user.type(input, 'Что с CPU?');
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
-    // ответ Ассистента с предложением автопочинки
-    expect(await screen.findByText('Перезапустить контейнер ноды')).toBeInTheDocument();
-    const card = screen.getByTestId('proposal-card');
-    expect(within(card).getByText('T2')).toBeInTheDocument();
-    expect(within(card).getByText(/Почему:/)).toBeInTheDocument();
-    expect(within(card).getByRole('button', { name: 'Выполнить' })).toBeInTheDocument();
-    expect(within(card).getByRole('link', { name: 'Открыть событие' })).toBeInTheDocument();
+    expect(await screen.findByText(/высокая нагрузка на CPU/)).toBeInTheDocument();
     // цитата на базу знаний ведёт на конкретную статью (?open=<id>), а не просто в раздел
     const kbLink = screen.getByRole('link', { name: /Лимит conntrack/ });
     expect(kbLink.getAttribute('href')).toContain('open=');
+    // Ассистент ничего не запускает и не меняет: ни кнопок шагов, ни «Применить».
+    expect(screen.queryByRole('button', { name: 'Выполнить' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Применить' })).not.toBeInTheDocument();
   });
 
-  it('изменения по подтверждению: Ассистент присылает карточки, применение делается кнопкой в самой карточке', async () => {
+  it('старая беседа: текст ответа на месте, карточек действий, проверок и хода работы нет', async () => {
     mockAssistant.enabled = true;
+    const conversationId = '0192f000-0000-7000-8000-000000000e01';
+    const iso = new Date().toISOString();
+    const incidentId = '0192d000-0000-7000-8000-000000000e02';
+    mockAssistant.conversations = [{ id: conversationId, title: 'Старая беседа', createdAt: iso }];
+    mockAssistant.messages = {
+      [conversationId]: [
+        {
+          id: '0192f000-0000-7000-8000-000000000e03',
+          role: 'user',
+          content: 'Почему упал de-fra-01?',
+          citations: [],
+          proposals: [],
+          reachability: [],
+          activity: [],
+          createdAt: iso,
+        },
+        {
+          id: '0192f000-0000-7000-8000-000000000e04',
+          role: 'assistant',
+          content: 'Нода остановилась после обновления. Предлагаю перезапустить контейнер.',
+          citations: [],
+          proposals: [
+            {
+              kind: 'autofix',
+              incidentId,
+              preset: 'restart_node',
+              title: 'Перезапустить контейнер ноды',
+              description: 'Снимет нагрузку.',
+              level: 'T2',
+            },
+            {
+              kind: 'change',
+              changeId: '0192f000-0000-7000-8000-000000000e05',
+              operation: 'server.provider',
+              title: 'Сменить провайдера',
+              level: 'T1',
+            },
+          ],
+          reachability: [
+            {
+              target: { name: 'de-fra-01', address: '203.0.113.7' },
+              probes: [],
+              ports: [
+                { port: 443, open: 0, closed: 3, verdict: 'closed_everywhere', text: 'Порт 443 закрыт.' },
+              ],
+              dns: { answers: [], consistent: true },
+              notes: [],
+            },
+          ],
+          activity: [
+            {
+              id: 'a1',
+              label: 'Проверка процессора',
+              state: 'done',
+              startedAt: iso,
+              finishedAt: iso,
+              detail: 'вывод во вкладке «Проверки»',
+            },
+          ],
+          createdAt: iso,
+        },
+      ],
+    };
+    localStorage.setItem(LAST_CONV_KEY, conversationId);
     renderPage(AssistantPage, '/assistant');
-    const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Сообщение Ассистенту'), 'предложи изменения');
-    await user.click(screen.getByRole('button', { name: 'Отправить' }));
-    const cards = await screen.findAllByTestId('change-card');
-    expect(cards).toHaveLength(3);
-    for (const c of cards) await within(c).findByRole('button', { name: 'Применить' });
-    expect(
-      cards.map(
-        (c) =>
-          within(c).getByText(/^(Сменить провайдера|Изменить теги|Изменить профиль сервера)$/).textContent,
-      ),
-    ).toEqual(['Сменить провайдера', 'Изменить теги', 'Изменить профиль сервера']);
-    expect(screen.queryByTestId('proposal-card')).not.toBeInTheDocument();
-    await user.click(within(cards[0] as HTMLElement).getByRole('button', { name: 'Применить' }));
-    await within(cards[0] as HTMLElement).findByText('Применено');
-    // остальные ждут своего решения: «Применить всё» нет
-    expect(within(cards[1] as HTMLElement).getByRole('button', { name: 'Применить' })).toBeEnabled();
-    expect(screen.queryByRole('button', { name: /Применить всё/ })).not.toBeInTheDocument();
-  });
-
-  it('без разрешения на изменения Ассистент карточек изменений не присылает', async () => {
-    mockAssistant.enabled = true;
-    mockAssistant.permissions = { ...mockAssistant.permissions, changes: false };
-    renderPage(AssistantPage, '/assistant');
-    const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Сообщение Ассистенту'), 'предложи изменения');
-    await user.click(screen.getByRole('button', { name: 'Отправить' }));
-    await screen.findByTestId('proposal-card');
-    expect(screen.queryByTestId('change-card')).not.toBeInTheDocument();
+    const list = await screen.findByTestId('assistant-messages');
+    expect(await within(list).findByText(/Нода остановилась после обновления/)).toBeInTheDocument();
+    expect(within(list).queryByText('Перезапустить контейнер ноды')).not.toBeInTheDocument();
+    expect(within(list).queryByText('Сменить провайдера')).not.toBeInTheDocument();
+    expect(within(list).queryByText('Порт 443 закрыт.')).not.toBeInTheDocument();
+    expect(within(list).queryByText(/Проверка процессора/)).not.toBeInTheDocument();
+    expect(within(list).queryByRole('button', { name: 'Выполнить' })).not.toBeInTheDocument();
+    expect(within(list).queryByRole('button', { name: 'Применить' })).not.toBeInTheDocument();
   });
 
   it('текущая нода в ответе и цитате открывает карточку Remnawave без старой серверной связи', async () => {
     mockAssistant.enabled = true;
     const uuid = '0192f200-0000-7000-8000-000000000001';
-    useServerModalStore.getState().close();
     server.use(
       http.get('/api/nodes/status', () =>
         HttpResponse.json({
@@ -132,14 +169,12 @@ describe('AssistantPage', () => {
     const list = await screen.findByTestId('assistant-messages');
     const buttons = await within(list).findAllByRole('button', { name: 'bridge' });
     await user.click(buttons[0] as HTMLElement);
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    expect(useServerModalStore.getState().serverId).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'bridge' })).toBeInTheDocument();
   });
 
   describe('ответ без пузыря, несколько сообщений, источники', () => {
     const ask = async (text: string) => {
       mockAssistant.enabled = true;
-      useServerModalStore.getState().close();
       renderPage(AssistantPage, '/assistant');
       const user = userEvent.setup();
       await user.type(await screen.findByLabelText('Сообщение Ассистенту'), text);
@@ -174,29 +209,19 @@ describe('AssistantPage', () => {
       const user = userEvent.setup();
       await user.type(await screen.findByLabelText('Сообщение Ассистенту'), 'Сервер доступен снаружи?');
       await user.click(screen.getByRole('button', { name: 'Отправить' }));
-      await screen.findByTestId('reachability-card');
+      await screen.findByText(/порт 443 не отвечает из России/);
       expect(screen.queryByText('Основано на:')).not.toBeInTheDocument();
     });
 
-    it('чип сервера в источниках открывает карточку', async () => {
-      const { user, list } = await ask('а по каким серверам больше событий');
+    it('чип старого сервера в источниках — простая метка: окна сервера больше нет', async () => {
+      const { list } = await ask('а по каким серверам больше событий');
       const sources = await within(list).findByTestId('assistant-sources');
-      await user.click(within(sources).getByRole('button', { name: 'de-fra-01' }));
-      expect(useServerModalStore.getState().serverId).toBe(
-        mockServers.items.find((node) => node.name === 'de-fra-01')?.id,
-      );
+      expect(within(sources).queryByRole('button', { name: MOCK_OLD_SERVER.name })).not.toBeInTheDocument();
+      const chip = within(sources).getByTitle(`Исторический сервер: ${MOCK_OLD_SERVER.name}`);
+      expect(chip.tagName).toBe('SPAN');
+      // и имя сервера в тексте не становится ссылкой
+      expect(within(list).queryByRole('button', { name: 'de-fra-01' })).not.toBeInTheDocument();
     });
-  });
-
-  it('вопрос про доступность: под ответом матрица проверки снаружи', async () => {
-    mockAssistant.enabled = true;
-    renderPage(AssistantPage, '/assistant');
-    const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Сообщение Ассистенту'), 'Сервер доступен снаружи?');
-    await user.click(screen.getByRole('button', { name: 'Отправить' }));
-    const card = await screen.findByTestId('reachability-card');
-    expect(within(card).getByText(/Доступность de-fra-01 снаружи/)).toBeInTheDocument();
-    expect(within(card).getByText('443: нет ответа с 3 проверенных точек')).toBeInTheDocument();
   });
 
   it('чип-подсказка отправляет вопрос', async () => {
@@ -208,7 +233,7 @@ describe('AssistantPage', () => {
     await waitFor(() =>
       expect(screen.getAllByText('Что сейчас требует внимания?').length).toBeGreaterThan(0),
     );
-    expect(await screen.findByText('Перезапустить контейнер ноды')).toBeInTheDocument();
+    expect(await screen.findByText(/высокая нагрузка на CPU/)).toBeInTheDocument();
   });
 
   it('режима «Анализ» нет: одно поле для всего, кнопка «Отправить», подсказка про статьи и термины', async () => {
@@ -531,7 +556,7 @@ describe('AssistantPage', () => {
     await user.click(await screen.findByLabelText('Сообщение Ассистенту'));
     await user.paste(`Что с CPU? ${'б'.repeat(30_000)}`);
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
-    expect(await screen.findByText('Перезапустить контейнер ноды')).toBeInTheDocument();
+    expect(await screen.findByText(/высокая нагрузка на CPU/)).toBeInTheDocument();
   });
 
   it('многострочное сообщение сохраняет абзацы и отступы в запросе и пузыре', async () => {
