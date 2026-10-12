@@ -9,8 +9,9 @@
 #
 # Ставит Docker, клонирует репозиторий в /opt/nodeservice (для приватного — по deploy-ключу),
 # генерирует infra/.env с секретами, собирает образ api из исходников, поднимает стек
-# (Caddy + api + Postgres + Valkey + VictoriaMetrics), ставит команду `nodeservice`, ежедневный
-# бэкап БД и печатает токен первого запуска. Повторный запуск безопасен: .env и данные не трогает.
+# (Caddy + api + Postgres + Valkey + VictoriaMetrics), ставит команду `nodeservice` и печатает токен
+# первого запуска. Расписание резервных копий настраивается в панели: «Настройки → Резервные копии».
+# Повторный запуск безопасен: .env и данные не трогает.
 set -euo pipefail
 
 REPO_SSH="${NODESERVICE_REPO_SSH:-git@github.com:feauche/nodeservice-panel.git}"

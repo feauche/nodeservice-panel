@@ -126,11 +126,11 @@ export class FleetMonitorJob {
             `Remnawave не видит ноду в ${st.downSeen} последовательных опросах.`,
           );
         if (node.isConnected && open.some((r) => r.kind === 'node_down')) {
-          const count = Number((await this.read<number>(key + '.connected')) ?? 0) + 1;
-          await this.write(key + '.connected', count);
+          const count = Number((await this.read<number>(`${key}.connected`)) ?? 0) + 1;
+          await this.write(`${key}.connected`, count);
           if (count >= cfg.recoverySamples)
             await this.resolve(node, 'node_down', 'Связь с Remnawave восстановлена.');
-        } else await this.write(key + '.connected', 0);
+        } else await this.write(`${key}.connected`, 0);
         if (node.usersOnline !== null) {
           const base = st.baseline ?? stableBaseline(st.samples, stamp, cfg);
           if (dropDetected(node.usersOnline, base, cfg)) {
@@ -343,12 +343,12 @@ export class FleetMonitorJob {
         severity: row.severity as 'crit' | 'warn',
         title,
         body: detail,
-        link: { to: '/incidents/' + row.id, label: 'Открыть событие' },
+        link: { to: `/incidents/${row.id}`, label: 'Открыть событие' },
         telegram: {
           event: row.severity === 'crit' ? 'incident_crit' : 'incident_warn',
           incidentId: row.id,
           kind,
-          serverKey: 'node:' + node.uuid,
+          serverKey: `node:${node.uuid}`,
           server: { name: node.name, host: node.address },
           awaitAnalysis: false,
         },
@@ -358,7 +358,7 @@ export class FleetMonitorJob {
     node: RemnawaveNode,
     kind: IncidentKind,
     detail: string,
-    diagnostics?: NodeTcpDiagnostics,
+    _diagnostics?: NodeTcpDiagnostics,
   ) {
     const row = (await this.repo.list('open')).find((r) => r.nodeUuid === node.uuid && r.kind === kind);
     if (!row) return;
@@ -373,13 +373,13 @@ export class FleetMonitorJob {
     });
     await this.notifications.push({
       severity: 'ok',
-      title: 'Восстановление · ' + node.name,
+      title: `Восстановление · ${node.name}`,
       body: detail,
       telegram: {
         event: 'resolved',
         incidentId: row.id,
         kind,
-        serverKey: 'node:' + node.uuid,
+        serverKey: `node:${node.uuid}`,
         server: { name: node.name, host: node.address },
         closed: { recovered: true },
       },

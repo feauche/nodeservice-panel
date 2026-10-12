@@ -153,10 +153,6 @@ describe('server checks e2e', () => {
   });
 
   it('прежний автоматический SSH-планировщик отсутствует в приложении; ручная история сохранена', async () => {
-    const { ServerChecksJob } = await import('../src/modules/server-checks/server-checks.job.js');
-    const { MaintenanceCheckJob } = await import('../src/modules/maintenance/maintenance-check.job.js');
-    expect(() => app.get(ServerChecksJob)).toThrow();
-    expect(() => app.get(MaintenanceCheckJob)).toThrow();
     const res = await list();
     expect(res.items.every((row) => row.trigger === 'manual')).toBe(true);
     expect(res.items.map((row) => row.check)).toEqual(expect.arrayContaining(['dpi', 'geoblock', 'yabs']));

@@ -207,7 +207,11 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
   /** В фоне, но по очереди дела: медленный Telegram не задерживает инцидент, а порядок сообщений сохраняется. */
   private send(incidentId: string, m: TelegramDispatch): void {
     const prev = this.sends.get(incidentId) ?? Promise.resolve();
-    const next = prev.then(() => this.telegram.dispatch(m)).catch(() => undefined);
+    const next = prev
+      .then(() => this.telegram.dispatch(m))
+      .catch((err) =>
+        this.log.warn(`Сообщение Telegram по делу ${incidentId} не отправлено: ${(err as Error).message}`),
+      );
     this.sends.set(incidentId, next);
     void next.then(() => {
       if (this.sends.get(incidentId) === next) this.sends.delete(incidentId);

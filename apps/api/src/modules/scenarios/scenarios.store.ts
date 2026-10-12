@@ -30,7 +30,7 @@ export class ScenariosStore {
   }
   async list(panel: string | null): Promise<Scenario[]> {
     if (!panel) return [];
-    const raw = await this.read('scenarios.rules.' + this.scope(panel));
+    const raw = await this.read(`scenarios.rules.${this.scope(panel)}`);
     const parsed = scenariosSchema.safeParse(raw ?? { items: [] });
     return parsed.success ? parsed.data.items : [];
   }
@@ -38,7 +38,7 @@ export class ScenariosStore {
     const parsed = scenariosSchema.parse({ items });
     if (new Set(parsed.items.map((i) => i.id)).size !== parsed.items.length)
       throw new Error('Повторяющийся идентификатор сценария.');
-    await this.write('scenarios.rules.' + this.scope(panel), parsed);
+    await this.write(`scenarios.rules.${this.scope(panel)}`, parsed);
     return parsed;
   }
 }

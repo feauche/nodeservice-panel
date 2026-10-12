@@ -43,10 +43,6 @@ export class MaintenanceRepository {
     return this.db.query.maintenanceState.findFirst({ where: eq(maintenanceState.serverId, serverId) });
   }
 
-  async listStates(): Promise<MaintenanceStateRow[]> {
-    return this.db.select().from(maintenanceState);
-  }
-
   /**
    * Общая отметка суточного прохода. Она нужна отдельно от состояния сервера: ручная проверка
    * одного сервера не должна сдвигать расписание всего парка и дробить проход на весь день.
@@ -56,17 +52,6 @@ export class MaintenanceRepository {
     if (!row) return null;
     const at = new Date(row.value);
     return Number.isNaN(at.getTime()) ? null : at;
-  }
-
-  async completeDailySweep(at = new Date()): Promise<void> {
-    const value = at.toISOString();
-    await this.db
-      .insert(appMeta)
-      .values({ key: DAILY_SWEEP_KEY, value, updatedAt: at })
-      .onConflictDoUpdate({
-        target: appMeta.key,
-        set: { value, updatedAt: at },
-      });
   }
 
   async saveCheck(serverId: string, check: MaintenanceCheck): Promise<void> {

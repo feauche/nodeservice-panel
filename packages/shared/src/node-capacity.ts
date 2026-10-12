@@ -21,7 +21,9 @@ export const nodeCapacitySchema = z.object({
   calculatedAt: z.string(),
 });
 export function estimateNodeCapacity(points: NodeMetricPoint[], channelMbps: number | null) {
-  const valid = points.filter((p) => p.online != null && p.online >= 30);
+  const valid = points.filter(
+    (p): p is NodeMetricPoint & { online: number } => p.online != null && p.online >= 30,
+  );
   const days = new Set(valid.map((p) => new Date(p.t).toISOString().slice(0, 10))).size;
   const limits: { name: string; users: number }[] = [];
   const missing: string[] = [];
@@ -29,14 +31,14 @@ export function estimateNodeCapacity(points: NodeMetricPoint[], channelMbps: num
     const estimates = valid
       .flatMap((p) => {
         const v = value(p);
-        return v != null && v > 0 ? [(threshold / v) * p.online!] : [];
+        return v != null && v > 0 ? [(threshold / v) * p.online] : [];
       })
       .sort((a, b) => a - b);
     // Lower 10th percentile of paired estimates: sustained busy periods dominate.
     if (estimates.length >= 10)
       limits.push({
         name,
-        users: Math.max(0, Math.floor(estimates[Math.floor((estimates.length - 1) * 0.1)]!)),
+        users: Math.max(0, Math.floor(estimates[Math.floor((estimates.length - 1) * 0.1)] ?? 0)),
       });
     else missing.push(name);
   };
@@ -48,7 +50,7 @@ export function estimateNodeCapacity(points: NodeMetricPoint[], channelMbps: num
     );
   else missing.push('Лимит канала');
   limits.sort((a, b) => a.users - b.users);
-  const capacity = !missing.length && limits.length === 3 ? limits[0]!.users : null;
+  const capacity = !missing.length && limits.length === 3 ? limits[0]?.users : null;
   return {
     samples: valid.length,
     days,
@@ -58,6 +60,6 @@ export function estimateNodeCapacity(points: NodeMetricPoint[], channelMbps: num
     missing,
     confidence:
       valid.length < 10 ? ('collecting' as const) : days < 3 ? ('preliminary' as const) : ('ready' as const),
-    peakOnline: valid.length ? Math.max(...valid.map((p) => p.online!)) : null,
+    peakOnline: valid.length ? Math.max(...valid.map((p) => p.online)) : null,
   };
 }

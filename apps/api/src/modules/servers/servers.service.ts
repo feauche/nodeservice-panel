@@ -30,7 +30,6 @@ import { errorText, problem } from '../../common/filters/problem-details.filter.
 import type { Env } from '../../config/env.schema.js';
 import type { ServerRow, servers } from '../../infra/db/schema/index.js';
 import { configuredAgentBaseUrls } from '../agent/agent-urls.js';
-import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { diffChanges } from '../audit/audit.diff.js';
 import { AuditService } from '../audit/audit.service.js';
 import {
@@ -653,44 +652,6 @@ export class ServersService {
       return this.toDto(updated);
     } finally {
       session.end();
-    }
-  }
-
-  /**
-   * Фоновая автопроверка SSH (Настройки → Автопроверки): без 409 при смене отпечатка,
-   * в Журнал — только смены статуса, не каждый прогон.
-   */
-  async autocheck(row: ServerRow): Promise<void> {
-    const before = row.sshOk;
-    const now = new Date();
-    const report = async (became: 'ok' | 'failed', reason?: string) => {
-      await this.audit.record({
-        action: 'server.autocheck.ssh',
-        ...(became === 'failed' ? { severity: 'warn' as const, result: 'failed' as const } : {}),
-        actor: SYSTEM_ACTOR,
-        source: 'auto',
-        target: { type: 'server', id: row.id, display: row.name },
-        metadata: { became, ...(reason ? { reason: reason.slice(0, 200) } : {}) },
-      });
-    };
-    try {
-      const session = await this.ssh.connect(await this.storedTarget(row));
-      try {
-        const facts = await this.ssh.gatherFacts(session);
-        await this.repo.update(row.id, {
-          ...facts,
-          ...(row.hostKeyFp ? {} : { hostKeyFp: session.hostKeyFp }),
-          sshOk: true,
-          lastSshCheckAt: now,
-          lastSshOkAt: now,
-        });
-      } finally {
-        session.end();
-      }
-      if (before !== true) await report('ok');
-    } catch (err) {
-      await this.repo.update(row.id, { sshOk: false, lastSshCheckAt: now });
-      if (before !== false) await report('failed', (err as Error).message);
     }
   }
 

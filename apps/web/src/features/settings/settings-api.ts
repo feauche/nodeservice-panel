@@ -1,6 +1,4 @@
 import {
-  type MonitoringSettings,
-  monitoringSettingsSchema,
   type AppearanceSettings,
   type AppearanceSettingsUpdate,
   type AutochecksSettings,
@@ -9,6 +7,8 @@ import {
   autochecksSettingsSchema,
   type CustomSites,
   customSitesSchema,
+  type MonitoringSettings,
+  monitoringSettingsSchema,
   type TerminalSnippets,
   terminalSnippetsSchema,
 } from '@nodeservice/shared';
@@ -116,9 +116,16 @@ export function useUpdateAppearance() {
 
 const monitoringKey = ['settings', 'monitoring'] as const;
 export function useMonitoring() {
-  return useQuery({ queryKey: monitoringKey, queryFn: ({signal}) => api.get('/settings/monitoring', monitoringSettingsSchema, signal) });
+  return useQuery({
+    queryKey: monitoringKey,
+    queryFn: ({ signal }) => api.get('/settings/monitoring', monitoringSettingsSchema, signal),
+  });
 }
 export function useUpdateMonitoring() {
   const qc = useQueryClient();
-  return useMutation({mutationFn: (body: Partial<MonitoringSettings>) => api.put('/settings/monitoring', body, monitoringSettingsSchema), onSuccess: data => qc.setQueryData(monitoringKey, data)});
+  return useMutation({
+    mutationFn: (body: Partial<MonitoringSettings>) =>
+      api.put('/settings/monitoring', body, monitoringSettingsSchema),
+    onSuccess: (data) => qc.setQueryData(monitoringKey, data),
+  });
 }

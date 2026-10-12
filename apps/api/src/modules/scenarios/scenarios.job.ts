@@ -266,7 +266,7 @@ export class ScenariosJob {
                 link: { to: '/scenarios', label: 'Открыть сценарии' },
                 telegram: {
                   event: 'scenario',
-                  serverKey: 'node:' + node.uuid,
+                  serverKey: `node:${node.uuid}`,
                   server: { name: node.name, host: node.address },
                 },
               });

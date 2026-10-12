@@ -73,7 +73,7 @@ export class DnsService {
   }
   async settings(): Promise<{ automaticNodes: string[]; automaticRecords: string[] }> {
     const domain = await this.scope();
-    return { automaticNodes: [], automaticRecords: [], ...(await this.read('dns.settings.' + domain)) };
+    return { automaticNodes: [], automaticRecords: [], ...(await this.read(`dns.settings.${domain}`)) };
   }
   private automatic(settings: { automaticNodes: string[]; automaticRecords: string[] }, record: DnsRecord) {
     return (
@@ -90,7 +90,7 @@ export class DnsService {
     )
       throw new BadRequestException('Выберите A/AAAA-запись с одной связанной нодой.');
     const status = await this.remna.status();
-    const key = 'dns.settings.' + scope;
+    const key = `dns.settings.${scope}`;
     const settings = await this.updateMetadata(key, async () => {
       if (scope !== (await this.scope()))
         throw new BadRequestException('Подключение изменилось. Обновите список.');
@@ -107,7 +107,7 @@ export class DnsService {
       await this.write(key, next);
       return next;
     });
-    const addressKey = 'dns.addresses.' + status.domain;
+    const addressKey = `dns.addresses.${status.domain}`;
     await this.updateMetadata(addressKey, async () => {
       const previous = (await this.read(addressKey)) ?? {};
       await this.write(addressKey, {
@@ -128,14 +128,14 @@ export class DnsService {
     return { items: rows.map((r) => JSON.parse(r.value)) };
   }
   private async log(row: unknown) {
-    await this.write('dns.event.' + randomUUID(), { at: new Date().toISOString(), ...obj(row) });
+    await this.write(`dns.event.${randomUUID()}`, { at: new Date().toISOString(), ...obj(row) });
   }
   private async pages(path: string) {
     const all: Record<string, unknown>[] = [];
     for (let page = 1; page <= 100; page++) {
       const d = await this.integrations.providerRequest(
         'cloudflare',
-        path + (path.includes('?') ? '&' : '?') + 'per_page=100&page=' + page,
+        `${path + (path.includes('?') ? '&' : '?')}per_page=100&page=${page}`,
       );
       if (d.success !== true)
         throw new BadRequestException(
@@ -151,11 +151,11 @@ export class DnsService {
     const c = await this.store.credentials();
     if (!c) throw new BadRequestException('Сначала подключите Remnawave.');
     const status = await this.remna.status();
-    const raw = await getJson('https://' + c.domain + '/api/hosts', c.apiKey);
+    const raw = await getJson(`https://${c.domain}/api/hosts`, c.apiKey);
     const hosts = list(obj(raw.response).hosts ?? raw.response).filter(
       (h) => typeof h.address === 'string' && !isIP(String(h.address)),
     );
-    const inferredKey = 'dns.links.' + (await this.scope());
+    const inferredKey = `dns.links.${await this.scope()}`;
     const inferred = (await this.read(inferredKey)) ?? {};
     const nextInferred = { ...inferred };
     const names = new Map<string, string[]>();
@@ -178,13 +178,13 @@ export class DnsService {
             : list((await this.integrations.reg('service/get_list', { servtype: 'domain' })).services);
         for (const z of zones) {
           const zone = String(z.name ?? z.dname ?? '').toLowerCase();
-          const matches = [...names.keys()].filter((n) => n === zone || n.endsWith('.' + zone));
+          const matches = [...names.keys()].filter((n) => n === zone || n.endsWith(`.${zone}`));
 
           const zoneId = String(z.id ?? zone);
           domains.push({ name: zone, provider, hosts: matches });
           const rows =
             provider === 'cloudflare'
-              ? await this.pages('/zones/' + encodeURIComponent(zoneId) + '/dns_records')
+              ? await this.pages(`/zones/${encodeURIComponent(zoneId)}/dns_records`)
               : list(
                   (await this.integrations.reg('zone/get_resource_records', { domains: [{ dname: zone }] }))
                     .domains,
@@ -197,7 +197,7 @@ export class DnsService {
                 ? String(r.name).toLowerCase()
                 : subname === '@' || subname === ''
                   ? zone
-                  : subname + '.' + zone;
+                  : `${subname}.${zone}`;
 
             const content = String(r.content ?? '');
             const recordId = String(r.id ?? [subname, type, content].join(':'));
@@ -211,7 +211,7 @@ export class DnsService {
               : explicit.length
                 ? explicit
                 : sameAddress.length === 1
-                  ? [sameAddress[0]!.uuid]
+                  ? [sameAddress[0]?.uuid]
                   : [];
             if (!explicit.length && !inferred[binding] && linked.length === 1)
               nextInferred[binding] = linked[0];
@@ -302,7 +302,7 @@ export class DnsService {
     if (automatic && !this.automatic(await this.settings(), record))
       throw new BadRequestException('Автоматическое обновление этой записи выключено.');
     const remember = async () => {
-      const key = 'dns.links.' + scope;
+      const key = `dns.links.${scope}`;
       const id =
         record.provider === 'cloudflare'
           ? record.id
@@ -312,7 +312,7 @@ export class DnsService {
         await this.write(key, { ...links, [id]: node.uuid });
       });
       if (id !== record.id) {
-        const settingsKey = 'dns.settings.' + scope;
+        const settingsKey = `dns.settings.${scope}`;
         await this.updateMetadata(settingsKey, async () => {
           const settings = { automaticNodes: [], automaticRecords: [], ...(await this.read(settingsKey)) };
           if (settings.automaticRecords.includes(record.id)) {
@@ -420,7 +420,7 @@ export class DnsService {
       if (!status.connected || status.error) return;
       const scope = await this.scope();
       const settings = await this.settings();
-      const key = 'dns.addresses.' + status.domain;
+      const key = `dns.addresses.${status.domain}`;
       const previous = (await this.read(key)) ?? {};
       const next = { ...previous };
       for (const n of status.nodes) {

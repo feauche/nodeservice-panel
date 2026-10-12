@@ -41,13 +41,13 @@ export class BsCheckerService {
     @Optional() private timeline?: NodeEventsStore,
   ) {}
   private async read(id: string): Promise<Stored | null> {
-    const row = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, 'bschecker.run.' + id) });
+    const row = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, `bschecker.run.${id}`) });
     return row ? JSON.parse(row.value) : null;
   }
   private async write(id: string, data: Stored) {
     await this.db
       .insert(appMeta)
-      .values({ key: 'bschecker.run.' + id, value: JSON.stringify(data) })
+      .values({ key: `bschecker.run.${id}`, value: JSON.stringify(data) })
       .onConflictDoUpdate({
         target: appMeta.key,
         set: { value: JSON.stringify(data), updatedAt: new Date() },
@@ -62,7 +62,7 @@ export class BsCheckerService {
   ): Promise<Record<string, unknown>> {
     let res: Response;
     try {
-      res = await fetch('https://bsbord.com/v1' + path, {
+      res = await fetch(`https://bsbord.com/v1${path}`, {
         method: method ?? (body ? 'POST' : 'GET'),
         headers: {
           Authorization: `Bearer ${session.credentials.apiKey}`,
@@ -167,7 +167,7 @@ export class BsCheckerService {
     const operators = [...new Set(input.operators)];
     if (operators.some((key) => !units.some((u) => u.op_key === key && u.probeable)))
       throw new BadRequestException('Выбранные единицы недоступны. Обновите список.');
-    const target = `${host.includes(':') ? '[' + host + ']' : host}:${input.port}`;
+    const target = `${host.includes(':') ? `[${host}]` : host}:${input.port}`;
     const body = { target, operators, probes: { tcp: input.tcp, icmp: input.icmp, sni: false }, dpi: 'any' };
     let answer: Record<string, unknown>;
     try {

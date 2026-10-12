@@ -20,6 +20,8 @@ import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js
 import { MonitoringStore } from '../settings/monitoring.store.js';
 import { NodeMetricHistoryService, parseMetricHistoryRange } from './node-metric-history.service.js';
 
+const PRUNE_EVERY_MS = 10 * 60_000;
+
 @Injectable()
 export class NodeMetricsService {
   private readonly log = new Logger(NodeMetricsService.name);
@@ -28,6 +30,10 @@ export class NodeMetricsService {
     { at: number; history: NodeMetrics['history']; since: string | null }
   >();
   private pending: Promise<void> | null = null;
+  /** Последний записанный снимок: тот же снимок повторно не пишем — замер этой минуты уже в базе. */
+  private recorded: string | null = null;
+  /** Старые замеры чистим не на каждом тике, а раз в 10 минут: удаление проходит по всей таблице. */
+  private prunedAt = 0;
   private cache = new Map<string, { at: number; traffic: NodeMetrics['traffic']; error: string | null }>();
   constructor(
     @Inject(DB) private readonly db: Db,
@@ -57,6 +63,8 @@ export class NodeMetricsService {
     // Persist the snapshot's actual timestamp; stale data must not become a new measurement.
     const status = await this.remna.status();
     if (status.domain !== domain || status.error || !status.checkedAt) return;
+    const snapshot = `${domain}:${status.checkedAt}`;
+    if (snapshot === this.recorded) return;
     const t = new Date(Math.floor(Date.parse(status.checkedAt) / 60000) * 60000);
     const inserts = status.nodes.map((n) => {
       const online = n.isConnected && !n.isDisabled;
@@ -77,9 +85,12 @@ export class NodeMetricsService {
       await this.db.execute(
         sql`INSERT INTO remna_metric_samples(panel,node_uuid,sampled_at,values) VALUES ${sql.join(inserts, sql`, `)} ON CONFLICT DO NOTHING`,
       );
+    this.recorded = snapshot;
+    if (Date.now() - this.prunedAt < PRUNE_EVERY_MS) return;
     await this.db.execute(
       sql`DELETE FROM remna_metric_samples WHERE sampled_at < now() - interval '30 days'`,
     );
+    this.prunedAt = Date.now();
   }
   async get(minutes: number, days: number): Promise<NodeMetrics> {
     await this.collect();

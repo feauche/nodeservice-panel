@@ -1,4 +1,5 @@
 import type { Me } from '@nodeservice/shared';
+import { plural as pluralRu } from '@/lib/plural';
 
 const dateFmt = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
 const dateTimeFmt = new Intl.DateTimeFormat('ru-RU', {
@@ -44,13 +45,8 @@ export function formatIn(iso: string, now = Date.now()): string {
 }
 
 /** Русские формы: plural(3, ['сессия', 'сессии', 'сессий']). */
-export function plural(n: number, forms: [string, string, string]): string {
-  const abs = Math.abs(n) % 100;
-  const last = abs % 10;
-  if (abs > 10 && abs < 20) return forms[2];
-  if (last > 1 && last < 5) return forms[1];
-  if (last === 1) return forms[0];
-  return forms[2];
+export function plural(n: number, [one, few, many]: [string, string, string]): string {
+  return pluralRu(n, one, few, many);
 }
 
 /** Как вошли в сессии — по amr. */

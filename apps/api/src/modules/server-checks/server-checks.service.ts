@@ -4,7 +4,6 @@ import {
   SERVER_CHECK_INTERVAL_HOURS,
   SERVER_CHECK_META,
   SERVER_CHECK_PROBLEM,
-  SERVER_CHECK_RETRY_FAILED_HOURS,
   type ServerCheckKey,
   type ServerCheckRun,
   type ServerChecksResponse,
@@ -131,19 +130,6 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
     return (await this.repo.history(serverId, check, limit)).map(toCheckRun);
   }
 
-  /**
-   * Суточный запуск (джоба): занято — просто пропуск; ждём конца, чтобы идти по серверам по одному.
-   * Только свои команды: сторонний скрипт по расписанию не запускается, даже если его сюда передали.
-   */
-  async scheduled(serverId: string, check: ServerCheckKey): Promise<ServerCheckRun | null> {
-    if (!SERVER_CHECK_AUTO_KEYS.includes(check)) return null;
-    if (this.active.has(serverId)) return null;
-    const { run, done } = await this.launch(serverId, check, 'auto', SYSTEM_ACTOR);
-    await done;
-    const finished = await this.repo.findById(run.id);
-    return finished ? toCheckRun(finished) : null;
-  }
-
   private async launch(
     serverId: string,
     check: ServerCheckKey,
@@ -253,23 +239,5 @@ export class ServerChecksService implements OnModuleInit, OnModuleDestroy {
         metadata: { runId: row.id, check: SERVER_CHECK_META[row.check].label, ...(error ? { error } : {}) },
       })
       .catch(() => undefined);
-  }
-
-  /** Свои проверки, которые пора повторить (или ещё не запускались), по серверам. Сторонние сюда не входят. */
-  async dueLightChecks(serverIds: string[]): Promise<Array<{ serverId: string; check: ServerCheckKey }>> {
-    const last = new Map((await this.repo.lastStarts()).map((r) => [`${r.serverId}:${r.check}`, r]));
-    const deadline = Date.now() - SERVER_CHECK_INTERVAL_HOURS * 3_600_000;
-    // Упавшую проверку повторяем через час, а не через сутки: причина часто разовая (сторонний сервис
-    // не ответил) или уже исправлена обновлением панели.
-    const failedDeadline = Date.now() - SERVER_CHECK_RETRY_FAILED_HOURS * 3_600_000;
-    const out: Array<{ serverId: string; check: ServerCheckKey }> = [];
-    for (const serverId of serverIds)
-      for (const check of SERVER_CHECK_AUTO_KEYS) {
-        const r = last.get(`${serverId}:${check}`);
-        const at = r?.at.getTime();
-        if (!r || at === undefined || at < deadline || (r.status === 'failed' && at < failedDeadline))
-          out.push({ serverId, check });
-      }
-    return out;
   }
 }

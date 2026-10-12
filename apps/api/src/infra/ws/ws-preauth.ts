@@ -75,6 +75,28 @@ export function upgradeClientIp(req: IncomingMessage, trustHops: number): string
   return isIP(ip) ? ip : socketIp;
 }
 
+/**
+ * Подключение пришло со страницы самой панели: Origin совпадает с адресом, на который пришёл запрос
+ * (Caddy и дев-прокси Host не меняют). Без Origin — не браузер: чужая страница так не подключится.
+ * Защита от подключения с чужого сайта поверх SameSite=Strict у cookie.
+ */
+export function sameOriginUpgrade(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === (req.headers.host ?? '');
+  } catch {
+    return false;
+  }
+}
+
+/** Отказ до рукопожатия для чужого источника: 403 и разрыв. */
+export function forbidUpgrade(socket: Duplex): void {
+  socket.on('error', () => socket.destroy());
+  socket.once('finish', () => socket.destroy());
+  socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+}
+
 /** Отказ до рукопожатия: 429 и разрыв — WebSocket не открывается, памяти на него не тратится. */
 export function rejectUpgrade(socket: Duplex): void {
   // Клиент мог уже оборвать связь: ошибка записи без слушателя уронила бы процесс.

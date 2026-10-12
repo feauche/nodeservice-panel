@@ -11,6 +11,7 @@ import { openServer } from '@/features/servers/server-modal-store';
 import { Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
+import { plural } from '@/lib/plural';
 import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
 import { DetailText } from './detail-text';
@@ -224,7 +225,7 @@ export function IncidentCasePage({ id }: { id: string }) {
               <p className="text-[12.5px] leading-snug text-text-2">
                 {similar.length === 0
                   ? 'На этом сервере за 7 дней такого не было.'
-                  : `На этом сервере ${similar.length + 1} ${plural(similar.length + 1)} за 7 дней.${
+                  : `На этом сервере ${similar.length + 1} ${plural(similar.length + 1, 'раз', 'раза', 'раз')} за 7 дней.${
                       lastSimilarHelped
                         ? ` В прошлый раз помогло: ${actionMeta(lastSimilarHelped.action).title.toLowerCase()}.`
                         : ''
@@ -314,7 +315,6 @@ export function IncidentCasePage({ id }: { id: string }) {
   );
 }
 
-const plural = (n: number) => (n === 1 ? 'раз' : n < 5 ? 'раза' : 'раз');
 const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v)} %`);
 /** Короткое состояние контейнера — длинная подпись из реестра ломает узкую колонку. */
 const nodeShort = (v: 'running' | 'restarting' | 'stopped' | 'docker_down' | 'none' | null) =>

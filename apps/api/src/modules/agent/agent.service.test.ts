@@ -1,9 +1,8 @@
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { type AgentPulseRequest, agentPulseSigningText } from '@nodeservice/shared';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { AgentService } from './agent.service.js';
-import { AGENT_OFFLINE_STARTUP_GRACE_MS, AgentOfflineJob } from './agent-offline.job.js';
 
 interface Row {
   id: string;
@@ -56,10 +55,9 @@ function make(row: Row | null, agentPublicUrl?: string, fallbacks: string[] = []
         })[key],
     } as never,
   );
-  const job = new AgentOfflineJob(repo as never, agents, autochecks as never);
   const online = () => journal.filter((e) => e.action === 'server.agent.online');
   const offline = () => journal.filter((e) => e.action === 'server.agent.offline');
-  return { agents, job, journal, online, offline, written };
+  return { agents, journal, online, offline, written };
 }
 
 const server = (patch: Partial<Row> = {}): Row => ({
@@ -77,18 +75,10 @@ const server = (patch: Partial<Row> = {}): Row => ({
 });
 
 describe('AgentService: сигнал по открытому соединению возвращает «в сети»', () => {
-  const prevEnv = process.env.NODE_ENV;
-  afterEach(() => {
-    process.env.NODE_ENV = prevEnv;
-    vi.useRealTimers();
-  });
-
   it('сеть подвисла дольше порога, соединение выжило: сигналы возобновились — статус снова «в сети», в Журнале одна запись', async () => {
     const row = server({ agentLastSeenAt: new Date(Date.now() - 35_000) });
     const ctx = make(row);
-    // Джоба тикает только вне тестового окружения — здесь проверяем её настоящую работу.
-    process.env.NODE_ENV = 'production';
-    await ctx.job.tick();
+    await ctx.agents.markOffline({ ...row } as never, 'сигнала нет', new Date(Date.now() - 30_000));
     expect(row.agentStatus).toBe('offline');
     expect(ctx.offline()).toHaveLength(1);
 
@@ -98,12 +88,6 @@ describe('AgentService: сигнал по открытому соединени�
     expect(ctx.online()[0]?.metadata).toMatchObject({ version: '0.5.4' });
     // Почему статус вернулся без переподключения — словами, по-русски.
     expect(String(ctx.online()[0]?.metadata?.reason)).toMatch(/возобновились/);
-
-    // Следующий тик джобы: сигнал свежий — статус не дёргается, новых записей нет.
-    await ctx.job.tick();
-    expect(row.agentStatus).toBe('online');
-    expect(ctx.offline()).toHaveLength(1);
-    expect(ctx.online()).toHaveLength(1);
   });
 
   it('метрики возвращают статус так же, как сигнал', async () => {
@@ -209,27 +193,6 @@ describe('AgentService: сигнал по открытому соединени�
     // Без свежего сигнала — помечает, как раньше.
     row.agentLastSeenAt = new Date(Date.now() - 35_000);
     await ctx.agents.markOffline(stale as never, 'сигнала нет', new Date(Date.now() - 30_000));
-    expect(row.agentStatus).toBe('offline');
-  });
-
-  it('причина в Журнале — по-русски, без слова heartbeat', async () => {
-    const row = server({ agentLastSeenAt: new Date(Date.now() - 35_000) });
-    const ctx = make(row);
-    process.env.NODE_ENV = 'production';
-    await ctx.job.tick();
-    expect(ctx.offline()[0]?.metadata?.reason).toBe('сигнала от агента нет дольше 30 с');
-  });
-
-  it('после старта панели даёт агентам минуту на переподключение', async () => {
-    process.env.NODE_ENV = 'production';
-    const row = server({ agentLastSeenAt: new Date(Date.now() - 35_000) });
-    const ctx = make(row);
-    await ctx.job.tick();
-    expect(row.agentStatus).toBe('online');
-    const job = ctx.job as unknown as { readyAt: number };
-    expect(job.readyAt - Date.now()).toBeGreaterThanOrEqual(AGENT_OFFLINE_STARTUP_GRACE_MS - 50);
-    job.readyAt = 0;
-    await ctx.job.tick();
     expect(row.agentStatus).toBe('offline');
   });
 });

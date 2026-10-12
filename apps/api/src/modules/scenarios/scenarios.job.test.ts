@@ -42,7 +42,7 @@ function fixture(host?: Record<string, unknown>, links?: string[]) {
       if (init?.method === 'PATCH') {
         const body = JSON.parse(String(init.body));
         calls.push(body);
-        h = { ...h, ...body, updatedAt: 'v' + (calls.length + 1) };
+        h = { ...h, ...body, updatedAt: `v${calls.length + 1}` };
         return new Response(JSON.stringify({ response: h }));
       }
       return new Response(JSON.stringify({ response: [h] }));

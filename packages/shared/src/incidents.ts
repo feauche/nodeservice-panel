@@ -1,9 +1,7 @@
-import {nodeTcpDiagnosticsSchema} from './tcp-check.js';
 import { z } from 'zod';
-
 import { reachabilityResultSchema } from './reachability.js';
-
 import { nodeStateSchema } from './servers.js';
+import { nodeTcpDiagnosticsSchema } from './tcp-check.js';
 
 /**
  * Инциденты (этап 8): панель сама замечает проблемы серверов (агент офлайн, SSH недоступен,
@@ -337,7 +335,7 @@ export const incidentSnapshotSchema = z.object({
         z.object({
           serverId: z.uuid().nullable(),
           diagnostics: nodeTcpDiagnosticsSchema.nullable().optional(),
-  nodeUuid: z.string().nullable(),
+          nodeUuid: z.string().nullable(),
           name: z.string(),
           baseline: z.number().nullable(),
         }),

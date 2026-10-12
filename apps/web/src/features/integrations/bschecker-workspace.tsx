@@ -18,11 +18,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { BarButton, CardButton, Pill } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
+import { plural } from '@/lib/plural';
 import { explainProbeError } from '@/lib/probe-error';
 import { BsRentals } from './bs-rentals';
 
-const pointCount = (count: number) =>
-  `${count} ${count % 100 >= 11 && count % 100 <= 14 ? 'точек' : count % 10 === 1 ? 'точка' : count % 10 >= 2 && count % 10 <= 4 ? 'точки' : 'точек'}`;
+const pointCount = (count: number) => `${count} ${plural(count, 'точка', 'точки', 'точек')}`;
 const formatDate = (value: string) =>
   new Intl.DateTimeFormat('ru-RU', {
     day: '2-digit',
@@ -145,7 +145,7 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
   }
   async function start(id: string, entry?: BsHistoryEntry) {
     const context = entry ?? {
-      target: `${ip.includes(':') ? '[' + ip + ']' : ip}:${port}`,
+      target: `${ip.includes(':') ? `[${ip}]` : ip}:${port}`,
       createdAt: new Date().toISOString(),
       units: operators.length,
       estimatedCredits: preview.data?.costCredits ?? 0,

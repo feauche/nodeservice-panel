@@ -25,7 +25,6 @@ import { SetupService } from '../src/modules/auth/setup.service.js';
 import { formatBillingMessage, formatBillingRichMessage } from '../src/modules/billing/billing.format.js';
 import { IncidentReminderJob } from '../src/modules/incidents/incident-reminder.job.js';
 import { IncidentsRepository } from '../src/modules/incidents/incidents.repository.js';
-import { IncidentsService } from '../src/modules/incidents/incidents.service.js';
 import { NotificationsRepository } from '../src/modules/notifications/notifications.repository.js';
 import { NotificationsService } from '../src/modules/notifications/notifications.service.js';
 import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications/telegram/telegram.client.js';
@@ -470,8 +469,6 @@ describe('telegram e2e', () => {
     await db.execute(sql`delete from telegram_outbox`);
     await db.execute(sql`update servers set agent_status = 'online', ssh_ok = true where id = ${serverId}`);
     await db.execute(sql`delete from app_meta where key = 'telegram.digest'`);
-    (app.get(IncidentsService) as unknown as { hostCache: Map<string, unknown> }).hostCache.clear();
-    app.get(IncidentsService).recordNodeState(serverId, 'running');
     const s = telegramSettingsSchema.parse(
       (
         await put({

@@ -3,7 +3,6 @@ import type { ActionKey } from '@nodeservice/shared';
 import type { IncidentRow } from '../../infra/db/schema/index.js';
 import { IncidentsRepository } from './incidents.repository.js';
 /** Compatibility for historical incident callers; no SSH or executable actions remain. */
-export type Decision = 'waiting' | 'proposed' | 'started' | 'none';
 @Injectable()
 export class IncidentRunnerService implements OnModuleInit {
   constructor(private readonly repo: IncidentsRepository) {}
@@ -16,19 +15,30 @@ export class IncidentRunnerService implements OnModuleInit {
     if (!row) return;
     await this.repo.update(id, {
       proposal: null,
-      attempts: row.attempts.map(a => a.status === 'running' ? {
-        ...a, status: 'failed' as const, finishedAt: new Date().toISOString(),
-        steps: a.steps.map(s => s.status === 'running' ? {...s, status:'failed' as const} : s),
-      } : a),
-      timeline: row.attempts.some(a=>a.status==='running') ? [...row.timeline, {
-        at:new Date().toISOString(),by:'auto',action:note,result:'detect',
-      }] : row.timeline,
+      attempts: row.attempts.map((a) =>
+        a.status === 'running'
+          ? {
+              ...a,
+              status: 'failed' as const,
+              finishedAt: new Date().toISOString(),
+              steps: a.steps.map((s) => (s.status === 'running' ? { ...s, status: 'failed' as const } : s)),
+            }
+          : a,
+      ),
+      timeline: row.attempts.some((a) => a.status === 'running')
+        ? [
+            ...row.timeline,
+            {
+              at: new Date().toISOString(),
+              by: 'auto',
+              action: note,
+              result: 'detect',
+            },
+          ]
+        : row.timeline,
     });
   }
-  async start(_id:string,_key:ActionKey,_by:'auto'|'manual'):Promise<IncidentRow> {
+  async start(_id: string, _key: ActionKey, _by: 'auto' | 'manual'): Promise<IncidentRow> {
     throw new GoneException('Автопочинка удалена. Панель только наблюдает за нодами.');
   }
-  async autoTick():Promise<void> {}
-  async onOpened(_row:IncidentRow,_awaitAnalysis=false):Promise<Decision> {return 'none';}
-  async settle():Promise<void> {}
 }

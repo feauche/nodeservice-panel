@@ -10,7 +10,6 @@ import { MaintenanceController } from './maintenance.controller.js';
 import { MaintenanceModule } from './maintenance.module.js';
 import { MaintenanceRepository } from './maintenance.repository.js';
 import { MaintenanceService } from './maintenance.service.js';
-import { MaintenanceCheckJob } from './maintenance-check.job.js';
 
 @Module({})
 class HistoricalServersTestModule {}
@@ -40,7 +39,6 @@ describe('MaintenanceModule retirement', () => {
       expect(module.get(MaintenanceService)).toBe(maintenance);
       expect(module.get(SchedulerRegistry).getIntervals()).toEqual([]);
       expect(module.get(SchedulerRegistry).getCronJobs().size).toBe(0);
-      expect(() => module.get(MaintenanceCheckJob)).toThrow();
       expect(maintenance.scheduledCheck).not.toHaveBeenCalled();
       expect(maintenance.scheduledAgentUpdate).not.toHaveBeenCalled();
       expect(Reflect.getMetadata(MODULE_METADATA.EXPORTS, MaintenanceModule)).toContain(MaintenanceService);

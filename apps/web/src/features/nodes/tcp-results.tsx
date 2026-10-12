@@ -1,8 +1,9 @@
-import type { TcpCheckReport, NodeTcpDiagnostics } from '@nodeservice/shared';
+import type { NodeTcpDiagnostics, TcpCheckReport } from '@nodeservice/shared';
 import { ExternalLinkIcon, NetworkIcon } from 'lucide-react';
 import { CountryFlag } from '@/components/country-flag';
-import { Pill } from '@/features/settings/settings-ui';
 import { formatDate } from '@/features/security/security-format';
+import { Pill } from '@/features/settings/settings-ui';
+
 const labels = {
   reachable: 'Доступен',
   russia_unreachable: 'Недоступен из РФ',
@@ -36,9 +37,9 @@ function Group({ rows }: { rows: TcpCheckReport['observations'] }) {
   return (
     <span className="text-[12px]">
       {ok
-        ? 'Ответили ' + ok + ' из ' + rows.length
+        ? `Ответили ${ok} из ${rows.length}`
         : rows.length && failed === rows.length
-          ? 'Не ответили ' + failed + ' из ' + rows.length
+          ? `Не ответили ${failed} из ${rows.length}`
           : 'Недостаточно данных'}
     </span>
   );

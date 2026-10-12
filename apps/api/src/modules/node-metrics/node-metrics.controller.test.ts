@@ -28,17 +28,28 @@ describe('node metric history', () => {
     await service.collect();
     expect(syncQuiet).not.toHaveBeenCalled();
     expect(status).toHaveBeenCalledTimes(2);
+    // Тот же снимок повторно не пишется: вставка и очистка старых замеров — только при первом сборе.
+    expect(execute).toHaveBeenCalledTimes(2);
     const dialect = new PgDialect();
     const first = dialect.sqlToQuery(execute.mock.calls[0][0]);
-    const repeated = dialect.sqlToQuery(execute.mock.calls[2][0]);
     expect(first.sql).toContain('ON CONFLICT DO NOTHING');
-    expect(repeated.params).toEqual(first.params);
     expect(first.params).toEqual([
       'panel.example',
       'node',
       '2026-10-12T03:00:00.000Z',
       JSON.stringify({ cpu: null, ram: null, load: null, rx: 0, tx: null, online: 42 }),
     ]);
+    expect(dialect.sqlToQuery(execute.mock.calls[1][0]).sql).toContain('DELETE');
+    // Новый снимок пишется сразу, а очистка ждёт 10 минут с прошлой.
+    status.mockResolvedValueOnce({
+      domain: 'panel.example',
+      checkedAt: '2026-10-12T04:01:05Z',
+      error: null,
+      nodes: [{ uuid: 'node', isConnected: true, isDisabled: false, usersOnline: 40, rxBytesPerSec: 0 }],
+    });
+    await service.collect();
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(dialect.sqlToQuery(execute.mock.calls[2][0]).sql).toContain('INSERT');
   });
   it.each([
     { checkedAt: null, error: null },

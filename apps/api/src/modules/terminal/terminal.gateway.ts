@@ -4,7 +4,14 @@ import { TERMINAL_WS_PATH, type TerminalServerMsg, terminalClientMsgSchema } fro
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { CookiesService } from '../../common/http/cookies.service.js';
-import { closePreAuth, holdPreAuth, ownOrReject, PreAuthLimiter } from '../../infra/ws/ws-preauth.js';
+import {
+  closePreAuth,
+  forbidUpgrade,
+  holdPreAuth,
+  ownOrReject,
+  PreAuthLimiter,
+  sameOriginUpgrade,
+} from '../../infra/ws/ws-preauth.js';
 import { WsUpgradeService } from '../../infra/ws/ws-upgrade.service.js';
 import type { AuditActor } from '../audit/audit.context.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -59,6 +66,11 @@ export class TerminalGateway {
     this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
     this.wsUpgrade.register(TERMINAL_WS_PATH, (req, socket, head) => {
       const ip = this.wsUpgrade.clientIp(req);
+      if (!sameOriginUpgrade(req)) {
+        this.log.warn(`Терминал: отказ подключению с чужого источника ${String(req.headers.origin)} (${ip})`);
+        forbidUpgrade(socket);
+        return;
+      }
       const open = (release: () => void) =>
         this.wss?.handleUpgrade(req, socket, head, (ws) => {
           // Сразу, до проверки входа: битый или слишком большой кадр приходит событием 'error', и без

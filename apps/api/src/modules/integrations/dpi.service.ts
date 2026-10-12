@@ -59,7 +59,7 @@ export class DpiService {
       });
   }
   async schedule(): Promise<DpiSchedule> {
-    return (await this.read('dpi.schedule.' + (await this.integrations.identity('dpi')))) ?? emptySchedule();
+    return (await this.read(`dpi.schedule.${await this.integrations.identity('dpi')}`)) ?? emptySchedule();
   }
   async setSchedule(value: Omit<DpiSchedule, 'nextAt' | 'lastError'>) {
     value.nodes = [...new Set(value.nodes)];
@@ -76,7 +76,7 @@ export class DpiService {
       nextAt: value.enabled ? new Date(Date.now() + value.minutes * 60000).toISOString() : null,
       lastError: null,
     };
-    await this.write('dpi.schedule.' + (await this.integrations.identity('dpi')), next);
+    await this.write(`dpi.schedule.${await this.integrations.identity('dpi')}`, next);
     return next;
   }
   normalize(c: Record<string, unknown>) {
@@ -122,20 +122,20 @@ export class DpiService {
         session,
       ),
     ]);
-    const refs = (await this.read('dpi.node-checks.' + session.identity)) ?? {};
+    const refs = (await this.read(`dpi.node-checks.${session.identity}`)) ?? {};
     const items = list(checks);
     for (let i = 0; i < items.length; i += 5)
       await Promise.all(
         items.slice(i, i + 5).map(async (c, index) => {
           const id = String(c.id ?? c.check_id ?? '');
           if (!/^\d+$/.test(id) || c.status !== 'completed' || list(c.results).length) return;
-          const cacheKey = session.identity + ':' + id;
+          const cacheKey = `${session.identity}:${id}`;
           let full = this.completed.get(cacheKey);
           if (!full) {
             try {
               const raw = await this.integrations.providerRequest(
                 'dpi',
-                '/checks/' + id,
+                `/checks/${id}`,
                 'GET',
                 undefined,
                 undefined,
@@ -183,7 +183,7 @@ export class DpiService {
     }
     return {
       ...cache.data,
-      schedule: (await this.read('dpi.schedule.' + session.identity)) ?? emptySchedule(),
+      schedule: (await this.read(`dpi.schedule.${session.identity}`)) ?? emptySchedule(),
     };
   }
   async detail(id: string) {
@@ -191,14 +191,14 @@ export class DpiService {
     const session = await this.integrations.session('dpi');
     const raw = await this.integrations.providerRequest(
       'dpi',
-      '/checks/' + id,
+      `/checks/${id}`,
       'GET',
       undefined,
       undefined,
       session,
     );
     const result = this.normalize(obj(raw.data ?? raw));
-    const refs = await this.read('dpi.node-checks.' + session.identity);
+    const refs = await this.read(`dpi.node-checks.${session.identity}`);
     if (refs?.[id]) await this.recordEvent(result, refs[id], session.identity);
     return result;
   }
@@ -217,7 +217,7 @@ export class DpiService {
     const node = status.nodes.find((n) => n.uuid === body.nodeUuid);
     if (!status.connected || !node) throw new BadRequestException('Нода не найдена.');
     const identity = session.identity;
-    const old = await this.read('dpi.request.' + identity + '.' + body.requestId);
+    const old = await this.read(`dpi.request.${identity}.${body.requestId}`);
     if (old) return old;
     let pops = body.popIds;
     if (!pops.length) {
@@ -252,12 +252,12 @@ export class DpiService {
       throw new BadRequestException(
         'Сервис не вернул номер проверки. Не повторяйте запуск без проверки истории.',
       );
-    const refKey = 'dpi.node-checks.' + identity;
+    const refKey = `dpi.node-checks.${identity}`;
     const value = JSON.stringify({ [result.id]: { uuid: node.uuid, name: node.name, panel: status.domain } });
     await this.db.execute(
       sql`INSERT INTO app_meta(key,value) VALUES(${refKey},${value}) ON CONFLICT(key) DO UPDATE SET value=(app_meta.value::jsonb || excluded.value::jsonb)::text`,
     );
-    await this.write('dpi.request.' + identity + '.' + body.requestId, result);
+    await this.write(`dpi.request.${identity}.${body.requestId}`, result);
     await this.recordEvent(result, { uuid: node.uuid, name: node.name, panel: status.domain }, identity);
     this.cache = null;
     return result;
@@ -267,12 +267,12 @@ export class DpiService {
     this.busy = true;
     try {
       const session = await this.integrations.session('dpi');
-      const schedule = ((await this.read('dpi.schedule.' + session.identity)) ??
+      const schedule = ((await this.read(`dpi.schedule.${session.identity}`)) ??
         emptySchedule()) as DpiSchedule & { panel?: string };
       if (!schedule.enabled || !schedule.nextAt || Date.parse(schedule.nextAt) > Date.now()) return;
       const status = await this.remna.status();
       if (status.domain !== schedule.panel) {
-        await this.write('dpi.schedule.' + session.identity, {
+        await this.write(`dpi.schedule.${session.identity}`, {
           ...schedule,
           enabled: false,
           lastError: 'Подключённая панель изменилась. Выберите ноды заново.',
@@ -280,12 +280,12 @@ export class DpiService {
         return;
       }
       const scheduledAt = schedule.nextAt;
-      await this.write('dpi.schedule.' + session.identity, {
+      await this.write(`dpi.schedule.${session.identity}`, {
         ...schedule,
         nextAt: new Date(Date.now() + schedule.minutes * 60000).toISOString(),
       });
       for (const uuid of schedule.nodes) {
-        const current = await this.read('dpi.schedule.' + session.identity);
+        const current = await this.read(`dpi.schedule.${session.identity}`);
         if (!current?.enabled || current.panel !== schedule.panel) break;
         if (!current.nodes.includes(uuid)) continue;
         try {
@@ -294,7 +294,7 @@ export class DpiService {
             session,
           );
         } catch {
-          await this.write('dpi.schedule.' + session.identity, {
+          await this.write(`dpi.schedule.${session.identity}`, {
             ...schedule,
             enabled: false,
             nextAt: null,

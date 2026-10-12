@@ -97,15 +97,6 @@ export interface BillingBrief {
   note: string | null;
 }
 
-/** Продление оплаты самого сервера, записанное после начала инцидента. */
-export interface RecentServerRenewal {
-  kind: 'server' | 'rent';
-  title: string;
-  paidAt: Date;
-  extendedTo: Date;
-  automatic: boolean;
-}
-
 @Injectable()
 export class BillingService {
   private readonly log = new Logger(BillingService.name);
@@ -989,63 +980,6 @@ export class BillingService {
       renewals.push({ entry, at: r.at });
     }
     return buildPaymentWindow([...entries.values()], renewals, now, timeZone);
-  }
-
-  /**
-   * Последнее продление хостинга или аренды, записанное во время инцидента. Оно не доказывает причину
-   * само по себе, но сочетание «отметили оплату → сразу восстановился онлайн» намного полезнее общего
-   * текста про краткий сетевой сбой. Домены, сертификаты и прочие расходы работу сервера не объясняют.
-   */
-  async recentServerRenewal(
-    serverId: string,
-    since: Date,
-    now = new Date(),
-    aliases: readonly string[] = [],
-  ): Promise<RecentServerRenewal | null> {
-    const rows = await this.db
-      .select({
-        kind: billingItems.kind,
-        title: billingItems.title,
-        provider: providers.name,
-        serverIds: billingItems.serverIds,
-        paidAt: billingPayments.paidAt,
-        extendedTo: billingPayments.extendedTo,
-        actorDisplay: billingPayments.actorDisplay,
-      })
-      .from(billingPayments)
-      .innerJoin(billingItems, eq(billingItems.id, billingPayments.itemId))
-      .leftJoin(providers, eq(providers.id, billingItems.providerId))
-      .where(
-        and(
-          inArray(billingItems.kind, [...SERVER_PAYMENT_KINDS]),
-          or(
-            sql`${billingItems.serverIds} @> ${JSON.stringify([serverId])}::jsonb`,
-            and(eq(billingItems.kind, 'rent'), sql`jsonb_array_length(${billingItems.serverIds}) = 0`),
-          ),
-          gte(billingPayments.paidAt, since),
-          lte(billingPayments.paidAt, now),
-        ),
-      )
-      .orderBy(desc(billingPayments.paidAt), desc(billingPayments.id))
-      .limit(50);
-    const row = rows.find((candidate) =>
-      billingItemBelongsToServer({
-        kind: candidate.kind,
-        title: candidate.title,
-        provider: candidate.provider,
-        serverIds: candidate.serverIds,
-        serverId,
-        aliases,
-      }),
-    );
-    if (!row || (row.kind !== 'server' && row.kind !== 'rent')) return null;
-    return {
-      kind: row.kind,
-      title: row.title,
-      paidAt: row.paidAt,
-      extendedTo: row.extendedTo,
-      automatic: row.actorDisplay === AUTO_CHARGE_ACTOR,
-    };
   }
 
   /* ─────────── Фоновая задача: автоплатёж, напоминания, досчёт рублей ─────────── */

@@ -126,8 +126,8 @@ export function MetricsHistoryPage({ overview = false }: { overview?: boolean })
       for (const p of node.points) {
         const row = map.get(p.t) ?? { t: p.t };
         row[node.uuid] = p[kind];
-        row[node.uuid + 'min'] = p.min[kind];
-        row[node.uuid + 'max'] = p.max[kind];
+        row[`${node.uuid}min`] = p.min[kind];
+        row[`${node.uuid}max`] = p.max[kind];
         map.set(p.t, row);
       }
     return [...map.values()].sort((a, b) => Number(a.t) - Number(b.t));

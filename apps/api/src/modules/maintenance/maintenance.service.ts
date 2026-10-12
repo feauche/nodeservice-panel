@@ -79,8 +79,14 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
       const reason = detached
         ? 'Автоматическое обслуживание удалено из панели. Повторное SSH-подключение отключено; состояние ранее запущенной системной задачи на сервере нужно проверить вручную.'
         : 'Автоматическое обслуживание удалено из панели. Незавершённый запуск закрыт без повторного выполнения.';
-      await this.repo.failRun(row.id, reason).catch(() => undefined);
-      failed += 1;
+      const closed = await this.repo.failRun(row.id, reason).then(
+        () => true,
+        (err: unknown) => {
+          this.log.error(`Не удалось закрыть запуск обслуживания ${row.id}: ${(err as Error).message}`);
+          return false;
+        },
+      );
+      if (closed) failed += 1;
     }
     if (failed > 0) this.log.warn(`Закрыто незавершённых запусков обслуживания: ${failed}`);
   }

@@ -100,22 +100,6 @@ export class ServerChecksRepository {
       .orderBy(serverChecks.check, desc(serverChecks.startedAt));
   }
 
-  /** Время последнего запуска каждой (сервер, проверка) — для суточного расписания. */
-  /** Последний запуск каждой (сервер, проверка): когда и чем кончился — для суточного расписания. */
-  async lastStarts(): Promise<
-    Array<{ serverId: string; check: ServerCheckKey; at: Date; status: ServerCheckRow['status'] }>
-  > {
-    return this.db
-      .selectDistinctOn([serverChecks.serverId, serverChecks.check], {
-        serverId: serverChecks.serverId,
-        check: serverChecks.check,
-        at: serverChecks.startedAt,
-        status: serverChecks.status,
-      })
-      .from(serverChecks)
-      .orderBy(serverChecks.serverId, serverChecks.check, desc(serverChecks.startedAt));
-  }
-
   /** Держим по 10 последних запусков каждой проверки сервера — историю для сравнения, без разрастания. */
   async prune(serverId: string, check: ServerCheckKey, keep = 10): Promise<void> {
     await this.db.execute(sql`

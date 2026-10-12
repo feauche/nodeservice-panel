@@ -1,10 +1,10 @@
 import type {
-  NodeTcpDiagnostics,
   IncidentAnalysis,
   IncidentAttempt,
   IncidentEvent,
   IncidentProposal,
   IncidentSnapshot,
+  NodeTcpDiagnostics,
 } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';

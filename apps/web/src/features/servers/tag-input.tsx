@@ -1,17 +1,11 @@
 import { normalizeTag, SERVER_TAGS_MAX, similarTag, tagCounts } from '@nodeservice/shared';
 import { TriangleAlertIcon, XIcon } from 'lucide-react';
 import { type KeyboardEvent, useId, useMemo, useRef, useState } from 'react';
-
+import { plural } from '@/lib/plural';
 import { cn } from '@/lib/utils';
 import { useServers } from './servers-api';
 
-const plural = (n: number) => {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return 'сервер';
-  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'сервера';
-  return 'серверов';
-};
+const servers = (n: number) => plural(n, 'сервер', 'сервера', 'серверов');
 
 /** Теги парка с числом серверов; сервер, который сейчас правится, не считаем. */
 export function useTagCounts(excludeId?: string): Record<string, number> {
@@ -232,7 +226,7 @@ export function TagInput({
                   )}
                 </span>
                 <span className="flex-none text-[11.5px] text-text-3">
-                  {o.kind === 'new' ? 'такого ещё нет' : `${o.count} ${plural(o.count)}`}
+                  {o.kind === 'new' ? 'такого ещё нет' : `${o.count} ${servers(o.count)}`}
                 </span>
               </div>
             ))}
@@ -250,7 +244,7 @@ export function TagInput({
             <b>
               «{t}» — {counts[t] ? 'есть только на 1 сервере' : 'новый тег'}.
             </b>{' '}
-            Похоже на «{like.tag}» ({like.count} {plural(like.count)}). Опечатка?
+            Похоже на «{like.tag}» ({like.count} {servers(like.count)}). Опечатка?
           </span>
           <button
             type="button"

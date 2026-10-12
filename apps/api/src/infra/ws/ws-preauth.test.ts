@@ -12,6 +12,7 @@ import {
   PREAUTH_TOTAL,
   PreAuthLimiter,
   rejectUpgrade,
+  sameOriginUpgrade,
   upgradeClientIp,
 } from './ws-preauth.js';
 
@@ -174,5 +175,20 @@ describe('closePreAuth: отказ до входа не держит соеди�
     expect(ws.terminate).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(ws.terminate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('sameOriginUpgrade: подключение только со страницы панели', () => {
+  const req = (headers: Record<string, string>) => ({ headers }) as unknown as IncomingMessage;
+  it('свой адрес и запрос без Origin пускаем, чужой сайт и битый Origin — нет', () => {
+    expect(sameOriginUpgrade(req({ host: 'panel.example.org', origin: 'https://panel.example.org' }))).toBe(
+      true,
+    );
+    expect(sameOriginUpgrade(req({ host: 'localhost:5173', origin: 'http://localhost:5173' }))).toBe(true);
+    expect(sameOriginUpgrade(req({ host: 'panel.example.org' }))).toBe(true);
+    expect(sameOriginUpgrade(req({ host: 'panel.example.org', origin: 'https://evil.example.com' }))).toBe(
+      false,
+    );
+    expect(sameOriginUpgrade(req({ host: 'panel.example.org', origin: 'null' }))).toBe(false);
   });
 });

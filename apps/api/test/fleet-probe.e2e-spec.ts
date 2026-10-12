@@ -24,7 +24,6 @@ import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { FleetProbeService } from '../src/modules/assistant/fleet-probe.service.js';
-import { IncidentAnalysisService } from '../src/modules/assistant/incident-analysis.service.js';
 import {
   LLM_PROVIDER,
   type LlmProvider,
@@ -562,22 +561,6 @@ describe('проверка доступности, процессы и пред�
         .send({ question: 'Почему?' })
         .expect(404);
       await setPerms({ analysis: true });
-    });
-
-    it('автоматический разбор не зарегистрирован даже при сохранённом старом разрешении', async () => {
-      await setPerms({ autoAnalysis: true });
-      await openIncident(5 * 60000);
-      const before = ssh.execLog.length;
-      expect(() => app.get(IncidentAnalysisService)).toThrow();
-      expect(ssh.execLog.length).toBe(before);
-      await setPerms({ autoAnalysis: false });
-    });
-
-    it('старые настройки анализа не возвращают удалённый фоновый сервис', async () => {
-      await setPerms({ autoAnalysis: true, analysis: false });
-      await openIncident(5 * 60000);
-      expect(() => app.get(IncidentAnalysisService)).toThrow();
-      await setPerms({ autoAnalysis: false, analysis: true });
     });
 
     it('без «Подсказок в терминале» подсказка отклоняется, а данные модели не уходят', async () => {

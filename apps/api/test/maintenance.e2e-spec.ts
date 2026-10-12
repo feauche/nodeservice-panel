@@ -111,8 +111,6 @@ describe('maintenance e2e', () => {
   });
 
   it('ручной API сохранён, но прежний автоматический job отсутствует в приложении', async () => {
-    const { MaintenanceCheckJob } = await import('../src/modules/maintenance/maintenance-check.job.js');
-    expect(() => app.get(MaintenanceCheckJob)).toThrow();
     expect(ssh.execLog.some((command) => command.includes('# ns-maint:'))).toBe(false);
   });
 

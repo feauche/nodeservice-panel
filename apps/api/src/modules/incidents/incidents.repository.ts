@@ -1,13 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   INCIDENT_KINDS,
-  type IncidentAnalysis,
   type IncidentEvent,
   type IncidentKind,
   type IncidentSeverity,
   type IncidentSnapshot,
 } from '@nodeservice/shared';
-import { and, desc, eq, gte, inArray, max, ne, type SQL, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, ne, type SQL, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { type IncidentRow, incidents } from '../../infra/db/schema/index.js';
@@ -63,11 +62,6 @@ export class IncidentsRepository {
         select 1 from jsonb_array_elements(${incidents.attempts}) as attempt
         where attempt->>'status' = 'running'
       )`);
-  }
-
-  /** Только оборванные разборы при старте API, без загрузки обычных инцидентов. */
-  async withRunningAnalysis(): Promise<IncidentRow[]> {
-    return this.db.select().from(incidents).where(sql`${incidents.analysis}->>'status' = 'running'`);
   }
 
   /** Статистика автопочинки считается PostgreSQL по элементам JSON, а не полными строками в Node.js. */
@@ -181,35 +175,9 @@ export class IncidentsRepository {
     return this.db.query.incidents.findFirst({ where: eq(incidents.id, id) });
   }
 
-  async findOpen(serverId: string | null, kind: IncidentKind): Promise<IncidentRow | undefined> {
-    const rows = await this.db
-      .select()
-      .from(incidents)
-      .where(
-        and(
-          serverId ? eq(incidents.serverId, serverId) : undefined,
-          eq(incidents.kind, kind),
-          ne(incidents.status, 'resolved'),
-        ),
-      );
-    return rows[0];
-  }
-
-  /**
-   * Когда панель последний раз сама запускала починку этого сигнала на сервере — по всем его делам, включая
-   * закрытые: пауза между автопочинками считается по серверу и виду сигнала, а не по одному делу.
-   */
-  async lastAutofixAt(serverId: string, kind: string): Promise<Date | null> {
-    const [row] = await this.db
-      .select({ at: max(incidents.lastAutofixAt) })
-      .from(incidents)
-      .where(and(eq(incidents.serverId, serverId), eq(incidents.kind, kind)));
-    return row?.at ?? null;
-  }
-
   async open(values: {
     nodeUuid?: string;
-    diagnostics?: import("@nodeservice/shared").NodeTcpDiagnostics | null;
+    diagnostics?: import('@nodeservice/shared').NodeTcpDiagnostics | null;
     serverId: string | null;
     serverName: string;
     kind: IncidentKind;
@@ -231,26 +199,6 @@ export class IncidentsRepository {
     return row;
   }
 
-  /**
-   * Записать ход разбора, только если в инциденте всё ещё этот же идущий разбор. Отменённый или запущенный
-   * заново разбор не трогаем: иначе запоздавший ответ модели затёр бы «отменён». false — писать некуда.
-   */
-  async updateRunningAnalysis(id: string, startedAt: string, analysis: IncidentAnalysis): Promise<boolean> {
-    const rows = await this.db
-      .update(incidents)
-      .set({ analysis })
-      .where(
-        and(
-          eq(incidents.id, id),
-          sql`${incidents.analysis}->>'status' = 'running'`,
-          sql`${incidents.analysis}->>'startedAt' = ${startedAt}`,
-        ),
-      )
-      .returning({ id: incidents.id });
-    if (rows.length > 0) this.events.emit({ type: 'incident', data: { id } });
-    return rows.length > 0;
-  }
-
   async delete(id: string): Promise<boolean> {
     const rows = await this.db.delete(incidents).where(eq(incidents.id, id)).returning({ id: incidents.id });
     if (rows.length > 0) this.events.emit({ type: 'incident', data: { id } });
@@ -263,11 +211,5 @@ export class IncidentsRepository {
     ).length;
     this.events.emit({ type: 'incident', data: { id: 'resolved' } });
     return n;
-  }
-
-  async appendEvent(id: string, event: IncidentEvent): Promise<IncidentRow | undefined> {
-    const row = await this.findById(id);
-    if (!row) return undefined;
-    return this.update(id, { timeline: [...row.timeline, event] });
   }
 }

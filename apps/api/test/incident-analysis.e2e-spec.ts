@@ -1,6 +1,5 @@
 import { CSRF_HEADER, type IncidentAnalysis, incidentSchema } from '@nodeservice/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { IncidentAnalysisService } from '../src/modules/assistant/incident-analysis.service.js';
 import { currentIncidentApp } from './current-incidents.fixture.js';
 
 describe('удалённый автоматический разбор и сохранённая история (e2e)', () => {
@@ -41,7 +40,6 @@ describe('удалённый автоматический разбор и сох
         .set(CSRF_HEADER, ctx.csrf)
         .send({ question: 'Что произошло?' })
         .expect(404);
-    expect(() => ctx.app.get(IncidentAnalysisService)).toThrow();
     expect(ctx.llm.run).not.toHaveBeenCalled();
     expect(ctx.ssh.connect).not.toHaveBeenCalled();
   });

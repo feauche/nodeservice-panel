@@ -45,7 +45,7 @@ describe('BS Checker: стоимость и повтор без второго �
     );
     const { service } = fixture();
     await service.preview({ ...input, ip: 'Example.COM' });
-    expect(JSON.parse(calls[1]!.body!)).toMatchObject({ target: 'example.com:443' });
+    expect(JSON.parse(String(calls[1]?.body))).toMatchObject({ target: 'example.com:443' });
     for (const ip of ['https://example.com/path', 'example.com:443', '127.0.0.1', 'node.local', 'localhost'])
       await expect(service.preview({ ...input, ip })).rejects.toThrow();
     expect(calls).toHaveLength(2);

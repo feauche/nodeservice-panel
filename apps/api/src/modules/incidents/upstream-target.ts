@@ -1,5 +1,4 @@
 import {
-  type BlockCheckResult,
   type BlockUncheckedReason,
   isExitOnly,
   type Server,
@@ -98,19 +97,4 @@ export async function resolveUpstreamTarget(
 ): Promise<UpstreamTarget | null> {
   const up = await resolveUpstream(server, allServers, remnawave, links);
   return up.kind === 'target' ? up.target : null;
-}
-
-/** Вход, который проверить нечем, — записью для результата проверки: без проб, с настоящей причиной. */
-export function unknownEntry(
-  up: Extract<UpstreamResolution, { kind: 'unknown' }>,
-): NonNullable<BlockCheckResult['entry']> {
-  return {
-    label: up.label,
-    address: '',
-    owner: up.owner,
-    rented: up.rented,
-    probes: [],
-    verdict: 'unreachable',
-    unchecked: up.reason,
-  };
 }

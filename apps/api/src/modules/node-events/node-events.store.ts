@@ -10,7 +10,7 @@ const eventSchema = nodeMetricHistorySchema.shape.events.element;
 export class NodeEventsStore {
   constructor(@Inject(DB) private readonly db: Db) {}
   private prefix(panel: string) {
-    return 'node.events.' + createHash('sha256').update(panel).digest('hex') + '.';
+    return `node.events.${createHash('sha256').update(panel).digest('hex')}.`;
   }
   async append(panel: string, event: Event) {
     const parsed = eventSchema.parse(event);
@@ -22,7 +22,7 @@ export class NodeEventsStore {
   }
   async list(panel: string, ids: string[], from: number, to: number) {
     const rows =
-      await this.db.execute(sql`SELECT value FROM app_meta WHERE key LIKE ${this.prefix(panel) + '%'}
+      await this.db.execute(sql`SELECT value FROM app_meta WHERE key LIKE ${`${this.prefix(panel)}%`}
       AND (value::jsonb->>'nodeUuid') IN (${sql.join(
         ids.map((id) => sql`${id}`),
         sql`, `,

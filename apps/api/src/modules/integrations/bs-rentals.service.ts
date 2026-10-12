@@ -37,12 +37,12 @@ export class BsRentalsService {
     const value = JSON.stringify(change);
     await this.db
       .insert(appMeta)
-      .values({ key: 'bschecker.rental-change.' + id, value })
+      .values({ key: `bschecker.rental-change.${id}`, value })
       .onConflictDoUpdate({ target: appMeta.key, set: { value, updatedAt: new Date() } });
   }
   private async load(id: string): Promise<Change> {
     const row = await this.db.query.appMeta.findFirst({
-      where: eq(appMeta.key, 'bschecker.rental-change.' + id),
+      where: eq(appMeta.key, `bschecker.rental-change.${id}`),
     });
     if (!row) throw new BadRequestException('Сначала подготовьте изменение.');
     return JSON.parse(row.value);
@@ -51,7 +51,7 @@ export class BsRentalsService {
     return bsRentalsSchema.parse(await this.bs.rentalRequest('/rentals'));
   }
   async get(id: string): Promise<BsRental> {
-    return bsRentalSchema.parse(await this.bs.rentalRequest('/rentals/' + validId(id)));
+    return bsRentalSchema.parse(await this.bs.rentalRequest(`/rentals/${validId(id)}`));
   }
   async prepare(id: string, targets: BsRentalTarget[]) {
     const rental = await this.get(id),
@@ -103,7 +103,7 @@ export class BsRentalsService {
     await this.save(id, change);
     try {
       const response = await this.bs.rentalRequest(
-        '/rentals/' + validId(change.rentalId) + '/targets',
+        `/rentals/${validId(change.rentalId)}/targets`,
         { targets: change.after },
         id,
         'PUT',
@@ -139,11 +139,11 @@ export class BsRentalsService {
     return change.result;
   }
   async checkResult(id: string, checkId: string) {
-    const response = await this.bs.rentalRequest('/rentals/' + validId(id) + '/check/' + validId(checkId));
+    const response = await this.bs.rentalRequest(`/rentals/${validId(id)}/check/${validId(checkId)}`);
     return response.check ?? response;
   }
   async check(id: string) {
-    const response = await this.bs.rentalRequest('/rentals/' + validId(id) + '/check?wait=25', {});
+    const response = await this.bs.rentalRequest(`/rentals/${validId(id)}/check?wait=25`, {});
     return response.check ?? response;
   }
 }

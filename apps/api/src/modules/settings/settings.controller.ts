@@ -8,11 +8,7 @@ import {
   AppearanceSettingsUpdateDto,
   AssistantSettingsUpdateDto,
   AssistantStatusDto,
-  AutochecksSettingsDto,
-  AutochecksSettingsUpdateDto,
   CustomSitesDto,
-  IncidentsSettingsDto,
-  IncidentsSettingsUpdateDto,
   TerminalSnippetsDto,
 } from './settings.dto.js';
 import { SettingsService } from './settings.service.js';
