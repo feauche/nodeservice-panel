@@ -6,7 +6,6 @@ import type { Request } from 'express';
 import { ClsModule } from 'nestjs-cls';
 import { LoggerModule } from 'nestjs-pino';
 import { ZodValidationPipe } from 'nestjs-zod';
-
 import { CryptoModule } from './common/crypto/crypto.module.js';
 import { ProblemDetailsFilter } from './common/filters/problem-details.filter.js';
 import { HttpModule } from './common/http/http.module.js';
@@ -32,6 +31,7 @@ import { IntegrationsModule } from './modules/integrations/integrations.module.j
 import { KnowledgeModule } from './modules/knowledge/knowledge.module.js';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module.js';
 import { MetricsModule } from './modules/metrics/metrics.module.js';
+import { NodeMetricsModule } from './modules/node-metrics/node-metrics.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { ProvidersModule } from './modules/providers/providers.module.js';
 import { RemnawaveModule } from './modules/remnawave/remnawave.module.js';
@@ -43,6 +43,7 @@ import { TerminalModule } from './modules/terminal/terminal.module.js';
 
 @Module({
   imports: [
+    NodeMetricsModule,
     ConfigModule,
     LoggerModule.forRoot({
       pinoHttp: {

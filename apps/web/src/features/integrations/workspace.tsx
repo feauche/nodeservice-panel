@@ -58,12 +58,77 @@ function SummaryStrip({ children }: { children: ReactNode }) {
     </div>
   );
 }
-function SummaryItem({ label, value, hint }: { label: string; value: string; hint: string }) {
+function SummaryItem({
+  label,
+  value,
+  hint,
+  loading = false,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  loading?: boolean;
+}) {
   return (
     <div>
       <p className="text-[11.5px] text-text-3">{label}</p>
-      <strong className="my-2 block break-words text-[22px] font-semibold tabular-nums">{value}</strong>
-      <p className="text-[11.5px] text-text-2">{hint}</p>
+      {loading ? (
+        <div role="status" aria-label={`Загрузка: ${label}`} className="my-2 flex h-[33px] items-center">
+          <Skeleton aria-hidden="true" className="h-6 w-28 max-w-full motion-reduce:animate-none" />
+        </div>
+      ) : (
+        <strong className="my-2 block break-words text-[22px] font-semibold tabular-nums">{value}</strong>
+      )}
+      <p className="min-h-[18px] text-[11.5px] text-text-2">{hint}</p>
+    </div>
+  );
+}
+function DpiChecksSkeleton() {
+  return (
+    <div role="status" aria-label="Загрузка истории DPI Checker" className="divide-y divide-border">
+      {[0, 1, 2].map((row) => (
+        <div
+          key={row}
+          aria-hidden="true"
+          className="grid min-h-[68px] grid-cols-[minmax(0,1fr)_16px] items-center gap-4 px-[18px] py-3.5 sm:grid-cols-[minmax(180px,1.4fr)_minmax(130px,1fr)_minmax(120px,.8fr)_16px]"
+        >
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-40 max-w-full motion-reduce:animate-none" />
+            <Skeleton className="h-3 w-28 motion-reduce:animate-none" />
+          </div>
+          <Skeleton className="hidden h-4 w-24 motion-reduce:animate-none sm:block" />
+          <Skeleton className="hidden h-4 w-20 motion-reduce:animate-none sm:block" />
+          <Skeleton className="size-4 motion-reduce:animate-none" />
+        </div>
+      ))}
+    </div>
+  );
+}
+export function DpiWorkspaceSkeleton() {
+  return (
+    <div className="space-y-4" aria-busy="true">
+      <div className="flex justify-end gap-2" aria-hidden="true">
+        <Skeleton className="h-10 w-36 rounded-[10px] motion-reduce:animate-none" />
+        <Skeleton className="h-10 w-40 rounded-[10px] motion-reduce:animate-none" />
+      </div>
+      <SummaryStrip>
+        {['Баланс', 'Проверки', 'Успешных точек', 'Расход в истории'].map((label) => (
+          <SummaryItem key={label} label={label} value="" hint="" loading />
+        ))}
+      </SummaryStrip>
+      <section className={card}>
+        <div
+          className="flex min-h-[75px] flex-wrap items-center gap-3 border-b border-border px-[18px] py-3.5"
+          aria-hidden="true"
+        >
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-4 w-24 motion-reduce:animate-none" />
+            <Skeleton className="h-3 w-48 max-w-full motion-reduce:animate-none" />
+          </div>
+          <Skeleton className="h-10 w-32 rounded-[10px] motion-reduce:animate-none" />
+        </div>
+        <DpiChecksSkeleton />
+      </section>
     </div>
   );
 }
@@ -222,9 +287,15 @@ export function DpiWorkspace({ balance, settings }: { balance: string | null; se
           value={balance == null ? '—' : `${balance} USD`}
           hint="Аккаунт подключён"
         />
-        <SummaryItem label="Проверки" value={String(checks.length)} hint="Последние 100 запусков" />
+        <SummaryItem
+          label="Проверки"
+          value={String(checks.length)}
+          hint="Последние 100 запусков"
+          loading={query.isPending}
+        />
         <SummaryItem
           label="Успешных точек"
+          loading={query.isPending}
           value={
             known.length
               ? `${Math.round(
@@ -237,6 +308,7 @@ export function DpiWorkspace({ balance, settings }: { balance: string | null; se
         />
         <SummaryItem
           label="Расход в истории"
+          loading={query.isPending}
           value={
             costs.length
               ? `${spent.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD`
@@ -251,11 +323,18 @@ export function DpiWorkspace({ balance, settings }: { balance: string | null; se
         <div className="flex flex-wrap items-center gap-3 border-b border-border px-[18px] py-3.5">
           <div className="min-w-[180px] flex-1">
             <h2 className="text-[14.5px] font-semibold">Проверки</h2>
-            <p className="mt-0.5 text-[12px] text-text-3">
-              {query.data?.schedule.enabled
-                ? `Следующая по расписанию: ${date(query.data.schedule.nextAt ?? '')}`
-                : 'Автоматические проверки выключены'}
-            </p>
+            <div className="mt-0.5 text-[12px] text-text-3">
+              {query.isPending ? (
+                <Skeleton
+                  aria-hidden="true"
+                  className="mt-1 h-3 w-48 max-w-full motion-reduce:animate-none"
+                />
+              ) : query.data?.schedule.enabled ? (
+                `Следующая по расписанию: ${date(query.data.schedule.nextAt ?? '')}`
+              ) : (
+                'Автоматические проверки выключены'
+              )}
+            </div>
           </div>
           <Input
             value={search}
@@ -263,11 +342,12 @@ export function DpiWorkspace({ balance, settings }: { balance: string | null; se
             placeholder="Нода или номер"
             className="h-10 max-w-xs"
           />
-          <Button variant="outline" onClick={openSchedule}>
+          <Button variant="outline" onClick={openSchedule} disabled={query.isPending}>
             <CalendarClockIcon className="size-4" /> Расписание
           </Button>
         </div>
         <div className="divide-y divide-border">
+          {query.isPending && <DpiChecksSkeleton />}
           {checks
             .filter((c) => (c.node?.name ?? c.id).toLowerCase().includes(search.toLowerCase()))
             .map((c) => (
@@ -290,7 +370,7 @@ export function DpiWorkspace({ balance, settings }: { balance: string | null; se
                 <ChevronRightIcon className="size-4 text-text-3 transition-transform group-hover:translate-x-0.5 group-hover:text-brand" />
               </button>
             ))}
-          {!checks.length && (
+          {!query.isPending && !query.isError && !checks.length && (
             <p className="p-5 text-sm text-text-3">Запустите первую проверку доступности ноды.</p>
           )}
         </div>
@@ -326,17 +406,25 @@ export function DpiWorkspace({ balance, settings }: { balance: string | null; se
                 </div>
                 <div>
                   <p className="mb-2.5 text-sm font-medium text-text-2">Нода</p>
-                  <Combobox
-                    ariaLabel="Нода для проверки"
-                    value={node}
-                    onChange={setNode}
-                    options={(nodes.data?.nodes ?? []).map((n) =>
-                      nodeOption({ id: n.uuid, name: n.name, host: n.address }),
-                    )}
-                    placeholder="Выберите ноду"
-                    searchPlaceholder="Найти ноду…"
-                    className="h-10 w-full"
-                  />
+                  {nodes.isPending ? (
+                    <Skeleton
+                      role="status"
+                      aria-label="Загрузка нод"
+                      className="h-10 w-full rounded-[10px] motion-reduce:animate-none"
+                    />
+                  ) : (
+                    <Combobox
+                      ariaLabel="Нода для проверки"
+                      value={node}
+                      onChange={setNode}
+                      options={(nodes.data?.nodes ?? []).map((n) =>
+                        nodeOption({ id: n.uuid, name: n.name, host: n.address }),
+                      )}
+                      placeholder="Выберите ноду"
+                      searchPlaceholder="Найти ноду…"
+                      className="h-10 w-full"
+                    />
+                  )}
                 </div>
                 <div>
                   <p className="mb-2.5 text-sm font-medium text-text-2">Тип</p>
@@ -481,6 +569,15 @@ export function DpiWorkspace({ balance, settings }: { balance: string | null; se
                 </Button>
               </div>
               <div className="grid max-h-64 gap-2 overflow-auto rounded-[12px] border border-border bg-bg-2/45 p-2 sm:grid-cols-2">
+                {query.isPending &&
+                  [0, 1, 2, 3].map((row) => (
+                    <Skeleton
+                      key={row}
+                      role={row === 0 ? 'status' : undefined}
+                      aria-label={row === 0 ? 'Загрузка точек проверки' : undefined}
+                      className="h-11 w-full rounded-lg motion-reduce:animate-none"
+                    />
+                  ))}
                 {visiblePops.map((p) => (
                   <label
                     htmlFor={`dpi-pop-${p.id}`}
@@ -498,7 +595,7 @@ export function DpiWorkspace({ balance, settings }: { balance: string | null; se
                     {p.name} {p.provider}
                   </label>
                 ))}
-                {!visiblePops.length && (
+                {!query.isPending && !visiblePops.length && (
                   <p className="col-span-full px-3 py-8 text-center text-xs text-text-3">
                     Точки с таким регионом или оператором не найдены.
                   </p>

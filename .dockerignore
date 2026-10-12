@@ -19,3 +19,5 @@ infra
 .env
 .env.*
 !.env.example
+
+**/dist-dev

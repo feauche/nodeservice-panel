@@ -31,7 +31,7 @@ VictoriaMetrics), напечатает токен первого запуска.
 
 После первоначальной настройки открой раздел «Ноды» и укажи адрес панели Remnawave и её
 API-ключ. NodeService получает ноды и доступные метрики через API; папки и порядок нод
-сохраняются в NodeService. Подключения DPI Checker, REG.RU и Cloudflare настраиваются отдельно
+сохраняются в NodeService. Подключения BS Checker, DPI Checker, REG.RU и Cloudflare настраиваются отдельно
 в разделе «Интеграции».
 
 ## Структура
@@ -44,6 +44,19 @@ infra/            Docker Compose (prod + dev), Caddy, скрипты устан�
 .github/          CI: lint, typecheck, tests, build
 ```
 
+Сервер остаётся одним приложением с отдельными модулями:
+
+- `remnawave` — подключение и актуальное состояние нод.
+- `node-metrics` — расписание опроса, сохранение метрик и чтение истории.
+- `incidents` — обнаружение сбоев и их жизненный цикл; индивидуальные CPU/RAM-пороги
+  наследуют общие настройки, если поля ноды пустые.
+- `integrations/bschecker`, `integrations/dpi`, `integrations/dns` — собственные сервисы,
+  кэш и операции каждой интеграции. `integration-connections` хранит подключения;
+  `IntegrationsModule` собирает модули вместе.
+
+Это границы внутри приложения, а не установка сторонних плагинов. Выключение платной
+автоматизации и ручные операции сохраняют свои настройки.
+
 ## Разработка
 
 ```bash
@@ -52,6 +65,10 @@ cp apps/api/.env.example apps/api/.env
 pnpm install
 pnpm dev                                            # api :3000 (+ /api/backend-tools/docs), web :5173
 ```
+
+Dev API пишет в `apps/api/dist-dev`, релизная сборка — в `apps/api/dist`.
+Кэши TypeScript разделены: `pnpm build` и `pnpm typecheck` не удаляют исполняемые
+файлы работающего watch-процесса. На сервере по-прежнему запускается `dist/main`.
 
 Требуются Node 24 и pnpm 11. При первом старте API печатает токен первого запуска — открой
 http://localhost:5173/setup. Потерял токен: `pnpm --filter api cli setup-token`; остальные команды

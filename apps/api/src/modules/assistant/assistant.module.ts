@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-
 import { AuditModule } from '../audit/audit.module.js';
 import { BackupsModule } from '../backups/backups.module.js';
 import { BillingModule } from '../billing/billing.module.js';
@@ -9,6 +8,7 @@ import { IncidentsModule } from '../incidents/incidents.module.js';
 import { KnowledgeModule } from '../knowledge/knowledge.module.js';
 import { MaintenanceModule } from '../maintenance/maintenance.module.js';
 import { MetricsModule } from '../metrics/metrics.module.js';
+import { NodeMetricsModule } from '../node-metrics/node-metrics.module.js';
 import { ProvidersModule } from '../providers/providers.module.js';
 import { RemnawaveModule } from '../remnawave/remnawave.module.js';
 import { ServerChecksModule } from '../server-checks/server-checks.module.js';
@@ -36,6 +36,7 @@ import { ZvenoProvider } from './zveno.provider.js';
 /** Этап 9: Ассистент. Провайдер LLM за токеном — в тестах подменяется фейком. */
 @Module({
   imports: [
+    NodeMetricsModule,
     ServersModule,
     IncidentsModule,
     KnowledgeModule,

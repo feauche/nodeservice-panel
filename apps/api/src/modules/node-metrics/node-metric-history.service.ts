@@ -1,9 +1,10 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
 import { type NodeMetricHistory, tcpCheckReportSchema } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import { DB, type Db } from '../../infra/db/db.module.js';
-import { RemnawaveService } from './remnawave.service.js';
-import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
+import { RemnawaveService } from '../remnawave/remnawave.service.js';
+import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js';
+import { MonitoringStore } from '../settings/monitoring.store.js';
 
 const fields = ['cpu', 'ram', 'load', 'rx', 'tx', 'online'] as const;
 const empty = () => ({ cpu: null, ram: null, load: null, rx: null, tx: null, online: null });
@@ -45,8 +46,11 @@ export class NodeMetricHistoryService {
     @Inject(DB) private readonly db: Db,
     private readonly store: RemnawaveSettingsStore,
     private readonly remna: RemnawaveService,
+    @Optional() private readonly monitoring?: MonitoringStore,
   ) {}
   async get(range: MetricHistoryRange): Promise<NodeMetricHistory> {
+    const pollSeconds = this.monitoring ? (await this.monitoring.get()).pollSeconds : 60;
+    range = { ...range, bucketSeconds: Math.max(range.bucketSeconds, Math.ceil(pollSeconds / 60) * 60) };
     const [domain, status] = await Promise.all([this.store.domain(), this.remna.status()]);
     if (domain !== status.domain) throw new BadRequestException('Подключение изменилось. Обновите историю.');
     const selected = status.nodes.filter((n) => !range.ids.length || range.ids.includes(n.uuid));

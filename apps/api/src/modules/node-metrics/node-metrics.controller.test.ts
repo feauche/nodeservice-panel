@@ -91,6 +91,28 @@ describe('node metric history', () => {
     expect(fetcher).toHaveBeenCalledOnce();
     expect(JSON.stringify(result)).not.toContain('secret');
   });
+  it.each([60, 300])(
+    'не создаёт ложный разрыв в текущем незавершённом интервале %sс',
+    async (pollSeconds) => {
+      vi.useFakeTimers();
+      const t = Date.parse('2026-10-11T08:00:00Z') / 1000;
+      vi.setSystemTime(new Date((t + pollSeconds) * 1000));
+      const execute = vi
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ first: new Date(t * 1000) }] })
+        .mockResolvedValueOnce({ rows: [{ uuid: 'node', t, rx: 0, online: 0 }] });
+      const service = new NodeMetricsService(
+        { execute } as never,
+        { domain: async () => 'panel.example' } as never,
+        {} as never,
+        { get: async () => ({ pollSeconds }) } as never,
+      );
+      const result = await service.localHistory(60);
+      expect(result.history[0].points).toHaveLength(1);
+      expect(result.history[0].points[0].rx).toBe(0);
+      expect(new PgDialect().sqlToQuery(execute.mock.calls[1][0]).params).toContain(pollSeconds);
+    },
+  );
   it('validates request ranges before querying storage or remote API', () => {
     const get = vi.fn();
     const controller = new NodeMetricsController({ get } as never, {} as never, {} as never, {} as never);

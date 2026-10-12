@@ -45,6 +45,8 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
     isConnected: true,
     isDisabled: false,
     cpuPercent: 10,
+    memoryTotalBytes: 100,
+    memoryUsedBytes: 20,
   };
   const status = { connected: true, domain: 'panel.example.com', checkedAt: '', error: null, nodes: [node] };
   const remna = { status: vi.fn(async () => structuredClone(status)) };
@@ -119,9 +121,11 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
   });
   beforeEach(async () => {
     await db.execute(sql`truncate incidents cascade`);
-    await db.execute(sql`delete from app_meta where key like 'monitor.%'`);
+    await db.execute(sql`delete from app_meta where key like 'monitor.%' or key like 'settings.node-view.%'`);
     Object.assign(node, {
       address: '198.51.100.9',
+      cpuPercent: 10,
+      memoryUsedBytes: 20,
       port: 8443,
       usersOnline: 100,
       isConnected: true,
@@ -236,5 +240,39 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
     expect(await list()).toHaveLength(0);
     expect((await list('resolved'))[0]).toMatchObject({ nodeUuid: uuid, resolvedBy: 'auto' });
     expect(notifications.push).toHaveBeenCalledTimes(2);
+  });
+  it('индивидуальные пороги CPU/RAM создают устойчивые инциденты в настоящей БД', async () => {
+    await settings.set({
+      cpuEnabled: true,
+      memoryEnabled: true,
+      cpuPercent: 90,
+      memoryPercent: 90,
+      resourceDurationMinutes: 1,
+    });
+    await db.execute(
+      sql`insert into app_meta(key,value) values(${`settings.node-view.panel.example.com:${uuid}`}, ${JSON.stringify({ cpuWarningPercent: 70, memoryWarningPercent: 75 })})`,
+    );
+    node.cpuPercent = 80;
+    node.memoryUsedBytes = 80;
+    await snapshot(100);
+    expect(await list()).toHaveLength(0);
+    stamp += 61000;
+    await snapshot(100);
+    expect((await list()).map((i) => i.kind).sort()).toEqual(['cpu_high', 'mem_high']);
+  });
+  it('без индивидуальных настроек CPU/RAM используют общий порог', async () => {
+    await settings.set({
+      cpuEnabled: true,
+      memoryEnabled: true,
+      cpuPercent: 90,
+      memoryPercent: 90,
+      resourceDurationMinutes: 1,
+    });
+    node.cpuPercent = 80;
+    node.memoryUsedBytes = 80;
+    await snapshot(100);
+    stamp += 61000;
+    await snapshot(100);
+    expect(await list()).toHaveLength(0);
   });
 });

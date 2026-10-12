@@ -2,6 +2,7 @@ import type { RemnaProvider } from '@nodeservice/shared';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { FormSkeleton } from '@/components/ui/loading-state';
 import { ProviderIcon } from '@/features/providers/provider-icon';
 import { apiErrorMessage } from '@/lib/api';
 import { useRemnaProviders, useUpdateRemnaProvider } from './nodes-api';
@@ -30,9 +31,11 @@ export function ProviderEdit({ uuid }: { uuid: string }) {
     provider = query.data?.providers.find((p) => p.uuid === uuid);
   return provider ? (
     <ProviderFields key={uuid} provider={provider} />
+  ) : query.isPending ? (
+    <FormSkeleton />
   ) : (
-    <p className="text-[12px] text-text-3">
-      {query.isError ? apiErrorMessage(query.error) : 'Загрузка провайдера…'}
+    <p role="alert" className="text-[12px] text-crit">
+      {query.isError ? apiErrorMessage(query.error) : 'Провайдер не найден.'}
     </p>
   );
 }

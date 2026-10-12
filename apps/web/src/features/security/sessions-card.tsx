@@ -1,6 +1,7 @@
 import type { SessionInfo, TrustedDeviceInfo } from '@nodeservice/shared';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
+import { RowsSkeleton } from '@/components/ui/loading-state';
 import { shortUserAgent } from '@/features/audit/audit-format';
 import { Pill, RowButton, SettingsCard } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
@@ -74,7 +75,11 @@ export function SessionsCard() {
       }
     >
       <ul className="m-0 list-none p-0 py-1" aria-label="Активные сессии">
-        {sessions.isPending && <li className="py-3 text-[12.5px] text-text-3">Загружаю…</li>}
+        {sessions.isPending && (
+          <li className="py-3">
+            <RowsSkeleton rows={2} label="Загрузка сеансов и устройств" />
+          </li>
+        )}
         {items.map((s) => (
           <ListRow key={s.id}>
             <div className="min-w-0">
@@ -167,7 +172,11 @@ export function DevicesCard() {
       }
     >
       <ul className="m-0 list-none p-0 py-1" aria-label="Запомненные устройства">
-        {devices.isPending && <li className="py-3 text-[12.5px] text-text-3">Загружаю…</li>}
+        {devices.isPending && (
+          <li className="py-3">
+            <RowsSkeleton rows={2} label="Загрузка сеансов и устройств" />
+          </li>
+        )}
         {devices.data && items.length === 0 && (
           <li className="py-3 text-[12.5px] text-text-3">
             Пока нет. Галочка на шаге ввода кода 2FA добавит устройство сюда.

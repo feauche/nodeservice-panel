@@ -13,6 +13,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { RowsSkeleton } from '@/components/ui/loading-state';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { formatDate } from '@/features/security/security-format';
@@ -67,7 +68,7 @@ export function BsRentals() {
         </BarButton>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-[18px] py-3 max-lg:max-h-[500px]">
-        {q.isPending && <p className="py-4 text-[13px] text-text-3">Загружаю точки…</p>}
+        {q.isPending && <RowsSkeleton label="Загрузка арендованных точек" />}
         {q.isError && (
           <p role="alert" className="py-4 text-[13px] text-crit">
             {apiErrorMessage(q.error)}

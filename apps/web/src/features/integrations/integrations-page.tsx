@@ -17,8 +17,8 @@ import { PasswordField } from '@/features/auth/components/password-field';
 import { formatDate } from '@/features/security/security-format';
 import { Pill, RowButton, SettingsCard } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage, request } from '@/lib/api';
-import { BsCheckerWorkspace } from './bschecker-workspace';
-import { DnsWorkspace, DpiWorkspace } from './workspace';
+import { BsBalanceSkeleton, BsCheckerWorkspace } from './bschecker-workspace';
+import { DnsWorkspace, DpiWorkspace, DpiWorkspaceSkeleton } from './workspace';
 
 const key = ['integrations'] as const;
 const names = { dpi: 'DPI Checker', regru: 'REG.RU', cloudflare: 'Cloudflare', bschecker: 'BS Checker' };
@@ -299,7 +299,25 @@ export function IntegrationsPage({ kind }: { kind: 'dpi' | 'dns' | 'bschecker' }
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
       {query.isPending ? (
-        <Skeleton className="h-60 rounded-[14px]" />
+        kind === 'dpi' ? (
+          <DpiWorkspaceSkeleton />
+        ) : kind === 'bschecker' ? (
+          <div aria-busy="true" className="space-y-4">
+            <div className="flex flex-wrap items-center gap-6 rounded-[14px] border border-border bg-surface px-[18px] py-4">
+              <div className="min-w-0 flex-1 max-sm:basis-full">
+                <BsBalanceSkeleton />
+              </div>
+              <Skeleton aria-hidden="true" className="h-10 w-40 rounded-[10px] motion-reduce:animate-none" />
+              <Skeleton aria-hidden="true" className="h-10 w-36 rounded-[10px] motion-reduce:animate-none" />
+            </div>
+            <div aria-hidden="true" className="grid gap-4 lg:grid-cols-2">
+              <Skeleton className="h-80 rounded-[14px] motion-reduce:animate-none" />
+              <Skeleton className="h-80 rounded-[14px] motion-reduce:animate-none" />
+            </div>
+          </div>
+        ) : (
+          <Skeleton className="h-60 rounded-[14px]" />
+        )
       ) : query.isError ? (
         <p role="alert" className="rounded-[12px] border border-crit/30 bg-crit-soft p-4 text-[13px]">
           {apiErrorMessage(query.error)} <RowButton onClick={() => void query.refetch()}>Повторить</RowButton>

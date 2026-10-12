@@ -1,4 +1,3 @@
-import {NodeTcpCheck} from './node-tcp-check';
 import type { NodePreferences, RemnawaveNode } from '@nodeservice/shared';
 import { ActivityIcon, CableIcon, CopyIcon, Settings2Icon } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
@@ -6,6 +5,7 @@ import { CountryFlag } from '@/components/country-flag';
 import { DialogPrimaryButton } from '@/components/dialog-actions';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { FormSkeleton } from '@/components/ui/loading-state';
 import { ProviderSelect } from '@/features/providers/provider-select';
 import { ProvidersSourceContext } from '@/features/providers/providers-api';
 import { Pill, Segmented } from '@/features/settings/settings-ui';
@@ -13,6 +13,7 @@ import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { bytes, mbitPerSecond, nodeState, percent, ram, uptime } from './node-card';
 import { NodeMetricChart, useNodeMetrics } from './node-metrics';
+import { NodeTcpCheck } from './node-tcp-check';
 import { useAssignNodeProvider, useNodePreferences, useNodes, useSaveNodePreferences } from './nodes-api';
 import { RemnaProviderIcon } from './remna-providers-page';
 
@@ -233,6 +234,7 @@ export function NodeDialog({
                 )}
                 <div className="grid gap-4 md:grid-cols-2">
                   <NodeMetricChart
+                    loading={metrics.isPending}
                     title={node.cpuPercent == null ? 'Нагрузка · Load average' : 'Процессор'}
                     value={
                       node.cpuPercent == null
@@ -243,6 +245,7 @@ export function NodeDialog({
                     percent={node.cpuPercent != null}
                   />
                   <NodeMetricChart
+                    loading={metrics.isPending}
                     title="Оперативная память"
                     value={percent(ram(node))}
                     data={points.map((p) => ({ t: p.t, v: p.ram }))}
@@ -250,12 +253,14 @@ export function NodeDialog({
                     color="var(--ns-ok)"
                   />
                   <NodeMetricChart
+                    loading={metrics.isPending}
                     title="Входящий трафик"
                     value={`${mbitPerSecond(node.rxBytesPerSec)} Мбит/с`}
                     data={points.map((p) => ({ t: p.t, v: p.rx == null ? null : (p.rx * 8) / 1_000_000 }))}
                     unit=" Мбит/с"
                   />
                   <NodeMetricChart
+                    loading={metrics.isPending}
                     title="Исходящий трафик"
                     value={`${mbitPerSecond(node.txBytesPerSec)} Мбит/с`}
                     data={points.map((p) => ({ t: p.t, v: p.tx == null ? null : (p.tx * 8) / 1_000_000 }))}
@@ -263,6 +268,7 @@ export function NodeDialog({
                     color="var(--ns-ok)"
                   />
                   <NodeMetricChart
+                    loading={metrics.isPending}
                     title="Онлайн на ноде"
                     value={String(node.usersOnline ?? '—')}
                     data={points.map((p) => ({ t: p.t, v: p.online }))}
@@ -282,7 +288,7 @@ export function NodeDialog({
               </div>
             ) : tab === 'connection' ? (
               <div className="space-y-5">
-                <NodeTcpCheck uuid={node.uuid}/>
+                <NodeTcpCheck uuid={node.uuid} />
                 <div>
                   <h2 className="font-heading text-[16px] font-semibold">Данные подключения и проверки</h2>
                   <p className="mt-1 text-[12px] text-text-3">
@@ -336,7 +342,7 @@ export function NodeDialog({
                   )}
                 </section>
                 {query.isPending ? (
-                  <p className="text-sm text-text-3">Загружаем настройки…</p>
+                  <FormSkeleton />
                 ) : query.isError ? (
                   <p role="alert" className="text-xs text-crit">
                     {apiErrorMessage(query.error)}
@@ -354,8 +360,8 @@ export function NodeDialog({
                             Предупреждения о нагрузке
                           </h3>
                           <p className="mb-4 mt-1 text-[12px] leading-5 text-text-3">
-                            При превышении порога нода попадёт в блок «Требует внимания». Это не ограничивает
-                            её работу.
+                            Пустое поле использует общий порог из настроек инцидентов. При устойчивом
+                            превышении мониторинг создаст инцидент, если предупреждения включены.
                           </p>
                           <div className="grid gap-4 sm:grid-cols-2">
                             {[
@@ -371,9 +377,13 @@ export function NodeDialog({
                                   type="number"
                                   min={1}
                                   max={100}
-                                  value={form[key as keyof NodePreferences] as number}
+                                  placeholder="Общий порог"
+                                  value={(form[key as keyof NodePreferences] as number | null) ?? ''}
                                   onChange={(e) => {
-                                    setForm({ ...form, [key]: Number(e.target.value) });
+                                    setForm({
+                                      ...form,
+                                      [key]: e.target.value === '' ? null : Number(e.target.value),
+                                    });
                                     setDirty(true);
                                     setSaved(false);
                                   }}

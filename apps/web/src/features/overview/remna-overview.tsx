@@ -5,6 +5,7 @@ import { CountryFlag } from '@/components/country-flag';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuditList } from '@/features/audit/audit-api';
 import { useBillingStats } from '@/features/billing/billing-api';
+import { useIncidents } from '@/features/incidents/incidents-api';
 import { useOnlineSummary } from '@/features/metrics/use-online-summary';
 import { bytes, mbitPerSecond, percent, ram } from '@/features/nodes/node-card';
 import { NodeDialog } from '@/features/nodes/node-dialog';
@@ -29,6 +30,8 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
   const metrics = useNodeMetrics(view === 'stats' ? Math.min(Number(days), 30) * 1440 : 60, Number(days));
   const billing = useBillingStats('month');
   const onlineSummary = useOnlineSummary(Number(days), view === 'stats');
+  const incidents = useIncidents('open', { enabled: view === 'now' });
+  const openIncidents = incidents.data?.items.filter((i) => i.status !== 'resolved') ?? [];
   const audit = useAuditList({ page: 1, pageSize: 6 });
   const status = query.data,
     nodes = status?.nodes ?? [],
@@ -61,7 +64,9 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
         return { t, v: value == null ? null : value / scale };
       });
   };
-  const issue = nodes.filter((n) => (!n.isConnected && !n.isDisabled) || (ram(n) ?? 0) > 85);
+  const incidentNodes = new Set(openIncidents.map((i) => i.nodeUuid));
+  const issue = nodes.filter((n) => !n.isConnected && !n.isDisabled && !incidentNodes.has(n.uuid));
+  const attentionCount = openIncidents.length + issue.length;
   if (query.isPending)
     return (
       <div className="grid gap-4">
@@ -195,33 +200,74 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
           <div className="grid gap-4 xl:grid-cols-2">
             <section className="rounded-2xl border border-border bg-surface">
               <h2 className="border-b border-border p-4 text-sm font-semibold">
-                Требует внимания <span className="ml-2 text-text-3">{issue.length}</span>
+                Требует внимания{' '}
+                <span className="ml-2 text-text-3">
+                  {incidents.isPending || (incidents.isError && !incidents.data) ? '—' : attentionCount}
+                </span>
               </h2>
               <div className="p-4">
-                {issue.length ? (
-                  issue.map((n) => (
-                    <button
-                      type="button"
-                      key={n.uuid}
-                      onClick={() => setSelected(n.uuid)}
-                      className="flex w-full items-center justify-between border-b border-border py-3 text-left text-sm"
-                    >
-                      <span>{n.name}</span>
-                      <span className="text-crit">
-                        {n.isConnected ? 'Высокая нагрузка RAM' : 'Нет связи'}
-                      </span>
-                    </button>
-                  ))
+                {incidents.isError && incidents.data && (
+                  <p role="alert" className="mb-3 text-xs text-warn">
+                    Инциденты не обновились: показан последний список.
+                  </p>
+                )}
+                {incidents.isPending ? (
+                  <div role="status" aria-label="Загрузка инцидентов" className="space-y-3">
+                    {[1, 2, 3].map((i) => (
+                      <Skeleton key={i} className="h-14 w-full rounded-xl" />
+                    ))}
+                  </div>
+                ) : incidents.isError && !incidents.data ? (
+                  <p role="alert" className="text-sm text-crit">
+                    Не удалось проверить открытые инциденты. {apiErrorMessage(incidents.error)}
+                  </p>
+                ) : attentionCount ? (
+                  <>
+                    {openIncidents.map((i) => (
+                      <Link
+                        key={i.id}
+                        to="/incidents/$id"
+                        params={{ id: i.id }}
+                        className="flex min-h-16 items-center justify-between gap-3 rounded-lg border-b border-border px-2 py-3 text-sm hover:bg-surface-2 focus-visible:outline focus-visible:outline-brand"
+                      >
+                        <span className="min-w-0">
+                          <span className="block font-medium">{i.serverName}</span>
+                          <span className="block text-text-2">{i.title}</span>
+                        </span>
+                        <span className={i.severity === 'crit' ? 'shrink-0 text-crit' : 'shrink-0 text-warn'}>
+                          {i.status === 'acknowledged' ? 'В работе' : 'Открыт'}
+                        </span>
+                      </Link>
+                    ))}
+                    {issue.map((n) => (
+                      <button
+                        type="button"
+                        key={n.uuid}
+                        onClick={() => setSelected(n.uuid)}
+                        className="flex w-full items-center justify-between border-b border-border py-3 text-left text-sm"
+                      >
+                        <span>{n.name}</span>
+                        <span className="text-crit">Нет связи</span>
+                      </button>
+                    ))}
+                  </>
+                ) : status.error || incidents.isError || !status.checkedAt || nodes.length === 0 ? (
+                  <p className="text-sm text-warn">
+                    Состояние нод не подтверждено: показан последний снимок.
+                  </p>
                 ) : (
                   <div className="flex h-48 flex-col items-center justify-center gap-2">
                     <span className="size-2 rounded-full bg-ok" />
-                    <strong>Все ноды на связи</strong>
-                    <span className="text-xs text-text-3">Состояние обновляется каждые 15 секунд</span>
+                    <strong>Нет открытых инцидентов</strong>
+                    <span className="text-xs text-text-3">
+                      Ноды на связи · инциденты обновляются автоматически
+                    </span>
                   </div>
                 )}
               </div>
             </section>
             <NodeMetricChart
+              loading={metrics.isPending}
               title="Входящий трафик парка · Мбит/с"
               value={`${mbitPerSecond(rx)} Мбит/с`}
               data={series('rx', false, 125000)}
@@ -229,8 +275,14 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
             />
           </div>
           <div className="grid gap-4 xl:grid-cols-2">
-            <NodeMetricChart title="Онлайн на нодах" value={display(online)} data={series('online')} />
             <NodeMetricChart
+              loading={metrics.isPending}
+              title="Онлайн на нодах"
+              value={display(online)}
+              data={series('online')}
+            />
+            <NodeMetricChart
+              loading={metrics.isPending}
               title="Оперативная память · средняя"
               value={percent(avg(active.map(ram)))}
               data={series('ram', true)}
@@ -244,6 +296,7 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
         <>
           <div className="grid gap-4 xl:grid-cols-2">
             <NodeMetricChart
+              loading={metrics.isPending}
               title="Трафик по дням · ГБ · UTC"
               value={bytes(trafficSum)}
               data={
@@ -255,6 +308,7 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
               unit=" ГБ"
             />
             <NodeMetricChart
+              loading={metrics.isPending}
               title="Онлайн · история NodeService"
               value={display(online)}
               data={series('online')}
@@ -267,11 +321,13 @@ export function RemnaOverview({ view }: { view: 'now' | 'stats' | 'capacity' }) 
           )}
           <div className="grid gap-4 xl:grid-cols-2">
             <NodeMetricChart
+              loading={metrics.isPending}
               title="Load average · средняя по нодам"
               value={String(avg(active.map((n) => n.loadAverage?.[0]))?.toFixed(2) ?? '—')}
               data={series('load', true)}
             />
             <NodeMetricChart
+              loading={metrics.isPending}
               title="Оперативная память · средняя"
               value={percent(avg(active.map(ram)))}
               data={series('ram', true)}

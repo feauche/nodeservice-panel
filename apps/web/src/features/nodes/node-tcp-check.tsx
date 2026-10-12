@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { ChevronRightIcon, NetworkIcon } from 'lucide-react';
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { RowsSkeleton } from '@/components/ui/loading-state';
 import { CardButton, Pill } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
 import { TcpResults } from './tcp-results';
@@ -61,7 +62,7 @@ export function NodeTcpCheck({ uuid }: { uuid: string }) {
           <h4 className="text-[12px] font-semibold text-text-2">Последние проверки</h4>
           <span className="text-[11.5px] text-text-3">Результаты также в Журнале</span>
         </div>
-        {history.isPending && <p className="text-[12px] text-text-3">Загружаю историю…</p>}
+        {history.isPending && <RowsSkeleton rows={2} label="Загрузка TCP-проверок" />}
         {history.isError && (
           <p role="alert" className="text-[12px] text-crit">
             {apiErrorMessage(history.error)}

@@ -12,7 +12,9 @@ import { useState } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { RowsSkeleton } from '@/components/ui/loading-state';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { BarButton, CardButton, Pill } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
@@ -58,6 +60,26 @@ const availability = (run: BsRun) => {
 };
 const runTone = (run: BsRun) =>
   run.status === 'done' ? ('ok' as const) : run.status === 'failed' ? ('crit' as const) : ('warn' as const);
+
+export function BsBalanceSkeleton() {
+  return (
+    <div
+      role="status"
+      aria-label="Загрузка баланса BS Checker"
+      className="flex min-h-[52px] flex-wrap items-center gap-x-6 gap-y-2"
+    >
+      <div className="space-y-2" aria-hidden="true">
+        <Skeleton className="h-3 w-16 motion-reduce:animate-none" />
+        <Skeleton className="h-7 w-40 motion-reduce:animate-none" />
+      </div>
+      <div className="space-y-2" aria-hidden="true">
+        <Skeleton className="h-3.5 w-36 motion-reduce:animate-none" />
+        <Skeleton className="h-3.5 w-28 motion-reduce:animate-none" />
+      </div>
+      <Skeleton aria-hidden="true" className="h-6 w-20 rounded-full motion-reduce:animate-none" />
+    </div>
+  );
+}
 
 export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
   const q = useQuery({
@@ -155,7 +177,7 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
       <section className="flex flex-none flex-wrap items-center gap-x-6 gap-y-3 rounded-[14px] border border-border bg-surface px-[18px] py-4">
         <div className="min-w-0 flex-1 max-sm:basis-full">
           {q.isPending ? (
-            <p className="text-text-3">Загружаю баланс…</p>
+            <BsBalanceSkeleton />
           ) : q.isError ? (
             <p role="alert" className="text-[13px] text-crit">
               {apiErrorMessage(q.error)}
@@ -313,7 +335,7 @@ export function BsCheckerWorkspace({ settings }: { settings: () => void }) {
             </BarButton>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto p-3 max-lg:max-h-[360px]">
-            {history.isPending && <p className="p-3 text-[13px] text-text-3">Загружаю историю…</p>}
+            {history.isPending && <RowsSkeleton label="Загрузка истории проверок" />}
             {history.isError && (
               <p role="alert" className="p-3 text-[13px] text-crit">
                 {apiErrorMessage(history.error)}

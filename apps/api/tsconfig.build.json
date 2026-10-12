@@ -8,6 +8,10 @@
     "**/*.test.ts",
     "drizzle.config.ts",
     "vitest.config.ts",
-    "vitest.config.e2e.ts"
-  ]
+    "vitest.config.e2e.ts",
+    "dist-dev"
+  ],
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.build.tsbuildinfo"
+  }
 }

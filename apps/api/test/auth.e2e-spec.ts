@@ -132,7 +132,7 @@ describe('auth e2e', () => {
   it('setup/confirm: 5 неверных кодов → pending сгорает (401 totpRequired), мастер можно начать заново', async () => {
     for (let i = 0; i < 4; i++) {
       const bad = await post('/api/auth/setup/confirm', { code: '000000' });
-      expect(bad.status).toBe(401);
+      expect(bad.status, JSON.stringify(bad.body)).toBe(401);
       expect(bad.body.type).toBe(AUTH_PROBLEM.invalidTotp);
     }
     const fifth = await post('/api/auth/setup/confirm', { code: '000000' });

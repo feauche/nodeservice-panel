@@ -405,12 +405,12 @@ export const remnawaveTopologySchema = z.object({
 });
 export type RemnawaveTopology = z.infer<typeof remnawaveTopologySchema>;
 
-/** Local presentation thresholds; these do not change the remote node configuration. */
+/** Local monitoring thresholds. Null inherits global policy; remote configuration is unchanged. */
 export const nodePreferencesSchema = z.object({
   channelMbps: z.number().positive().max(1000000).nullable().default(null),
   note: z.string().trim().max(1000).default(''),
-  cpuWarningPercent: z.number().int().min(1).max(100).default(85),
-  memoryWarningPercent: z.number().int().min(1).max(100).default(85),
+  cpuWarningPercent: z.number().int().min(1).max(100).nullable().default(null),
+  memoryWarningPercent: z.number().int().min(1).max(100).nullable().default(null),
 });
 export type NodePreferences = z.infer<typeof nodePreferencesSchema>;
 

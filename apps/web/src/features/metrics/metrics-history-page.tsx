@@ -26,7 +26,9 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { ChartSkeleton, RowsSkeleton } from '@/components/ui/loading-state';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { BarButton as BaseBarButton, CardButton, Pill } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
@@ -237,10 +239,18 @@ export function MetricsHistoryPage({ overview = false }: { overview?: boolean })
             ].map(([label, value, hint]) => (
               <div key={String(label)} className="min-w-0 bg-surface-2 px-4 py-3">
                 <p className="text-[11.5px] text-text-3">{label}</p>
-                <p className="mt-1 font-mono text-[18px] font-semibold">
-                  {typeof value === 'number' ? Math.round(value).toLocaleString('ru-RU') : '—'}
-                </p>
-                <p className="mt-1 text-[11px] text-text-3">{hint}</p>
+                <div className="mt-1 flex h-7 items-center font-mono text-[18px] font-semibold">
+                  {query.isPending ? (
+                    <Skeleton className="h-5 w-20" />
+                  ) : typeof value === 'number' ? (
+                    Math.round(value).toLocaleString('ru-RU')
+                  ) : (
+                    '—'
+                  )}
+                </div>
+                <div className="mt-1 min-h-4 text-[11px] text-text-3">
+                  {query.isPending ? <Skeleton className="h-3 w-3/4" /> : hint}
+                </div>
               </div>
             ))}
           </div>
@@ -278,9 +288,7 @@ export function MetricsHistoryPage({ overview = false }: { overview?: boolean })
           </header>
           <div className="min-h-[180px] flex-1 p-4 [@media(min-width:1280px)_and_(max-height:850px)]:h-[240px] [@media(min-width:1280px)_and_(max-height:850px)]:flex-none">
             {query.isPending ? (
-              <p role="status" className="grid h-full place-items-center text-[13px] text-text-3">
-                Загружаю историю…
-              </p>
+              <ChartSkeleton />
             ) : query.isError ? (
               <p role="alert" className="text-crit">
                 {apiErrorMessage(query.error)}
@@ -447,10 +455,14 @@ export function MetricsHistoryPage({ overview = false }: { overview?: boolean })
         <section className="flex min-h-0 flex-col overflow-hidden rounded-[14px] border border-border bg-surface">
           <header className="flex items-center justify-between border-b border-border px-[18px] py-3.5">
             <h3 className="text-[14px] font-semibold">События за промежуток</h3>
-            <Pill>{events.length}</Pill>
+            <Pill>{query.isPending || query.isError ? '—' : events.length}</Pill>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto p-3 max-xl:max-h-[300px]">
-            {events.length === 0 && (
+            {query.isPending && <RowsSkeleton rows={3} label="Загрузка событий метрик" />}
+            {query.isError && (
+              <p className="px-2 py-3 text-[12px] text-warn">События не удалось загрузить.</p>
+            )}
+            {!query.isPending && !query.isError && events.length === 0 && (
               <p className="px-2 py-3 text-[12px] text-text-3">Событий за выбранный промежуток нет</p>
             )}
             {events.map((e) => (

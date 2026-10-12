@@ -9,8 +9,6 @@ import { SettingsModule } from '../settings/settings.module.js';
 import { NodeActionsController } from './node-actions.controller.js';
 import { NodeLayoutStore } from './node-layout.store.js';
 import { DnsHostResolver, HOST_RESOLVER, NodeLinkService } from './node-link.service.js';
-import { NodeMetricHistoryService } from './node-metric-history.service.js';
-import { NodeMetricsController, NodeMetricsService } from './node-metrics.controller.js';
 import { NodePreferencesStore } from './node-preferences.store.js';
 import { NodeTcpHistoryService } from './node-tcp-history.service.js';
 import { NodesController } from './nodes.controller.js';
@@ -24,7 +22,6 @@ import { RemnawaveController } from './remnawave.controller.js';
 import { RemnawaveService } from './remnawave.service.js';
 import { HttpRemnawaveClient, REMNAWAVE_CLIENT } from './remnawave-client.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
-import { RemnawaveSyncJob } from './remnawave-sync.job.js';
 import { RemnawaveTopologyService } from './remnawave-topology.service.js';
 import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
 
@@ -40,7 +37,6 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
     ProvidersModule,
   ],
   controllers: [
-    NodeMetricsController,
     RemnaBillingProvidersController,
     NodeActionsController,
     RemnawaveController,
@@ -50,8 +46,6 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
   ],
   providers: [
     NodeTcpHistoryService,
-    NodeMetricHistoryService,
-    NodeMetricsService,
     RemnaProviderCatalogController,
     NodeLayoutStore,
     RemnaPermissionsService,
@@ -60,7 +54,6 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
     RemnaProvidersService,
     RemnaProviderAssetsService,
     RemnawaveService,
-    RemnawaveSyncJob,
     RemnawaveVpnProbeService,
     RemnawaveTopologyService,
     NodeLinkService,
@@ -68,7 +61,7 @@ import { RemnawaveVpnProbeService } from './remnawave-vpn-probe.service.js';
     { provide: HOST_RESOLVER, useClass: DnsHostResolver },
   ],
   exports: [
-    NodeMetricsService,
+    NodePreferencesStore,
     RemnawaveSettingsStore,
     RemnawaveService,
     NodeLinkService,

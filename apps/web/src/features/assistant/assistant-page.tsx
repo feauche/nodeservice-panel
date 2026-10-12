@@ -33,6 +33,7 @@ import {
   useState,
 } from 'react';
 import { JarvisIcon } from '@/components/jarvis-icon';
+import { FormSkeleton, RowsSkeleton } from '@/components/ui/loading-state';
 import { Markdown, NodeLinkContext } from '@/features/knowledge/markdown';
 import { nodeState } from '@/features/nodes/node-card';
 import { NodeDialog } from '@/features/nodes/node-dialog';
@@ -63,7 +64,15 @@ export function AssistantPage() {
   const status = useAssistantStatus();
 
   if (status.isPending)
-    return <div className="grid h-full place-items-center text-[13px] text-text-3">Загрузка…</div>;
+    return (
+      <div className="grid h-full grid-cols-[minmax(0,1fr)] gap-4 p-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <RowsSkeleton rows={5} label="Загрузка диалогов" />
+        <div className="space-y-4">
+          <FormSkeleton />
+          <RowsSkeleton rows={4} label="Загрузка ассистента" />
+        </div>
+      </div>
+    );
 
   if (!status.data?.enabled) return <AssistantDisabled />;
 

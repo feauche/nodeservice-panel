@@ -38,6 +38,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { RowsSkeleton } from '@/components/ui/loading-state';
 import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useCustomSites, useUpdateCustomSites } from './settings-api';
@@ -139,9 +140,7 @@ function SitesDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-4 pb-4">
           {sites.isPending ? (
-            <p className="rounded-[10px] border border-dashed border-border-2 px-4 py-6 text-center text-[13px] text-text-3">
-              Загружаю сайты…
-            </p>
+            <RowsSkeleton label="Загрузка сайтов" />
           ) : sites.isError || !sites.data ? (
             <div className="rounded-[10px] border border-crit/30 bg-crit-soft px-4 py-4 text-center text-[13px] text-text-2">
               <p>Список не загрузился. Сохранение заблокировано, чтобы не потерять ссылки.</p>

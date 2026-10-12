@@ -2,6 +2,7 @@ import { nodeMetricsSchema } from '@nodeservice/shared';
 import { useQuery } from '@tanstack/react-query';
 import { useId } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ChartSkeleton } from '@/components/ui/loading-state';
 import { api } from '@/lib/api';
 export function useNodeMetrics(minutes = 60, days = 30) {
   return useQuery({
@@ -19,6 +20,7 @@ export function NodeMetricChart({
   unit = '',
   color = 'var(--ns-accent)',
   percent = false,
+  loading = false,
 }: {
   title: string;
   value: string;
@@ -26,6 +28,7 @@ export function NodeMetricChart({
   unit?: string;
   color?: string;
   percent?: boolean;
+  loading?: boolean;
 }) {
   const id = useId().replaceAll(':', '');
   const valid = data.some((p) => p.v !== null);
@@ -36,7 +39,9 @@ export function NodeMetricChart({
         <strong className="text-2xl tabular-nums">{value}</strong>
       </div>
       <div className="h-[200px] min-w-0">
-        {valid ? (
+        {loading ? (
+          <ChartSkeleton />
+        ) : valid ? (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={data} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
               <defs>
@@ -101,7 +106,8 @@ export function NodeMetricChart({
       </div>
       {valid && data.some((p) => p.v === null) && (
         <p className="mt-2 text-[11px] text-text-3">
-          Разрыв линии — нет сохранённого замера за этот интервал.
+          Получено {data.filter((p) => p.v !== null).length} из {data.length} точек. Разрыв — нет замера или
+          нода не передала показатель.
         </p>
       )}
     </section>

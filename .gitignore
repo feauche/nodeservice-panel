@@ -56,3 +56,6 @@ packages/shared/dist
 # Резервные копии панели в разработке (BACKUPS_DIR=backups)
 apps/api/backups/
 /backups/
+
+# Отдельный вывод локального API watch
+apps/api/dist-dev/

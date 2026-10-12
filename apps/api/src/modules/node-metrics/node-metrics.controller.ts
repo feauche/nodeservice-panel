@@ -1,17 +1,28 @@
 import { createHash } from 'node:crypto';
-import { BadRequestException, Controller, Get, Inject, Injectable, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Inject,
+  Injectable,
+  Logger,
+  Optional,
+  Query,
+} from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { estimateNodeCapacity, type NodeMetrics, remnaTrafficSchema } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import { DB, type Db } from '../../infra/db/db.module.js';
+import { NodePreferencesStore } from '../remnawave/node-preferences.store.js';
+import { RemnawaveService } from '../remnawave/remnawave.service.js';
+import { getJson, RemnawaveApiError } from '../remnawave/remnawave-client.js';
+import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js';
+import { MonitoringStore } from '../settings/monitoring.store.js';
 import { NodeMetricHistoryService, parseMetricHistoryRange } from './node-metric-history.service.js';
-import { NodePreferencesStore } from './node-preferences.store.js';
-import { RemnawaveService } from './remnawave.service.js';
-import { getJson, RemnawaveApiError } from './remnawave-client.js';
-import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
 
 @Injectable()
 export class NodeMetricsService {
+  private readonly log = new Logger(NodeMetricsService.name);
   private historyCache = new Map<
     string,
     { at: number; history: NodeMetrics['history']; since: string | null }
@@ -22,9 +33,13 @@ export class NodeMetricsService {
     @Inject(DB) private readonly db: Db,
     private readonly store: RemnawaveSettingsStore,
     private readonly remna: RemnawaveService,
+    @Optional() private readonly monitoring?: MonitoringStore,
   ) {}
   @Interval(15000) async tick() {
-    if (process.env.NODE_ENV !== 'test') await this.collect().catch(() => undefined);
+    if (process.env.NODE_ENV !== 'test')
+      await this.collect().catch(() =>
+        this.log.warn('Не удалось сохранить замеры Remnawave. Проверьте подключение к базе данных.'),
+      );
   }
   async collect() {
     if (this.pending) return this.pending;
@@ -117,7 +132,8 @@ export class NodeMetricsService {
       );
       const since = first.rows[0]?.first ? new Date(String(first.rows[0].first)).getTime() : Date.now();
       const span = Math.min(minutes * 60, Math.max(60, (Date.now() - since) / 1000));
-      const bucket = Math.max(60, Math.ceil(span / 240 / 60) * 60);
+      const pollSeconds = this.monitoring ? (await this.monitoring.get()).pollSeconds : 60;
+      const bucket = Math.max(Math.ceil(pollSeconds / 60) * 60, Math.ceil(span / 240 / 60) * 60);
       const rows = await this.db.execute(sql`SELECT node_uuid AS uuid, bucket_t AS t,
       avg((values->>'cpu')::float) AS cpu, avg((values->>'ram')::float) AS ram, avg((values->>'load')::float) AS load,
       avg((values->>'rx')::float) AS rx, avg((values->>'tx')::float) AS tx, avg((values->>'online')::float) AS online
@@ -146,7 +162,11 @@ export class NodeMetricsService {
         const points = new Map(node.points.map((p) => [p.t, p]));
         const start = node.points[0]?.t ?? endBucket;
         node.points = [];
-        for (let t = start; t <= endBucket; t += bucket * 1000) {
+        for (
+          let t = start;
+          t <= (points.has(endBucket) ? endBucket : endBucket - bucket * 1000);
+          t += bucket * 1000
+        ) {
           node.points.push(
             points.get(t) ?? { t, cpu: null, ram: null, load: null, rx: null, tx: null, online: null },
           );
