@@ -66,6 +66,9 @@ jobs:
       - name: Shell сценарии релиза
         run: bash infra/scripts/release-source.test.sh
 
+      - name: Установщик рядом с nginx и Caddy
+        run: bash infra/scripts/install.test.sh
+
       - name: Upload web build
         uses: actions/upload-artifact@v4
         with:

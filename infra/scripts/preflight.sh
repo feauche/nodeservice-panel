@@ -6,6 +6,12 @@ ENV_FILE="$APP_DIR/infra/.env"
 [[ -f "$ENV_FILE" ]] || { echo 'Не найден infra/.env установленной панели.' >&2; exit 1; }
 command -v docker >/dev/null || { echo 'Docker не найден.' >&2; exit 1; }
 COMPOSE=(docker compose -f "$APP_DIR/infra/compose.yaml" --env-file "$ENV_FILE")
+# Панель открыта через ваш nginx или Caddy — к compose.yaml добавляется оверлей (см. compose-args.sh).
+if [[ -f "$APP_DIR/infra/scripts/compose-args.sh" ]]; then
+    # shellcheck disable=SC1091
+    . "$APP_DIR/infra/scripts/compose-args.sh"
+    nodeservice_compose "$APP_DIR" "$ENV_FILE"
+fi
 psql_read() { "${COMPOSE[@]}" exec -T postgres psql -U nodeservice -d nodeservice -X -qAt -v ON_ERROR_STOP=1 -c "BEGIN READ ONLY; $1 COMMIT;"; }
 printf 'Код установленной панели: '
 git -C "$APP_DIR" describe --tags --always --dirty 2>/dev/null || printf 'не определён\n'

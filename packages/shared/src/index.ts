@@ -3,7 +3,7 @@
  * Этап 1: auth API, настройки. Этап 2: Журнал (аудит).
  */
 /** Версия панели x.y.z. Поднимается каждой поставкой: `node scripts/bump-version.mjs patch` (фиксы) или `minor` (новые возможности). */
-export const SHARED_VERSION = '0.98.1';
+export const SHARED_VERSION = '0.99.0';
 export * from './assistant.js';
 export * from './audit.js';
 export * from './auth.js';

@@ -1,0 +1,14 @@
+# Панель открыта через Caddy в другом контейнере (например, у панели Remnawave): свой Caddy не запускается,
+# api подключается к сети того контейнера под именем nodeservice-api — Caddy ходит к нему как к соседу.
+services:
+  caddy:
+    profiles: ["off"]
+  api:
+    networks:
+      default: {}
+      proxy:
+        aliases: [nodeservice-api]
+networks:
+  proxy:
+    external: true
+    name: ${PANEL_PROXY_NETWORK:?PANEL_PROXY_NETWORK не задан}

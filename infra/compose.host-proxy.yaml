@@ -1,0 +1,9 @@
+# Панель открыта через ваш nginx или Caddy на этом сервере (так решил установщик): свой Caddy не запускается,
+# а api слушает только PANEL_LOCAL_BIND:PANEL_LOCAL_PORT — по умолчанию 127.0.0.1, снаружи только через
+# ваш веб-сервер. Для Caddy в контейнере без общей сети адрес — шлюз Docker (172.17.0.1).
+services:
+  caddy:
+    profiles: ["off"]
+  api:
+    ports:
+      - "${PANEL_LOCAL_BIND:-127.0.0.1}:${PANEL_LOCAL_PORT:?PANEL_LOCAL_PORT не задан}:3000"

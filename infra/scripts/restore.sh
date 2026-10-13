@@ -15,6 +15,12 @@ set -euo pipefail
 APP_DIR="${NODESERVICE_DIR:-/opt/nodeservice}"
 ENV_FILE="$APP_DIR/infra/.env"
 COMPOSE=(docker compose -f "$APP_DIR/infra/compose.yaml" --env-file "$ENV_FILE")
+# Панель открыта через ваш nginx или Caddy — к compose.yaml добавляется оверлей (см. compose-args.sh).
+if [[ -f "$APP_DIR/infra/scripts/compose-args.sh" ]]; then
+    # shellcheck disable=SC1091
+    . "$APP_DIR/infra/scripts/compose-args.sh"
+    nodeservice_compose "$APP_DIR" "$ENV_FILE"
+fi
 R='\033[1;31m'; G='\033[0;32m'; Y='\033[1;33m'; C='\033[0;36m'; N='\033[0m'
 die() { echo -e "${R}[-] $1${N}" >&2; exit 1; }
 step() { echo -e "${C}==> $1${N}"; }

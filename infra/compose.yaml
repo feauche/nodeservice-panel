@@ -1,6 +1,8 @@
 # NodeService — production stack. Запуск: `docker compose -f infra/compose.yaml up -d`
 # (install.sh делает это за тебя и генерирует .env с секретами).
 # Внутренние сервисы не публикуют порты наружу — всё идёт через Caddy (авто-HTTPS).
+# Панель открыта через ваш nginx или Caddy — к этому файлу добавляется compose.host-proxy.yaml или
+# compose.docker-proxy.yaml (выбирает установщик, см. scripts/compose-args.sh): свой Caddy тогда не запускается.
 
 name: nodeservice
 
@@ -15,12 +17,16 @@ services:
   caddy:
     image: caddy:2.11-alpine
     restart: unless-stopped
+    # Порт https — 443, на ноде с VPN установщик ставит 8443 (PANEL_HTTPS_PORT). UDP 443 занят (Hysteria2 и т. п.) —
+    # HTTP/3 выключен (PANEL_PROTOCOLS), а UDP проброшен на случайный порт (PANEL_H3_PORT=0), чтобы не мешать.
     ports:
       - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "${PANEL_HTTPS_PORT:-443}:${PANEL_HTTPS_PORT:-443}"
+      - "${PANEL_H3_PORT:-${PANEL_HTTPS_PORT:-443}}:${PANEL_HTTPS_PORT:-443}/udp"
     environment:
       PANEL_DOMAIN: ${PANEL_DOMAIN:?PANEL_DOMAIN не задан}
+      PANEL_SITE: ${PANEL_DOMAIN}${PANEL_URL_PORT:-}
+      PANEL_PROTOCOLS: ${PANEL_PROTOCOLS:-h1 h2 h3}
       # Caddy: `email` без значения — ошибка парсинга Caddyfile, поэтому переменная обязательна.
       ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL не задан}
     volumes:
@@ -50,7 +56,7 @@ services:
       PORT: "3000"
       DATABASE_URL: postgres://nodeservice:${POSTGRES_PASSWORD}@postgres:5432/nodeservice
       VALKEY_URL: redis://valkey:6379
-      PUBLIC_URL: https://${PANEL_DOMAIN}
+      PUBLIC_URL: https://${PANEL_DOMAIN}${PANEL_URL_PORT:-}
       # Резервные копии из панели («Настройки → Резервные копии»): та же папка, что у nodeservice backup;
       # .env установки — только на чтение (входит в копию); / — только на чтение, для «Дополнительных файлов».
       BACKUPS_DIR: /app/backups

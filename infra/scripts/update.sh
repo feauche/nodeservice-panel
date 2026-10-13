@@ -120,6 +120,12 @@ APP_DIR="${NODESERVICE_DIR:-/opt/nodeservice}"
 export NODESERVICE_DIR="$APP_DIR"
 ENV_FILE="$APP_DIR/infra/.env"
 COMPOSE=(docker compose -f "$APP_DIR/infra/compose.yaml" --env-file "$ENV_FILE")
+# Панель открыта через ваш nginx или Caddy — к compose.yaml добавляется оверлей (см. compose-args.sh).
+if [[ -f "$APP_DIR/infra/scripts/compose-args.sh" ]]; then
+    # shellcheck disable=SC1091
+    . "$APP_DIR/infra/scripts/compose-args.sh"
+    nodeservice_compose "$APP_DIR" "$ENV_FILE"
+fi
 REF="${1:-latest}"
 G='\033[0;32m'; C='\033[0;36m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 die() { echo -e "${R}[-] $1${N}" >&2; exit 1; }
@@ -318,6 +324,31 @@ if [[ "$st" != "healthy" ]]; then
     die "Новая версия и откатный образ не запустились. Восстанови указанную выше копию."
 fi
 cleanup_old_images || true
+# Панель отвечает по https так, как её откроет браузер: свой Caddy или ваш nginx мог не подняться, а api при
+# этом здоров. Сначала — соединяясь с этим сервером напрямую, затем обычным путём через DNS.
+panel_domain=$(sed -n 's/^PANEL_DOMAIN=//p' "$ENV_FILE" | head -n 1)
+panel_port=$(sed -n 's/^PANEL_HTTPS_PORT=//p' "$ENV_FILE" | head -n 1)
+panel_port=${panel_port:-443}
+panel_url="https://$panel_domain"
+[[ "$panel_port" != 443 ]] && panel_url+=":$panel_port"
+if [[ -n "$panel_domain" ]]; then
+    https_ok=0
+    for _ in $(seq 1 20); do
+        for via in server dns; do
+            resolve=()
+            [[ $via == server ]] && resolve=(--resolve "$panel_domain:$panel_port:127.0.0.1")
+            if curl -fsS --max-time 8 "${resolve[@]}" "https://$panel_domain:$panel_port/api/health/live" 2>/dev/null |
+                grep -q '"status":"ok"'; then
+                https_ok=1
+                break 2
+            fi
+        done
+        sleep 3
+    done
+    if (( https_ok == 0 )); then
+        echo -e "${Y}Панель запущена, но $panel_url не открывается с этого сервера — проверьте веб-сервер: nodeservice status${N}"
+    fi
+fi
 echo -e "${G}Обновлено: $before → $after.${N} Откат при необходимости: nodeservice rollback"
 
 # В интерактивном терминале сразу показываем, как новая версия работает вживую. Все обязательные

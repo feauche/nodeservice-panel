@@ -12,6 +12,12 @@
 set -euo pipefail
 APP_DIR="${NODESERVICE_DIR:-/opt/nodeservice}"
 COMPOSE=(docker compose -f "$APP_DIR/infra/compose.yaml" --env-file "$APP_DIR/infra/.env")
+# Панель открыта через ваш nginx или Caddy — к compose.yaml добавляется оверлей (см. compose-args.sh).
+if [[ -f "$APP_DIR/infra/scripts/compose-args.sh" ]]; then
+    # shellcheck disable=SC1091
+    . "$APP_DIR/infra/scripts/compose-args.sh"
+    nodeservice_compose "$APP_DIR" "$APP_DIR/infra/.env"
+fi
 OUT="$APP_DIR/backups"; mkdir -p -m 700 "$OUT"
 # Панель (пользователь 10001 в контейнере api) сама делает, удаляет и отправляет копии в этой папке.
 PANEL_UID=10001

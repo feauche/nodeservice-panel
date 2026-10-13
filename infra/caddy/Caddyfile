@@ -1,11 +1,13 @@
 {
 	email {$ACME_EMAIL}
 	servers {
-		protocols h1 h2 h3
+		# h1 h2 h3; без h3, если UDP 443 на сервере занят (PANEL_PROTOCOLS в compose.yaml).
+		protocols {$PANEL_PROTOCOLS}
 	}
 }
 
-{$PANEL_DOMAIN} {
+# Домен панели; на ноде с VPN — с портом (panel.example.com:8443).
+{$PANEL_SITE} {
 	encode zstd gzip
 
 	header {
