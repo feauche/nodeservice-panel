@@ -223,6 +223,35 @@ export function tcpStep(
     text: `TCP ${word}${detail ? `: ${detail}` : ''}`,
   };
 }
+/** Значок итога проверки порта в строке шага: доступен, частично, недоступен, нет данных. */
+const TCP_MARK: Record<TcpCheckReport['verdict'], string> = {
+  reachable: '✅',
+  russia_partial: '🟠',
+  russia_unreachable: '🔴',
+  port_unreachable: '🔴',
+  unknown: '⚪',
+};
+/** Что не вышло — подпись строки ❌ для каждого шага. */
+const FAILED_LABEL: Partial<Record<NonNullable<ScenarioRunStep['action']>, string>> = {
+  record_event: 'Запись в событие не вышла',
+  hide_host: 'Host не скрыт',
+  rename_host: 'Имя Host не изменено',
+};
+/**
+ * Строка шага в сообщении Telegram (витрина telegram-2026-10, сценарий A): значок итога — ✅ сделано, 🟠 замечание,
+ * ❌ не вышло — и коротко что именно. Пропущенные шаги и само уведомление в сообщение не попадают.
+ */
+export function telegramStepLine(step: ScenarioRunStep, report: TcpCheckReport | null): string | null {
+  if (step.skipped || step.action === 'notify') return null;
+  if (step.failed)
+    return `❌ ${(step.action && FAILED_LABEL[step.action]) || 'Шаг не вышел'}: ${step.detail ?? step.text}`;
+  if (step.action === 'check_tcp')
+    return report ? `${TCP_MARK[report.verdict]} TCP: ${step.word}` : `🟠 ${step.text}`;
+  if (step.tone === 'change')
+    return step.action === 'rename_host' ? `✅ Имя Host: ${step.detail}` : `✅ ${step.text}`;
+  if (step.action === 'record_event' && step.incidentId) return `✅ ${step.text}`;
+  return `🟠 ${step.text}`;
+}
 @Injectable()
 export class ScenariosJob {
   private busy = false;
@@ -533,7 +562,9 @@ export class ScenariosJob {
                 break;
               }
             const finish = async () => {
-              if (tcpCheck) steps.push(tcpStep(n('check_tcp'), await tcpCheck));
+              const tcpResult = tcpCheck ? await tcpCheck : null;
+              const tcpReport = tcpResult && 'report' in tcpResult ? tcpResult.report : null;
+              if (tcpResult) steps.push(tcpStep(n('check_tcp'), tcpResult));
               // Уведомление уходит и после ошибки шага — журнал скажет, ушло ли оно на самом деле.
               if (rule.actions.includes('notify'))
                 steps.push(notifyStep(n('notify'), await this.notify.telegramOutlook('scenario')));
@@ -563,25 +594,28 @@ export class ScenariosJob {
                   `Сценарий «${rule.name}»: ${lowerFirst(summary)}`,
                   failed ? 'failed' : 'applied',
                 );
-              if (rule.actions.includes('notify'))
+              if (rule.actions.includes('notify')) {
+                // Строка на шаг со значком итога, под ними — таблица портов (витрина telegram-2026-10, сценарий A);
+                // нода — под заголовком. Сценарий только с уведомлением: шагов нет — только условие.
+                const lines = steps
+                  .map((x) => telegramStepLine(x, tcpReport))
+                  .filter((x): x is string => x !== null);
                 await this.notify.push({
                   severity: 'warn',
                   title: `Сценарий: ${rule.name}`,
-                  // Сценарий только с уведомлением: шагов нет — строки «Результат:» без значения тоже нет.
                   body: [
-                    `Нода: ${node.name}`,
                     `Условие: ${scenarioConditionLabel(rule)}`,
-                    summary && `Результат: ${summary}`,
-                  ]
-                    .filter(Boolean)
-                    .join('\n'),
+                    ...(lines.length ? ['', ...lines] : []),
+                  ].join('\n'),
                   link: { to: '/scenarios', label: 'Открыть сценарии' },
                   telegram: {
                     event: 'scenario',
                     serverKey: `node:${node.uuid}`,
                     server: { name: node.name, host: node.address },
+                    ports: tcpReport,
                   },
                 });
+              }
             };
             // Ждём проверку порта — дописываем в фоне: следующие ноды не стоят в очереди за Check-Host.
             if (tcpCheck) this.track(finish());

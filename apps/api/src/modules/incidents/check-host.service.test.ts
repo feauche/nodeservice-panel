@@ -97,7 +97,11 @@ describe('Доступность Check-Host', () => {
       await vi.advanceTimersByTimeAsync(59_000);
       expect(check).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1_000);
-      expect(await out).toMatchObject({ verdict: 'russia_partial', confirmed: true });
+      const result = await out;
+      expect(result).toMatchObject({ verdict: 'russia_partial', confirmed: true });
+      // Первая проверка сохраняется: в сообщении — строки «РФ, 16:09» и «РФ, 16:10».
+      expect(result.first).toMatchObject({ verdict: 'russia_partial', target: '8.8.8.8:2226' });
+      expect(result.first).not.toHaveProperty('first');
       expect(check).toHaveBeenCalledTimes(2);
     });
     it('при повторе РФ отвечает вся — действует свежий итог, без подтверждения', async () => {

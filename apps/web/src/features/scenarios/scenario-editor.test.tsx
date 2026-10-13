@@ -185,9 +185,12 @@ describe('Редактор сценария «Если → то»', () => {
     await user.click(step('Уведомить в Telegram'));
     const preview = (await screen.findByText(/🟡 Сценарий: Проверка/)).parentElement;
     if (!preview) throw Error('Нет примера сообщения');
-    expect(preview).toHaveTextContent('Нода: Германия - 1');
+    // Строка на шаг со значком, под ними таблица портов; отдельной строки «Нода: …» нет — нода под заголовком.
+    expect(preview).not.toHaveTextContent('Нода: Германия - 1');
     expect(preview).toHaveTextContent('Условие: Нода потеряла связь');
-    expect(preview).toHaveTextContent('Результат: TCP недоступен; Записано в событие «Нода не на связи»');
+    expect(preview).toHaveTextContent('🔴 TCP: недоступен из РФ');
+    expect(preview).toHaveTextContent('✅ Записано в событие «Нода не на связи»');
+    expect(within(preview).getByRole('table')).toHaveTextContent('Откуда5492РФ0 из 3Другие страны3 из 3');
   });
 
   it('нет права «Изменение Host» — предупреждение прямо в шаге с Host', async () => {

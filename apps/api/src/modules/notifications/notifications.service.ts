@@ -4,12 +4,13 @@ import type {
   NodeTcpDiagnostics,
   NotificationLink,
   NotificationSeverity,
+  TcpCheckReport,
   TelegramEvent,
 } from '@nodeservice/shared';
 
 import { EventsService } from '../events/events.service.js';
 import { NotificationsRepository, type PendingTelegram } from './notifications.repository.js';
-import { shortOutageMessage } from './telegram/telegram.format.js';
+import { type RecoveryFacts, shortOutageMessage } from './telegram/telegram.format.js';
 import type { RichBlock } from './telegram/telegram.rich.js';
 import { type TelegramDispatch, TelegramService } from './telegram/telegram.service.js';
 
@@ -46,6 +47,12 @@ export interface PushInput {
     rich?: RichBlock[] | null;
     /** Проверка портов у события: в Telegram — таблица по портам и отчёты кнопками вместо строк со ссылками. */
     tcp?: NodeTcpDiagnostics | null;
+    /** Таблица портов под текстом (сообщение сценария): вывод уже в строке шага. */
+    ports?: TcpCheckReport | null;
+    /** «Восстановление» короткими строками: онлайн, смена адреса, порт, DNS-запись. */
+    recovery?: RecoveryFacts | null;
+    /** Сколько длился сбой — для подписи «Починилось за 16 мин». */
+    lastedMs?: number | null;
     /**
      * Инцидент сейчас разберёт Джарвис: в Telegram отправляем после разбора — уже с выводом
      * (releaseAfterAnalysis). Не дождались за ANALYSIS_WAIT_MS — уходит как есть. Колокольчик — сразу.
@@ -380,6 +387,9 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
         html: t.html ?? null,
         rich: t.rich ?? null,
         tcp: t.tcp ?? null,
+        ports: t.ports ?? null,
+        recovery: t.recovery ?? null,
+        lastedMs: t.lastedMs ?? null,
         severity: t.severity ?? input.severity,
       };
       // Сообщения по делу идут по очереди дела (см. route): ждём только решения, сама отправка — в фоне.

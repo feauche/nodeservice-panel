@@ -1,7 +1,7 @@
 import { MONITORING_DEFAULTS } from '@nodeservice/shared';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it, vi } from 'vitest';
-import { FleetMonitorJob } from './fleet-monitor.job.js';
+import { dnsManualLink, FleetMonitorJob, recoveryFacts } from './fleet-monitor.job.js';
 
 describe('Пороги ресурсов ноды', () => {
   async function run(loadWarningPerCore: number | null, memoryWarningPercent: number | null, enabled = true) {
@@ -277,8 +277,77 @@ describe('Пороги ресурсов ноды', () => {
           'Обычно в это время около 225. Закрою событие сам, когда онлайн около минуты продержится не ниже 113.',
       });
       expect(pushed.at(-1)).toMatchObject({ title: 'Восстановление · Нидерланды - 1' });
+      // «Восстановление» строками (витрина telegram-2026-10, вариант A): онлайн, прежний адрес, порт на нынешнем
+      // адресе; сколько длился сбой — для подписи «Починилось за …».
+      expect(pushed.at(-1) as unknown).toMatchObject({
+        telegram: {
+          recovery: {
+            online: { low: null, now: 210, before: null, usual: 225 },
+            oldAddress: '94.183.152.24',
+            tcp: { verdict: 'reachable', target: '45.12.8.77:5492' },
+            dns: null,
+          },
+          lastedMs: expect.any(Number),
+        },
+      });
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('«Восстановление» строками', () => {
+  const at = '2026-10-13T10:20:00.000Z';
+  const dns = (tone: 'ok' | 'warn', action: string) => ({
+    at,
+    by: 'auto' as const,
+    result: 'notify' as const,
+    step: 'dns' as const,
+    tone,
+    action,
+    link: { label: 'Открыть запись', to: '/integrations/dns', search: { record: 'cloudflare|zone|de1' } },
+  });
+  const moved = {
+    at,
+    by: 'auto' as const,
+    result: 'notify' as const,
+    step: 'address' as const,
+    tone: 'change' as const,
+    action: 'Адрес ноды изменён в Remnawave',
+    detail: '177.3.216.253 → 87.120.187.164',
+  };
+  it('онлайн при обнаружении → сейчас (до падения), прежний адрес; DNS вручную — ⚠️ и кнопка к записи', () => {
+    const timeline = [moved, dns('warn', 'DNS-запись de1.example.ru ведёт на старый адрес')];
+    const facts = recoveryFacts(
+      {
+        timeline,
+        diagnostics: { source: 'checkhost', report: {} as never, online: { before: 451, after: 61 } },
+      },
+      274,
+      470,
+      null,
+    );
+    expect(facts).toEqual({
+      online: { low: 61, now: 274, before: 451, usual: 470 },
+      oldAddress: '177.3.216.253',
+      tcp: null,
+      dns: { label: 'DNS-запись de1.example.ru', text: '⚠️ ведёт на старый адрес — замените вручную' },
+    });
+    expect(dnsManualLink(timeline)).toEqual({
+      to: '/integrations/dns?record=cloudflare%7Czone%7Cde1',
+      label: 'Открыть запись DNS',
+    });
+  });
+  it('DNS обновлена сама — без значка и без кнопки; последнее состояние записи важнее прежнего', () => {
+    const timeline = [
+      moved,
+      dns('warn', 'DNS-запись de1.example.ru ведёт на старый адрес'),
+      dns('ok', 'DNS-запись de1.example.ru обновлена автоматически'),
+    ];
+    expect(recoveryFacts({ timeline }, null, null, null).dns).toEqual({
+      label: 'DNS-запись de1.example.ru',
+      text: 'обновлена автоматически',
+    });
+    expect(dnsManualLink(timeline)).toBeNull();
   });
 });

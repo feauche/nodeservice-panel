@@ -6,6 +6,7 @@ import {
   type NodeTcpDiagnostics,
   type NotificationSeverity,
   parseTelegramUrl,
+  type TcpCheckReport,
   TELEGRAM_EVENT_LABELS,
   type TelegramEvent,
   type TelegramSettings,
@@ -22,7 +23,14 @@ import { incidents, telegramMessages, telegramOutbox } from '../../../infra/db/s
 import { SYSTEM_ACTOR } from '../../audit/audit.context.js';
 import { AuditService } from '../../audit/audit.service.js';
 import { describeTelegramError, TELEGRAM_CLIENT, type TelegramClient } from './telegram.client.js';
-import { esc, formatTelegramMessage, inQuietHours, localTime } from './telegram.format.js';
+import {
+  esc,
+  formatTelegramMessage,
+  inQuietHours,
+  localTime,
+  outageDuration,
+  type RecoveryFacts,
+} from './telegram.format.js';
 import {
   digestBlocks,
   isRichRejected,
@@ -55,6 +63,12 @@ export interface TelegramDispatch {
   rich?: RichBlock[] | null;
   /** Проверка портов у события: таблица в сообщении и отчёты Check-Host кнопками. */
   tcp?: NodeTcpDiagnostics | null;
+  /** Таблица портов под текстом сообщения сценария (вывод — в строке шага). */
+  ports?: TcpCheckReport | null;
+  /** «Восстановление» короткими строками: онлайн, смена адреса, порт, DNS-запись. */
+  recovery?: RecoveryFacts | null;
+  /** Сколько длился сбой — в подписи «Починилось за 16 мин · 16:26». */
+  lastedMs?: number | null;
   /**
    * Важность сбоя, о котором сообщение. Судим по ней, а не по типу события: первое сообщение о критичном
    * деле — его открытие, даже если оно пришло как «ждёт подтверждения» (панель сразу предложила шаг).
@@ -707,32 +721,32 @@ export class TelegramService {
       const glued = head !== null && head.rank >= rank;
       const silent =
         m.silent === true || nightResolved || glued || (s.delivery.silentWarnings && !LOUD.has(soundAs));
-      const text =
-        m.html ??
-        formatTelegramMessage({
-          event: m.event,
-          title: m.title,
-          body: m.body ?? null,
-          server: m.server ?? null,
-          // Время — по поясу панели, как и в тексте сообщения (срок оплаты): иначе в одном сообщении два пояса.
-          footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, zone)}`,
-          tcp: m.tcp ?? null,
-        });
+      // Время — по поясу панели, как и в тексте сообщения (срок оплаты): иначе в одном сообщении два пояса.
+      // «Починилось» с длительностью сбоя: «Починилось за 16 мин · 16:26».
+      const lasted =
+        m.event === 'resolved' && m.lastedMs != null
+          ? m.lastedMs < 60_000
+            ? ' меньше чем за минуту'
+            : ` за ${outageDuration(m.lastedMs)}`
+          : '';
+      const footer = `${TELEGRAM_EVENT_LABELS[m.event]}${lasted} · ${localTime(now, zone)}`;
+      const input = {
+        event: m.event,
+        title: m.title,
+        body: m.body ?? null,
+        server: m.server ?? null,
+        footer,
+        tcp: m.tcp ?? null,
+        timeZone: zone,
+        ports: m.ports ?? null,
+        recovery: m.recovery ?? null,
+      };
+      const text = m.html ?? formatTelegramMessage(input);
       // Специальное сообщение может передать готовую таблицу; для остальных блоки строятся из title/body.
       // Scenario results always use the approved rich presentation; the existing fallback still handles old Bot API servers.
       const rich =
         s.delivery.rich || m.event === 'scenario'
-          ? (m.rich ??
-            (!m.html
-              ? richMessageBlocks({
-                  event: m.event,
-                  title: m.title,
-                  body: m.body ?? null,
-                  server: m.server ?? null,
-                  footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, zone)}`,
-                  tcp: m.tcp ?? null,
-                })
-              : null))
+          ? (m.rich ?? (!m.html ? richMessageBlocks(input) : null))
           : null;
       const buttons = this.buttons(m.link, m.tcp ?? null);
       let anyFirst = false;

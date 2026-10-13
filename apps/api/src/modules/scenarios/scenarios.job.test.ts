@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renameHost, ScenariosJob } from './scenarios.job.js';
+import { renameHost, ScenariosJob, telegramStepLine } from './scenarios.job.js';
 
 const node = {
   uuid: '11111111-1111-4111-8111-111111111111',
@@ -754,6 +754,18 @@ describe('Сценарии: реальные правила владения Hos
       [3, 'notify'],
     ]);
     expect(run.steps[0]).toMatchObject({ tone: 'ok' });
+    // Сообщение в Telegram (витрина telegram-2026-10, сценарий A): условие, строка на шаг со значком итога,
+    // таблица портов — из той же проверки; строки «Нода: …» нет — нода под заголовком.
+    const sent = f.notify.push.mock.calls.at(-1)?.[0] as unknown as {
+      body: string;
+      telegram: { ports: unknown };
+    };
+    const lines = sent.body.split('\n');
+    expect(lines[0]).toMatch(/^Условие: /);
+    expect(lines.slice(1, 3)).toEqual(['', '✅ TCP: доступен']);
+    expect(lines[3]).toMatch(/^✅ Имя Host: «Host» → «Host.*⚠️»$/);
+    expect(lines).toHaveLength(4);
+    expect(sent.telegram.ports).toMatchObject({ verdict: 'reachable', target: '8.8.8.8:5492' });
 
     const g = fixture();
     g.tcp.checkNode.mockRejectedValue(new Error('Check-Host не ответил'));
@@ -820,5 +832,80 @@ describe('Сценарии: реальные правила владения Hos
     expect((f.data.get(`scenarios.state.scope.${rule.id}.${node.uuid}`) as { since: number }).since).toBe(
       start - 9 * 60000,
     );
+  });
+});
+
+describe('строка шага в сообщении Telegram', () => {
+  const report = (verdict: string) =>
+    ({ verdict, checkedAt: '', target: '8.8.8.8:5492', link: null, observations: [], error: null }) as never;
+  it('значок по итогу: сделано, замечание, не вышло; TCP — по выводу проверки', () => {
+    expect(
+      telegramStepLine(
+        { action: 'check_tcp', n: 1, tone: 'crit', word: 'частично недоступен из РФ', text: '' },
+        report('russia_partial'),
+      ),
+    ).toBe('🟠 TCP: частично недоступен из РФ');
+    expect(
+      telegramStepLine(
+        {
+          action: 'check_tcp',
+          n: 1,
+          tone: 'warn',
+          word: 'не проверили',
+          text: 'TCP не проверили: Check-Host не ответил',
+        },
+        null,
+      ),
+    ).toBe('🟠 TCP не проверили: Check-Host не ответил');
+    expect(
+      telegramStepLine(
+        {
+          action: 'rename_host',
+          n: 2,
+          tone: 'crit',
+          failed: true,
+          word: 'не вышло',
+          detail: 'у ключа Remnawave нет права «Изменение Host»',
+          text: 'у ключа Remnawave нет права «Изменение Host»',
+        },
+        null,
+      ),
+    ).toBe('❌ Имя Host не изменено: у ключа Remnawave нет права «Изменение Host»');
+    expect(
+      telegramStepLine(
+        {
+          action: 'rename_host',
+          n: 2,
+          tone: 'info',
+          word: 'не изменено',
+          text: 'Имя Host не изменено: метка уже есть в имени',
+        },
+        null,
+      ),
+    ).toBe('🟠 Имя Host не изменено: метка уже есть в имени');
+    expect(
+      telegramStepLine(
+        {
+          action: 'record_event',
+          n: 3,
+          tone: 'info',
+          word: 'события нет',
+          text: 'Открытого события у ноды нет — запись только в «Метриках»',
+        },
+        null,
+      ),
+    ).toBe('🟠 Открытого события у ноды нет — запись только в «Метриках»');
+    expect(
+      telegramStepLine(
+        { action: 'notify', n: 4, tone: 'info', word: 'отправлено', text: 'Уведомление в Telegram' },
+        null,
+      ),
+    ).toBeNull();
+    expect(
+      telegramStepLine(
+        { action: 'hide_host', n: 5, tone: 'info', skipped: true, word: 'не выполнялся', text: '' },
+        null,
+      ),
+    ).toBeNull();
   });
 });

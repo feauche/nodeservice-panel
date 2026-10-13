@@ -26,10 +26,12 @@ const base = z.object({
   observations: z.array(tcpObservationSchema),
   error: z.string().nullable(),
 });
-export const tcpCheckReportSchema = base.extend({
-  ports: z.array(base).optional(),
+const withPorts = base.extend({ ports: z.array(base).optional() });
+export const tcpCheckReportSchema = withPorts.extend({
   /** «Частично недоступен из РФ» повторился при проверке через минуту — это уже не сбой одной точки. */
   confirmed: z.boolean().optional(),
+  /** Первая проверка, которую подтвердил повтор: в сообщении видны обе — «РФ, 16:09» и «РФ, 16:10». */
+  first: withPorts.optional(),
 });
 export type TcpCheckReport = z.infer<typeof tcpCheckReportSchema>;
 export const nodeTcpDiagnosticsSchema = z.object({

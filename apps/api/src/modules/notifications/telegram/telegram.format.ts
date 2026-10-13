@@ -1,10 +1,9 @@
 import {
   isCheckHostReport,
   type NodeTcpDiagnostics,
-  TCP_VERDICT_EXPLANATIONS,
-  TCP_VERDICT_HEADLINES,
-  TCP_VERDICT_LABELS,
+  type TcpCheckReport,
   type TelegramEvent,
+  tcpPortOf,
   tcpRegions,
 } from '@nodeservice/shared';
 
@@ -42,35 +41,181 @@ export interface TelegramMessageInput {
    * (в расширенном оформлении — таблица), отчёты — кнопками и ссылками.
    */
   tcp?: NodeTcpDiagnostics | null;
+  /** Пояс панели: время проверок в таблице портов («РФ, 16:09») — как в подписи сообщения. */
+  timeZone?: string | null;
+  /** Таблица портов под текстом (сообщение сценария): вывод уже в строке шага «TCP: …». */
+  ports?: TcpCheckReport | null;
+  /** «Восстановление» — короткими строками вместо одной фразы (витрина telegram-2026-10, вариант A). */
+  recovery?: RecoveryFacts | null;
 }
 
-/** Сколько точек ответило — коротко для строки и ячейки: «3 из 3», «0 из 3», «нет данных». */
-export function tcpShort(rows: Array<{ state: string }>): string {
-  if (!rows.length) return 'нет данных';
+/** Что вернулось после сбоя — для сообщения «Восстановление». */
+export interface RecoveryFacts {
+  /** Онлайн при обнаружении сбоя, сейчас и до падения; нет падения онлайна — только «сейчас» и обычный. */
+  online?: { low: number | null; now: number; before: number | null; usual?: number | null } | null;
+  /** Адрес до смены — если адрес ноды меняли. */
+  oldAddress?: string | null;
+  /** Последняя проверка порта на нынешнем адресе. */
+  tcp?: TcpCheckReport | null;
+  /** DNS-запись ноды: подпись («DNS-запись nl1.example.ru») и что с ней; ⚠️ — нужна ручная замена. */
+  dns?: { label: string; text: string } | null;
+}
+
+/** Сколько точек подключилось: «1 из 3»; никто не подключился, а отказали не все (остальные молчат) — прочерк. */
+export function tcpCount(rows: Array<{ state: string }>): string {
   const ok = rows.filter((r) => r.state === 'ok').length,
     failed = rows.filter((r) => r.state === 'failed').length;
-  return ok || failed === rows.length ? `${ok} из ${rows.length}` : 'нет данных';
+  return rows.length && (ok || failed === rows.length) ? `${ok} из ${rows.length}` : '—';
 }
 /** «−100 %» — насколько упал онлайн. */
 export const onlineDrop = (o: { before: number; after: number }): string =>
   `−${Math.round(((o.before - o.after) / Math.max(o.before, 1)) * 100)} %`;
-/** Проверка портов обычным сообщением: онлайн, вывод с пояснением, строка на порт со ссылкой на отчёт. */
-function tcpHtml(t: NodeTcpDiagnostics): string[] {
+
+/** Вывод проверки портов в сообщении: значок, заголовок и пояснение (витрина telegram-2026-10, вариант C). */
+export function tcpVerdict(r: TcpCheckReport): { mark: string; head: string; text: string } {
+  switch (r.verdict) {
+    case 'reachable':
+      return {
+        mark: '🟢',
+        head: 'Порты доступны',
+        text: 'Подключились точки и в России, и в других странах — это не блокировка порта. Причину падения стоит искать на самой ноде.',
+      };
+    case 'russia_partial':
+      return {
+        mark: '🟠',
+        head: 'Частично недоступен из РФ',
+        text: r.confirmed
+          ? 'Из России подключилась только часть точек, из других стран — все; повтор через минуту — то же. Похоже на блокировку у части провайдеров.'
+          : 'Из России подключилась только часть точек, из других стран — все. Повторной проверки не было — вывод не подтверждён.',
+      };
+    case 'russia_unreachable':
+      return {
+        mark: '🔴',
+        head: 'Недоступен из РФ',
+        text: 'Ни одна точка в России не подключилась, из других стран — все. Вероятная блокировка.',
+      };
+    case 'port_unreachable':
+      return {
+        mark: '🔴',
+        head: 'Порты не отвечают',
+        text: 'Не подключилась ни одна точка — ни в России, ни в других странах: нода выключена, порт закрыт или его фильтруют.',
+      };
+    default:
+      return {
+        mark: '⚪',
+        head: 'Нет полного результата',
+        text: r.error
+          ? `Проверка не удалась: ${r.error}`
+          : 'Часть точек не ответила вовремя (в таблице — прочерк) — вывода о блокировке пока нет.',
+      };
+  }
+}
+
+type PortReport = Pick<TcpCheckReport, 'target' | 'observations' | 'ports'>;
+const portsOf = (r: PortReport) => (r.ports?.length ? r.ports : [r]);
+/**
+ * Таблица портов (вариант C): столбцы — порты, строки — откуда проверяли. Повтор подтвердил первую проверку —
+ * две строки РФ со временем обеих («РФ, 16:09», «РФ, 16:10»): видно, на чём основан вывод.
+ */
+export function tcpPortTable(
+  r: TcpCheckReport,
+  timeZone: string | null | undefined,
+): { ports: string[]; rows: string[][] } {
+  const list = portsOf(r);
+  const ports = list.map((p) => tcpPortOf(p.target));
+  const russia = (report: PortReport) => {
+    const byPort = new Map(portsOf(report).map((p) => [tcpPortOf(p.target), p]));
+    return ports.map((port) => {
+      const p = byPort.get(port);
+      return p ? tcpCount(tcpRegions(p).ru) : '—';
+    });
+  };
+  const other = list.map((p) => tcpCount(tcpRegions(p).other));
+  const at = (iso: string) => localTime(new Date(iso), timeZone ?? 'UTC');
+  return {
+    ports,
+    rows: r.first
+      ? [
+          [`РФ, ${at(r.first.checkedAt)}`, ...russia(r.first)],
+          [`РФ, ${at(r.checkedAt)}`, ...russia(r)],
+          ['Другие страны', ...other],
+        ]
+      : [
+          ['РФ', ...russia(r)],
+          ['Другие страны', ...other],
+        ],
+  };
+}
+/** Порты одной строкой обычного сообщения: «РФ 1 из 3, повтор 1 из 3 · другие 3 из 3»; прочерк — «нет ответа». */
+function portReach(r: TcpCheckReport, timeZone: string | null | undefined) {
+  const { ports, rows } = tcpPortTable(r, timeZone);
+  const said = (v: string | undefined) => (v === '—' || v === undefined ? 'нет ответа' : v);
+  return ports.map((port, i) => {
+    const russia = r.first
+      ? `РФ ${said(rows[0]?.[i + 1])}, повтор ${said(rows[1]?.[i + 1])}`
+      : `РФ ${said(rows[0]?.[i + 1])}`;
+    return { port, russia, other: said(rows.at(-1)?.[i + 1]) };
+  });
+}
+/** Проверка портов обычным сообщением: онлайн, вывод со значком, строка на порт со ссылкой на отчёт. */
+function tcpHtml(t: NodeTcpDiagnostics, timeZone: string | null | undefined): string[] {
   const r = t.report;
+  const v = tcpVerdict(r);
   const out: string[] = [];
   if (t.online)
     out.push(`<b>Онлайн:</b> ${t.online.before} → ${t.online.after} (${onlineDrop(t.online)})`, '');
-  out.push(`<b>${esc(TCP_VERDICT_HEADLINES[r.verdict])}</b>`, esc(TCP_VERDICT_EXPLANATIONS[r.verdict]), '');
-  out.push('<b>Порты · Check-Host:</b>');
-  for (const p of r.ports ?? [r]) {
-    const { ru, other } = tcpRegions(p);
-    const link = isCheckHostReport(p.link) ? ` · <a href="${esc(p.link)}">отчёт</a>` : '';
-    out.push(
-      `• <code>${esc(p.target)}</code> — ${TCP_VERDICT_LABELS[p.verdict].toLowerCase()}: РФ ${tcpShort(ru)}, другие страны ${tcpShort(other)}${link}`,
-    );
+  out.push(`<b>${v.mark} ${esc(v.head)}</b>`, esc(v.text), '');
+  const links = new Map((r.ports?.length ? r.ports : [r]).map((p) => [tcpPortOf(p.target), p.link]));
+  for (const p of portReach(r, timeZone)) {
+    const href = links.get(p.port);
+    const link = isCheckHostReport(href) ? ` · <a href="${esc(href)}">отчёт</a>` : '';
+    out.push(`• <b>Порт <code>${esc(p.port)}</code></b> — ${p.russia} · другие ${p.other}${link}`);
   }
   return out;
 }
+/** Порты под текстом сценария одной строкой: «5492 — РФ 1 из 3 · 2226 — РФ 2 из 3 · другие страны 3 из 3». */
+export function portsLine(r: TcpCheckReport, timeZone: string | null | undefined): string {
+  const list = portReach(r, timeZone);
+  const sameOther = list.every((p) => p.other === list[0]?.other);
+  return sameOther
+    ? `${list.map((p) => `${p.port} — ${p.russia}`).join(' · ')} · другие страны ${list[0]?.other ?? 'нет ответа'}`
+    : list.map((p) => `${p.port} — ${p.russia}, другие ${p.other}`).join(' · ');
+}
+
+/** Часть строки «Восстановления»: текст или адрес моноширинным. */
+export type RecoveryPart = string | { code: string };
+/** Строки «Восстановления»: подпись и значение — онлайн, смена адреса, порт, DNS-запись. */
+export function recoveryLines(f: RecoveryFacts): Array<{ label: string; parts: RecoveryPart[] }> {
+  const out: Array<{ label: string; parts: RecoveryPart[] }> = [];
+  const o = f.online;
+  if (o)
+    out.push({
+      label: 'Онлайн',
+      parts: [
+        o.low !== null && o.before !== null
+          ? `${o.low} → ${o.now} (до падения ${o.before})`
+          : `${o.now}${o.usual ? ` (обычно около ${o.usual})` : ''}`,
+      ],
+    });
+  if (f.oldAddress) out.push({ label: 'Адрес сменили', parts: ['был ', { code: f.oldAddress }] });
+  if (f.tcp) {
+    const list = portReach(f.tcp, null).map((p) => ({ ...p, text: `${p.russia} · другие ${p.other}` }));
+    const same = list.every((p) => p.text === list[0]?.text);
+    if (same && list.length)
+      out.push({
+        label: list.length === 1 ? `Порт ${list[0]?.port}` : `Порты ${list.map((p) => p.port).join(', ')}`,
+        parts: [list[0]?.text ?? ''],
+      });
+    else for (const p of list) out.push({ label: `Порт ${p.port}`, parts: [p.text] });
+  }
+  if (f.dns) out.push({ label: f.dns.label, parts: [f.dns.text] });
+  return out;
+}
+const recoveryHtml = (f: RecoveryFacts) =>
+  recoveryLines(f).map(
+    (l) =>
+      `<b>${esc(l.label)}:</b> ${l.parts.map((x) => (typeof x === 'string' ? esc(x) : `<code>${esc(x.code)}</code>`)).join('')}`,
+  );
 
 /** Строка — подпись целиком: кончается двоеточием, не пункт списка и не ссылка. */
 export const LABEL_LINE = /^(?!•)(?!.*https?:\/\/)[^\n]{2,120}:$/;
@@ -100,8 +245,11 @@ export function formatTelegramMessage(m: TelegramMessageInput): string {
   if (m.server)
     parts.push(`<b>${esc(m.server.name)}</b>${m.server.host ? ` · <code>${esc(m.server.host)}</code>` : ''}`);
   const body = m.body?.trim();
-  if (m.tcp) parts.push('', ...tcpHtml(m.tcp));
+  const recovery = m.recovery ? recoveryHtml(m.recovery) : [];
+  if (m.tcp) parts.push('', ...tcpHtml(m.tcp, m.timeZone));
+  else if (recovery.length) parts.push('', ...recovery);
   else if (body) parts.push('', body.split('\n').map(formatLine).join('\n'));
+  if (m.ports && !m.tcp) parts.push('', `<b>Порты:</b> ${esc(portsLine(m.ports, m.timeZone))}`);
   if (m.footer) parts.push('', `<i>${esc(m.footer)}</i>`);
   const text = parts.join('\n');
   return text.length > 4000 ? `${text.slice(0, 3990)}…` : text;

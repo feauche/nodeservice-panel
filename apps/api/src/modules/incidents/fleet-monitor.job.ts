@@ -17,6 +17,7 @@ import { appMeta } from '../../infra/db/schema/index.js';
 import { PanelPulse } from '../health/panel-pulse.js';
 import { NodeMetricsService } from '../node-metrics/node-metrics.controller.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import type { RecoveryFacts } from '../notifications/telegram/telegram.format.js';
 import { NodePreferencesStore } from '../remnawave/node-preferences.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
@@ -295,8 +296,14 @@ export class FleetMonitorJob {
                   Date.parse(probe.report.checkedAt) > Date.now() - cfg.checkHostCooldownMinutes * 60000)
               ) {
                 const online = node.usersOnline;
+                const fresh = probe?.address === node.address ? (probe.report ?? null) : null;
                 for (const kind of TCP_KINDS)
-                  await this.resolve(node, kind, (row) => closeSummary(row.timeline, online, goal.usual));
+                  await this.resolve(
+                    node,
+                    kind,
+                    (row) => closeSummary(row.timeline, online, goal.usual),
+                    (row) => recoveryFacts(row, online, goal.usual, fresh),
+                  );
                 st.baseline = null;
                 st.returningNoted = false;
               } else if (!this.verifying.has(node.uuid))
@@ -588,16 +595,21 @@ export class FleetMonitorJob {
     node: RemnawaveNode,
     kind: IncidentKind,
     detail: (row: { timeline: IncidentEvent[] }) => string,
+    facts?: (row: RecoverySource) => RecoveryFacts,
   ) {
     const row = (await this.repo.list('open')).find((r) => r.nodeUuid === node.uuid && r.kind === kind);
     if (!row) return;
     const text = detail(row);
     await this.repo.appendTimeline(row.id, entry(text, { step: 'close', tone: 'ok' }, 'resolved'));
     await this.repo.update(row.id, { status: 'resolved', resolvedAt: new Date(), resolvedBy: 'auto' });
+    const recovery = facts?.(row) ?? null;
+    // DNS-запись ждёт ручной замены — кнопка прямо к ней (окно записи в «DNS интеграциях» откроется само).
+    const dnsLink = recovery ? dnsManualLink(row.timeline) : null;
     await this.notifications.push({
       severity: 'ok',
       title: `Восстановление · ${node.name}`,
       body: text,
+      link: dnsLink,
       telegram: {
         event: 'resolved',
         incidentId: row.id,
@@ -605,6 +617,8 @@ export class FleetMonitorJob {
         serverKey: `node:${node.uuid}`,
         server: { name: node.name, host: node.address },
         closed: { recovered: true },
+        recovery,
+        lastedMs: Math.max(0, Date.now() - new Date(row.openedAt).getTime()),
       },
     });
   }
@@ -684,7 +698,12 @@ export class FleetMonitorJob {
           // Падения онлайна нет — событие о порте закрывает сам порт; есть — закроет вернувшийся онлайн.
           if (!history?.baseline)
             for (const kind of TCP_KINDS)
-              await this.resolve(node, kind, (row) => closeSummary(row.timeline, null, null));
+              await this.resolve(
+                node,
+                kind,
+                (row) => closeSummary(row.timeline, null, null),
+                (row) => recoveryFacts(row, null, null, report),
+              );
         }
         if (++count >= 2) break;
       }
@@ -708,4 +727,53 @@ export function closeSummary(timeline: IncidentEvent[], online: number | null, u
     online !== null && `онлайн ${online}${usual !== null ? ` (обычно около ${usual})` : ''}`,
   ].filter(Boolean);
   return `Нода снова работает: ${facts.join(', ')}.`;
+}
+
+/** Что из события нужно для «Восстановления»: хронология и онлайн при обнаружении. */
+type RecoverySource = { timeline: IncidentEvent[]; diagnostics?: NodeTcpDiagnostics | null };
+/**
+ * Строки «Восстановления» из события (витрина telegram-2026-10, вариант A): онлайн при обнаружении → сейчас (до
+ * падения), прежний адрес, если его меняли, свежая проверка порта на нынешнем адресе, последнее о DNS-записи.
+ */
+export function recoveryFacts(
+  row: RecoverySource,
+  online: number | null,
+  usual: number | null,
+  report: TcpReport | null,
+): RecoveryFacts {
+  const drop = row.diagnostics?.online ?? null;
+  const moved =
+    row.timeline
+      .find((e) => e.step === 'address')
+      ?.detail?.split(' → ')[0]
+      ?.trim() || null;
+  const parsed = report?.verdict === 'reachable' ? tcpCheckReportSchema.safeParse(report) : null;
+  return {
+    online:
+      online === null ? null : { low: drop?.after ?? null, now: online, before: drop?.before ?? null, usual },
+    oldAddress: moved,
+    tcp: parsed?.success ? parsed.data : null,
+    dns: dnsFact(row.timeline),
+  };
+}
+/** Последнее о DNS-записи ноды: «DNS-запись nl1.example.ru» — «обновлена автоматически» или ⚠️ что не так. */
+function dnsFact(timeline: IncidentEvent[]): NonNullable<RecoveryFacts['dns']> | null {
+  const last = timeline.filter((e) => e.step === 'dns' && e.tone !== 'info').at(-1);
+  if (!last) return null;
+  const m = /^DNS-запись (\S+) (.+)$/.exec(last.action);
+  const label = m ? `DNS-запись ${m[1]}` : 'DNS-запись';
+  const what = m?.[2] ?? `${last.action.charAt(0).toLowerCase()}${last.action.slice(1)}`;
+  if (last.tone === 'ok') return { label, text: what };
+  return { label, text: `⚠️ ${what}${/старый адрес/.test(what) ? ' — замените вручную' : ''}` };
+}
+/** Кнопка к DNS-записи, которую нужно заменить вручную: последний DNS-шаг события не «готово». */
+export function dnsManualLink(timeline: IncidentEvent[]): { to: string; label: string } | null {
+  const last = timeline.filter((e) => e.step === 'dns' && e.tone !== 'info').at(-1);
+  const link = last && last.tone !== 'ok' ? last.link : null;
+  if (!link?.to) return null;
+  const record = link.search?.record;
+  return {
+    to: `${link.to}${record ? `?record=${encodeURIComponent(record)}` : ''}`,
+    label: 'Открыть запись DNS',
+  };
 }

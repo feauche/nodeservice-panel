@@ -319,15 +319,41 @@ describe('telegram e2e', () => {
     });
     const service = app.get(TelegramService),
       before = tg.rich().length;
+    const point = (country: string, state: 'ok' | 'failed') => ({
+      node: country,
+      country,
+      city: '',
+      state,
+      error: null,
+    });
     await service.dispatch({
       event: 'scenario',
       title: 'Сценарий: Резерв',
-      body: 'Нода: Германия\nУсловие: Нода потеряла связь И TCP недоступен\nРезультат: TCP недоступен; скрыто Host: 1',
+      body: 'Условие: Нода потеряла связь И TCP недоступен\n\n🔴 TCP: не отвечает\n✅ Скрыт Host: «Германия»',
       link: { to: '/scenarios', label: 'Открыть сценарии' },
+      ports: {
+        verdict: 'port_unreachable',
+        checkedAt: new Date().toISOString(),
+        target: '198.51.100.9:5492',
+        link: null,
+        observations: [
+          point('ru', 'failed'),
+          point('ru', 'failed'),
+          point('de', 'failed'),
+          point('fi', 'failed'),
+        ],
+        error: null,
+      },
     });
     expect(tg.rich().length).toBe(before + 1);
-    expect(JSON.stringify(tg.rich().at(-1)?.body)).toContain('Сценарий: Резерв');
-    expect(JSON.stringify(tg.rich().at(-1)?.body)).toContain('Сценарий ·');
+    const body = JSON.stringify(tg.rich().at(-1)?.body);
+    expect(body).toContain('Сценарий: Резерв');
+    expect(body).toContain('Сценарий ·');
+    // Строка на шаг и под ними таблица портов: «Откуда» / порт / «РФ» / «Другие страны» (витрина telegram-2026-10).
+    expect(body).toContain('🔴 TCP:');
+    expect(body).toContain('"Откуда"');
+    expect(body).toContain('"0 из 2"');
+    expect(body).not.toContain('Нода:');
     // Шаг «Уведомить в Telegram» в сценарии — уже согласие: старый переключатель ни на что не влияет.
     await put({ events: { incident_warn: true, scenario: false } });
     expect(await service.outlook('scenario')).toBe('send');
@@ -489,6 +515,11 @@ describe('telegram e2e', () => {
     return JSON.parse(r.rows[0]?.value ?? '[]') as Array<{ event: string; title: string }>;
   };
   /** Записи Журнала про Telegram, сделанные с указанного момента (в базе остаются записи прошлых прогонов). */
+  /**
+   * Начало отсчёта для Журнала: часы базы в Docker отстают от часов машины на несколько миллисекунд, и запись,
+   * сделанная сразу после «сейчас», оказалась бы раньше него — тест то находил её, то нет.
+   */
+  const journalSince = () => new Date(Date.now() - 250);
   const journal = async (action: string, since: Date) => {
     const res = await agent
       .get(`/api/audit?category=settings&pageSize=100&from=${encodeURIComponent(since.toISOString())}`)
@@ -680,7 +711,7 @@ describe('telegram e2e', () => {
     const goodId = await fresh();
     const db = app.get<Db>(DB);
     const tgs = app.get(TelegramService);
-    const since = new Date();
+    const since = journalSince();
     const chats = telegramSettingsSchema.parse(
       (
         await put({
@@ -1058,7 +1089,7 @@ describe('telegram e2e', () => {
   it('группа стала супергруппой: номер чата обновляется сам, сообщение доходит со второй попытки', async () => {
     await fresh();
     const tgs = app.get(TelegramService);
-    const since = new Date();
+    const since = journalSince();
     const moved = telegramSettingsSchema.parse(
       (await put({ destinations: [{ url: `tgram://${TOKEN}/${OLD_GROUP}` }] })).body,
     );

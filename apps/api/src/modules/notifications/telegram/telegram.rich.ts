@@ -1,12 +1,13 @@
+import type { NodeTcpDiagnostics, TcpCheckReport } from '@nodeservice/shared';
+import type { RecoveryFacts, TelegramMessageInput } from './telegram.format.js';
 import {
-  type NodeTcpDiagnostics,
-  TCP_VERDICT_EXPLANATIONS,
-  TCP_VERDICT_HEADLINES,
-  TCP_VERDICT_LABELS,
-  tcpRegions,
-} from '@nodeservice/shared';
-import type { TelegramMessageInput } from './telegram.format.js';
-import { LABEL_LINE, onlineDrop, TELEGRAM_EVENT_ICON, tcpShort } from './telegram.format.js';
+  LABEL_LINE,
+  onlineDrop,
+  recoveryLines,
+  TELEGRAM_EVENT_ICON,
+  tcpPortTable,
+  tcpVerdict,
+} from './telegram.format.js';
 
 /**
  * Расширенное оформление сообщений Telegram (Bot API 10.1+, метод sendRichMessage): заголовки и настоящие
@@ -121,11 +122,31 @@ export function bodyBlocks(body: string): RichBlock[] {
 }
 
 /**
- * Проверка портов блоками: онлайн, вывод с пояснением и таблица «Порт / РФ / Другие страны / Итог»; разделы
- * отделены пустой строкой. Отчёты Check-Host — кнопками под сообщением (в блоках ссылки не нажимаются).
+ * Таблица портов (витрина telegram-2026-10, вариант C): столбцы — порты без адреса (он под заголовком), строки —
+ * «РФ» и «Другие страны»; повтор подтвердил первую проверку — две строки РФ со временем обеих. Ячейки короткие:
+ * на телефоне не переносятся.
  */
-export function tcpBlocks(t: NodeTcpDiagnostics): RichBlock[] {
+export function portTableBlock(r: TcpCheckReport, timeZone: string | null | undefined): RichBlock {
+  const { ports, rows } = tcpPortTable(r, timeZone);
+  return {
+    type: 'table',
+    is_bordered: true,
+    is_striped: true,
+    is_compact: true,
+    cells: [
+      [cell('Откуда', true), ...ports.map((p) => cell({ type: 'code', text: p }, true))],
+      ...rows.map((row) => row.map((v) => cell(v))),
+    ],
+  };
+}
+
+/**
+ * Проверка портов блоками: онлайн, вывод со значком и пояснением, таблица портов; разделы отделены пустой
+ * строкой. Отчёты Check-Host — кнопками под сообщением (в блоках ссылки не нажимаются).
+ */
+export function tcpBlocks(t: NodeTcpDiagnostics, timeZone?: string | null): RichBlock[] {
   const r = t.report;
+  const v = tcpVerdict(r);
   const out: RichBlock[] = [];
   if (t.online)
     out.push(
@@ -136,29 +157,24 @@ export function tcpBlocks(t: NodeTcpDiagnostics): RichBlock[] {
       spacer(),
     );
   out.push(
-    { type: 'paragraph', text: bold(TCP_VERDICT_HEADLINES[r.verdict]) },
-    { type: 'paragraph', text: TCP_VERDICT_EXPLANATIONS[r.verdict] },
+    { type: 'paragraph', text: bold(`${v.mark} ${v.head}`) },
+    { type: 'paragraph', text: v.text },
     spacer(),
-    {
-      type: 'table',
-      is_bordered: true,
-      is_striped: true,
-      is_compact: true,
-      cells: [
-        [cell('Порт', true), cell('РФ', true), cell('Другие страны', true), cell('Итог', true)],
-        ...(r.ports ?? [r]).map((p) => {
-          const { ru, other } = tcpRegions(p);
-          return [
-            cell({ type: 'code', text: p.target }),
-            cell(tcpShort(ru)),
-            cell(tcpShort(other)),
-            cell(TCP_VERDICT_LABELS[p.verdict]),
-          ];
-        }),
-      ],
-    },
+    portTableBlock(r, timeZone),
   );
   return out;
+}
+
+/** «Восстановление» блоками: строка на факт с жирной подписью — онлайн, адрес, порт, DNS-запись. */
+function recoveryBlocks(f: RecoveryFacts): RichBlock[] {
+  return recoveryLines(f).map((l) => ({
+    type: 'paragraph',
+    text: [
+      bold(`${l.label}:`),
+      ' ',
+      ...l.parts.map((x): RichText => (typeof x === 'string' ? x : { type: 'code', text: x.code })),
+    ],
+  }));
 }
 
 /**
@@ -179,9 +195,13 @@ export function richMessageBlocks(m: TelegramMessageInput): RichBlock[] {
         : bold(m.server.name),
     });
   const body = m.body?.trim();
+  const recovery = m.recovery ? recoveryBlocks(m.recovery) : [];
   if (m.tcp) {
     if (m.server) blocks.push(spacer());
-    blocks.push(...tcpBlocks(m.tcp));
+    blocks.push(...tcpBlocks(m.tcp, m.timeZone));
+  } else if (recovery.length) {
+    if (m.server) blocks.push(spacer());
+    blocks.push(...recovery);
   } else if (body) {
     if (m.server) blocks.push(spacer());
     const clipped = body.length > TEXT_MAX ? `${body.slice(0, TEXT_MAX)}…` : body;
@@ -189,8 +209,10 @@ export function richMessageBlocks(m: TelegramMessageInput): RichBlock[] {
     blocks.push(...parsed.slice(0, BLOCKS_MAX));
     if (parsed.length > BLOCKS_MAX) blocks.push({ type: 'paragraph', text: '…остальное — в панели.' });
   }
+  // Сообщение сценария: та же таблица портов, что в сообщении о сбое, — под строками шагов.
+  if (m.ports && !m.tcp) blocks.push(spacer(), portTableBlock(m.ports, m.timeZone));
   if (m.footer) {
-    if ((body || m.tcp) && !isSpacer(blocks.at(-1))) blocks.push(spacer());
+    if ((body || m.tcp || recovery.length) && !isSpacer(blocks.at(-1))) blocks.push(spacer());
     blocks.push({ type: 'footer', text: m.footer });
   }
   return blocks;

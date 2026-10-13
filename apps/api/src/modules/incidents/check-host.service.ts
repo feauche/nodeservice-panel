@@ -23,6 +23,8 @@ export type TcpReport = {
   ports?: TcpReport[];
   /** «Частично недоступен из РФ» повторился при проверке через минуту. */
   confirmed?: boolean;
+  /** Первая проверка, которую подтвердил повтор. */
+  first?: Omit<TcpReport, 'confirmed' | 'first'>;
 };
 export function publicIp(value: string): boolean {
   if (!isIP(value)) return false;
@@ -107,7 +109,7 @@ export class CheckHostService {
     if (!confirm || first.verdict !== 'russia_partial') return first;
     await new Promise((resolve) => setTimeout(resolve, CheckHostService.confirmDelayMs));
     const again = await this.probeNode(ip, primaryPort, nodePort);
-    return again.verdict === 'russia_partial' ? { ...again, confirmed: true } : again;
+    return again.verdict === 'russia_partial' ? { ...again, confirmed: true, first } : again;
   }
   private async probeNode(ip: string, primaryPort: number, nodePort?: number | null): Promise<TcpReport> {
     const primary = await this.check(ip, primaryPort);

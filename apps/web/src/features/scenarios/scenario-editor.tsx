@@ -357,14 +357,10 @@ export function ScenarioEditor({
           { tone: 'ok' as const, text: 'Сообщение придёт в Telegram; в тихие часы — в утренней сводке.' };
   // Пример итога для ноды-образца — теми же словами, что пишет сервер: TCP, событие, Host (один раз на запуск).
   const sampleHosts = sample ? targets.filter((h) => h.nodes.includes(sample.uuid)) : [];
-  const hostResult = !hosts.data
-    ? '…'
-    : `${sampleHosts.filter((h) => h.nodes.length === 1).length}${
-        sampleHosts.some((h) => h.nodes.length > 1)
-          ? `; общих Host пропущено: ${sampleHosts.filter((h) => h.nodes.length > 1).length}`
-          : ''
-      }`;
-  const result = enabledOrder
+  // Строка на шаг со значком итога, как в сообщении сервера (витрина telegram-2026-10, сценарий A).
+  const ownHost = sampleHosts.find((h) => h.nodes.length === 1);
+  const rename = draft.actions.includes('rename_host');
+  const lines = enabledOrder
     .filter(
       (a, i) =>
         !(a === 'rename_host' || a === 'hide_host') ||
@@ -372,12 +368,18 @@ export function ScenarioEditor({
     )
     .map((a) =>
       a === 'check_tcp'
-        ? 'TCP недоступен'
+        ? '🔴 TCP: недоступен из РФ'
         : a === 'record_event'
-          ? `Записано в событие «${conditions.includes('offline') ? 'Нода не на связи' : '…'}»`
-          : `${draft.actions.includes('rename_host') ? 'Изменено' : 'Скрыто'} Host: ${hostResult}`,
-    )
-    .join('; ');
+          ? `✅ Записано в событие «${conditions.includes('offline') ? 'Нода не на связи' : '…'}»`
+          : !hosts.data
+            ? '… Host'
+            : !ownHost
+              ? `🟠 ${rename ? 'Имя Host не изменено' : 'Host не скрыт'}: у ноды нет своих Host`
+              : rename
+                ? `✅ Имя Host: «${ownHost.name}» → «${formatScenarioHostName(ownHost.name, draft.renameMode, draft.renameText.trim() || '…')}»`
+                : `✅ Скрыт Host: «${ownHost.name}»`,
+    );
+  const tableCell = 'border border-[#2b3a4c] px-2 py-1';
   const kicker = 'text-[11px] font-semibold tracking-[0.1em] text-text-3 uppercase';
 
   return (
@@ -922,19 +924,36 @@ export function ScenarioEditor({
                   )}
                   <br />
                   <br />
-                  <b>Нода:</b> {sample?.name ?? '—'}
-                  <br />
                   <b>Условие:</b> {scenarioConditionLabel(draft)}
-                  {result && (
-                    <>
-                      <br />
-                      <b>Результат:</b> {result}
-                    </>
+                  {/* Пустая строка между условием и шагами — как в сообщении. */}
+                  {lines.length > 0 && <span className="block h-3" aria-hidden="true" />}
+                  {lines.map((line) => (
+                    <span key={line} className="block">
+                      {line}
+                    </span>
+                  ))}
+                  {draft.actions.includes('check_tcp') && (
+                    <table className="mt-2 border-collapse text-[11.5px]">
+                      <tbody>
+                        <tr className="bg-[#22303f]">
+                          <th className={cn(tableCell, 'text-left font-medium')}>Откуда</th>
+                          <th className={cn(tableCell, 'text-left font-mono font-medium')}>5492</th>
+                        </tr>
+                        <tr>
+                          <td className={tableCell}>РФ</td>
+                          <td className={tableCell}>0 из 3</td>
+                        </tr>
+                        <tr>
+                          <td className={tableCell}>Другие страны</td>
+                          <td className={tableCell}>3 из 3</td>
+                        </tr>
+                      </tbody>
+                    </table>
                   )}
                 </div>
                 <p className="mt-1.5 text-[11.5px] leading-snug text-text-3">
-                  Пример{sample ? ` для ноды ${sample.name}` : ''}, если TCP недоступен. В расширенном
-                  оформлении — те же строки, заголовок крупнее.
+                  Пример{sample ? ` для ноды ${sample.name}` : ''}, если TCP недоступен из РФ: строка на шаг
+                  со значком итога (✅ сделано, 🟠 замечание, ❌ не вышло), под ними — таблица портов.
                 </p>
               </div>
             )}
