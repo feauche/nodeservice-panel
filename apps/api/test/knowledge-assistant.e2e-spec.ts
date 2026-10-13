@@ -38,6 +38,7 @@ import {
   type LlmRunInput,
 } from '../src/modules/assistant/llm.provider.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
+import { listenLocal } from './listen-local.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: DATABASE_URL должен указывать на nodeservice_test');
@@ -323,7 +324,7 @@ describe('knowledge + assistant e2e', () => {
     );
     await db.execute(sql`delete from app_meta where key like 'settings.%' or key = 'panel.ssh-key'`);
     await app.get<Redis>(VALKEY).flushdb();
-    await app.init();
+    await listenLocal(app);
     agent = request.agent(app.getHttpServer());
     csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token as string;
     const setupToken = await app.get(SetupService).issueToken();

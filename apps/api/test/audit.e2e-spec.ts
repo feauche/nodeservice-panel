@@ -20,6 +20,7 @@ import { AuditRepository } from '../src/modules/audit/audit.repository.js';
 import { AuditService } from '../src/modules/audit/audit.service.js';
 import { AuditPartitionsService } from '../src/modules/audit/audit-partitions.service.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
+import { listenLocal } from './listen-local.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: DATABASE_URL должен указывать на nodeservice_test');
@@ -47,7 +48,7 @@ describe('audit e2e', () => {
     // Журнал append-only: чистим только пересозданием разделов текущего теста.
     for (const p of await listPartitionNames(db)) await db.execute(sql.raw(`DROP TABLE "${p}"`));
     await app.get<Redis>(VALKEY).flushdb();
-    await app.init();
+    await listenLocal(app);
     agent = request.agent(app.getHttpServer());
     csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token as string;
 

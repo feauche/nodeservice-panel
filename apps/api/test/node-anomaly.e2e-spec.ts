@@ -26,6 +26,7 @@ import { RemnawaveService } from '../src/modules/remnawave/remnawave.service.js'
 import { ScenariosJob } from '../src/modules/scenarios/scenarios.job.js';
 import { ScenariosStore } from '../src/modules/scenarios/scenarios.store.js';
 import { MonitoringStore } from '../src/modules/settings/monitoring.store.js';
+import { listenLocal } from './listen-local.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: нужна отдельная nodeservice_test');
@@ -98,7 +99,7 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
     await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens, incidents cascade`);
     await db.execute(sql`delete from app_meta where key like 'settings.%' or key like 'monitor.%'`);
     await app.get<Redis>(VALKEY).flushdb();
-    await app.init();
+    await listenLocal(app);
     job = app.get(FleetMonitorJob);
     settings = app.get(MonitoringStore);
     agent = request.agent(app.getHttpServer());

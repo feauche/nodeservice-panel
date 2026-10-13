@@ -30,6 +30,7 @@ import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications
 import { TelegramService } from '../src/modules/notifications/telegram/telegram.service.js';
 import { TelegramSettingsStore } from '../src/modules/notifications/telegram/telegram-settings.store.js';
 import { SettingsService } from '../src/modules/settings/settings.service.js';
+import { listenLocal } from './listen-local.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: DATABASE_URL должен указывать на nodeservice_test');
@@ -142,7 +143,7 @@ describe('telegram e2e', () => {
       sql`delete from app_meta where key like 'settings.%' or key like 'telegram.%' or key = 'panel.ssh-key'`,
     );
     await app.get<Redis>(VALKEY).flushdb();
-    await app.init();
+    await listenLocal(app);
     agent = request.agent(app.getHttpServer());
     csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token as string;
     const setupToken = await app.get(SetupService).issueToken();

@@ -27,6 +27,7 @@ import { SessionStore } from '../src/modules/auth/session.store.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
 import { UsersRepository } from '../src/modules/auth/users.repository.js';
 import { PwnedPasswordsService } from '../src/modules/security/pwned-passwords.service.js';
+import { listenLocal } from './listen-local.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: DATABASE_URL должен указывать на nodeservice_test');
@@ -89,7 +90,7 @@ describe('security e2e', () => {
     await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens cascade`);
     await db.execute(sql`delete from app_meta where key = 'settings.security'`);
     await app.get<Redis>(VALKEY).flushdb();
-    await app.init();
+    await listenLocal(app);
 
     ({ agent: main, csrf } = await newAgent());
     const setupToken = await app.get(SetupService).issueToken();

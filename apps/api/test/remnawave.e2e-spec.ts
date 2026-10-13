@@ -30,6 +30,7 @@ import {
   RemnawaveApiError,
   type RemnawaveClient,
 } from '../src/modules/remnawave/remnawave-client.js';
+import { listenLocal } from './listen-local.js';
 
 const LOGIN = 'admin';
 const PASSWORD = 'correct horse battery staple';
@@ -124,7 +125,7 @@ describe('Remnawave e2e (J4)', () => {
     await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens cascade`);
     await db.execute(sql`delete from app_meta where key like 'settings.%'`);
     await app.get<Redis>(VALKEY).flushdb();
-    await app.init();
+    await listenLocal(app);
     agent = request.agent(app.getHttpServer());
     csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token as string;
     const setupToken = await app.get(SetupService).issueToken();

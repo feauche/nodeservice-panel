@@ -19,6 +19,7 @@ import { NOT_READY_PROBLEM } from '../src/modules/health/health.controller.js';
 import { PanelAlertsService } from '../src/modules/health/panel-alerts.service.js';
 import { PanelPulse } from '../src/modules/health/panel-pulse.js';
 import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications/telegram/telegram.client.js';
+import { listenLocal } from './listen-local.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: DATABASE_URL должен указывать на nodeservice_test');
@@ -59,7 +60,7 @@ describe('панель следит за собой e2e', () => {
       sql`delete from app_meta where key like 'settings.%' or key like 'telegram.%' or key in ('panel.ssh-key', 'panel.alerts', 'watchdog')`,
     );
     await app.get<Redis>(VALKEY).flushdb();
-    await app.init();
+    await listenLocal(app);
     agent = request.agent(app.getHttpServer());
     csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token as string;
     const setupToken = await app.get(SetupService).issueToken();

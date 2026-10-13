@@ -15,6 +15,7 @@ import { runMigrations } from '../src/infra/db/migrate.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
 import { ThrottleService } from '../src/modules/auth/throttle.service.js';
+import { listenLocal } from './listen-local.js';
 
 // Окружение (DATABASE_URL=nodeservice_test, VALKEY_URL db 14, LOG_LEVEL=silent) задаёт vitest.config.e2e.ts;
 // БД создаёт test/global-setup.ts. Здесь только страховка от запуска против dev-БД.
@@ -48,7 +49,7 @@ describe('auth e2e', () => {
     await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens cascade`);
     await app.get<Redis>(VALKEY).flushdb();
 
-    await app.init();
+    await listenLocal(app);
     agent = request.agent(app.getHttpServer());
     setupToken = await app.get(SetupService).issueToken();
   });

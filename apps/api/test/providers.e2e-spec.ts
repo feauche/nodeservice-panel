@@ -23,6 +23,7 @@ import {
   isPrivateHost,
   sanitizeSvg,
 } from '../src/modules/providers/icon-fetch.service.js';
+import { listenLocal } from './listen-local.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: DATABASE_URL должен указывать на nodeservice_test');
@@ -128,7 +129,7 @@ describe('providers e2e', () => {
     await runMigrations(db);
     await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens, providers cascade`);
     await app.get<Redis>(VALKEY).flushdb();
-    await app.init();
+    await listenLocal(app);
     agent = request.agent(app.getHttpServer());
     csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token as string;
     const setupToken = await app.get(SetupService).issueToken();

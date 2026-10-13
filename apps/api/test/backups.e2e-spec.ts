@@ -55,6 +55,7 @@ import { BackupsService } from '../src/modules/backups/backups.service.js';
 import { internalSignature } from '../src/modules/backups/backups-internal.controller.js';
 import { PANEL_LIFE_KEY, PanelLifecycleService } from '../src/modules/health/panel-lifecycle.service.js';
 import { TELEGRAM_CLIENT, type TelegramCall } from '../src/modules/notifications/telegram/telegram.client.js';
+import { listenLocal } from './listen-local.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: DATABASE_URL должен указывать на nodeservice_test');
@@ -165,7 +166,7 @@ describe('резервные копии e2e', () => {
       sql`delete from app_meta where key like 'settings.%' or key like 'telegram.%' or key like 'backups.%'`,
     );
     await app.get<Redis>(VALKEY).flushdb();
-    await app.init();
+    await listenLocal(app);
     agent = request.agent(app.getHttpServer());
     csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token as string;
     const setupToken = await app.get(SetupService).issueToken();

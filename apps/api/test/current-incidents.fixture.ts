@@ -15,6 +15,7 @@ import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { LLM_PROVIDER } from '../src/modules/assistant/llm.provider.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
 import { IncidentsRepository } from '../src/modules/incidents/incidents.repository.js';
+import { listenLocal } from './listen-local.js';
 
 export async function currentIncidentApp() {
   if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test')) throw new Error('Только nodeservice_test');
@@ -30,7 +31,7 @@ export async function currentIncidentApp() {
   await db.execute(sql`truncate users, recovery_codes, trusted_devices, setup_tokens, incidents cascade`);
   await db.execute(sql`delete from app_meta where key like 'settings.%' or key like 'monitor.%'`);
   await app.get<Redis>(VALKEY).flushdb();
-  await app.init();
+  await listenLocal(app);
   const agent = request.agent(app.getHttpServer());
   const csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token;
   const start = await agent

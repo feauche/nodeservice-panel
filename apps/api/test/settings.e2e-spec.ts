@@ -14,6 +14,7 @@ import { DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
 import { NotificationsService } from '../src/modules/notifications/notifications.service.js';
 import { SettingsService } from '../src/modules/settings/settings.service.js';
+import { listenLocal } from './listen-local.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
   throw new Error('e2e: DATABASE_URL должен указывать на nodeservice_test');
@@ -30,7 +31,7 @@ describe('settings e2e', () => {
     const db = app.get<Db>(DB);
     await runMigrations(db);
     await db.execute(sql`delete from app_meta where key like 'settings.%'`);
-    await app.init();
+    await listenLocal(app);
     agent = request.agent(app.getHttpServer());
     csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token as string;
   });
