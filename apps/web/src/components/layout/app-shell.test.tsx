@@ -226,3 +226,47 @@ describe('AppShell · меню пользователя', () => {
     expect(useAuthStore.getState().me).toBeNull();
   });
 });
+
+describe('AppShell · сворачиваемые группы меню (витрина menu-groups-2026-10, вариант A)', () => {
+  beforeEach(() => {
+    resetMockState({ authenticated: true });
+    useAuthStore.setState({ me: mockMe, hydrated: true });
+    resetNavigationLayout();
+  });
+
+  it('свёрнутая группа: число пунктов, пункты недоступны, положение помнит браузер', async () => {
+    const user = userEvent.setup();
+    const first = renderPage(Page, '/', ['/assistant', '/knowledge']);
+    const help = await screen.findByRole('button', { name: /^Помощь/ });
+    expect(help).toHaveAttribute('aria-expanded', 'true');
+    await user.click(help);
+    expect(help).toHaveAttribute('aria-expanded', 'false');
+    expect(help).toHaveTextContent('Помощь · 2');
+    // Свёрнутые пункты не выбираются с клавиатуры.
+    expect(screen.getByRole('link', { name: 'Ассистент', hidden: true }).closest('[inert]')).not.toBeNull();
+    expect(localStorage.getItem('ns-menu-groups')).toBe('["help"]');
+    // Обновление страницы: группа остаётся свёрнутой.
+    first.unmount();
+    renderPage(Page, '/', ['/assistant', '/knowledge']);
+    const again = await screen.findByRole('button', { name: /^Помощь/ });
+    expect(again).toHaveAttribute('aria-expanded', 'false');
+    await user.click(again);
+    expect(again).toHaveAttribute('aria-expanded', 'true');
+    expect(localStorage.getItem('ns-menu-groups')).toBe('[]');
+  });
+
+  it('открытый раздел остаётся под свёрнутым заголовком; счётчик событий — на заголовке «Управление»', async () => {
+    const user = userEvent.setup();
+    renderPage(Page, '/assistant', ['/incidents', '/knowledge']);
+    await user.click(await screen.findByRole('button', { name: /^Помощь/ }));
+    expect(screen.getByRole('link', { name: 'Ассистент' }).closest('[inert]')).toBeNull();
+    expect(screen.getByRole('link', { name: 'База знаний', hidden: true }).closest('[inert]')).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: /^Помощь/ }));
+    const events = await screen.findByRole('link', { name: /События/ });
+    const count = events.textContent?.replace(/\D/g, '') ?? '';
+    await user.click(screen.getByRole('button', { name: /^Управление/ }));
+    const manage = screen.getByRole('button', { name: /^Управление/ });
+    expect(manage).toHaveTextContent(`Управление · 7${count}`);
+    await user.click(manage);
+  });
+});

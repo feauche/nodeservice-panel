@@ -29,6 +29,7 @@ import {
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
+import { toggleNavGroup, useClosedNavGroups } from '@/components/layout/nav-groups';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
@@ -284,11 +285,14 @@ function SitesDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
 export function CustomSitesNav({
   collapsed,
   mode,
+  canCollapse = false,
   onNavigate,
 }: {
   collapsed: boolean;
   mode: Mode;
-  onNavigate?: () => void;
+  /** Группу можно свернуть заголовком (не в меню значками) — положение помнит браузер. */
+  canCollapse?: boolean;
+  onNavigate?: (() => void) | undefined;
 }) {
   const sites = useCustomSites();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -296,63 +300,92 @@ export function CustomSitesNav({
   const railOnPhone = mode === 'rail';
   const hideLabel = iconOnly;
   const items = sites.data?.items ?? [];
+  const closedGroups = useClosedNavGroups();
+  const open = !canCollapse || !closedGroups.has('sites');
+  const controls = `nav-group-sites-${mode}`;
 
   return (
     <>
       <div className="mt-1 border-t border-border pt-2">
-        <NavGroupLabel hidden={hideLabel}>
+        <NavGroupLabel
+          hidden={hideLabel}
+          toggle={
+            canCollapse
+              ? { open, onToggle: () => toggleNavGroup('sites'), count: items.length, controls }
+              : undefined
+          }
+        >
           <span className={cn(railOnPhone && 'max-md:sr-only')}>Свои сайты</span>
         </NavGroupLabel>
       </div>
-
-      {items.map((site) => (
-        <a
-          key={site.id}
-          href={site.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={iconOnly ? site.name : undefined}
-          onClick={onNavigate}
-          className={cn(
-            'group relative flex items-center gap-[11px] rounded-[10px] px-3 py-[9px] text-[13.5px] font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
-            railOnPhone && 'max-md:justify-center max-md:px-0',
-            iconOnly && 'justify-center px-0',
-          )}
-        >
-          <SiteIcon site={site} />
-          <span
-            className={cn('min-w-0 flex-1 truncate', railOnPhone && 'max-md:sr-only', iconOnly && 'sr-only')}
-          >
-            {site.name}
-          </span>
-          <ExternalLinkIcon
-            className={cn(
-              'size-3.5 flex-none text-text-3 opacity-0 transition-opacity group-hover:opacity-100',
-              (railOnPhone || iconOnly) && 'max-md:hidden',
-              iconOnly && 'hidden',
-            )}
-            aria-hidden="true"
-          />
-        </a>
-      ))}
-
-      <button
-        type="button"
-        title={iconOnly ? 'Добавить сайт' : undefined}
-        onClick={() => setDialogOpen(true)}
+      {/* Свёрнутая группа прячет и сайты, и «Добавить сайт»; пункты недоступны с клавиатуры (inert). */}
+      <div
+        id={controls}
+        inert={!open}
         className={cn(
-          'flex w-full cursor-pointer items-center gap-[11px] rounded-[10px] px-3 py-[8px] text-left text-[13px] font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
-          railOnPhone && 'max-md:justify-center max-md:px-0',
-          iconOnly && 'justify-center px-0',
+          'grid transition-[grid-template-rows] duration-200',
+          open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
         )}
       >
-        <PlusIcon className="size-[17px] flex-none" aria-hidden="true" />
-        <span
-          className={cn('min-w-0 flex-1 truncate', railOnPhone && 'max-md:sr-only', iconOnly && 'sr-only')}
-        >
-          {items.length >= CUSTOM_SITES_MAX ? 'Управлять сайтами' : 'Добавить сайт'}
-        </span>
-      </button>
+        <div className="flex min-h-0 flex-col gap-[3px] overflow-hidden">
+          {items.map((site) => (
+            <a
+              key={site.id}
+              href={site.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={iconOnly ? site.name : undefined}
+              onClick={onNavigate}
+              className={cn(
+                'group relative flex items-center gap-[11px] rounded-[10px] px-3 py-[9px] text-[13.5px] font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
+                railOnPhone && 'max-md:justify-center max-md:px-0',
+                iconOnly && 'justify-center px-0',
+              )}
+            >
+              <SiteIcon site={site} />
+              <span
+                className={cn(
+                  'min-w-0 flex-1 truncate',
+                  railOnPhone && 'max-md:sr-only',
+                  iconOnly && 'sr-only',
+                )}
+              >
+                {site.name}
+              </span>
+              <ExternalLinkIcon
+                className={cn(
+                  'size-3.5 flex-none text-text-3 opacity-0 transition-opacity group-hover:opacity-100',
+                  (railOnPhone || iconOnly) && 'max-md:hidden',
+                  iconOnly && 'hidden',
+                )}
+                aria-hidden="true"
+              />
+            </a>
+          ))}
+
+          <button
+            type="button"
+            title={iconOnly ? 'Добавить сайт' : undefined}
+            onClick={() => setDialogOpen(true)}
+            className={cn(
+              'flex w-full cursor-pointer items-center gap-[11px] rounded-[10px] px-3 py-[8px] text-left text-[13px] font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
+              railOnPhone && 'max-md:justify-center max-md:px-0',
+              iconOnly && 'justify-center px-0',
+            )}
+          >
+            <PlusIcon className="size-[17px] flex-none" aria-hidden="true" />
+            <span
+              className={cn(
+                'min-w-0 flex-1 truncate',
+                railOnPhone && 'max-md:sr-only',
+                iconOnly && 'sr-only',
+              )}
+            >
+              {items.length >= CUSTOM_SITES_MAX ? 'Управлять сайтами' : 'Добавить сайт'}
+            </span>
+          </button>
+        </div>
+      </div>
 
       <SitesDialog open={dialogOpen} onOpenChange={setDialogOpen} />
     </>

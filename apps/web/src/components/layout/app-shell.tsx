@@ -43,7 +43,9 @@ import { CustomSitesNav, CustomSitesTopMenu } from '@/features/settings/custom-s
 import { useNavigationLayout } from '@/features/settings/navigation-layout';
 import { PanelVersion } from '@/features/system/panel-version';
 import { isSectionOpen, LOCKED_HINT } from '@/lib/stages';
+import { useMediaQuery } from '@/lib/use-media';
 import { cn } from '@/lib/utils';
+import { type NavGroupId, toggleNavGroup, useClosedNavGroups } from './nav-groups';
 import { UserMenu } from './user-menu';
 
 const RAIL_KEY = 'ns-rail';
@@ -178,6 +180,87 @@ function NavItem({
   );
 }
 
+/** Пункт меню открыт: «Обзор» — только корень, остальные — и вложенные адреса. */
+const isActive = (to: string, pathname: string) =>
+  to === '/' ? pathname === '/' : pathname === to || pathname.startsWith(`${to}/`);
+
+/**
+ * Группа меню (витрина menu-groups-2026-10, вариант A): заголовок сворачивает её, положение помнит браузер.
+ * Свёрнутая группа — одна строка «УПРАВЛЕНИЕ · 7»; открытый раздел остаётся на виду, счётчики скрытых пунктов
+ * (открытые события) — на заголовке. Меню значками групп не сворачивает: заголовков там нет.
+ */
+function NavSection({
+  id,
+  title,
+  items,
+  badges,
+  collapsed,
+  mode,
+  canCollapse,
+  pathname,
+  onNavigate,
+}: {
+  id: NavGroupId;
+  title: string;
+  items: ReadonlyArray<NavEntry>;
+  badges?: Partial<Record<string, number | undefined>>;
+  collapsed: boolean;
+  mode: 'rail' | 'drawer';
+  canCollapse: boolean;
+  pathname: string;
+  onNavigate?: (() => void) | undefined;
+}) {
+  const closed = useClosedNavGroups();
+  const open = !canCollapse || !closed.has(id);
+  const active = open ? undefined : items.find((n) => isActive(n.to, pathname));
+  const hiddenBadge = items.filter((n) => n !== active).reduce((sum, n) => sum + (badges?.[n.to] ?? 0), 0);
+  const controls = `nav-group-${id}-${mode}`;
+  const item = (n: NavEntry) => (
+    <NavItem
+      key={n.to}
+      {...n}
+      collapsed={collapsed}
+      mode={mode}
+      onNavigate={onNavigate}
+      badge={badges?.[n.to]}
+    />
+  );
+  return (
+    <>
+      <GroupLabel
+        hidden={mode === 'rail' && collapsed}
+        toggle={
+          canCollapse
+            ? {
+                open,
+                onToggle: () => toggleNavGroup(id),
+                count: items.length,
+                badge: open ? 0 : hiddenBadge,
+                controls,
+              }
+            : undefined
+        }
+      >
+        <span className={mode === 'rail' ? 'max-md:sr-only' : undefined}>{title}</span>
+      </GroupLabel>
+      {active && item(active)}
+      {/* Пункты сворачиваются по высоте за 0,2 с; свёрнутые недоступны с клавиатуры (inert). */}
+      <div
+        id={controls}
+        inert={!open}
+        className={cn(
+          'grid transition-[grid-template-rows] duration-200',
+          open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+        )}
+      >
+        <div className="flex min-h-0 flex-col gap-[3px] overflow-hidden">
+          {items.filter((n) => n !== active).map(item)}
+        </div>
+      </div>
+    </>
+  );
+}
+
 /** Список разделов — один и тот же в боковой колонке и в выезжающем меню на телефоне. */
 function NavList({
   collapsed,
@@ -190,36 +273,23 @@ function NavList({
   openIncidents: number | undefined;
   onNavigate?: () => void;
 }) {
-  const hideLabels = mode === 'rail' && collapsed;
-  const labelClass = mode === 'rail' ? 'max-md:sr-only' : undefined;
+  const pathname = useRouterState({ select: (st) => st.location.pathname });
+  // На узком экране боковая колонка — значками: групп с заголовками там нет, сворачивать нечего.
+  const narrow = useMediaQuery('(max-width: 767px)', false);
+  const canCollapse = mode === 'drawer' || (!collapsed && !narrow);
+  const common = { collapsed, mode, canCollapse, pathname, onNavigate };
   return (
     <>
-      <GroupLabel hidden={hideLabels}>
-        <span className={labelClass}>Управление</span>
-      </GroupLabel>
-      {NAV.map((n) => (
-        <NavItem
-          key={n.to}
-          {...n}
-          collapsed={collapsed}
-          mode={mode}
-          onNavigate={onNavigate}
-          badge={n.to === '/incidents' ? openIncidents : undefined}
-        />
-      ))}
-      <GroupLabel hidden={hideLabels}>
-        <span className={labelClass}>Помощь</span>
-      </GroupLabel>
-      {NAV_HELP.map((n) => (
-        <NavItem key={n.to} {...n} collapsed={collapsed} mode={mode} onNavigate={onNavigate} />
-      ))}
-      <GroupLabel hidden={hideLabels}>
-        <span className={labelClass}>Интеграции</span>
-      </GroupLabel>
-      {NAV_INTEGRATIONS.map((n) => (
-        <NavItem key={n.to} {...n} collapsed={collapsed} mode={mode} onNavigate={onNavigate} />
-      ))}
-      <CustomSitesNav collapsed={collapsed} mode={mode} onNavigate={onNavigate} />
+      <NavSection
+        id="manage"
+        title="Управление"
+        items={NAV}
+        badges={{ '/incidents': openIncidents }}
+        {...common}
+      />
+      <NavSection id="help" title="Помощь" items={NAV_HELP} {...common} />
+      <NavSection id="integrations" title="Интеграции" items={NAV_INTEGRATIONS} {...common} />
+      <CustomSitesNav collapsed={collapsed} mode={mode} canCollapse={canCollapse} onNavigate={onNavigate} />
       <div className="flex-1" />
       {NAV_BOTTOM.map((n) => (
         <NavItem key={n.to} {...n} collapsed={collapsed} mode={mode} onNavigate={onNavigate} />
