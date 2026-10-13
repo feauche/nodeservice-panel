@@ -28,6 +28,9 @@ export class ScenariosStore {
         set: { value: JSON.stringify(value), updatedAt: new Date() },
       });
   }
+  async remove(key: string) {
+    await this.db.delete(appMeta).where(eq(appMeta.key, key));
+  }
   async list(panel: string | null): Promise<Scenario[]> {
     if (!panel) return [];
     const raw = await this.read(`scenarios.rules.${this.scope(panel)}`);

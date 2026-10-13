@@ -1,4 +1,3 @@
-import { ShieldIcon } from 'lucide-react';
 import { SectionHeader } from '@/features/settings/settings-ui';
 import { PasswordCard } from './password-card';
 import { PolicyCard } from './policy-card';
@@ -16,7 +15,6 @@ export function SecurityPage() {
   return (
     <div className="flex flex-col gap-3.5">
       <SectionHeader
-        icon={ShieldIcon}
         title="Безопасность"
         description="Пароль, вход по коду и где вы сейчас вошли. Действия с сессиями и устройствами применяются сразу."
       />

@@ -14,6 +14,8 @@ export class RemnawaveApiError extends Error {
   constructor(
     message: string,
     readonly kind: 'unauthorized' | 'unreachable',
+    /** Код ответа Remnawave; null — ответа не было (сеть, таймаут) или он повреждён. */
+    readonly status: number | null = null,
   ) {
     super(message);
   }
@@ -114,12 +116,21 @@ export async function getJson(
   } catch (err) {
     throw new RemnawaveApiError(`Remnawave не отвечает: ${connectionErrorText(err)}`, 'unreachable');
   }
-  if (res.status === 401 || res.status === 403)
+  // 401 — ключ не принят вовсе; 403 — ключ рабочий, но этого права у него нет (чтение может работать).
+  if (res.status === 401)
     throw new RemnawaveApiError(
       'Remnawave ответила «доступ запрещён»: токен неверный, отозван или просрочен.',
       'unauthorized',
+      401,
     );
-  if (!res.ok) throw new RemnawaveApiError(`Remnawave ответила ошибкой HTTP ${res.status}.`, 'unreachable');
+  if (res.status === 403)
+    throw new RemnawaveApiError(
+      'Remnawave ответила «нет доступа»: у API-ключа нет права на это действие.',
+      'unauthorized',
+      403,
+    );
+  if (!res.ok)
+    throw new RemnawaveApiError(`Remnawave ответила ошибкой HTTP ${res.status}.`, 'unreachable', res.status);
   if (res.status === 204) return {};
   try {
     return (await res.json()) as Record<string, unknown>;

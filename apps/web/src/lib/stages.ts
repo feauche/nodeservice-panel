@@ -35,7 +35,7 @@ export const OPEN_SECTIONS: ReadonlySet<string> = new Set<string>([
   '/settings/backups',
   '/settings/appearance',
   '/settings/security',
-  '/settings/autochecks',
+  '/settings/monitoring',
   '/settings/incidents',
 ]);
 

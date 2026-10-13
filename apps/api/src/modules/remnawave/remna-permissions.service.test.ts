@@ -19,7 +19,18 @@ describe('Remna permission evidence', () => {
     expect(result.items.find((p) => p.scope === 'system:metadata')?.state).toBe('unknown');
     expect(result.items.find((p) => p.scope === 'system:stats')?.state).toBe('granted');
     expect(result.items.find((p) => p.scope === 'nodes:update')?.state).toBe('unknown');
-    expect(fetcher.mock.calls).toHaveLength(6);
+    // Чтение Host проверяется само, изменение Host — только по делу (срабатывание сценария).
+    expect(result.items.find((p) => p.scope === 'hosts:list')?.state).toBe('granted');
+    expect(result.items.find((p) => p.scope === 'hosts:update')).toMatchObject({
+      state: 'unknown',
+      when: 'Проверится при срабатывании сценария',
+    });
+    expect(fetcher.mock.calls).toHaveLength(7);
+    expect(
+      fetcher.mock.calls.every(
+        (c) => !(c as unknown[])[1] || (c as [string, RequestInit])[1].method === undefined,
+      ),
+    ).toBe(true);
   });
   it('records only the exact token used by a real action and expires evidence on token change', async () => {
     let creds = first;

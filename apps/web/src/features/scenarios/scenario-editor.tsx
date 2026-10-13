@@ -1,46 +1,244 @@
 import {
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
   formatScenarioHostName,
   type Scenario,
-  scenarioActionLabels,
   scenarioConditionDescriptions,
+  scenarioConditionLabel,
   scenarioConditions,
   scenarioHostsSchema,
   scenarioLabels,
 } from '@nodeservice/shared';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import {
   ArrowDownIcon,
-  ArrowRightIcon,
-  ArrowUpIcon,
   BellIcon,
+  ChevronDownIcon,
   ClipboardListIcon,
   EyeOffIcon,
   GitBranchIcon,
-  GlobeIcon,
-  NetworkIcon,
-  ServerIcon,
+  GripVerticalIcon,
+  LockIcon,
+  PlayIcon,
+  PlusIcon,
+  RadarIcon,
+  SearchIcon,
   TypeIcon,
+  XIcon,
+  ZapIcon,
 } from 'lucide-react';
-import { type Dispatch, type SetStateAction, useState } from 'react';
+import { Popover } from 'radix-ui';
+import { Children, type Dispatch, type ReactNode, type SetStateAction, useState } from 'react';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { RowsSkeleton } from '@/components/ui/loading-state';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useNodes } from '@/features/nodes/nodes-api';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useNodes, useRemnaPermissions } from '@/features/nodes/nodes-api';
 import { useMonitoring } from '@/features/settings/settings-api';
-import { BarButton, CardButton, Pill, Segmented } from '@/features/settings/settings-ui';
+import { Pill, Segmented, Toggle } from '@/features/settings/settings-ui';
 import { useTelegramSettings } from '@/features/settings/telegram-api';
 import { api, apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-const icons = {
-  check_tcp: NetworkIcon,
-  record_event: ClipboardListIcon,
-  notify: BellIcon,
-  hide_host: EyeOffIcon,
-  rename_host: TypeIcon,
+type Action = Scenario['actions'][number];
+type Condition = Scenario['trigger'];
+
+/** Шаги сценария: что делает и зачем — одной строкой под названием. Telegram всегда последний. */
+const STEPS: Record<Action, { title: string; hint: string; icon: typeof RadarIcon }> = {
+  check_tcp: {
+    title: 'Проверить TCP',
+    hint: 'Check-Host проверит порт ноды из России и других стран. Бесплатно.',
+    icon: RadarIcon,
+  },
+  record_event: {
+    title: 'Записать событие',
+    hint: 'Допишет срабатывание и итог в открытое событие ноды в «Событиях». Нет события — только в «Метриках».',
+    icon: ClipboardListIcon,
+  },
+  hide_host: {
+    title: 'Скрыть Host',
+    hint: 'Host этой ноды выключается в Remnawave, клиенты уходят на другие ноды.',
+    icon: EyeOffIcon,
+  },
+  rename_host: {
+    title: 'Изменить имя Host',
+    hint: 'Клиенты видят в списке подключений, что нода временно не работает.',
+    icon: TypeIcon,
+  },
+  notify: {
+    title: 'Уведомить в Telegram',
+    hint: 'Сообщение с условием и результатом действий. Всегда последним.',
+    icon: BellIcon,
+  },
 };
+const ORDERABLE: Action[] = ['check_tcp', 'record_event', 'hide_host', 'rename_host'];
+const CHIP =
+  'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border-2 bg-surface px-2.5 text-[13px] font-semibold whitespace-nowrap transition-colors hover:border-ai/50 focus-visible:outline-2 focus-visible:outline-ai [&_svg]:size-3.5 [&_svg]:text-text-3';
+/** Строчная первая буква в середине фразы — только у русского слова: «TCP недоступен» не трогаем. */
+const lower = (s: string) => (/^[А-ЯЁ][а-яё]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s);
+/** «на 1 выбранной ноде», «на 21 выбранной ноде», «на 3 выбранных нодах». */
+const pickedWord = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? 'выбранной ноде' : 'выбранных нодах');
+/** «А», «А и Б», «А, Б и В». */
+const listWords = (words: string[]) =>
+  words.length < 2 ? (words[0] ?? '') : `${words.slice(0, -1).join(', ')} и ${words.at(-1)}`;
+
+/** Шаг «То»: номер по порядку, название и пояснение, переключатель; включённый — с ручкой для перестановки. */
+function StepCard({
+  action,
+  on,
+  index,
+  sortable,
+  onToggle,
+  children,
+}: {
+  action: Action;
+  on: boolean;
+  index: number | null;
+  sortable: boolean;
+  onToggle: (on: boolean) => void;
+  children?: ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({
+      id: action,
+      disabled: !sortable,
+    });
+  const meta = STEPS[action];
+  const nested = Children.toArray(children);
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(
+        'rounded-[14px] border bg-surface px-3.5 py-3 transition-[border-color,background-color]',
+        on ? 'border-teal/45 bg-teal/[0.05]' : 'border-border',
+        isDragging && 'relative z-10 shadow-float',
+      )}
+    >
+      <div className="grid grid-cols-[18px_30px_minmax(0,1fr)_auto] items-center gap-3">
+        {action === 'notify' ? (
+          <LockIcon className="size-4 text-text-3" aria-label="Всегда последним" />
+        ) : sortable ? (
+          <button
+            type="button"
+            ref={setActivatorNodeRef}
+            {...attributes}
+            {...listeners}
+            aria-label={`Переставить шаг «${meta.title}»`}
+            className="grid cursor-grab touch-none place-items-center rounded text-text-3 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand active:cursor-grabbing"
+          >
+            <GripVerticalIcon className="size-4" />
+          </button>
+        ) : (
+          <span />
+        )}
+        <span
+          className={cn(
+            'grid size-[30px] place-items-center rounded-[9px] text-[13px] font-extrabold transition-colors',
+            on ? 'bg-teal text-bg' : 'bg-surface-2 text-text-3',
+          )}
+          aria-hidden="true"
+        >
+          {index ?? '—'}
+        </span>
+        <span className="min-w-0">
+          <b className="flex items-center gap-1.5 text-[14px] font-semibold">
+            <meta.icon className="size-4 flex-none text-text-3" aria-hidden="true" />
+            {meta.title}
+          </b>
+          <small className="mt-0.5 block text-[12.5px] leading-snug text-text-3">{meta.hint}</small>
+        </span>
+        <Toggle
+          id={`scenario-step-${action}`}
+          checked={on}
+          onChange={onToggle}
+          aria-label={`Шаг «${meta.title}»`}
+        />
+      </div>
+      {on && nested.length > 0 && (
+        <div className="mt-3 ml-[60px] flex flex-col gap-2.5 max-sm:ml-0">{nested}</div>
+      )}
+    </div>
+  );
+}
+
+/** Новое имя Host (пробелы — точками, как их поставит сценарий) и предупреждение о пределе Remnawave. */
+function RenamePreview({ name, mode, text }: { name: string; mode: Scenario['renameMode']; text: string }) {
+  const next = formatScenarioHostName(name, mode, text);
+  return (
+    <>
+      <p className="mt-1 text-brand">→ {next.replaceAll(' ', '·')}</p>
+      {next.length > 100 && (
+        <p className="mt-1 text-[11.5px] text-warn">Длиннее 100 знаков — Remnawave такое имя не примет.</p>
+      )}
+    </>
+  );
+}
+
+function CloseButton({
+  busy,
+  onClose,
+  className,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label="Закрыть окно"
+      disabled={busy}
+      onClick={onClose}
+      className={cn(
+        'grid size-9 flex-none cursor-pointer place-items-center rounded-[10px] border border-border bg-surface-2 text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-50',
+        className,
+      )}
+    >
+      <XIcon className="size-4" aria-hidden="true" />
+    </button>
+  );
+}
+
+function Note({ tone = 'muted', children }: { tone?: 'muted' | 'warn'; children: ReactNode }) {
+  return (
+    <p
+      role={tone === 'warn' ? 'status' : undefined}
+      className={cn(
+        'rounded-[10px] px-3 py-2 text-[12.5px] leading-snug',
+        tone === 'warn' ? 'border border-warn/30 bg-warn-soft text-text-2' : 'bg-surface-2 text-text-2',
+      )}
+    >
+      {children}
+    </p>
+  );
+}
+
+/**
+ * Редактор сценария «Если → то» (витрина redesign-2026-10, вариант A, сдержанно): условие читается фразой,
+ * шаги — карточками по порядку, справа живой предпросмотр. Весь прежний функционал на месте: до трёх условий с
+ * «и/или», подтверждение по времени, выбор нод, пять действий и их порядок, имя Host, возврат после
+ * восстановления, пауза, ручная привязка Host и предпросмотр.
+ */
 export function ScenarioEditor({
   draft,
   setDraft,
@@ -58,27 +256,75 @@ export function ScenarioEditor({
   onDelete?: () => void;
   error: string | null;
 }) {
-  const nodes = useNodes(),
-    [search, setSearch] = useState('');
-  const [holdInput, setHoldInput] = useState(String(draft.holdMinutes));
-  const [cooldownInput, setCooldownInput] = useState(String(draft.cooldownMinutes));
-  const timeValid = (v: string, min: number, max: number) =>
-    v.trim() !== '' && Number.isInteger(Number(v)) && Number(v) >= min && Number(v) <= max;
-  const conditions = scenarioConditions(draft);
+  const nodes = useNodes();
   const telegram = useTelegramSettings();
   const monitoring = useMonitoring();
+  const [search, setSearch] = useState('');
+  const [holdInput, setHoldInput] = useState(String(draft.holdMinutes));
+  const [cooldownInput, setCooldownInput] = useState(String(draft.cooldownMinutes));
+  const [deleting, setDeleting] = useState(false);
+  const conditions = scenarioConditions(draft);
+  const all = nodes.data?.nodes ?? [];
+  const hostStep = draft.actions.some((a) => a === 'hide_host' || a === 'rename_host');
   const hosts = useQuery({
     queryKey: ['scenario-hosts'],
     queryFn: ({ signal }) => api.get('/scenarios/hosts', scenarioHostsSchema, signal),
-    enabled: draft.actions.some((a) => a === 'hide_host' || a === 'rename_host'),
-    staleTime: 15000,
+    enabled: hostStep,
+    staleTime: 15_000,
   });
-  const visibleNodes = (nodes.data?.nodes ?? []).filter((n) =>
-    `${n.name} ${n.address}`.toLowerCase().includes(search.toLowerCase()),
+  // Право «Изменение Host» Remnawave заранее не сообщает: видно только после попытки (или отказа).
+  const permissions = useRemnaPermissions(hostStep);
+  const hostRight = permissions.data?.items.find((p) => p.scope === 'hosts:update')?.state;
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
-  const allowedNodes = (nodes.data?.nodes ?? []).filter(
-    (n) => draft.scope === 'all' || draft.nodes.includes(n.uuid),
-  );
+
+  const change = (v: Partial<Scenario>) => {
+    const next = { ...draft, ...v };
+    if (next.scope === 'selected')
+      next.hostBindings = next.hostBindings.filter((b) => next.nodes.includes(b.nodeUuid));
+    setDraft(next);
+  };
+  const setConditions = (list: Condition[]) =>
+    change({ conditions: list, trigger: list[0] ?? draft.trigger });
+  const enabledOrder: Action[] = draft.actions.filter((a) => a !== 'notify');
+  const withNotify = (order: Action[], notify = draft.actions.includes('notify')) =>
+    notify ? [...order, 'notify' as const] : order;
+  const toggleStep = (action: Action, on: boolean) => {
+    if (action === 'notify') change({ actions: withNotify(enabledOrder, on) });
+    else
+      change({
+        actions: withNotify(on ? [...enabledOrder, action] : enabledOrder.filter((a) => a !== action)),
+      });
+  };
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const from = enabledOrder.indexOf(active.id as Action);
+    const to = enabledOrder.indexOf(over.id as Action);
+    if (from < 0 || to < 0) return;
+    change({ actions: withNotify(arrayMove(enabledOrder, from, to)) });
+  };
+
+  const timeValid = (v: string, min: number, max: number) =>
+    v.trim() !== '' && Number.isInteger(Number(v)) && Number(v) >= min && Number(v) <= max;
+  // Почему «Сохранить» недоступна — коротко рядом с кнопкой, а не молча.
+  const blocker =
+    draft.name.trim().length < 2
+      ? 'Название — от двух букв'
+      : !draft.actions.length
+        ? 'Включите хотя бы один шаг'
+        : draft.scope === 'selected' && !draft.nodes.length
+          ? 'Выберите ноды'
+          : draft.actions.includes('rename_host') && !draft.renameText.trim()
+            ? 'Введите текст для имени Host'
+            : !timeValid(holdInput, 1, 60)
+              ? 'Время — от 1 до 60 мин'
+              : !timeValid(cooldownInput, 5, 1440)
+                ? 'Пауза — от 5 до 1440 мин'
+                : null;
+
+  const allowedNodes = all.filter((n) => draft.scope === 'all' || draft.nodes.includes(n.uuid));
   const targets = (hosts.data?.hosts ?? [])
     .map((h) => {
       const manual = draft.hostBindings.find((b) => b.hostUuid === h.uuid);
@@ -86,449 +332,560 @@ export function ScenarioEditor({
       return {
         ...h,
         nodes: ids,
-        nodeNames: ids.map((id) => nodes.data?.nodes.find((n) => n.uuid === id)?.name ?? id),
+        nodeNames: ids.map((id) => all.find((n) => n.uuid === id)?.name ?? id),
         automaticNodes: h.nodes,
       };
     })
     .filter(
       (h) => !h.nodes.length || draft.scope === 'all' || h.nodes.some((id) => draft.nodes.includes(id)),
     );
-  const change = (v: Partial<Scenario>) => {
-    const next = { ...draft, ...v };
-    if (next.scope === 'selected')
-      next.hostBindings = next.hostBindings.filter((b) => next.nodes.includes(b.nodeUuid));
-    setDraft(next);
-  };
-  const name = (before: string) => formatScenarioHostName(before, draft.renameMode, draft.renameText);
-  const reorder = (action: Scenario['actions'][number], delta: number) => {
-    const actions = [...draft.actions],
-      i = actions.indexOf(action),
-      j = i + delta;
-    if (j < 0 || j >= actions.length) return;
-    [actions[i], actions[j]] = [actions[j], actions[i]];
-    change({ actions });
-  };
-  const title = (n: number, text: string) => (
-    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-      <span className="grid size-6 place-items-center rounded-lg bg-brand-soft text-xs text-brand">{n}</span>
-      {text}
-    </h3>
+  const willChange = targets.filter((h) => h.nodes.length === 1);
+  const picked = all.filter((n) => draft.nodes.includes(n.uuid));
+  const count = draft.nodes.length;
+  const scopeText =
+    draft.scope === 'all' ? 'любой ноде' : count ? `${count} ${pickedWord(count)}` : 'выберите ноды';
+  // В пересказе до трёх нод — по именам: «на нодах «Турция - 1» и «США - 1»».
+  const readScope =
+    draft.scope === 'all'
+      ? 'любой ноде'
+      : !count
+        ? null
+        : picked.length === count && count <= 3
+          ? `${count === 1 ? 'ноде' : 'нодах'} ${listWords(picked.map((n) => `«${n.name}»`))}`
+          : scopeText;
+  const visibleNodes = all.filter((n) =>
+    `${n.name} ${n.address}`.toLowerCase().includes(search.toLowerCase()),
   );
+  const sample = allowedNodes[0];
+  const steps = draft.actions.map((a) => lower(STEPS[a].title));
+  const telegramState = telegram.isPending
+    ? { tone: 'muted' as const, text: 'Проверяю настройки Telegram…' }
+    : telegram.isError
+      ? {
+          tone: 'warn' as const,
+          text: 'Не удалось проверить Telegram — проверьте подключение перед включением.',
+        }
+      : !telegram.data?.destinations.length
+        ? { tone: 'warn' as const, text: 'Сообщение не придёт: Telegram не подключён.' }
+        : !telegram.data.events.scenario
+          ? { tone: 'warn' as const, text: 'Сообщение не придёт: «Уведомления из сценариев» выключены.' }
+          : { tone: 'ok' as const, text: 'Уведомления из сценариев включены; действуют тихие часы.' };
+  // Пример итога для ноды-образца — теми же словами, что пишет сервер: TCP, событие, Host (один раз на запуск).
+  const sampleHosts = sample ? targets.filter((h) => h.nodes.includes(sample.uuid)) : [];
+  const hostResult = !hosts.data
+    ? '…'
+    : `${sampleHosts.filter((h) => h.nodes.length === 1).length}${
+        sampleHosts.some((h) => h.nodes.length > 1)
+          ? `; общих Host пропущено: ${sampleHosts.filter((h) => h.nodes.length > 1).length}`
+          : ''
+      }`;
+  const result = enabledOrder
+    .filter(
+      (a, i) =>
+        !(a === 'rename_host' || a === 'hide_host') ||
+        i === enabledOrder.findIndex((b) => b === 'hide_host' || b === 'rename_host'),
+    )
+    .map((a) =>
+      a === 'check_tcp'
+        ? 'TCP недоступен'
+        : a === 'record_event'
+          ? `Записано в событие «${conditions.includes('offline') ? 'Нода не на связи' : '…'}»`
+          : `${draft.actions.includes('rename_host') ? 'Изменено' : 'Скрыто'} Host: ${hostResult}`,
+    )
+    .join('; ');
+  const kicker = 'text-[11px] font-semibold tracking-[0.1em] text-text-3 uppercase';
+
   return (
-    <Dialog
-      open
-      onOpenChange={(v) => {
-        if (!v && !busy) onClose();
-      }}
-    >
-      <DialogContent className="flex h-[min(860px,90dvh)] max-h-[90dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-[960px]">
-        <header className="shrink-0 border-b border-border px-5 py-4 pr-14">
-          <DialogTitle className="flex items-center gap-2">
-            <GitBranchIcon className="size-5 text-brand" />
-            {onDelete ? 'Настроить сценарий' : 'Новый сценарий'}
-          </DialogTitle>
-          <DialogDescription className="mt-2">
-            Условие, ноды и действия. Справа — результат и затронутые Host.
-          </DialogDescription>
-        </header>
-        <div className="grid min-h-0 flex-1 overflow-y-auto lg:overflow-hidden lg:grid-cols-[minmax(0,1fr)_300px]">
-          <div className="min-h-0 min-w-0 space-y-5 p-5 lg:overflow-y-auto">
-            <label htmlFor="scenario-field-1" className="block text-xs font-medium text-text-2">
-              Название
+    <Dialog open onOpenChange={(v) => !v && !busy && onClose()}>
+      <DialogContent
+        showCloseButton={false}
+        className={cn(
+          // Окно постоянного размера: слева форма и подвал, справа предпросмотр во всю высоту; прокрутка внутри.
+          'h-[min(820px,calc(100dvh-40px))] w-[min(1140px,calc(100vw-40px))] gap-0 overflow-hidden rounded-[18px] border border-border-2 bg-surface p-0 shadow-float sm:max-w-[1140px]',
+          'lg:grid-cols-[minmax(0,1fr)_330px] lg:grid-rows-[minmax(0,1fr)_auto]',
+          // Узкий экран: одна колонка, общая прокрутка, подвал с кнопками прилипает к низу.
+          'max-lg:flex max-lg:flex-col max-lg:overflow-y-auto max-md:top-0 max-md:left-0 max-md:h-dvh max-md:w-screen max-md:max-w-none max-md:translate-x-0 max-md:translate-y-0 max-md:rounded-none max-md:border-0',
+        )}
+        overlayClassName="bg-black/45 backdrop-blur-sm"
+      >
+        <div className="flex min-w-0 flex-col gap-3.5 px-[22px] py-5 max-md:px-4 lg:col-start-1 lg:row-start-1 lg:min-h-0 lg:overflow-y-auto">
+          <div className="flex items-start gap-3 max-lg:pr-12">
+            <span className="grid size-9 flex-none place-items-center rounded-full bg-ai-soft text-ai">
+              <GitBranchIcon className="size-4" aria-hidden="true" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="font-heading text-[17px] font-bold">
+                {onDelete ? 'Настроить сценарий' : 'Новый сценарий'}
+              </DialogTitle>
+              <DialogDescription className="mt-0.5 text-[12.5px] text-text-3">
+                Сработает сам, когда выполнится условие. Проверки бесплатные.
+              </DialogDescription>
+            </div>
+          </div>
+
+          <div className="flex items-end gap-3">
+            <label htmlFor="scenario-name" className="min-w-0 flex-1">
+              <span className="mb-1.5 block text-[12.5px] font-medium text-text-2">Название</span>
               <Input
-                id="scenario-field-1"
-                className="mt-2 h-10"
+                id="scenario-name"
+                className="h-10"
                 value={draft.name}
                 onChange={(e) => change({ name: e.target.value })}
               />
             </label>
-            <section>
-              {title(1, 'Когда запускать')}
-              <div className="space-y-3">
-                <Segmented
-                  label="Логика условий"
-                  value={draft.conditionMode}
-                  onChange={(value) => change({ conditionMode: value as Scenario['conditionMode'] })}
-                  items={[
-                    { key: 'all', label: 'И · все условия' },
-                    { key: 'any', label: 'ИЛИ · любое' },
-                  ]}
-                />
-                {conditions.map((condition, index) => (
-                  <div key={condition} className="rounded-xl border border-border bg-surface-2 p-3">
-                    <div className="flex items-center gap-2">
-                      <Select
-                        value={condition}
-                        onValueChange={(value) =>
-                          change({
-                            conditions: conditions.map((c, i) =>
-                              i === index ? (value as Scenario['trigger']) : c,
-                            ),
-                          })
-                        }
-                      >
-                        <SelectTrigger aria-label={`Условие ${index + 1}`} className="h-10 flex-1">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(scenarioLabels)
-                            .filter(
-                              ([key]) =>
-                                key === condition || !conditions.includes(key as Scenario['trigger']),
-                            )
-                            .map(([key, text]) => (
-                              <SelectItem key={key} value={key}>
-                                {text}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                      {conditions.length > 1 && (
-                        <BarButton
-                          className="size-10 min-w-0 p-0"
-                          aria-label={`Удалить условие ${index + 1}`}
-                          onClick={() => change({ conditions: conditions.filter((_, i) => i !== index) })}
-                        >
-                          ×
-                        </BarButton>
-                      )}
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-text-3">
-                      {scenarioConditionDescriptions[condition]}
-                    </p>
-                  </div>
-                ))}
-                {conditions.length < 3 && (
-                  <BarButton
-                    className="h-10"
-                    onClick={() => {
-                      const next = (Object.keys(scenarioLabels) as Scenario['trigger'][]).find(
-                        (c) => !conditions.includes(c),
-                      );
-                      if (next) change({ conditions: [...conditions, next] });
-                    }}
-                  >
-                    Добавить условие
-                  </BarButton>
-                )}
-                {monitoring.data &&
-                  (!monitoring.data.enabled ||
-                    (conditions.includes('tcp_unreachable') && !monitoring.data.checkHostEnabled)) && (
-                    <p
-                      className="rounded-xl border border-warn/30 bg-warn/10 p-3 text-xs leading-5"
-                      role="status"
-                    >
-                      {!monitoring.data.enabled
-                        ? 'Мониторинг нод выключен — сценарий не выполнится.'
-                        : 'TCP-проверки выключены — условие «TCP недоступен» не подтвердится.'}{' '}
-                      <a href="/settings/autochecks" className="text-brand hover:underline">
-                        Настройки автопроверок →
-                      </a>
-                    </p>
-                  )}
-                {conditions.includes('tcp_unreachable') && monitoring.data?.checkHostEnabled && (
-                  <p className="text-xs leading-5 text-text-3">
-                    TCP проверяется раз в {monitoring.data.checkHostCooldownMinutes} мин; неполный результат —
-                    повтор через минуту. Основной порт: {monitoring.data.checkHostPort}, также проверяется
-                    порт ноды.
-                  </p>
-                )}
-                <label htmlFor="scenario-field-3" className="block text-xs text-text-2">
-                  Подтверждение всей группы, минут
-                  <Input
-                    id="scenario-field-3"
-                    className="mt-2 h-10"
-                    type="number"
-                    min={1}
-                    max={60}
-                    aria-invalid={!timeValid(holdInput, 1, 60)}
-                    value={holdInput}
-                    onChange={(e) => {
-                      setHoldInput(e.target.value);
-                      if (e.target.value !== '') change({ holdMinutes: Number(e.target.value) });
-                    }}
-                  />
-                  <span className="mt-2 block text-[11px] text-text-3">
-                    Условия должны сохраняться в течение этого времени. И — все одновременно; ИЛИ — хотя бы
-                    одно.
-                  </span>
-                </label>
-              </div>
-            </section>
-            <section>
-              {title(2, 'Какие ноды')}
-              <Segmented
-                label="Область сценария"
-                value={draft.scope}
-                onChange={(v) =>
-                  change({ scope: v as Scenario['scope'], nodes: v === 'all' ? [] : draft.nodes })
-                }
-                items={[
-                  { key: 'all', label: 'Все ноды' },
-                  { key: 'selected', label: 'Выбранные' },
-                ]}
+            <div className="flex h-10 flex-none items-center gap-2.5 rounded-[10px] border border-border px-3">
+              <span className="text-[13px] text-text-2">Включён</span>
+              <Toggle
+                id="scenario-enabled"
+                checked={draft.enabled}
+                onChange={(enabled) => change({ enabled })}
+                aria-label="Сценарий включён"
               />
-              {draft.scope === 'all' ? (
-                <div className="mt-3 flex items-center gap-3 rounded-xl border border-border bg-surface-2 p-3">
-                  <GlobeIcon className="size-5 text-brand" />
-                  <div className="text-sm">
-                    Общий сценарий
-                    <span className="block text-xs text-text-3">
-                      Применяется к каждой ноде при её собственном сбое.
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-3 rounded-xl border border-border p-3">
-                  <Input
-                    className="h-10"
-                    placeholder="Найти ноду"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                  <div className="mt-2 flex justify-between text-xs">
-                    <button
-                      type="button"
-                      className="text-brand"
-                      onClick={() => change({ nodes: visibleNodes.map((n) => n.uuid) })}
-                    >
-                      Выбрать все
-                    </button>
-                    <button type="button" className="text-text-3" onClick={() => change({ nodes: [] })}>
-                      Очистить
-                    </button>
-                  </div>
-                  <div className="mt-3 grid max-h-36 gap-2 overflow-y-auto sm:grid-cols-2">
-                    {visibleNodes.map((n) => (
-                      <label
-                        htmlFor={`scenario-node-${n.uuid}`}
-                        key={n.uuid}
-                        className="flex min-w-0 items-center gap-2 text-xs"
-                      >
-                        <Checkbox
-                          id={`scenario-node-${n.uuid}`}
-                          checked={draft.nodes.includes(n.uuid)}
-                          onCheckedChange={(v) =>
-                            change({
-                              nodes: v ? [...draft.nodes, n.uuid] : draft.nodes.filter((id) => id !== n.uuid),
-                            })
-                          }
-                        />
-                        <span className="truncate">{n.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </section>
-            <section>
-              {title(3, 'Что делать')}
-              <div className="grid gap-2 sm:grid-cols-2">
-                {Object.entries(scenarioActionLabels).map(([key, text]) => {
-                  const action = key as Scenario['actions'][number],
-                    Icon = icons[action],
-                    checked = draft.actions.includes(action);
-                  return (
-                    <label
-                      htmlFor={`scenario-action-${action}`}
-                      key={action}
-                      className={cn(
-                        'flex cursor-pointer items-center gap-2 rounded-xl border p-3 text-xs transition-colors',
-                        checked
-                          ? 'border-brand/40 bg-brand-soft'
-                          : 'border-border bg-surface-2 hover:border-brand/30',
-                      )}
-                    >
-                      <Checkbox
-                        id={`scenario-action-${action}`}
-                        aria-label={text}
-                        checked={checked}
-                        onCheckedChange={(v) =>
-                          change({
-                            actions: v
-                              ? [...draft.actions, action]
-                              : draft.actions.filter((a) => a !== action),
-                          })
-                        }
-                      />
-                      <Icon className={cn('size-4 shrink-0', checked ? 'text-brand' : 'text-text-3')} />
-                      {text}
-                    </label>
-                  );
-                })}
-              </div>
-              {draft.actions.includes('notify') && (
-                <div
-                  className="mt-3 rounded-xl border border-warn/30 bg-warn/10 p-3 text-xs leading-5"
-                  role="status"
-                >
-                  {telegram.isPending
-                    ? 'Проверяем настройки Telegram…'
-                    : telegram.isError
-                      ? 'Не удалось проверить настройки Telegram. Проверьте подключение перед включением сценария.'
-                      : !telegram.data?.destinations.length
-                        ? 'Сообщение не придёт: Telegram не подключён.'
-                        : !telegram.data.events.scenario
-                          ? 'Сообщение не придёт: «Уведомления из сценариев» выключены в настройках.'
-                          : 'Уведомления из сценариев включены. Действуют тихие часы и ограничения доставки Telegram.'}
-                  <a href="/settings/notifications" className="mt-1 block text-brand hover:underline">
-                    Настройки уведомлений →
-                  </a>
-                </div>
-              )}
-              {draft.actions.includes('rename_host') && (
-                <div className="mt-3 space-y-3 rounded-xl border border-border bg-surface-2 p-3">
-                  <label htmlFor="scenario-field-6" className="block text-xs text-text-2">
-                    Как изменить имя
+            </div>
+          </div>
+
+          <section className="rounded-2xl border border-ai/30 bg-ai/[0.05] px-4 py-3.5">
+            <h3 className="mb-2.5 flex items-center gap-2 text-[10.5px] font-extrabold tracking-[0.12em] text-ai uppercase">
+              <ZapIcon className="size-3.5" aria-hidden="true" />
+              Если
+            </h3>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-2 text-[14px] leading-8">
+              {conditions.map((condition, index) => (
+                <span key={condition} className="contents">
+                  {index > 0 && (
                     <Select
-                      value={draft.renameMode}
-                      onValueChange={(v) => change({ renameMode: v as Scenario['renameMode'] })}
+                      value={draft.conditionMode}
+                      onValueChange={(conditionMode) =>
+                        change({ conditionMode: conditionMode as Scenario['conditionMode'] })
+                      }
                     >
-                      <SelectTrigger id="scenario-field-6" className="mt-2 h-10">
+                      <SelectTrigger
+                        aria-label="Как сочетать условия"
+                        className={cn(CHIP, 'h-8 w-auto text-ai')}
+                      >
+                        <SelectValue>{draft.conditionMode === 'all' ? 'и' : 'или'}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">и — все условия одновременно</SelectItem>
+                        <SelectItem value="any">или — хватит любого</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                  <span className="inline-flex items-center gap-1">
+                    <Select
+                      value={condition}
+                      onValueChange={(value) =>
+                        setConditions(conditions.map((c, i) => (i === index ? (value as Condition) : c)))
+                      }
+                    >
+                      <SelectTrigger aria-label={`Условие ${index + 1}`} className={cn(CHIP, 'h-8 w-auto')}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="replace">Заменить целиком</SelectItem>
-                        <SelectItem value="prepend">Добавить в начало, после флага</SelectItem>
-                        <SelectItem value="append">Добавить в конец</SelectItem>
+                        {(Object.keys(scenarioLabels) as Condition[])
+                          .filter((key) => key === condition || !conditions.includes(key))
+                          .map((key) => (
+                            <SelectItem key={key} value={key}>
+                              {scenarioLabels[key]}
+                            </SelectItem>
+                          ))}
                       </SelectContent>
                     </Select>
-                  </label>
-                  <label htmlFor="scenario-field-7" className="block text-xs text-text-2">
-                    Текст или эмодзи
-                    <Input
-                      id="scenario-field-7"
-                      className="mt-2 h-10"
-                      placeholder="Например: 🔴 или временно недоступен"
-                      aria-describedby="scenario-name-spacing"
-                      value={draft.renameText}
-                      onChange={(e) => change({ renameText: e.target.value })}
-                    />
-                    <span id="scenario-name-spacing" className="mt-2 block text-[11px] text-text-3">
-                      Пробел до и после текста добавляется автоматически. В предпросмотре · означает пробел.
-                    </span>
-                  </label>
-                </div>
-              )}
-              {draft.actions.some((a) => a === 'hide_host' || a === 'rename_host') && (
-                <label
-                  htmlFor="scenario-field-8"
-                  className="mt-3 flex items-start gap-2 rounded-xl border border-border p-3 text-xs"
-                >
-                  <Checkbox
-                    id="scenario-field-8"
-                    checked={draft.autoRestore}
-                    onCheckedChange={(v) => change({ autoRestore: !!v })}
-                  />
-                  <span>
-                    Вернуть исходные параметры Host после восстановления
-                    <span className="mt-1 block text-text-3">
-                      Только для изменений этого сценария с подтверждённой и неизменённой версией Host.
-                    </span>
+                    {conditions.length > 1 && (
+                      <button
+                        type="button"
+                        aria-label={`Удалить условие ${index + 1}`}
+                        className="grid size-6 cursor-pointer place-items-center rounded-md text-text-3 hover:bg-surface-2 hover:text-foreground"
+                        onClick={() => setConditions(conditions.filter((_, i) => i !== index))}
+                      >
+                        <XIcon className="size-3.5" aria-hidden="true" />
+                      </button>
+                    )}
                   </span>
-                </label>
-              )}
-            </section>
-            <label htmlFor="scenario-field-9" className="block text-xs text-text-2">
-              Пауза между повторными сбоями, минут
-              <Input
-                id="scenario-field-9"
-                className="mt-2 h-10"
-                type="number"
-                min={5}
-                max={1440}
-                aria-invalid={!timeValid(cooldownInput, 5, 1440)}
-                value={cooldownInput}
-                onChange={(e) => {
-                  setCooldownInput(e.target.value);
-                  if (e.target.value !== '') change({ cooldownMinutes: Number(e.target.value) });
-                }}
-              />
-            </label>
-          </div>
-          <aside className="min-h-0 min-w-0 space-y-4 lg:overflow-y-auto border-l border-border bg-bg-2 p-5 max-lg:border-l-0 max-lg:border-t">
-            <h3 className="text-sm font-semibold">Последовательность</h3>
-            <div className="space-y-2">
-              {[
-                ...draft.actions.filter((a) => a !== 'notify'),
-                ...(draft.actions.includes('notify') ? ['notify' as const] : []),
-              ].map((a, i) => (
-                <div
-                  key={a}
-                  className="flex items-center gap-2 rounded-xl border border-border bg-surface p-3"
-                >
-                  <span className="text-xs text-brand">{i + 1}</span>
-                  <span className="flex-1 text-xs">{scenarioActionLabels[a]}</span>
-                  {a !== 'notify' && (
-                    <div className="flex gap-1">
-                      <button
-                        type="button"
-                        aria-label={`Выше: ${scenarioActionLabels[a]}`}
-                        onClick={() => reorder(a, -1)}
-                        className="grid size-8 place-items-center rounded-md hover:bg-surface-2"
-                      >
-                        <ArrowUpIcon className="size-3" />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Ниже: ${scenarioActionLabels[a]}`}
-                        onClick={() => reorder(a, 1)}
-                        className="grid size-8 place-items-center rounded-md hover:bg-surface-2"
-                      >
-                        <ArrowDownIcon className="size-3" />
-                      </button>
-                    </div>
-                  )}
-                </div>
+                </span>
               ))}
+              <span className="text-text-2">держится</span>
+              <label className={cn(CHIP, 'cursor-text gap-1 pr-2.5 focus-within:border-ai/60')}>
+                <input
+                  aria-label="Подтверждение, минут"
+                  inputMode="numeric"
+                  aria-invalid={!timeValid(holdInput, 1, 60)}
+                  value={holdInput}
+                  onChange={(e) => {
+                    setHoldInput(e.target.value);
+                    if (timeValid(e.target.value, 1, 60)) change({ holdMinutes: Number(e.target.value) });
+                  }}
+                  style={{ width: `${Math.max(holdInput.length, 1) + 0.4}ch` }}
+                  className="bg-transparent text-center outline-none"
+                />
+                мин
+              </label>
+              <span className="text-text-2">на</span>
+              {/* modal: окно поверх диалога со своей прокруткой — иначе диалог глушит колесо мыши в списке нод. */}
+              <Popover.Root modal>
+                <Popover.Trigger asChild>
+                  <button
+                    type="button"
+                    className={cn(CHIP, draft.scope === 'selected' && !count && 'border-warn/50 text-warn')}
+                  >
+                    {scopeText}
+                    <ChevronDownIcon aria-hidden="true" />
+                  </button>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Content
+                    align="start"
+                    sideOffset={6}
+                    collisionPadding={12}
+                    className="z-[60] flex max-h-[var(--radix-popover-content-available-height)] w-[340px] flex-col rounded-[14px] border border-border-2 bg-surface p-3.5 shadow-float outline-none"
+                  >
+                    <Segmented<Scenario['scope']>
+                      label="Какие ноды"
+                      value={draft.scope}
+                      onChange={(scope) => change({ scope, nodes: scope === 'all' ? [] : draft.nodes })}
+                      items={[
+                        { key: 'all', label: 'Любая нода' },
+                        { key: 'selected', label: 'Выбранные' },
+                      ]}
+                    />
+                    {draft.scope === 'all' ? (
+                      <p className="mt-2.5 text-[12.5px] leading-snug text-text-3">
+                        Общий сценарий: применяется к каждой ноде при её собственном сбое.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="relative mt-2.5">
+                          <SearchIcon
+                            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-text-3"
+                            aria-hidden="true"
+                          />
+                          <Input
+                            className="h-10 pl-9"
+                            aria-label="Найти ноду"
+                            placeholder="Найти ноду"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                          />
+                        </div>
+                        <div className="mt-2 flex items-center gap-3 text-[12.5px]">
+                          <span className="flex-1 text-text-3 tabular-nums">
+                            Выбрано {count} из {all.length}
+                          </span>
+                          <button
+                            type="button"
+                            className="cursor-pointer text-brand hover:underline"
+                            onClick={() =>
+                              change({
+                                nodes: [...new Set([...draft.nodes, ...visibleNodes.map((n) => n.uuid)])],
+                              })
+                            }
+                          >
+                            Выбрать все
+                          </button>
+                          <button
+                            type="button"
+                            className="cursor-pointer text-text-3 hover:text-foreground"
+                            onClick={() => change({ nodes: [] })}
+                          >
+                            Очистить
+                          </button>
+                        </div>
+                        <fieldset
+                          aria-label="Ноды сценария"
+                          className="-mx-1.5 mt-2 max-h-[300px] min-h-0 min-w-0 overflow-y-auto overscroll-contain border-t border-border px-1.5 pt-1.5"
+                        >
+                          {visibleNodes.map((n) => (
+                            <label
+                              key={n.uuid}
+                              htmlFor={`scenario-node-${n.uuid}`}
+                              className="flex cursor-pointer items-center gap-2.5 rounded-[8px] px-1.5 py-1.5 text-[13px] hover:bg-surface-2"
+                            >
+                              <Checkbox
+                                id={`scenario-node-${n.uuid}`}
+                                checked={draft.nodes.includes(n.uuid)}
+                                onCheckedChange={(v) =>
+                                  change({
+                                    nodes: v
+                                      ? [...draft.nodes, n.uuid]
+                                      : draft.nodes.filter((id) => id !== n.uuid),
+                                  })
+                                }
+                              />
+                              <span className="truncate">{n.name}</span>
+                            </label>
+                          ))}
+                          {nodes.isPending &&
+                            [1, 2, 3, 4].map((row) => (
+                              <div key={row} className="flex items-center gap-2.5 px-1.5 py-2">
+                                <Skeleton className="size-4 rounded-[5px]" />
+                                <Skeleton className="h-3 w-[55%]" />
+                              </div>
+                            ))}
+                          {!nodes.isPending && !visibleNodes.length && (
+                            <p className="px-1.5 py-2 text-[12.5px] text-text-3">Ничего не найдено.</p>
+                          )}
+                        </fieldset>
+                      </>
+                    )}
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
+              {conditions.length < 3 && (
+                <button
+                  type="button"
+                  className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-[9px] border border-dashed border-border-2 px-2.5 text-[12.5px] font-medium text-text-2 hover:border-ai/50 hover:text-foreground"
+                  onClick={() => {
+                    const next = (Object.keys(scenarioLabels) as Condition[]).find(
+                      (c) => !conditions.includes(c),
+                    );
+                    if (next) setConditions([...conditions, next]);
+                  }}
+                >
+                  <PlusIcon className="size-3.5" aria-hidden="true" />
+                  Условие
+                </button>
+              )}
             </div>
-            <p className="text-xs leading-5 text-text-3">
-              Уведомление — после действий. Один запуск на сбой; общие и индивидуальные правила независимы.
-            </p>
-            {draft.actions.some((a) => a === 'hide_host' || a === 'rename_host') && (
-              <>
-                <h3 className="flex items-center gap-2 text-sm font-semibold">
-                  <ServerIcon className="size-4 text-brand" />
-                  Затронутые Host
+            <ul className="mt-2.5 flex flex-col gap-1 text-[12px] leading-snug text-text-3">
+              {conditions.map((c) => (
+                <li key={c}>
+                  <b className="font-semibold text-text-2">{scenarioLabels[c]}:</b>{' '}
+                  {scenarioConditionDescriptions[c]}
+                </li>
+              ))}
+              {conditions.includes('tcp_unreachable') &&
+                monitoring.data?.enabled &&
+                monitoring.data.checkHostEnabled && (
+                  <li>
+                    TCP проверяется раз в {monitoring.data.checkHostCooldownMinutes} мин, порты{' '}
+                    {monitoring.data.checkHostPort} и порт ноды; неполный результат — повтор через минуту.
+                  </li>
+                )}
+            </ul>
+          </section>
+          {monitoring.data && !monitoring.data.enabled && (
+            <Note tone="warn">
+              Мониторинг нод выключен — сценарий не выполнится.{' '}
+              <Link to="/settings/monitoring" className="text-brand hover:underline">
+                Мониторинг нод →
+              </Link>
+            </Note>
+          )}
+          {monitoring.data?.enabled &&
+            conditions.includes('tcp_unreachable') &&
+            !monitoring.data.checkHostEnabled && (
+              <Note tone="warn">
+                TCP-проверки выключены — условие «TCP недоступен» не подтвердится.{' '}
+                <Link to="/settings/monitoring" className="text-brand hover:underline">
+                  Мониторинг нод →
+                </Link>
+              </Note>
+            )}
+
+          <div className="-my-1 flex justify-center text-text-3" aria-hidden="true">
+            <ArrowDownIcon className="size-4" />
+          </div>
+
+          <section className="flex flex-col gap-2.5">
+            <h3 className="flex items-center gap-2 text-[10.5px] font-extrabold tracking-[0.12em] text-teal uppercase">
+              <PlayIcon className="size-3.5" aria-hidden="true" />
+              То — по порядку
+            </h3>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <SortableContext items={enabledOrder} strategy={verticalListSortingStrategy}>
+                {[...enabledOrder, ...ORDERABLE.filter((a) => !enabledOrder.includes(a))].map((action) => {
+                  const on = draft.actions.includes(action);
+                  const firstHost = enabledOrder.find((a) => a === 'hide_host' || a === 'rename_host');
+                  return (
+                    <StepCard
+                      key={action}
+                      action={action}
+                      on={on}
+                      index={on ? enabledOrder.indexOf(action) + 1 : null}
+                      sortable={on && enabledOrder.length > 1}
+                      onToggle={(v) => toggleStep(action, v)}
+                    >
+                      {action === 'check_tcp' &&
+                        monitoring.data &&
+                        (monitoring.data.checkHostEnabled ? (
+                          <Note>
+                            Порт {monitoring.data.checkHostPort} из «Мониторинга нод» и порт ноды. Если данных
+                            мало, в итоге будет «недостаточно данных».
+                          </Note>
+                        ) : (
+                          <Note tone="warn">
+                            TCP-проверки выключены в «Мониторинге нод» — шаг не выполнится.
+                          </Note>
+                        ))}
+                      {action === 'rename_host' && (
+                        <>
+                          <Segmented<Scenario['renameMode']>
+                            label="Как изменить имя Host"
+                            value={draft.renameMode}
+                            onChange={(renameMode) => change({ renameMode })}
+                            items={[
+                              { key: 'replace', label: 'Заменить имя' },
+                              { key: 'prepend', label: 'В начало, после флага' },
+                              { key: 'append', label: 'В конец' },
+                            ]}
+                          />
+                          <label htmlFor="scenario-rename" className="block">
+                            <span className="mb-1.5 block text-[12.5px] font-medium text-text-2">
+                              Текст или эмодзи
+                            </span>
+                            <Input
+                              id="scenario-rename"
+                              className="h-10"
+                              placeholder="Например: 🔴 или временно недоступен"
+                              value={draft.renameText}
+                              onChange={(e) => change({ renameText: e.target.value })}
+                            />
+                            <span className="mt-1.5 block text-[12px] text-text-3">
+                              Пробел до и после текста добавляется сам — как в предпросмотре справа.
+                            </span>
+                          </label>
+                        </>
+                      )}
+                      {action === firstHost && hostRight === 'denied' && (
+                        <Note tone="warn">
+                          У API-ключа нет права «Изменение Host» — Remnawave отказала. Права ключа не
+                          меняются: выпустите в Remnawave новый ключ с правами на чтение и изменение Host и
+                          замените его в «Ноды» → «Настроить подключение».
+                        </Note>
+                      )}
+                      {action === firstHost && hostRight === 'unknown' && (
+                        <Note>
+                          Право ключа «Изменение Host» проверится при первом срабатывании: Remnawave не
+                          сообщает права заранее. Итог будет в событии ноды и в Telegram.
+                        </Note>
+                      )}
+                      {action === firstHost && (
+                        <label
+                          htmlFor="scenario-restore"
+                          className="flex cursor-pointer items-start gap-2.5 text-[13px]"
+                        >
+                          <Checkbox
+                            id="scenario-restore"
+                            className="mt-0.5"
+                            checked={draft.autoRestore}
+                            onCheckedChange={(v) => change({ autoRestore: v === true })}
+                          />
+                          <span>
+                            Вернуть Host как был, когда нода восстановится
+                            <span className="mt-0.5 block text-[12px] text-text-3">
+                              Только для изменений этого сценария, если Host с тех пор не меняли.
+                            </span>
+                          </span>
+                        </label>
+                      )}
+                    </StepCard>
+                  );
+                })}
+              </SortableContext>
+            </DndContext>
+            <StepCard
+              action="notify"
+              on={draft.actions.includes('notify')}
+              index={draft.actions.includes('notify') ? enabledOrder.length + 1 : null}
+              sortable={false}
+              onToggle={(v) => toggleStep('notify', v)}
+            >
+              <p className="flex flex-wrap items-center gap-2 text-[12.5px] text-text-2">
+                <Pill tone={telegramState.tone}>
+                  {telegramState.tone === 'ok' ? 'Подключён' : 'Внимание'}
+                </Pill>
+                {telegramState.text}
+                <Link to="/settings/notifications" className="text-brand hover:underline">
+                  Настройки уведомлений
+                </Link>
+              </p>
+            </StepCard>
+          </section>
+        </div>
+
+        <aside className="flex min-w-0 flex-col bg-bg-2 max-lg:border-t max-lg:border-border lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:min-h-0 lg:border-l lg:border-border">
+          {/* Шапка правого блока не прокручивается: крестик в правом верхнем углу, текст под него не заезжает. */}
+          <div className="hidden flex-none items-center justify-between gap-3 px-[18px] pt-5 pb-3 lg:flex">
+            <span className={kicker}>Предпросмотр</span>
+            <CloseButton busy={busy} onClose={onClose} />
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col gap-4 px-[18px] pb-5 max-lg:pt-5 lg:overflow-y-auto">
+            <div>
+              <h3 className={cn(kicker, 'mb-2')}>Как это прочитать</h3>
+              <p className="rounded-[14px] border border-border bg-surface px-3.5 py-3 text-[13px] leading-relaxed">
+                Если{' '}
+                <b>
+                  {conditions
+                    .map((c) => lower(scenarioLabels[c]))
+                    .join(draft.conditionMode === 'all' ? ' и ' : ' или ')}
+                </b>{' '}
+                держится <b>{draft.holdMinutes} мин</b>{' '}
+                {readScope ? (
+                  <>
+                    на <b>{readScope}</b>
+                  </>
+                ) : (
+                  <b className="text-warn">(ноды не выбраны)</b>
+                )}
+                , то:{' '}
+                {steps.length ? (
+                  steps.map((s, i) => `${i + 1}) ${s}`).join(', ')
+                ) : (
+                  <span className="text-warn">шаги не выбраны</span>
+                )}
+                . Повтор не раньше чем через {draft.cooldownMinutes} мин.
+              </p>
+            </div>
+            {hostStep && (
+              <div>
+                <h3 className={cn(kicker, 'mb-2')}>
+                  Затронутые Host{hosts.data ? ` · ${willChange.length}` : ''}
                 </h3>
-                <p className="text-xs leading-5 text-text-3">
-                  Host связываются по адресу или UUID. Если связь не определена, назначьте ноду вручную. Общие
-                  Host пропускаются.
-                </p>
                 {hosts.isPending ? (
-                  <RowsSkeleton rows={2} />
+                  <RowsSkeleton rows={2} label="Загрузка Host" />
                 ) : hosts.isError ? (
-                  <p role="alert" className="text-xs text-crit">
+                  <p role="alert" className="text-[12.5px] text-crit">
                     {apiErrorMessage(hosts.error)}
                   </p>
                 ) : !targets.length ? (
-                  <p className="text-xs text-text-3">У выбранных нод нет связанных Host.</p>
+                  <p className="text-[12.5px] text-text-3">У выбранных нод нет связанных Host.</p>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="flex flex-col rounded-[14px] border border-border bg-surface px-3.5 py-1">
                     {targets.map((h) => (
-                      <div key={h.uuid} className="rounded-xl border border-border bg-surface p-3">
-                        <strong className="block break-words text-xs">{h.name}</strong>
-                        {draft.actions.includes('rename_host') &&
-                          draft.renameText &&
-                          h.nodes.length === 1 && (
-                            <div className="mt-2 flex items-start gap-2 text-xs text-brand">
-                              <ArrowRightIcon className="mt-0.5 size-3 shrink-0" />
-                              <span className="break-words">{name(h.name).replaceAll(' ', '·')}</span>
-                            </div>
+                      <div
+                        key={h.uuid}
+                        className="border-t border-border py-2.5 text-[12.5px] first:border-t-0"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="min-w-0 font-medium break-words">{h.name}</span>
+                          {h.nodes.length !== 1 ? (
+                            <Pill tone="warn">Пропускается</Pill>
+                          ) : draft.actions.includes('hide_host') &&
+                            h.disabled &&
+                            !draft.actions.includes('rename_host') ? (
+                            <Pill>Уже выключен</Pill>
+                          ) : (
+                            <Pill tone="ok">Будет изменён</Pill>
                           )}
-                        <p className="mt-1 break-all text-[11px] text-text-3">
+                        </div>
+                        <p className="mt-0.5 font-mono text-[11px] break-all text-text-3">
                           {h.address}
                           {h.port ? `:${h.port}` : ''}
                         </p>
-                        <p className="mt-1 text-[11px] text-text-3">
-                          {h.nodeNames.join(', ') || 'Нода не назначена'}
-                        </p>
-                        <p className="mt-1 text-[11px] text-text-3">
+                        {draft.actions.includes('rename_host') &&
+                          draft.renameText &&
+                          h.nodes.length === 1 && (
+                            <RenamePreview name={h.name} mode={draft.renameMode} text={draft.renameText} />
+                          )}
+                        <p className="mt-1 text-[11.5px] text-text-3">
+                          {h.nodeNames.join(', ') || 'Нода не назначена'} ·{' '}
                           {h.automaticNodes.length
                             ? h.bindingSource
                             : draft.hostBindings.some((b) => b.hostUuid === h.uuid)
-                              ? 'Ручная привязка в этом сценарии'
-                              : 'Нет однозначной связи'}
+                              ? 'ручная привязка в этом сценарии'
+                              : h.nodes.length > 1
+                                ? 'общий для нескольких нод'
+                                : 'связь не определена'}
                         </p>
                         {!h.automaticNodes.length && (
                           <Select
@@ -542,7 +899,10 @@ export function ScenarioEditor({
                               })
                             }
                           >
-                            <SelectTrigger aria-label={`Нода для Host ${h.name}`} className="mt-2 h-10">
+                            <SelectTrigger
+                              aria-label={`Нода для Host ${h.name}`}
+                              className="mt-2 h-9 text-[12.5px]"
+                            >
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -555,59 +915,113 @@ export function ScenarioEditor({
                             </SelectContent>
                           </Select>
                         )}
-                        <div className="mt-2">
-                          <Pill tone={h.nodes.length !== 1 ? 'warn' : 'muted'}>
-                            {h.nodes.length !== 1
-                              ? 'Пропускается'
-                              : draft.actions.includes('hide_host') &&
-                                  h.disabled &&
-                                  !draft.actions.includes('rename_host')
-                                ? 'Уже выключен'
-                                : 'Будет изменён'}
-                          </Pill>
-                        </div>
-                        {h.restoration && <p className="mt-1 text-[11px] text-warn">{h.restoration}</p>}
+                        {h.restoration && <p className="mt-1 text-[11.5px] text-warn">{h.restoration}</p>}
                       </div>
                     ))}
                   </div>
                 )}
-              </>
+              </div>
             )}
-          </aside>
-        </div>
-        {error && (
-          <p role="alert" className="px-5 py-2 text-xs text-crit">
-            {error}
-          </p>
-        )}
-        <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-border bg-bg-2 px-5 py-4">
-          <BarButton className="h-10 min-w-28" disabled={busy} onClick={onClose}>
-            Отмена
-          </BarButton>
-          <div className="flex gap-2">
-            {onDelete && (
-              <BarButton className="h-10" disabled={busy} onClick={onDelete}>
-                Удалить
-              </BarButton>
+            {draft.actions.includes('notify') && (
+              <div>
+                <h3 className={cn(kicker, 'mb-2')}>Сообщение в Telegram</h3>
+                <div className="rounded-[14px] border border-[#243140] bg-[#17212b] px-3 py-2.5 text-[12.5px] leading-relaxed text-[#e9edf4]">
+                  <b>🟡 Сценарий: {draft.name || 'без названия'}</b>
+                  <br />
+                  <b>{sample?.name ?? 'Нода'}</b>
+                  {sample?.address && (
+                    <span className="text-[#9fb0c4]">
+                      {' '}
+                      · <span className="font-mono text-[11.5px]">{sample.address}</span>
+                    </span>
+                  )}
+                  <br />
+                  <br />
+                  <b>Нода:</b> {sample?.name ?? '—'}
+                  <br />
+                  <b>Условие:</b> {scenarioConditionLabel(draft)}
+                  {result && (
+                    <>
+                      <br />
+                      <b>Результат:</b> {result}
+                    </>
+                  )}
+                </div>
+                <p className="mt-1.5 text-[11.5px] leading-snug text-text-3">
+                  Пример{sample ? ` для ноды ${sample.name}` : ''}, если TCP недоступен. В расширенном
+                  оформлении — те же строки, заголовок крупнее.
+                </p>
+              </div>
             )}
-            <CardButton
-              className="h-10 min-w-28"
-              disabled={
-                busy ||
-                !timeValid(holdInput, 1, 60) ||
-                !timeValid(cooldownInput, 5, 1440) ||
-                draft.name.trim().length < 2 ||
-                !draft.actions.length ||
-                (draft.scope === 'selected' && !draft.nodes.length) ||
-                (draft.actions.includes('rename_host') && !draft.renameText.trim())
-              }
-              onClick={onSave}
-            >
-              Сохранить
-            </CardButton>
           </div>
-        </footer>
+        </aside>
+
+        <div className="flex flex-none flex-wrap items-center gap-3 border-t border-border bg-bg-2 px-[22px] py-3.5 max-lg:sticky max-lg:bottom-0 max-lg:z-10 max-md:px-4 lg:col-start-1 lg:row-start-2">
+          <label htmlFor="scenario-cooldown" className="flex items-center gap-2 text-[12.5px] text-text-2">
+            Пауза между повторными сбоями
+            <Input
+              id="scenario-cooldown"
+              inputMode="numeric"
+              aria-invalid={!timeValid(cooldownInput, 5, 1440)}
+              className="h-10 w-[76px] text-right"
+              value={cooldownInput}
+              onChange={(e) => {
+                setCooldownInput(e.target.value);
+                if (timeValid(e.target.value, 5, 1440)) change({ cooldownMinutes: Number(e.target.value) });
+              }}
+            />
+            мин
+          </label>
+          <span
+            className="min-w-0 flex-1 text-right text-[12.5px] text-text-3 max-md:basis-full max-md:text-left max-md:empty:hidden"
+            aria-live="polite"
+          >
+            {error ? <span className="text-crit">{error}</span> : blocker}
+          </span>
+          {onDelete && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setDeleting(true)}
+              className="inline-flex h-10 cursor-pointer items-center rounded-[10px] border border-border bg-surface px-3.5 text-[13px] font-medium text-text-2 transition-colors hover:border-crit/50 hover:text-crit disabled:opacity-50"
+            >
+              Удалить
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onClose}
+            className="inline-flex h-10 cursor-pointer items-center rounded-[10px] border border-border bg-surface px-4 text-[13px] font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground disabled:opacity-50"
+          >
+            Отмена
+          </button>
+          <button
+            type="button"
+            disabled={busy || Boolean(blocker)}
+            onClick={onSave}
+            className="inline-flex h-10 cursor-pointer items-center justify-center rounded-[10px] bg-cta px-4 text-[13px] font-semibold text-cta-foreground transition-colors hover:bg-(--ns-cta-hover) disabled:cursor-default disabled:opacity-50 max-md:flex-1"
+          >
+            {busy ? 'Сохраняю…' : 'Сохранить сценарий'}
+          </button>
+        </div>
+
+        {/* Узкий экран: правый блок уходит вниз, крестик — в правом верхнем углу окна. */}
+        <CloseButton busy={busy} onClose={onClose} className="absolute top-5 right-[18px] z-20 lg:hidden" />
       </DialogContent>
+      <ConfirmDialog
+        open={deleting}
+        onOpenChange={setDeleting}
+        kind="crit"
+        title="Удалить сценарий?"
+        description={`Сценарий «${draft.name}» перестанет срабатывать. Уже сделанные изменения Host он не вернёт.`}
+        yesLabel="Да, удалить"
+        loading={busy}
+        onConfirm={() => {
+          setDeleting(false);
+          onDelete?.();
+        }}
+      />
     </Dialog>
   );
 }

@@ -74,7 +74,8 @@ describe('AssistantSettingsPage', () => {
     const { router } = renderPage(AssistantSettingsPage, '/settings/assistant');
     const user = userEvent.setup();
     await screen.findByText('Включён');
-    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
+    // Без правок полосы «Сохранить» нет — она появляется после первой правки.
+    expect(screen.queryByRole('button', { name: 'Сохранить' })).toBeNull();
     await go(router, 'behavior');
     await user.click(screen.getByRole('radio', { name: 'Подробно' }));
     expect(screen.getByText('Есть несохранённые изменения')).toBeInTheDocument();
@@ -84,6 +85,7 @@ describe('AssistantSettingsPage', () => {
     await user.click(screen.getByRole('button', { name: 'Отменить' }));
     expect(screen.getByRole('radio', { name: 'Обычно' })).toBeChecked();
     expect(screen.queryByText('Есть несохранённые изменения')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Сохранить' })).toBeNull();
   });
 
   it('убрать ключ выключает Ассистента', async () => {

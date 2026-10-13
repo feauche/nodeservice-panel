@@ -14,15 +14,22 @@ import {
   type TelegramQuiet,
   type TelegramSettings,
 } from '@nodeservice/shared';
-import { BellIcon, Loader2Icon, PlusIcon, SendIcon, Trash2Icon } from 'lucide-react';
+import { Loader2Icon, PlusIcon, SendIcon, Trash2Icon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Skeleton } from '@/components/ui/skeleton';
 import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import { formatAgo } from '@/features/security/security-format';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
-import { SaveBar, SectionHeader, SettingsCard, SettingsRow, Toggle } from './settings-ui';
+import {
+  LoadError,
+  SaveBar,
+  SectionHeader,
+  SettingsCard,
+  SettingsRow,
+  SettingsSkeleton,
+  Toggle,
+} from './settings-ui';
 import { useTelegramSettings, useTestTelegram, useUpdateTelegram } from './telegram-api';
 import { timeZoneLabel } from './time-zones';
 
@@ -136,22 +143,14 @@ export function NotificationsPage() {
   const base = useMemo(() => (q.data ? fromSettings(q.data) : null), [q.data]);
   const dirty = Boolean(draft && base && !sameDraft(draft, base));
 
-  if (q.isPending || !draft)
+  // Ошибка — раньше скелетона: без данных черновика нет, и скелетон крутился бы вечно.
+  if (q.isError && !draft)
     return (
-      <div className="flex flex-col gap-4">
-        <Skeleton className="h-[260px] rounded-2xl" />
-        <Skeleton className="h-[360px] rounded-2xl" />
-      </div>
+      <SettingsCard title="Не удалось загрузить уведомления">
+        <LoadError message={apiErrorMessage(q.error)} onRetry={() => void q.refetch()} />
+      </SettingsCard>
     );
-  if (q.isError)
-    return (
-      <p
-        role="alert"
-        className="rounded-[12px] border border-crit/30 bg-crit-soft px-4 py-3 text-[13px] text-crit"
-      >
-        {apiErrorMessage(q.error)}
-      </p>
-    );
+  if (q.isPending || !draft || !q.data) return <SettingsSkeleton cards={[2, 4, 3]} />;
 
   const badUrl = (r: Row) => !('saved' in r) && r.url.trim() !== '' && parseTelegramUrl(r.url) === null;
   const proxyChanged = draft.proxy.trim() !== (q.data?.proxy ?? '');
@@ -235,7 +234,6 @@ export function NotificationsPage() {
     <div className="flex flex-col gap-3.5">
       <UnsavedChangesGuard dirty={dirty} />
       <SectionHeader
-        icon={BellIcon}
         title="Уведомления"
         description="Куда и что присылать в Telegram. События и сценарии настраиваются независимо."
         aside={
@@ -296,7 +294,7 @@ export function NotificationsPage() {
                 <div className="flex items-center gap-2">
                   <div
                     className={cn(
-                      'flex h-[38px] min-w-0 flex-1 items-center gap-2 rounded-[10px] border bg-surface-2 px-3 font-mono text-[12.5px]',
+                      'flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[10px] border bg-surface-2 px-3 font-mono text-[12.5px]',
                       badUrl(r) ? 'border-crit' : 'border-border focus-within:border-brand',
                     )}
                   >
@@ -404,7 +402,7 @@ export function NotificationsPage() {
               type="button"
               disabled={draft.rows.length >= TELEGRAM_DESTINATIONS_MAX}
               onClick={() => setRows([...draft.rows, { key: newKey(), url: '' }])}
-              className="inline-flex h-[34px] cursor-pointer items-center gap-1.5 rounded-[10px] border border-dashed border-border-2 px-3 text-[12.5px] font-medium text-text-2 transition-colors hover:border-brand/60 hover:text-foreground disabled:opacity-50"
+              className="inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-[10px] border border-dashed border-border-2 px-3.5 text-[13px] font-medium text-text-2 transition-colors hover:border-brand/60 hover:text-foreground disabled:opacity-50"
             >
               <PlusIcon className="size-3.5" aria-hidden="true" />
               Добавить чат
@@ -468,7 +466,7 @@ export function NotificationsPage() {
             spellCheck={false}
             autoComplete="off"
             className={cn(
-              'h-9 w-full rounded-[9px] border bg-surface-2 px-3 font-mono text-[12.5px] outline-none placeholder:text-text-3 focus:border-brand',
+              'h-10 w-full rounded-[10px] border bg-surface-2 px-3 font-mono text-[12.5px] outline-none placeholder:text-text-3 focus:border-brand',
               badProxy ? 'border-crit' : 'border-border',
             )}
           />
@@ -576,7 +574,7 @@ export function NotificationsPage() {
               setDraft({ ...draft, delivery: { ...draft.delivery, remindHours: Number(e.target.value) } })
             }
             className={cn(
-              'h-[34px] cursor-pointer rounded-[9px] border border-border bg-surface-2 px-2.5 text-[13px] disabled:cursor-default',
+              'h-10 cursor-pointer rounded-[10px] border border-border bg-surface-2 px-3 text-[13px] disabled:cursor-default',
               !draft.events.reminder && 'opacity-50',
             )}
           >
@@ -613,7 +611,7 @@ export function NotificationsPage() {
               disabled={!draft.quiet.enabled}
               value={draft.quiet.from}
               onChange={(e) => setDraft({ ...draft, quiet: { ...draft.quiet, from: e.target.value } })}
-              className="h-[34px] cursor-pointer rounded-[9px] border border-border bg-surface-2 px-2.5 font-mono text-[13px] disabled:cursor-default"
+              className="h-10 cursor-pointer rounded-[10px] border border-border bg-surface-2 px-3 font-mono text-[13px] disabled:cursor-default"
             >
               {HALF_HOURS.map((t) => (
                 <option key={t} value={t}>
@@ -627,7 +625,7 @@ export function NotificationsPage() {
               disabled={!draft.quiet.enabled}
               value={draft.quiet.to}
               onChange={(e) => setDraft({ ...draft, quiet: { ...draft.quiet, to: e.target.value } })}
-              className="h-[34px] cursor-pointer rounded-[9px] border border-border bg-surface-2 px-2.5 font-mono text-[13px] disabled:cursor-default"
+              className="h-10 cursor-pointer rounded-[10px] border border-border bg-surface-2 px-3 font-mono text-[13px] disabled:cursor-default"
             >
               {HALF_HOURS.map((t) => (
                 <option key={t} value={t}>
@@ -649,7 +647,7 @@ export function NotificationsPage() {
         onSave={() => void save()}
         onReset={() => base && setDraft(base)}
         error={invalid ? 'Исправьте поле, отмеченное красным.' : undefined}
-        note="Изменения попадают в Журнал. Токены после сохранения скрыты."
+        note="попадут в Журнал, токены после сохранения скрыты"
       />
     </div>
   );

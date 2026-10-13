@@ -8,22 +8,26 @@ import {
 } from '@nodeservice/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { apiErrorMessage } from '@/lib/api';
-import { toast } from '@/lib/notify';
-import { BarButton, SettingsCard, SettingsRow, Toggle } from './settings-ui';
+import { SettingsCard, SettingsCardSkeleton, SettingsRow, Toggle } from './settings-ui';
 import { useTelegramSettings, useUpdateTelegram } from './telegram-api';
 
 const kinds: IncidentKind[] = ['node_down', 'node_blocked', 'server_down', 'cpu_high', 'mem_high'];
 const events: TelegramEvent[] = ['incident_crit', 'incident_warn', 'resolved', 'reminder'];
-export function IncidentTelegramCard() {
-  const q = useTelegramSettings(),
-    m = useUpdateTelegram();
-  const [draft, setDraft] = useState<{
-    kinds: Partial<Record<IncidentKind, boolean>>;
-    events: Partial<Record<TelegramEvent, boolean>>;
-  } | null>(null);
-  const data = q.data;
+type Draft = {
+  kinds: Partial<Record<IncidentKind, boolean>>;
+  events: Partial<Record<TelegramEvent, boolean>>;
+};
+
+/**
+ * Какие события уходят в Telegram — черновик для общей полосы «Сохранить» раздела «События»: своей кнопки
+ * у карточки нет, сохранение одно на раздел.
+ */
+export function useIncidentTelegramDraft() {
+  const query = useTelegramSettings(),
+    update = useUpdateTelegram();
+  const data = query.data;
   const pick = useCallback(
-    () =>
+    (): Draft | null =>
       data
         ? {
             kinds: Object.fromEntries(kinds.map((k) => [k, data.kinds[k]])),
@@ -32,30 +36,33 @@ export function IncidentTelegramCard() {
         : null,
     [data],
   );
+  const [draft, setDraft] = useState<Draft | null>(null);
   useEffect(() => setDraft(pick()), [pick]);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(pick());
-  async function save() {
-    if (!draft) return;
-    try {
-      await m.mutateAsync(draft);
-      toast.success('Уведомления об событиях сохранены.');
-    } catch (e) {
-      toast.error(apiErrorMessage(e));
-    }
-  }
+  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(pick());
+  return {
+    query,
+    draft,
+    setDraft,
+    dirty,
+    pending: update.isPending,
+    save: async () => {
+      if (draft && dirty) await update.mutateAsync(draft);
+    },
+    reset: () => setDraft(pick()),
+  };
+}
+
+export function IncidentTelegramCard({ state }: { state: ReturnType<typeof useIncidentTelegramDraft> }) {
+  const { query, draft, setDraft } = state;
+  if (query.isPending) return <SettingsCardSkeleton rows={kinds.length + events.length} />;
   return (
     <SettingsCard
       title="События в Telegram"
       hint="Выключенный вид остаётся в панели, но не отправляется в Telegram. Чаты, тихие часы и частота напоминаний — в разделе «Уведомления»."
-      footer={
-        <BarButton disabled={!draft || !dirty || m.isPending} onClick={() => void save()}>
-          {m.isPending ? 'Сохраняю…' : 'Сохранить уведомления'}
-        </BarButton>
-      }
     >
-      {q.isError && (
+      {query.isError && (
         <p role="alert" className="py-3 text-crit">
-          {apiErrorMessage(q.error)}
+          {apiErrorMessage(query.error)}
         </p>
       )}
       {draft && (

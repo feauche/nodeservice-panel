@@ -1,9 +1,9 @@
 import { BACKUP_STAGE_LABELS, type BackupItem } from '@nodeservice/shared';
-import { DatabaseBackupIcon, DownloadIcon, Loader2Icon, TriangleAlertIcon, UploadIcon } from 'lucide-react';
+import { DownloadIcon, Loader2Icon, TriangleAlertIcon, UploadIcon } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
 import { Skeleton } from '@/components/ui/skeleton';
-import { SectionHeader } from '@/features/settings/settings-ui';
+import { SectionHeader, SettingsSkeleton } from '@/features/settings/settings-ui';
 import { useTelegramSettings } from '@/features/settings/telegram-api';
 import { timeZoneLabel } from '@/features/settings/time-zones';
 import { apiErrorMessage } from '@/lib/api';
@@ -51,7 +51,6 @@ export function BackupsPage() {
   return (
     <div className="flex flex-col gap-3.5">
       <SectionHeader
-        icon={DatabaseBackupIcon}
         title="Резервные копии"
         description="Полная копия панели одним архивом: база, ключи шифрования и ваши файлы. По расписанию и вручную, с отправкой в Telegram."
       />
@@ -178,7 +177,7 @@ export function BackupsPage() {
           </button>
         </p>
       ) : (
-        <Skeleton className="h-[320px] rounded-[14px]" />
+        <SettingsSkeleton cards={[3, 3, 2]} />
       )}
 
       <RunDialog

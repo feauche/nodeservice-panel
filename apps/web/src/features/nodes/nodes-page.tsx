@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
-import { KpiCard } from '@/components/kpi-card';
+import { KpiCard, KpiCardSkeleton } from '@/components/kpi-card';
 import { Button } from '@/components/ui/button';
 import { Combobox } from '@/components/ui/combobox';
 import { Input } from '@/components/ui/input';
@@ -24,7 +24,7 @@ import { cn } from '@/lib/utils';
 import { ConnectionPermissions } from './connection-permissions';
 import { bytes as traffic } from './node-card';
 import { NodeDialog } from './node-dialog';
-import { NodeInventory } from './node-inventory';
+import { NodeInventory, NodeTreeSkeleton } from './node-inventory';
 import {
   useCheckRemnaPermissions,
   useConnectNodes,
@@ -162,9 +162,20 @@ export function NodesPage() {
   }
   if (query.isPending)
     return (
-      <div className="grid gap-4">
-        <Skeleton className="h-40 rounded-2xl" />
-        <Skeleton className="h-64 rounded-2xl" />
+      <div role="status" aria-label="Загрузка нод" className="flex flex-col gap-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => (
+            <KpiCardSkeleton key={i} />
+          ))}
+        </div>
+        <section className="rounded-2xl border border-border bg-surface px-4 pb-4">
+          <div className="my-4 flex gap-2">
+            <Skeleton className="h-10 w-[260px] max-w-full rounded-[10px]" />
+            <Skeleton className="h-10 w-[150px] rounded-[10px] max-sm:hidden" />
+            <Skeleton className="ml-auto h-10 w-[130px] rounded-[10px]" />
+          </div>
+          <NodeTreeSkeleton />
+        </section>
       </div>
     );
   if (query.isError)

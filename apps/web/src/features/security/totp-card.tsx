@@ -1,7 +1,6 @@
 import { SECURITY_PROBLEM } from '@nodeservice/shared';
 import { CopyIcon, RefreshCwIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { OtpField } from '@/features/auth/components/otp-field';
 import { Pill, RowButton, SettingsCard, SettingsRow } from '@/features/settings/settings-ui';
@@ -122,10 +121,8 @@ function TotpReissueDialog({ open, onOpenChange }: { open: boolean; onOpenChange
                 <code className="mt-1 block break-all font-mono text-[12.5px] leading-relaxed">
                   {data.totpSecret}
                 </code>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="mt-2 h-8 rounded-[8px] border-border bg-surface-2 px-2.5 text-[12px] text-text-2 hover:bg-surface-3 hover:text-foreground"
+                <RowButton
+                  className="mt-2"
                   onClick={() => {
                     void navigator.clipboard?.writeText(data.totpSecret);
                     toast.success('Ключ скопирован.');
@@ -133,7 +130,7 @@ function TotpReissueDialog({ open, onOpenChange }: { open: boolean; onOpenChange
                 >
                   <CopyIcon className="size-3.5" aria-hidden="true" />
                   Скопировать ключ
-                </Button>
+                </RowButton>
               </div>
             </div>
             <div>

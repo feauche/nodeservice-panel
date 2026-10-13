@@ -68,7 +68,7 @@ describe('SecurityPage', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Подтвердить' }));
     await waitFor(() => expect(mockSecurity.policy.alwaysAskTotp).toBe(true));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled(); // сохранено — не dirty
+    expect(screen.queryByRole('button', { name: 'Сохранить' })).toBeNull(); // сохранено — полосы нет
   });
 
   it('политика: подсказка к сроку сессии говорит, что будет на деле, и не упоминает терминалы', async () => {

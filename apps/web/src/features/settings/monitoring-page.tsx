@@ -3,21 +3,21 @@ import {
   type MonitoringSettings,
   monitoringSettingsUpdateSchema,
 } from '@nodeservice/shared';
-import { ActivityIcon, TriangleAlertIcon } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import { Skeleton } from '@/components/ui/skeleton';
 import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
-import { IncidentTelegramCard } from './monitoring-telegram-card';
+import { IncidentTelegramCard, useIncidentTelegramDraft } from './monitoring-telegram-card';
 import { useMonitoring, useUpdateMonitoring } from './settings-api';
 import {
   BarButton,
   NumberField,
+  RowButton,
   SaveBar,
   SectionHeader,
   SettingsCard,
   SettingsRow,
+  SettingsSkeleton,
   Toggle,
 } from './settings-ui';
 
@@ -217,8 +217,22 @@ export function MonitoringPage({ section }: { section: 'checks' | 'incidents' })
     if (query.data) setDraft(pick(query.data));
   }, [query.data, pick]);
   const dirty = !!draft && !!query.data && JSON.stringify(draft) !== JSON.stringify(pick(query.data));
+  // «События»: какие события уходят в Telegram — в той же полосе «Сохранить», своей кнопки у карточки нет.
+  const telegram = useIncidentTelegramDraft();
+  const telegramDirty = section === 'incidents' && telegram.dirty;
+  const anyDirty = dirty || telegramDirty;
   async function save() {
     if (!draft) return;
+    if (!dirty) {
+      try {
+        await telegram.save();
+        setError(null);
+        toast.success('Настройки сохранены.');
+      } catch (e) {
+        setError(apiErrorMessage(e));
+      }
+      return;
+    }
     const body = Object.fromEntries(
       fields.map((f) => [f.key, typeof draft[f.key] === 'boolean' ? draft[f.key] : Number(draft[f.key])]),
     );
@@ -233,6 +247,7 @@ export function MonitoringPage({ section }: { section: 'checks' | 'incidents' })
     }
     try {
       await update.mutateAsync(parsed.data);
+      if (telegramDirty) await telegram.save();
       setError(null);
       toast.success('Настройки сохранены.');
     } catch (e) {
@@ -241,17 +256,31 @@ export function MonitoringPage({ section }: { section: 'checks' | 'incidents' })
   }
   return (
     <div className="flex flex-col gap-3.5">
-      <UnsavedChangesGuard dirty={dirty} />
+      <UnsavedChangesGuard dirty={anyDirty} />
       <SectionHeader
-        icon={section === 'checks' ? ActivityIcon : TriangleAlertIcon}
-        title={section === 'checks' ? 'Автопроверки нод' : 'События'}
+        title={section === 'checks' ? 'Мониторинг нод' : 'События'}
         description={
           section === 'checks'
-            ? 'Частота обновления данных и проверки доступности IP.'
-            : 'Условия создания и восстановления событий по данным Remnawave.'
+            ? 'Как часто панель опрашивает Remnawave и когда проверяет порты нод.'
+            : 'Когда панель заводит событие и когда считает, что проблема ушла.'
+        }
+        aside={
+          draft && (
+            <RowButton
+              disabled={
+                update.isPending || JSON.stringify(draft) === JSON.stringify(pick(MONITORING_DEFAULTS))
+              }
+              onClick={() => {
+                setDraft(pick(MONITORING_DEFAULTS));
+                setError(null);
+              }}
+            >
+              По умолчанию
+            </RowButton>
+          )
         }
       />
-      {query.isPending && <Skeleton className="h-[320px] rounded-[14px]" />}
+      {query.isPending && <SettingsSkeleton cards={sections[section].map((group) => group.fields.length)} />}
       {query.isError && (
         <SettingsCard title="Не удалось загрузить настройки">
           <p role="alert" className="py-3 text-crit">
@@ -286,33 +315,22 @@ export function MonitoringPage({ section }: { section: 'checks' | 'incidents' })
             ))}
           </SettingsCard>
         ))}
+      {section === 'incidents' && <IncidentTelegramCard state={telegram} />}
       {error && (
         <p role="alert" className="text-[13px] text-crit">
           {error}
         </p>
       )}
       <SaveBar
-        dirty={dirty}
-        pending={update.isPending}
-        error={undefined}
+        dirty={anyDirty}
+        pending={update.isPending || telegram.pending}
         onSave={() => void save()}
         onReset={() => {
           if (query.data) setDraft(pick(query.data));
+          telegram.reset();
           setError(null);
         }}
-        extra={
-          <BarButton
-            disabled={!draft || update.isPending}
-            onClick={() => {
-              setDraft(pick(MONITORING_DEFAULTS));
-              setError(null);
-            }}
-          >
-            По умолчанию
-          </BarButton>
-        }
       />
-      {section === 'incidents' && <IncidentTelegramCard />}
     </div>
   );
 }

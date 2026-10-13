@@ -376,6 +376,8 @@ export const remnaPermissionsSchema = z.object({
       why: z.string(),
       state: z.enum(['granted', 'denied', 'unknown']),
       checkedAt: z.string().nullable(),
+      /** Право на изменение, которое ещё не пробовали: когда оно проверится («при срабатывании сценария»). */
+      when: z.string().optional(),
     }),
   ),
 });

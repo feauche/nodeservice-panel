@@ -349,4 +349,23 @@ describe('Обзор, «Ёмкость»', () => {
       memoryWarningPercent: null,
     });
   });
+  it('«Отмена» закрывает окошко лимита без сохранения', async () => {
+    let puts = 0;
+    server.use(
+      http.get('/api/nodes/capacity', () =>
+        HttpResponse.json({ rows: [row({})], calculatedAt: new Date().toISOString() }),
+      ),
+      http.put('/api/nodes/:uuid/preferences', () => {
+        puts += 1;
+        return HttpResponse.json({});
+      }),
+    );
+    renderPage(OverviewCapacity, '/');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Указать лимит' }));
+    expect(screen.getByRole('textbox', { name: 'Лимит канала, Мбит/с' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Отмена' }));
+    expect(screen.queryByRole('textbox', { name: 'Лимит канала, Мбит/с' })).not.toBeInTheDocument();
+    expect(puts).toBe(0);
+  });
 });

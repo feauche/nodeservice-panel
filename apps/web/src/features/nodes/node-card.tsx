@@ -123,7 +123,7 @@ export function NodeCard({
       onClick={onClick}
       className={cn(
         'group relative grid w-full min-w-0 cursor-pointer grid-cols-2 items-center gap-x-5 gap-y-3 rounded-[10px] border py-3 pr-12 pl-9 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-        '@min-[720px]/nodes:grid-cols-[minmax(0,1.6fr)_72px_minmax(0,1fr)_minmax(0,1fr)] @min-[1080px]/nodes:grid-cols-[minmax(0,1.7fr)_80px_minmax(0,1fr)_minmax(0,1fr)_120px_84px]',
+        '@min-[720px]/nodes:grid-cols-[minmax(0,1.6fr)_72px_minmax(0,1fr)_minmax(0,1fr)] @min-[1000px]/nodes:grid-cols-[minmax(0,1.7fr)_80px_minmax(0,1fr)_minmax(0,1fr)_120px_84px]',
         tones[tone],
       )}
     >
@@ -191,7 +191,7 @@ export function NodeCard({
       <Metric label="Память">
         <LoadBar value={ram(node)} />
       </Metric>
-      <Metric label="Сеть, Мбит/с" className="hidden @min-[1080px]/nodes:block">
+      <Metric label="Сеть, Мбит/с" className="hidden @min-[1000px]/nodes:block">
         <span className="flex items-center gap-1.5 text-[12.5px] whitespace-nowrap tabular-nums">
           <ArrowDownIcon className="size-3 text-brand" aria-hidden="true" />
           {mbitPerSecond(node.rxBytesPerSec)}
@@ -199,7 +199,7 @@ export function NodeCard({
           {mbitPerSecond(node.txBytesPerSec)}
         </span>
       </Metric>
-      <Metric label="Работает" className="hidden @min-[1080px]/nodes:block">
+      <Metric label="Работает" className="hidden @min-[1000px]/nodes:block">
         <span className="block truncate text-[12.5px]">{uptime(node.uptime)}</span>
       </Metric>
     </button>

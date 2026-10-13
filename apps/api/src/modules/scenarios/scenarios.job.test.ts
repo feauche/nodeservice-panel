@@ -25,7 +25,16 @@ const rule = {
   autoRestore: true,
   cooldownMinutes: 30,
 };
-function fixture(host?: Record<string, unknown>, links?: string[]) {
+function fixture(
+  host?: Record<string, unknown>,
+  links?: string[],
+  opts: {
+    /** Ответ Remnawave на PATCH: код и как она сохраняет тело (например, обрезает пробелы в имени). */
+    patchStatus?: number;
+    patchApply?: (body: Record<string, unknown>) => Record<string, unknown>;
+    incident?: { id: string; title: string } | null;
+  } = {},
+) {
   const data = new Map<string, unknown>();
   let rules = [{ ...rule }],
     current = {
@@ -42,7 +51,9 @@ function fixture(host?: Record<string, unknown>, links?: string[]) {
       if (init?.method === 'PATCH') {
         const body = JSON.parse(String(init.body));
         calls.push(body);
-        h = { ...h, ...body, updatedAt: `v${calls.length + 1}` };
+        if (opts.patchStatus && opts.patchStatus >= 400)
+          return new Response(JSON.stringify({ message: 'Forbidden' }), { status: opts.patchStatus });
+        h = { ...h, ...(opts.patchApply ? opts.patchApply(body) : body), updatedAt: `v${calls.length + 1}` };
         return new Response(JSON.stringify({ response: h }));
       }
       return new Response(JSON.stringify({ response: [h] }));
@@ -55,6 +66,16 @@ function fixture(host?: Record<string, unknown>, links?: string[]) {
     write: async (k: string, v: unknown) => {
       data.set(k, structuredClone(v));
     },
+    remove: async (k: string) => {
+      data.delete(k);
+    },
+  };
+  const permissions = {
+    observe: vi.fn(async (_scope: string, _c: unknown, action: () => Promise<unknown>) => action()),
+  };
+  const incidents = {
+    forNode: vi.fn(async () => opts.incident ?? null),
+    note: vi.fn(async () => {}),
   };
   const events = { append: vi.fn() },
     notify = { push: vi.fn() },
@@ -78,9 +99,13 @@ function fixture(host?: Record<string, unknown>, links?: string[]) {
     events as never,
     notify as never,
     links ? ({ get: async () => ({ hosts: [{ id: 'host', nodeUuids: links }] }) } as never) : undefined,
+    permissions as never,
+    incidents as never,
   );
   return {
     job,
+    permissions,
+    incidents,
     store,
     data,
     events,
@@ -315,5 +340,180 @@ describe('Сценарии: реальные правила владения Hos
     f.current.nodes[0].isConnected = true;
     await f.job.restore('panel.test', 'scope', r as never, node as never);
     expect(f.calls[1]).toEqual({ uuid: 'host', isDisabled: false, remark: 'Host' });
+  });
+  it('нет права изменять Host: понятная причина, Host не заблокирован, отказ отмечен у права ключа', async () => {
+    const f = fixture(undefined, undefined, { patchStatus: 403 });
+    const r = { ...rule, actions: ['rename_host'] as ['rename_host'], renameText: '⚠️' };
+    f.setRules([r as never]);
+    await expect(f.job.hide('panel.test', 'scope', r as never, node as never)).rejects.toThrow(
+      'нет права «Изменение Host»',
+    );
+    expect(f.permissions.observe).toHaveBeenCalledWith(
+      'hosts:update',
+      expect.anything(),
+      expect.any(Function),
+    );
+    // Отказ — изменение точно не применено: запись о владении снята, «не подтверждено» не висит.
+    expect([...f.data.keys()].filter((k) => k.startsWith('scenarios.host.'))).toEqual([]);
+    expect((await f.job.previewHosts()).hosts[0].restoration).toBeNull();
+  });
+  it('неподтверждённая попытка, после которой Host не изменился, не мешает следующей', async () => {
+    const f = fixture();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_u: string, init?: RequestInit) => {
+        if (init?.method === 'PATCH') throw new Error('timeout');
+        return new Response(JSON.stringify({ response: [f.getHost()] }));
+      }),
+    );
+    await expect(f.job.hide('panel.test', 'scope', rule as never, node as never)).rejects.toThrow();
+    expect((await f.job.previewHosts()).hosts[0].restoration).toBeNull();
+    const g = fixture();
+    for (const [k, v] of f.data) g.data.set(k, v);
+    await g.job.hide('panel.test', 'scope', rule as never, node as never);
+    expect(g.calls).toEqual([{ uuid: 'host', isDisabled: true }]);
+  });
+  it('новое имя длиннее 100 знаков — понятная причина и ни одного запроса на изменение', async () => {
+    const f = fixture({
+      uuid: 'host',
+      nodes: [node.uuid],
+      isDisabled: false,
+      updatedAt: 'v1',
+      remark: 'Х'.repeat(98),
+    });
+    const r = { ...rule, actions: ['rename_host'] as ['rename_host'], renameText: '⚠️' };
+    f.setRules([r as never]);
+    await expect(f.job.hide('panel.test', 'scope', r as never, node as never)).rejects.toThrow(
+      'длиннее 100 знаков',
+    );
+    expect(f.calls).toEqual([]);
+  });
+  it('переименование передаёт «выключен» как есть: выключенный Host не включится', async () => {
+    const f = fixture({
+      uuid: 'host',
+      nodes: [node.uuid],
+      isDisabled: true,
+      updatedAt: 'v1',
+      remark: 'Host',
+    });
+    const r = { ...rule, actions: ['rename_host'] as ['rename_host'], renameText: '🔴' };
+    f.setRules([r as never]);
+    await f.job.hide('panel.test', 'scope', r as never, node as never);
+    expect(f.calls).toEqual([{ uuid: 'host', isDisabled: true, remark: 'Host 🔴 ' }]);
+  });
+  it('Remnawave не отдаёт версию Host: имя возвращается, если его не трогали, итог — в событии ноды', async () => {
+    const incident = { id: 'inc-1', title: 'Нода не на связи · {server}' };
+    const f = fixture({ uuid: 'host', nodes: [node.uuid], isDisabled: false, remark: 'Host' }, undefined, {
+      incident,
+    });
+    const r = { ...rule, actions: ['rename_host'] as ['rename_host'], renameText: '⚠️' };
+    f.setRules([r as never]);
+    await f.job.hide('panel.test', 'scope', r as never, node as never);
+    expect(f.getHost().remark).toBe('Host ⚠️ ');
+    f.current.nodes[0].isConnected = true;
+    expect(await f.job.restore('panel.test', 'scope', r as never, node as never)).toBe('done');
+    expect(f.calls.at(-1)).toEqual({ uuid: 'host', isDisabled: false, remark: 'Host' });
+    expect(f.incidents.note).toHaveBeenLastCalledWith(
+      'inc-1',
+      'Сценарий «Скрыть при потере связи»: Host «Host» возвращён после восстановления ноды',
+      'helped',
+    );
+  });
+  it('имя изменили вручную после сценария — не возвращаем и говорим об этом в событии', async () => {
+    const f = fixture({ uuid: 'host', nodes: [node.uuid], isDisabled: false, remark: 'Host' }, undefined, {
+      incident: { id: 'inc-1', title: 'Нода не на связи' },
+    });
+    const r = { ...rule, actions: ['rename_host'] as ['rename_host'], renameText: '⚠️' };
+    f.setRules([r as never]);
+    await f.job.hide('panel.test', 'scope', r as never, node as never);
+    f.setHost({ ...f.getHost(), remark: 'Своё имя' });
+    f.current.nodes[0].isConnected = true;
+    await f.job.restore('panel.test', 'scope', r as never, node as never);
+    expect(f.calls).toHaveLength(1);
+    expect(f.incidents.note).toHaveBeenLastCalledWith(
+      'inc-1',
+      expect.stringContaining('не возвращён: после сценария его изменили вручную'),
+      'failed',
+    );
+  });
+  it('Host уже вернули вручную — запросов нет, в событии «уже в исходном виде»', async () => {
+    const f = fixture({ uuid: 'host', nodes: [node.uuid], isDisabled: false, remark: 'Host' }, undefined, {
+      incident: { id: 'inc-1', title: 'Нода не на связи' },
+    });
+    const r = { ...rule, actions: ['rename_host'] as ['rename_host'], renameText: '⚠️' };
+    f.setRules([r as never]);
+    await f.job.hide('panel.test', 'scope', r as never, node as never);
+    f.setHost({ ...f.getHost(), remark: 'Host' });
+    f.current.nodes[0].isConnected = true;
+    await f.job.restore('panel.test', 'scope', r as never, node as never);
+    expect(f.calls).toHaveLength(1);
+    expect(f.incidents.note).toHaveBeenLastCalledWith(
+      'inc-1',
+      'Сценарий «Скрыть при потере связи»: Host «Host» уже в исходном виде — его вернули вручную',
+      'helped',
+    );
+  });
+  it('возврат выключен в сценарии — в событии строка, что Host остаётся изменённым', async () => {
+    const f = fixture(undefined, undefined, { incident: { id: 'inc-1', title: 'Нода не на связи' } });
+    const r = { ...rule, autoRestore: false };
+    f.setRules([r as never]);
+    await f.job.hide('panel.test', 'scope', r as never, node as never);
+    f.current.nodes[0].isConnected = true;
+    await f.job.restore('panel.test', 'scope', r as never, node as never);
+    expect(f.calls).toHaveLength(1);
+    expect(f.incidents.note).toHaveBeenLastCalledWith(
+      'inc-1',
+      expect.stringContaining('остаётся изменённым: возврат выключен в сценарии'),
+      'failed',
+    );
+  });
+  it('Remnawave не ответила на возврат — попытка повторяется на следующем опросе', async () => {
+    const f = fixture();
+    await f.job.hide('panel.test', 'scope', rule as never, node as never);
+    f.current.nodes[0].isConnected = true;
+    const ok = fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u: string, init?: RequestInit) => {
+        if (init?.method === 'PATCH') throw new Error('timeout');
+        return (ok as typeof fetch)(u, init);
+      }),
+    );
+    expect(await f.job.restore('panel.test', 'scope', rule as never, node as never)).toBe('retry');
+    vi.stubGlobal('fetch', ok);
+    expect(await f.job.restore('panel.test', 'scope', rule as never, node as never)).toBe('done');
+    expect(f.calls.at(-1)).toEqual({ uuid: 'host', isDisabled: false });
+  });
+  it('Remnawave обрезает пробелы в имени — изменение всё равно подтверждено', async () => {
+    const f = fixture(undefined, undefined, {
+      patchApply: (b) => (typeof b.remark === 'string' ? { ...b, remark: b.remark.trim() } : b),
+    });
+    const r = { ...rule, actions: ['rename_host'] as ['rename_host'], renameText: '⚠️' };
+    f.setRules([r as never]);
+    expect(await f.job.hide('panel.test', 'scope', r as never, node as never)).toBe(
+      'Изменено имя Host: «Host» → «Host ⚠️»',
+    );
+    expect(f.getHost().remark).toBe('Host ⚠️');
+  });
+  it('«Записать событие» дописывает срабатывание и итог в открытое событие ноды', async () => {
+    vi.useFakeTimers();
+    const start = Date.parse('2026-10-12T00:00:00Z');
+    vi.setSystemTime(start);
+    const f = fixture(undefined, undefined, {
+      incident: { id: 'inc-1', title: 'Нода не на связи · {server}' },
+    });
+    const r = { ...rule, actions: ['record_event', 'hide_host'] as ['record_event', 'hide_host'] };
+    f.setRules([r as never]);
+    for (let i = 0; i <= 6; i++) {
+      vi.setSystemTime(start + i * 60000);
+      f.current.checkedAt = new Date().toISOString();
+      await f.job.run();
+    }
+    expect(f.incidents.note).toHaveBeenCalledTimes(1);
+    expect(f.incidents.note).toHaveBeenCalledWith(
+      'inc-1',
+      'Сценарий «Скрыть при потере связи»: записано в событие «Нода не на связи»; Скрыто Host: «Host»',
+      'applied',
+    );
   });
 });

@@ -6,7 +6,7 @@ import {
   type IncidentSeverity,
   type IncidentSnapshot,
 } from '@nodeservice/shared';
-import { and, desc, eq, gte, inArray, ne, type SQL, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, ne, or, type SQL, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { type IncidentRow, incidents } from '../../infra/db/schema/index.js';
@@ -195,6 +195,29 @@ export class IncidentsRepository {
 
   async update(id: string, patch: Partial<typeof incidents.$inferInsert>): Promise<IncidentRow | undefined> {
     const [row] = await this.db.update(incidents).set(patch).where(eq(incidents.id, id)).returning();
+    if (row) this.events.emit({ type: 'incident', data: { id } });
+    return row;
+  }
+
+  /** Последнее событие ноды: открытое или в работе; с `resolvedSince` — и закрытое не раньше этого времени. */
+  async latestForNode(nodeUuid: string, resolvedSince: Date | null = null): Promise<IncidentRow | undefined> {
+    const active = inArray(incidents.status, ['open', 'acknowledged']);
+    return this.db.query.incidents.findFirst({
+      where: and(
+        eq(incidents.nodeUuid, nodeUuid),
+        resolvedSince ? or(active, gte(incidents.resolvedAt, resolvedSince)) : active,
+      ),
+      orderBy: desc(incidents.openedAt),
+    });
+  }
+
+  /** Дописать строку в хронологию одним запросом: параллельные записи друг друга не затирают. */
+  async appendTimeline(id: string, event: import('@nodeservice/shared').IncidentEvent) {
+    const [row] = await this.db
+      .update(incidents)
+      .set({ timeline: sql`${incidents.timeline} || ${JSON.stringify([event])}::jsonb` })
+      .where(eq(incidents.id, id))
+      .returning({ id: incidents.id, title: incidents.title });
     if (row) this.events.emit({ type: 'incident', data: { id } });
     return row;
   }

@@ -41,15 +41,39 @@ export function useUpdateCustomSites() {
   });
 }
 
+/**
+ * Последние логотип и название — в этом браузере: при следующем открытии они видны сразу, без мелькания
+ * стандартных. Хранилище может быть недоступно (приватный режим) — тогда просто ждём ответа.
+ */
+const APPEARANCE_CACHE = 'ns-appearance';
+function rememberAppearance(data: AppearanceSettings) {
+  try {
+    localStorage.setItem(APPEARANCE_CACHE, JSON.stringify(data));
+  } catch {}
+}
+function rememberedAppearance(): AppearanceSettings | undefined {
+  try {
+    const raw = localStorage.getItem(APPEARANCE_CACHE);
+    const parsed = raw ? appearanceSettingsSchema.safeParse(JSON.parse(raw)) : null;
+    return parsed?.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const appearanceQuery = {
   queryKey: ['settings', 'appearance'] as const,
-  queryFn: ({ signal }: { signal?: AbortSignal }) => settingsApi.appearance(signal),
+  queryFn: async ({ signal }: { signal?: AbortSignal }) => {
+    const data = await settingsApi.appearance(signal);
+    rememberAppearance(data);
+    return data;
+  },
   staleTime: 5 * 60_000,
 };
 
 /** Открытая настройка — нужна и до входа (логотип на экране входа). */
 export function useAppearance() {
-  return useQuery(appearanceQuery);
+  return useQuery({ ...appearanceQuery, placeholderData: rememberedAppearance });
 }
 
 export function useUpdateAppearance() {
@@ -58,6 +82,7 @@ export function useUpdateAppearance() {
     mutationFn: settingsApi.updateAppearance,
     onSuccess: (data) => {
       qc.setQueryData(appearanceQuery.queryKey, data);
+      rememberAppearance(data);
     },
   });
 }

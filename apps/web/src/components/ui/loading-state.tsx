@@ -28,15 +28,31 @@ export function FormSkeleton() {
   );
 }
 export function ChartSkeleton() {
+  // Силуэт графика — площадь с сеткой, как у готового графика, а не столбики.
   return (
-    <div
-      role="status"
-      aria-label="Загрузка графика"
-      className="flex h-full min-h-44 items-end gap-3 border-b border-l border-border p-4"
-    >
-      {[45, 65, 52, 78, 62, 85, 70, 55, 68, 80].map((h) => (
-        <Skeleton key={h} className="flex-1 rounded-t-md" style={{ height: `${h}%` }} />
-      ))}
+    <div role="status" aria-label="Загрузка графика" className="relative h-full min-h-44 overflow-hidden">
+      <div className="absolute inset-0 flex flex-col justify-between py-1.5" aria-hidden="true">
+        {[0, 1, 2, 3].map((i) => (
+          <span key={i} className="block h-px w-full bg-border" />
+        ))}
+      </div>
+      <svg
+        viewBox="0 0 600 190"
+        preserveAspectRatio="none"
+        className="absolute inset-x-0 bottom-0 h-[78%] w-full animate-pulse motion-reduce:animate-none"
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient id="ns-sk-area" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stopColor="var(--ns-surface-3)" />
+            <stop offset="1" stopColor="var(--ns-surface-2)" stopOpacity="0.35" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M0,120 C60,100 100,130 160,110 C220,90 260,70 320,95 C380,120 420,80 480,90 C540,100 570,85 600,92 L600,190 L0,190 Z"
+          fill="url(#ns-sk-area)"
+        />
+      </svg>
     </div>
   );
 }

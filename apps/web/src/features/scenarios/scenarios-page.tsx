@@ -1,7 +1,7 @@
 import { type Scenario, scenarioActionLabels, scenarioConditionLabel } from '@nodeservice/shared';
 import { ArrowRightIcon, GitBranchIcon, GlobeIcon, PlusIcon, Settings2Icon } from 'lucide-react';
 import { useState } from 'react';
-import { RowsSkeleton } from '@/components/ui/loading-state';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { BarButton, CardButton, Pill } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
@@ -25,6 +25,39 @@ const make = (): Scenario => ({
   autoRestore: false,
   cooldownMinutes: 30,
 });
+/** Скелетон списка — те же карточки: шапка с пилюлей, условие, цепочка шагов, подвал с двумя кнопками. */
+function ScenarioCardsSkeleton() {
+  return (
+    <div role="status" aria-label="Загрузка сценариев" className="grid gap-4 xl:grid-cols-2">
+      {[1, 2].map((i) => (
+        <section key={i} className="overflow-hidden rounded-[14px] border border-border bg-surface">
+          <header className="flex items-center justify-between gap-3 border-b border-border p-4">
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-2/5" />
+              <Skeleton className="h-3 w-1/4" />
+            </div>
+            <Skeleton className="h-6 w-20 rounded-full" />
+          </header>
+          <div className="space-y-4 p-4">
+            <div className="space-y-2 rounded-xl border border-border bg-surface-2 p-3">
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-3 w-2/3" />
+            </div>
+            <div className="flex gap-2">
+              <Skeleton className="h-7 w-28 rounded-lg" />
+              <Skeleton className="h-7 w-32 rounded-lg" />
+              <Skeleton className="h-7 w-24 rounded-lg" />
+            </div>
+          </div>
+          <footer className="flex items-center justify-between border-t border-border bg-bg-2 p-4">
+            <Skeleton className="h-[34px] w-32 rounded-[9px]" />
+            <Skeleton className="h-[34px] w-32 rounded-[9px]" />
+          </footer>
+        </section>
+      ))}
+    </div>
+  );
+}
 export function ScenariosPage() {
   const q = useScenarios(),
     save = useSaveScenarios(),
@@ -61,7 +94,7 @@ export function ScenariosPage() {
         </CardButton>
       </section>
       {q.isPending ? (
-        <RowsSkeleton />
+        <ScenarioCardsSkeleton />
       ) : q.isError ? (
         <p role="alert" className="text-crit">
           {apiErrorMessage(q.error)}
@@ -142,7 +175,14 @@ export function ScenariosPage() {
           setDraft={setDraft}
           busy={save.isPending}
           onClose={() => setDraft(null)}
-          onSave={() => void persist([...items.filter((r) => r.id !== draft.id), draft])}
+          // Правленый сценарий остаётся на своём месте в списке, новый — в конце.
+          onSave={() =>
+            void persist(
+              items.some((r) => r.id === draft.id)
+                ? items.map((r) => (r.id === draft.id ? draft : r))
+                : [...items, draft],
+            )
+          }
           onDelete={
             items.some((r) => r.id === draft.id)
               ? () => void persist(items.filter((r) => r.id !== draft.id))

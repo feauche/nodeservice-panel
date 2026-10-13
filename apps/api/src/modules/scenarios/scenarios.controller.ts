@@ -27,7 +27,7 @@ export class ScenariosController {
       );
     }
   }
-  @Put() @Audit('settings.autochecks.updated') async set(@Body() body: Dto) {
+  @Put() @Audit('settings.scenarios.updated') async set(@Body() body: Dto) {
     const st = await this.remna.status();
     if (!st.domain) throw new BadRequestException('Подключите Remnawave.');
     const ids = new Set(st.nodes.map((n) => n.uuid));

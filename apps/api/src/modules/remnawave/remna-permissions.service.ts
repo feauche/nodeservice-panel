@@ -2,7 +2,18 @@ import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { getJson, RemnawaveApiError } from './remnawave-client.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
-export const requiredPermissions = [
+/** Права ключа на Host Remnawave: чтение — для «Затронутых Host», изменение — для шагов сценария с Host. */
+export const HOSTS_READ_SCOPE = 'hosts:list';
+export const HOSTS_UPDATE_SCOPE = 'hosts:update';
+export const requiredPermissions: Array<{
+  scope: string;
+  label: string;
+  why: string;
+  /** Чтение: запрос, которым право проверяется само. Без него право на изменение видно только по делу. */
+  path?: string;
+  /** Когда проверится право на изменение, если его ещё не пробовали. */
+  when?: string;
+}> = [
   {
     scope: 'bandwidth-stats:nodes-usage',
     label: 'История трафика',
@@ -53,6 +64,13 @@ export const requiredPermissions = [
     scope: 'infra-billing:delete-provider',
     label: 'Удаление провайдера',
     why: 'Удаление по вашему подтверждению',
+  },
+  { scope: HOSTS_READ_SCOPE, label: 'Чтение Host', why: 'Затронутые Host в сценариях', path: '/api/hosts' },
+  {
+    scope: HOSTS_UPDATE_SCOPE,
+    label: 'Изменение Host',
+    why: 'Шаги сценария «Скрыть Host» и «Изменить имя Host»',
+    when: 'Проверится при срабатывании сценария',
   },
 ];
 type Evidence = { state: 'granted' | 'denied' | 'unknown'; checkedAt: string };

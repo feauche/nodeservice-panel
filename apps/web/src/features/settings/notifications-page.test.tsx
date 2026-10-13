@@ -1,7 +1,9 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { HttpResponse, http } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetMockState } from '@/test/msw/handlers';
+import { server } from '@/test/msw/server';
 import { mockTelegram } from '@/test/msw/telegram-mock';
 import { renderPage } from '@/test/render';
 import { NotificationsPage } from './notifications-page';
@@ -10,6 +12,23 @@ const TOKEN = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw';
 
 describe('NotificationsPage', () => {
   beforeEach(() => resetMockState({ authenticated: true }));
+
+  it('ошибка загрузки — причина и «Повторить», а не вечный скелетон', async () => {
+    let fail = true;
+    server.use(
+      http.get('*/api/settings/telegram', () =>
+        fail
+          ? HttpResponse.json({ title: 'Сбой', detail: 'База недоступна.' }, { status: 500 })
+          : HttpResponse.json(mockTelegram.settings),
+      ),
+    );
+    renderPage(NotificationsPage, '/settings/notifications');
+    expect(await screen.findByText('Не удалось загрузить уведомления')).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Загрузка настроек' })).toBeNull();
+    fail = false;
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Повторить' }));
+    await waitFor(() => expect(screen.queryByText('Не удалось загрузить уведомления')).toBeNull());
+  });
 
   it('сторож и резервная тревога удалены из настроек', async () => {
     renderPage(NotificationsPage, '/settings/notifications');

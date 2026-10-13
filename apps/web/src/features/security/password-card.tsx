@@ -70,6 +70,7 @@ export function PasswordCard() {
         <Field id="pw-current" label="Текущий пароль" error={errors.current}>
           <PasswordField
             id="pw-current"
+            className="h-10 py-0 text-[13px]"
             autoComplete="current-password"
             value={current}
             onChange={(e) => {
@@ -87,6 +88,7 @@ export function PasswordCard() {
         >
           <PasswordField
             id="pw-next"
+            className="h-10 py-0 text-[13px]"
             autoComplete="new-password"
             value={next}
             onChange={(e) => {

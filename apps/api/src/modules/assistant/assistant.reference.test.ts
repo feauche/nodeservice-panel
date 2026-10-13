@@ -143,7 +143,7 @@ describe('справочник Ассистента', () => {
       '(/scenarios)',
       '(/settings)',
       '(/settings/appearance)',
-      '(/settings/autochecks)',
+      '(/settings/monitoring)',
       '(/settings/incidents)',
       '(/assistant)',
       '(/knowledge)',

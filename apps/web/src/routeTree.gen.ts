@@ -38,6 +38,7 @@ import { Route as SettingsAssistantRouteImport } from './routes/settings.assista
 import { Route as SettingsAutochecksRouteImport } from './routes/settings.autochecks';
 import { Route as SettingsBackupsRouteImport } from './routes/settings.backups';
 import { Route as SettingsIncidentsRouteImport } from './routes/settings.incidents';
+import { Route as SettingsMonitoringRouteImport } from './routes/settings.monitoring';
 import { Route as SettingsNotificationsRouteImport } from './routes/settings.notifications';
 import { Route as SettingsSecurityRouteImport } from './routes/settings.security';
 
@@ -186,6 +187,11 @@ const SettingsIncidentsRoute = SettingsIncidentsRouteImport.update({
   path: '/incidents',
   getParentRoute: () => SettingsRoute,
 } as any);
+const SettingsMonitoringRoute = SettingsMonitoringRouteImport.update({
+  id: '/monitoring',
+  path: '/monitoring',
+  getParentRoute: () => SettingsRoute,
+} as any);
 const SettingsNotificationsRoute = SettingsNotificationsRouteImport.update({
   id: '/notifications',
   path: '/notifications',
@@ -226,6 +232,7 @@ export interface FileRoutesByFullPath {
   '/settings/autochecks': typeof SettingsAutochecksRoute;
   '/settings/backups': typeof SettingsBackupsRoute;
   '/settings/incidents': typeof SettingsIncidentsRoute;
+  '/settings/monitoring': typeof SettingsMonitoringRoute;
   '/settings/notifications': typeof SettingsNotificationsRoute;
   '/settings/security': typeof SettingsSecurityRoute;
   '/settings/': typeof SettingsIndexRoute;
@@ -258,6 +265,7 @@ export interface FileRoutesByTo {
   '/settings/autochecks': typeof SettingsAutochecksRoute;
   '/settings/backups': typeof SettingsBackupsRoute;
   '/settings/incidents': typeof SettingsIncidentsRoute;
+  '/settings/monitoring': typeof SettingsMonitoringRoute;
   '/settings/notifications': typeof SettingsNotificationsRoute;
   '/settings/security': typeof SettingsSecurityRoute;
   '/settings': typeof SettingsIndexRoute;
@@ -292,6 +300,7 @@ export interface FileRoutesById {
   '/settings/autochecks': typeof SettingsAutochecksRoute;
   '/settings/backups': typeof SettingsBackupsRoute;
   '/settings/incidents': typeof SettingsIncidentsRoute;
+  '/settings/monitoring': typeof SettingsMonitoringRoute;
   '/settings/notifications': typeof SettingsNotificationsRoute;
   '/settings/security': typeof SettingsSecurityRoute;
   '/settings/': typeof SettingsIndexRoute;
@@ -327,6 +336,7 @@ export interface FileRouteTypes {
     | '/settings/autochecks'
     | '/settings/backups'
     | '/settings/incidents'
+    | '/settings/monitoring'
     | '/settings/notifications'
     | '/settings/security'
     | '/settings/';
@@ -359,6 +369,7 @@ export interface FileRouteTypes {
     | '/settings/autochecks'
     | '/settings/backups'
     | '/settings/incidents'
+    | '/settings/monitoring'
     | '/settings/notifications'
     | '/settings/security'
     | '/settings';
@@ -392,6 +403,7 @@ export interface FileRouteTypes {
     | '/settings/autochecks'
     | '/settings/backups'
     | '/settings/incidents'
+    | '/settings/monitoring'
     | '/settings/notifications'
     | '/settings/security'
     | '/settings/';
@@ -628,6 +640,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsIncidentsRouteImport;
       parentRoute: typeof SettingsRoute;
     };
+    '/settings/monitoring': {
+      id: '/settings/monitoring';
+      path: '/monitoring';
+      fullPath: '/settings/monitoring';
+      preLoaderRoute: typeof SettingsMonitoringRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
     '/settings/notifications': {
       id: '/settings/notifications';
       path: '/notifications';
@@ -651,6 +670,7 @@ interface SettingsRouteChildren {
   SettingsAutochecksRoute: typeof SettingsAutochecksRoute;
   SettingsBackupsRoute: typeof SettingsBackupsRoute;
   SettingsIncidentsRoute: typeof SettingsIncidentsRoute;
+  SettingsMonitoringRoute: typeof SettingsMonitoringRoute;
   SettingsNotificationsRoute: typeof SettingsNotificationsRoute;
   SettingsSecurityRoute: typeof SettingsSecurityRoute;
   SettingsIndexRoute: typeof SettingsIndexRoute;
@@ -662,6 +682,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAutochecksRoute: SettingsAutochecksRoute,
   SettingsBackupsRoute: SettingsBackupsRoute,
   SettingsIncidentsRoute: SettingsIncidentsRoute,
+  SettingsMonitoringRoute: SettingsMonitoringRoute,
   SettingsNotificationsRoute: SettingsNotificationsRoute,
   SettingsSecurityRoute: SettingsSecurityRoute,
   SettingsIndexRoute: SettingsIndexRoute,

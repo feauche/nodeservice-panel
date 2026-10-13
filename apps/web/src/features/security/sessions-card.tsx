@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { RowsSkeleton } from '@/components/ui/loading-state';
 import { shortUserAgent } from '@/features/audit/audit-format';
-import { Pill, RowButton, SettingsCard } from '@/features/settings/settings-ui';
+import { LoadError, Pill, RowButton, SettingsCard } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -78,6 +78,11 @@ export function SessionsCard() {
         {sessions.isPending && (
           <li className="py-3">
             <RowsSkeleton rows={2} label="Загрузка сеансов и устройств" />
+          </li>
+        )}
+        {sessions.isError && (
+          <li>
+            <LoadError message={apiErrorMessage(sessions.error)} onRetry={() => void sessions.refetch()} />
           </li>
         )}
         {items.map((s) => (
@@ -175,6 +180,11 @@ export function DevicesCard() {
         {devices.isPending && (
           <li className="py-3">
             <RowsSkeleton rows={2} label="Загрузка сеансов и устройств" />
+          </li>
+        )}
+        {devices.isError && (
+          <li>
+            <LoadError message={apiErrorMessage(devices.error)} onRetry={() => void devices.refetch()} />
           </li>
         )}
         {devices.data && items.length === 0 && (

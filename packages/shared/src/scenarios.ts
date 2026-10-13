@@ -74,15 +74,22 @@ export const scenarioHostsSchema = z.object({
 });
 
 /** Spaces around the replacement/inserted fragment are part of the actual Host remark. */
+/**
+ * Новое имя Host по сценарию. Пометка уже стоит на своём месте (Host не вернули после прошлого сбоя) — имя
+ * не меняется: «⚠️» не добавится второй раз.
+ */
 export function formatScenarioHostName(name: string, mode: 'replace' | 'prepend' | 'append', text: string) {
-  const fragment = ` ${text.trim()} `;
+  const mark = text.trim();
+  const fragment = ` ${mark} `;
   if (mode === 'replace') return fragment;
-  if (mode === 'append') return name.trimEnd() + fragment;
+  if (mode === 'append') return mark && name.trimEnd().endsWith(mark) ? name : name.trimEnd() + fragment;
   const original = name.trimStart();
   const flag = original.match(
     /^(\p{Regional_Indicator}{2}|🏳️(?:‍🌈|‍⚧️)?|🏴(?:[\u{E0020}-\u{E007E}]+\u{E007F})?)\s*/u,
   );
-  return flag ? flag[1] + fragment + original.slice(flag[0].length) : fragment + original;
+  const rest = flag ? original.slice(flag[0].length) : original;
+  if (mark && rest.startsWith(mark)) return name;
+  return flag ? flag[1] + fragment + rest : fragment + original;
 }
 
 export const scenarioConditionDescriptions = {
@@ -90,7 +97,7 @@ export const scenarioConditionDescriptions = {
   online_drop:
     'Мониторинг подтвердил снижение числа пользователей относительно обычного уровня. Нода при этом может оставаться на связи.',
   tcp_unreachable:
-    'Check-Host подтвердил недоступность проверяемых TCP-портов из РФ или других стран. Это не доказывает выключение сервера; неполная проверка не запускает сценарий. Частота и порты — в настройках автопроверок.',
+    'Check-Host подтвердил недоступность проверяемых TCP-портов из РФ или других стран. Это не доказывает выключение сервера; неполная проверка не запускает сценарий. Частота и порты — в разделе «Мониторинг нод».',
 };
 export const scenarioConditions = (rule: Scenario): Scenario['trigger'][] =>
   rule.conditions.length ? rule.conditions : [rule.trigger];

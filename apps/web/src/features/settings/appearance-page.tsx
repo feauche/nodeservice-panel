@@ -1,4 +1,4 @@
-import { CheckIcon, PanelLeftIcon, PanelTopIcon, SunIcon } from 'lucide-react';
+import { CheckIcon, PanelLeftIcon, PanelTopIcon } from 'lucide-react';
 
 import { Swatch } from '@/components/theme-menu';
 import { setTheme, THEMES } from '@/features/theme/theme';
@@ -34,7 +34,6 @@ export function AppearancePage() {
   return (
     <div className="flex flex-col gap-3.5">
       <SectionHeader
-        icon={SunIcon}
         title="Внешний вид"
         description="Тема применяется сразу и хранится в этом браузере. Расположение меню тоже хранится в этом браузере. Часовой пояс — сразу и для всех. Логотип и название — для всех, по кнопке «Сохранить»."
       />

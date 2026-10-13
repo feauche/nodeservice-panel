@@ -94,6 +94,18 @@
   --animate-modin: ns-modin 0.32s var(--ease-ns);
   --animate-shake: ns-shake 0.36s var(--ease-ns);
   --animate-fade: ns-fade 0.25s var(--ease-ns);
+  /* Каркасы загрузки (витрина redesign-2026-10, вариант B): спокойный пульс вместо бегущего блика. */
+  --animate-pulse: ns-skp 1.3s ease-in-out infinite;
+
+  @keyframes ns-skp {
+    0%,
+    100% {
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
 
   @keyframes ns-modin {
     from {
@@ -580,5 +592,15 @@
   .ns-row-in,
   .ns-row-out {
     animation: none;
+  }
+}
+
+/* Тонкая полоса «обновляется» над уже показанными данными: старое остаётся на месте, пока грузится новое. */
+@keyframes ns-load {
+  from {
+    left: -34%;
+  }
+  to {
+    left: 100%;
   }
 }

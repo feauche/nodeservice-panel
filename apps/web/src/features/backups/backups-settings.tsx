@@ -274,7 +274,7 @@ export function BackupSettingsForm({
               type="time"
               value={d.s.time}
               onChange={(e) => e.target.value && set({ time: e.target.value })}
-              className="h-[34px] w-[110px] rounded-[9px] bg-surface-2 text-center font-mono text-[13px]"
+              className="h-10 w-[110px] rounded-[10px] bg-surface-2 text-center font-mono text-[13px]"
             />
           </SettingsRow>
         </div>
@@ -443,10 +443,10 @@ export function BackupSettingsForm({
                       placeholder="tgram://123456:ABC…/-1001234567890"
                       value={d.ownUrl}
                       onChange={(e) => setD((p) => ({ ...p, ownUrl: e.target.value }))}
-                      className="h-[34px] min-w-0 flex-1 rounded-[9px] bg-surface-2 font-mono text-[12.5px]"
+                      className="h-10 min-w-0 flex-1 rounded-[10px] bg-surface-2 font-mono text-[12.5px]"
                     />
                     <RowButton
-                      className="h-[34px]"
+                      className="h-10"
                       disabled={!d.ownUrl.trim() || testChat.isPending}
                       onClick={() =>
                         testChat.mutate(ownChanged ? d.ownUrl.trim() : null, {
@@ -573,7 +573,7 @@ export function BackupSettingsForm({
                     onChange={(e) =>
                       setD((x) => ({ ...x, paths: x.paths.map((y, j) => (j === i ? e.target.value : y)) }))
                     }
-                    className="h-[34px] min-w-0 flex-1 rounded-[9px] bg-surface-2 font-mono text-[12.5px]"
+                    className="h-10 min-w-0 flex-1 rounded-[10px] bg-surface-2 font-mono text-[12.5px]"
                   />
                   <span className="flex-none">{pathCheckPill(checks[p.trim()])}</span>
                   <button
@@ -618,7 +618,7 @@ export function BackupSettingsForm({
           setD(fromSaved(saved));
           setError(null);
         }}
-        note="Настройки копий попадают в Журнал; пароль — нет."
+        note="попадут в Журнал, пароль — нет"
       />
     </>
   );
@@ -732,7 +732,7 @@ function PwField({
         autoComplete="new-password"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-[34px] rounded-[9px] bg-surface-2 text-[13px]"
+        className="h-10 rounded-[10px] bg-surface-2 text-[13px]"
       />
       {hint && <span className="text-[11.5px] text-text-3">{hint}</span>}
     </div>
@@ -771,7 +771,7 @@ function TextField({
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="h-[34px] rounded-[9px] bg-surface-2 font-mono text-[12.5px]"
+        className="h-10 rounded-[10px] bg-surface-2 font-mono text-[12.5px]"
       />
       {hint && <span className="text-[11.5px] text-text-3">{hint}</span>}
     </div>

@@ -11,8 +11,10 @@ const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-22
 const names = ['Первая нода', 'Вторая нода'];
 let requests: URL[];
 let eventCount = 1;
+/** Запросы основного графика (навигатор по всему периоду запрашивает историю отдельно и реже). */
+const viewRequests = () => requests.filter((u) => u.searchParams.get('maxPoints') === '480');
 function lastRequest() {
-  const url = requests.at(-1);
+  const url = viewRequests().at(-1);
   if (!url) throw new Error('Запрос истории не выполнен');
   return url;
 }
@@ -98,8 +100,8 @@ beforeEach(() => {
   );
 });
 
-describe('Общая история метрик', () => {
-  it('листает 10/25/50 событий и сохраняет страницу списка после выбора момента', async () => {
+describe('Метрики', () => {
+  it('листает 10/25/50 событий видимого окна', async () => {
     eventCount = 51;
     const user = userEvent.setup();
     renderPage(MetricsHistoryPage, '/metrics');
@@ -107,8 +109,6 @@ describe('Общая история метрик', () => {
     await within(region).findByText('1–10 из 51');
     await user.click(within(region).getByRole('button', { name: 'Следующая страница событий' }));
     expect(within(region).getByText('11–20 из 51')).toBeVisible();
-    await user.click(within(region).getAllByRole('button', { name: /Проверка TCP: результат неполный/ })[0]);
-    await waitFor(() => expect(within(region).getByText('11–20 из 51')).toBeVisible());
     await user.click(within(region).getByRole('combobox', { name: 'Событий на странице' }));
     await user.click(screen.getByRole('option', { name: '25' }));
     expect(within(region).getByText('1–25 из 51')).toBeVisible();
@@ -116,18 +116,17 @@ describe('Общая история метрик', () => {
     await user.click(screen.getByRole('option', { name: '50' }));
     expect(within(region).getByText('1–50 из 51')).toBeVisible();
   });
-  it('меняет ISO-границы масштаба и восстанавливает исходный период', async () => {
+  it('приближает окно вдвое и возвращает исходный период', async () => {
     renderPage(MetricsHistoryPage, '/metrics');
     await screen.findByText('Проверка TCP: результат неполный');
-    expect(within(screen.getByTestId('online-period-summary')).getByText('35')).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId('online-period-summary')).getByText('Минимальный онлайн'),
-    ).toBeInTheDocument();
+    const summary = screen.getByTestId('online-period-summary');
+    expect(within(summary).getByText('35')).toBeInTheDocument();
+    expect(within(summary).getByText('Минимальный онлайн')).toBeInTheDocument();
     const initial = lastRequest();
     const span = Date.parse(param(initial, 'to')) - Date.parse(param(initial, 'from'));
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Увеличить масштаб' }));
-    await waitFor(() => expect(requests.length).toBe(2));
+    await waitFor(() => expect(viewRequests()).toHaveLength(2));
     const zoom = lastRequest();
     expect(Date.parse(param(zoom, 'to')) - Date.parse(param(zoom, 'from'))).toBe(span / 2);
     expect(Date.parse(param(zoom, 'from'))).toBeGreaterThan(Date.parse(param(initial, 'from')));
@@ -138,24 +137,23 @@ describe('Общая история метрик', () => {
       expect(lastRequest().searchParams.get('from')).toBe(initial.searchParams.get('from')),
     );
   });
-  it('применяет выбор нод только после подтверждения и не заменяет пустой результат поиска всеми нодами', async () => {
-    renderPage(MetricsHistoryPage, '/metrics');
+  it('ноды включаются в легенде; «Весь парк» показывает сумму вместо линий', async () => {
+    const { container } = renderPage(MetricsHistoryPage, '/metrics');
     await screen.findByText('Проверка TCP: результат неполный');
+    const legend = screen.getByRole('table', { name: 'Ноды на графике' });
+    // По умолчанию — пять нод с наибольшим онлайном: здесь их две.
+    await waitFor(() => expect(within(legend).getAllByRole('checkbox', { checked: true })).toHaveLength(2));
+    await waitFor(() => expect(container.querySelectorAll('.recharts-line')).toHaveLength(2));
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Ноды · Все' }));
-    const dialog = await screen.findByRole('dialog');
-    await waitFor(() => expect(within(dialog).getAllByRole('checkbox')).toHaveLength(2));
-    for (const box of within(dialog).getAllByRole('checkbox')) expect(box).toBeChecked();
-    await user.click(within(dialog).getAllByRole('checkbox')[1]);
-    expect(requests).toHaveLength(1);
-    await user.click(within(dialog).getByRole('button', { name: 'Готово' }));
-    await waitFor(() => expect(lastRequest().searchParams.get('nodes')).toBe(ids[0]));
-    await user.click(screen.getByRole('button', { name: 'Ноды · 1' }));
-    const picker = await screen.findByRole('dialog');
-    await user.type(within(picker).getByRole('textbox', { name: 'Найти ноду' }), 'несуществующая');
-    expect(within(picker).getByRole('button', { name: 'Выбрать показанные' })).toBeDisabled();
-    await user.click(within(picker).getByRole('button', { name: 'Снять выбор' }));
-    expect(within(picker).getByRole('button', { name: 'Готово' })).toBeDisabled();
+    await user.click(within(legend).getByRole('checkbox', { name: 'Вторая нода на графике' }));
+    await waitFor(() => expect(container.querySelectorAll('.recharts-line')).toHaveLength(1));
+    // Запрос один и тот же: выбор нод не перезапрашивает историю.
+    expect(viewRequests()).toHaveLength(1);
+    await user.click(screen.getByRole('radio', { name: 'Весь парк' }));
+    await waitFor(() => expect(container.querySelectorAll('.recharts-line')).toHaveLength(0));
+    expect(container.querySelector('.recharts-area')).not.toBeNull();
+    await user.click(screen.getByRole('radio', { name: 'Все 2' }));
+    await waitFor(() => expect(container.querySelectorAll('.recharts-line')).toHaveLength(2));
   });
   it('не запрашивает неверные даты и отправляет подтверждённые локальные даты как ISO-инстанты', async () => {
     renderPage(MetricsHistoryPage, '/metrics');
@@ -169,15 +167,15 @@ describe('Общая история метрик', () => {
     fireEvent.change(to, { target: { value: '2026-10-11T08:00' } });
     await user.click(within(dialog).getByRole('button', { name: 'Показать историю' }));
     expect(within(dialog).getByRole('alert')).toHaveTextContent('Выберите начало раньше конца');
-    expect(requests).toHaveLength(1);
+    expect(viewRequests()).toHaveLength(1);
     fireEvent.change(from, { target: { value: '2026-10-11T08:00' } });
     fireEvent.change(to, { target: { value: '2026-10-12T08:00' } });
     await user.click(within(dialog).getByRole('button', { name: 'Показать историю' }));
-    await waitFor(() => expect(requests).toHaveLength(2));
+    await waitFor(() => expect(viewRequests()).toHaveLength(2));
     expect(lastRequest().searchParams.get('from')).toBe(new Date('2026-10-11T08:00').toISOString());
     expect(lastRequest().searchParams.get('to')).toBe(new Date('2026-10-12T08:00').toISOString());
   });
-  it('сохраняет разрыв неизвестных замеров и открывает подробности неполного события', async () => {
+  it('сохраняет разрыв неизвестных замеров и открывает подробности события', async () => {
     const { container } = renderPage(MetricsHistoryPage, '/metrics');
     const title = await screen.findByText('Проверка TCP: результат неполный');
     await waitFor(() => {
@@ -187,11 +185,11 @@ describe('Общая история метрик', () => {
     });
     await userEvent.setup().click(title);
     expect(screen.getByText(/Недостаточно точек проверки; доступность не подтверждена/)).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Подробнее' })).toHaveAttribute(
+    expect(screen.getAllByRole('link', { name: 'Подробнее' })[0]).toHaveAttribute(
       'href',
       'https://check-host.net/check-report/example',
     );
-    await waitFor(() => expect(requests).toHaveLength(2));
+    await waitFor(() => expect(viewRequests()).toHaveLength(2));
     const url = lastRequest();
     expect(Date.parse(param(url, 'to')) - Date.parse(param(url, 'from'))).toBe(30 * 60000);
   });

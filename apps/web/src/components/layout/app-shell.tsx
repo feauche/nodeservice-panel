@@ -1,3 +1,4 @@
+import { SECURITY_POLICY_DEFAULTS } from '@nodeservice/shared';
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
   ActivityIcon,
@@ -398,7 +399,8 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
   useEventsStream();
   // Автоблокировка экрана при бездействии — по политике безопасности.
   const security = useSecurityOverview();
-  useIdleLock(security.data?.policy.lockAfterMinutes ?? 0);
+  // Политика не загрузилась — блокируем по умолчанию (30 минут), а не выключаем автоблокировку молча.
+  useIdleLock(security.data?.policy.lockAfterMinutes ?? SECURITY_POLICY_DEFAULTS.lockAfterMinutes);
   const openIncidents = useOpenIncidentsCount();
   const navigationLayout = useNavigationLayout();
   const topLayout = navigationLayout === 'top';

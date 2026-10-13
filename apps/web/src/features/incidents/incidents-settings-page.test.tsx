@@ -26,11 +26,13 @@ describe('Условия событий Remnawave', () => {
     await waitFor(() => expect(mockMonitoring.value.cpuPercent).toBe(85));
     expect(mockMonitoring.value.checkHostHours).toBe(24);
   });
-  it('отдельно сохраняет виды уведомлений', async () => {
+  it('виды уведомлений сохраняются общей полосой «Сохранить» раздела, своей кнопки у карточки нет', async () => {
     renderPage(IncidentsSettingsPage, '/settings/incidents');
     const user = userEvent.setup();
     await user.click(await screen.findByRole('switch', { name: 'Память на пределе' }));
-    await user.click(screen.getByRole('button', { name: 'Сохранить уведомления' }));
+    expect(screen.queryByRole('button', { name: 'Сохранить уведомления' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
     await waitFor(() => expect(mockTelegram.settings.kinds.mem_high).toBe(false));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Сохранить' })).toBeNull());
   });
 });

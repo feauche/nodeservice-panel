@@ -17,6 +17,7 @@ import { DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-
 import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { nodeOption } from '@/features/nodes/node-option';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { ProviderSelect } from '@/features/providers/provider-select';
@@ -332,7 +333,10 @@ export function ItemDialog({
             <Label htmlFor="bill-server">
               {SERVERS_LABEL[kind]} <Opt />
             </Label>
-            {list.length === 0 ? (
+            {servers.isPending && list.length === 0 ? (
+              // Пока ноды грузятся — силуэт поля, а не «ноды не загружены».
+              <Skeleton className="h-10 w-full rounded-[10px]" />
+            ) : list.length === 0 ? (
               <p className="rounded-[10px] border border-dashed border-border-2 px-3 py-2.5 text-[12.5px] text-text-3">
                 Ноды Remnawave ещё не загружены. Проверьте подключение в разделе «Ноды».
               </p>

@@ -213,7 +213,9 @@ export const AUDIT_ACTIONS = {
   'billing.payment.updated': { category: 'server', label: 'Биллинг: запись оплаты изменена' },
   'billing.payment.undone': { category: 'server', label: 'Биллинг: продление отменено' },
   'billing.autocharge': { category: 'server', label: 'Биллинг: списано автоматически' },
-  'settings.autochecks.updated': { category: 'settings', label: 'Автопроверки изменены' },
+  // Ключ остался от раздела «Автопроверки нод» (до 0.93.0), чтобы старые записи Журнала читались так же.
+  'settings.autochecks.updated': { category: 'settings', label: 'Мониторинг нод изменён' },
+  'settings.scenarios.updated': { category: 'settings', label: 'Сценарии изменены' },
   'settings.incidents.updated': { category: 'settings', label: 'Настройки событий изменены' },
   'settings.assistant.updated': { category: 'settings', label: 'Настройки Ассистента изменены' },
   'settings.snippets.updated': { category: 'settings', label: 'Сниппеты терминала изменены' },

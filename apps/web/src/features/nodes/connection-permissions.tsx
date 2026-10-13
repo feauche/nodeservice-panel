@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { useRemnaPermissions } from './nodes-api';
 
 /** Сколько разрешений проверяет панель: столько строк и у каркаса, чтобы блок не прыгал по высоте. */
-const SKELETON_ROWS = 8;
+const SKELETON_ROWS = 12;
 
 export function ConnectionPermissions({
   enabled,
@@ -96,7 +96,7 @@ export function ConnectionPermissions({
                         : p.state === 'denied'
                           ? 'Нет доступа'
                           : write
-                            ? 'Проверится при сохранении'
+                            ? (p.when ?? 'Проверится при сохранении')
                             : 'Нет ответа на проверку'}
                     </span>
                   </div>

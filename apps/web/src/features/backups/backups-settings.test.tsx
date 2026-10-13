@@ -28,7 +28,8 @@ describe('настройки копий: свой чат', () => {
     expect(mockBackups.lastUpdate?.telegram).toMatchObject({ enabled: true, target: 'own' });
     expect(mockBackups.lastUpdate?.telegram).not.toHaveProperty('ownUrl');
     expect(mockBackups.settings.telegram.ownUrl).toBe('tgram://***/-1002233445566:12');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled());
+    // Сохранено — правок нет, полоса «Сохранить» убирается.
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Сохранить' })).toBeNull());
   });
 
   it('новый чат уходит строкой и возвращается маской; пустое поле при другом способе отправки убирает чат', async () => {

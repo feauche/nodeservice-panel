@@ -1,13 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 
-import { requireAuth } from '@/features/auth/guards';
-import { AutochecksPage } from '@/features/settings/autochecks-page';
-import { requireSectionOpen } from '@/lib/stages';
-
+/** Старый адрес раздела «Автопроверки нод» (до 0.93.0): сохранённые ссылки ведут в «Мониторинг нод». */
 export const Route = createFileRoute('/settings/autochecks')({
-  beforeLoad: async ({ context }) => {
-    await requireAuth(context);
-    requireSectionOpen('/settings/autochecks');
+  beforeLoad: () => {
+    throw redirect({ to: '/settings/monitoring', replace: true });
   },
-  component: AutochecksPage,
 });

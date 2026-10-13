@@ -29,6 +29,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useIncidents } from '@/features/incidents/incidents-api';
 import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -195,8 +196,9 @@ const NodeTreeItem = forwardRef<HTMLDivElement, TreeItemComponentProps<NodeTreeD
   const common = cn(
     'relative min-w-0 transition-opacity',
     ghost && 'opacity-[0.18]',
-    // Копия под курсором — ровно по ширине строки, без сдвига: тот же отступ, что у самой строки.
-    clone && 'w-full opacity-100 shadow-xl',
+    // Копия под курсором — ровно по ширине строки, без сдвига; под заливкой сплошной фон, как у карточки списка,
+    // иначе сквозь неё видны строки ниже.
+    clone && 'w-full rounded-[10px] bg-surface opacity-100 shadow-xl',
     disableInteraction && !clone && 'pointer-events-none',
   );
   const offset = depth * 12;
@@ -340,7 +342,13 @@ const NodeTreeItem = forwardRef<HTMLDivElement, TreeItemComponentProps<NodeTreeD
       <div className={motion}>
         <div className={motion ? 'min-h-0 overflow-hidden' : undefined}>
           <div className="py-1.5">
-            <div ref={ref} className={common} style={{ marginLeft: clone ? 0 : offset }}>
+            {/* Раскладка строки зависит от ширины самой строки: копия под курсором (она рисуется вне списка) и
+                строка в списке всегда выглядят одинаково. */}
+            <div
+              ref={ref}
+              className={cn(common, '@container/nodes')}
+              style={{ marginLeft: clone ? 0 : offset }}
+            >
               <NodeCard
                 node={node}
                 stale={context.stale}
@@ -648,20 +656,24 @@ export function NodeInventory({
           {error || 'Не удалось загрузить порядок нод.'}
         </p>
       )}
-      <NodeTreeContext.Provider value={treeContext}>
-        <div data-node-tree className="@container/nodes -my-1.5">
-          <SortableTree
-            items={treeItems}
-            onItemsChanged={handleTreeChange}
-            TreeItemComponent={NodeTreeItem}
-            indentationWidth={12}
-            pointerSensorOptions={{ activationConstraint: { distance: 6 } }}
-            disableSorting={searching || locked}
-            label={(item) => item.label}
-            onDraggingChange={setDragging}
-          />
-        </div>
-      </NodeTreeContext.Provider>
+      {query.isPending ? (
+        <NodeTreeSkeleton />
+      ) : (
+        <NodeTreeContext.Provider value={treeContext}>
+          <div data-node-tree className="-my-1.5">
+            <SortableTree
+              items={treeItems}
+              onItemsChanged={handleTreeChange}
+              TreeItemComponent={NodeTreeItem}
+              indentationWidth={12}
+              pointerSensorOptions={{ activationConstraint: { distance: 6 } }}
+              disableSorting={searching || locked}
+              label={(item) => item.label}
+              onDraggingChange={setDragging}
+            />
+          </div>
+        </NodeTreeContext.Provider>
+      )}
       <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent className="rounded-2xl sm:max-w-[420px]">
           <DialogHeader>
@@ -703,6 +715,41 @@ export function NodeInventory({
           </form>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/**
+ * Пока не пришёл порядок и папки, — силуэт папки со строками той же сетки, что у карточки ноды: без мелькания
+ * плоского списка, который через мгновение раскладывается по папкам.
+ */
+export function NodeTreeSkeleton() {
+  return (
+    <div role="status" aria-label="Загрузка нод" className="@container/nodes flex flex-col gap-2">
+      <div className="flex h-11 items-center gap-3 px-2">
+        <Skeleton className="size-4 rounded-[5px]" />
+        <Skeleton className="h-3.5 w-40" />
+        <Skeleton className="ml-auto h-3 w-24" />
+      </div>
+      {[1, 2, 3].map((row) => (
+        <div
+          key={row}
+          className="grid grid-cols-2 items-center gap-x-5 gap-y-3 rounded-[10px] border border-border py-3 pr-12 pl-9 @min-[720px]/nodes:grid-cols-[minmax(0,1.6fr)_72px_minmax(0,1fr)_minmax(0,1fr)] @min-[1000px]/nodes:grid-cols-[minmax(0,1.7fr)_80px_minmax(0,1fr)_minmax(0,1fr)_120px_84px]"
+        >
+          <div className="col-span-2 space-y-2 @min-[720px]/nodes:col-span-1">
+            <Skeleton className="h-3.5 w-[55%]" />
+            <Skeleton className="h-3 w-[70%]" />
+          </div>
+          <div className="space-y-2">
+            <Skeleton className="h-2.5 w-[70%]" />
+            <Skeleton className="h-3.5 w-[60%]" />
+          </div>
+          <Skeleton className="h-1.5 w-full rounded-full" />
+          <Skeleton className="h-1.5 w-full rounded-full" />
+          <Skeleton className="hidden h-3 w-[80%] @min-[1000px]/nodes:block" />
+          <Skeleton className="hidden h-3 w-[70%] @min-[1000px]/nodes:block" />
+        </div>
+      ))}
     </div>
   );
 }

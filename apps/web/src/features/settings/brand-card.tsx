@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useAppearance, useUpdateAppearance } from './settings-api';
-import { BarButton, SaveBar, SettingsCard, SettingsRow } from './settings-ui';
+import { RowButton, SaveBar, SettingsCard, SettingsRow } from './settings-ui';
 
 /**
  * Логотип и название панели: карточка и общая для раздела панель «Сохранить» (единый стиль настроек).
@@ -92,7 +92,7 @@ export function BrandCard() {
                 setErrors((p) => ({ ...p, logo: undefined, form: undefined }));
               }}
               aria-invalid={errors.logo ? true : undefined}
-              className="h-9 rounded-[9px] bg-surface-2 font-mono text-[13px]"
+              className="h-10 rounded-[10px] bg-surface-2 font-mono text-[13px]"
             />
           </SettingsRow>
           <SettingsRow
@@ -125,8 +125,19 @@ export function BrandCard() {
                 setErrors((p) => ({ ...p, name: undefined, form: undefined }));
               }}
               aria-invalid={errors.name ? true : undefined}
-              className="h-9 rounded-[9px] bg-surface-2 font-mono text-[13px]"
+              className="h-10 rounded-[10px] bg-surface-2 font-mono text-[13px]"
             />
+          </SettingsRow>
+          {/* Мгновенное действие — кнопкой в строке: полоса «Сохранить» появляется только при правках. */}
+          <SettingsRow
+            label="Стандартные логотип и название"
+            hint={
+              isDefault ? 'Сейчас стоят стандартные.' : 'Сразу вернёт стандартный логотип и название панели.'
+            }
+          >
+            <RowButton disabled={isDefault || update.isPending} onClick={() => void reset()}>
+              Вернуть стандартные
+            </RowButton>
           </SettingsRow>
         </form>
       </SettingsCard>
@@ -140,12 +151,7 @@ export function BrandCard() {
           setName(savedName);
           setErrors({});
         }}
-        note="Логотип и название — после сохранения, попадают в Журнал."
-        extra={
-          <BarButton disabled={isDefault || update.isPending} onClick={() => void reset()}>
-            Вернуть стандартные
-          </BarButton>
-        }
+        note="логотип и название попадут в Журнал"
       />
     </>
   );

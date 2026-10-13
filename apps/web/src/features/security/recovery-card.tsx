@@ -2,9 +2,9 @@ import { CopyIcon, DownloadIcon, EyeIcon, KeyRoundIcon } from 'lucide-react';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { DialogActions, DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
-import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Pill, RowButton, SettingsCard, SettingsRow } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -57,6 +57,8 @@ export function RecoveryCard() {
             <Pill tone={left <= 3 ? 'warn' : 'muted'}>
               {left} из {total}
             </Pill>
+          ) : overview.isPending ? (
+            <Skeleton className="h-[22px] w-16 rounded-full" />
           ) : (
             <span className="text-text-3">—</span>
           )}
@@ -174,11 +176,8 @@ function RecoveryCodesDialog({
           </ol>
         )}
         <div className={cn('mt-1 flex flex-wrap justify-center gap-2', legacy && 'hidden')}>
-          <Button
-            type="button"
-            variant="outline"
+          <RowButton
             disabled={unused.length === 0}
-            className="h-8 rounded-[8px] border-border bg-surface-2 px-2.5 text-[12px] text-text-2 hover:bg-surface-3 hover:text-foreground"
             onClick={() => {
               void navigator.clipboard?.writeText(text);
               toast.success('Коды скопированы.');
@@ -186,17 +185,11 @@ function RecoveryCodesDialog({
           >
             <CopyIcon className="size-3.5" aria-hidden="true" />
             Скопировать
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={unused.length === 0}
-            className="h-8 rounded-[8px] border-border bg-surface-2 px-2.5 text-[12px] text-text-2 hover:bg-surface-3 hover:text-foreground"
-            onClick={download}
-          >
+          </RowButton>
+          <RowButton disabled={unused.length === 0} onClick={download}>
             <DownloadIcon className="size-3.5" aria-hidden="true" />
             Скачать .txt
-          </Button>
+          </RowButton>
         </div>
         {mode === 'new' && (
           <label

@@ -78,9 +78,23 @@ export function NodeTcpCheck({ uuid, runToken = 0 }: { uuid: string; runToken?: 
         </button>
       </div>
       {history.isPending ? (
-        <div role="status" aria-label="Загрузка проверок" className="mt-3 flex gap-2">
-          <Skeleton className="h-7 w-48 rounded-full" />
-          <Skeleton className="h-7 w-40 rounded-full" />
+        // Силуэт готового блока: пилюли портов, строка «Последняя проверка» и список последних проверок.
+        <div role="status" aria-label="Загрузка проверок" className="mt-3">
+          <div className="flex gap-2">
+            <Skeleton className="h-[22px] w-48 rounded-full" />
+            <Skeleton className="h-[22px] w-40 rounded-full" />
+          </div>
+          <Skeleton className="mt-3 h-3 w-56" />
+          <div className="mt-3 border-t border-border pt-2.5">
+            <Skeleton className="mb-2 h-3 w-32" />
+            {[1, 2, 3].map((row) => (
+              <div key={row} className="flex items-center gap-3 px-2 py-2">
+                <Skeleton className="size-4 rounded-full" />
+                <Skeleton className="h-3 w-[40%]" />
+                <Skeleton className="ml-auto h-3 w-16" />
+              </div>
+            ))}
+          </div>
         </div>
       ) : history.isError ? (
         <p role="alert" className="mt-3 text-[12.5px] text-crit">

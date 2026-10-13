@@ -11,10 +11,8 @@ import {
 import { useSearch } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
-import { JarvisIcon } from '@/components/jarvis-icon';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
 import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import { PasswordField } from '@/features/auth/components/password-field';
 import {
@@ -25,6 +23,7 @@ import {
   Segmented,
   SettingsCard,
   SettingsRow,
+  SettingsSkeleton,
 } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
@@ -109,13 +108,7 @@ export function AssistantSettingsPage() {
 
   const providerName = ASSISTANT_PROVIDER_LABELS[provider];
 
-  if (settings.isPending)
-    return (
-      <div className="flex flex-col gap-4">
-        <Skeleton className="h-[52px] rounded-2xl" />
-        <Skeleton className="h-[340px] rounded-2xl" />
-      </div>
-    );
+  if (settings.isPending) return <SettingsSkeleton cards={[4]} />;
   if (settings.isError || !data)
     return (
       <div className="rounded-2xl border border-crit/30 bg-crit-soft px-5 py-4 text-[13px] text-text-2">
@@ -135,7 +128,6 @@ export function AssistantSettingsPage() {
     <div className="flex flex-col">
       <UnsavedChangesGuard dirty={dirty} />
       <SectionHeader
-        icon={JarvisIcon}
         title={`Ассистент · ${ASSISTANT_SECTIONS.find((x) => x.key === section)?.label ?? ''}`}
         description={
           enabled
@@ -194,7 +186,7 @@ export function AssistantSettingsPage() {
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                   placeholder="anthropic/claude-sonnet-4-5"
-                  className="h-9 rounded-[9px] bg-surface-2 font-mono text-[13px]"
+                  className="h-10 rounded-[10px] bg-surface-2 font-mono text-[13px]"
                 />
               </SettingsRow>
               <SettingsRow
@@ -218,6 +210,7 @@ export function AssistantSettingsPage() {
               >
                 <PasswordField
                   id="as-key"
+                  className="h-10 py-0 text-[13px]"
                   autoComplete="off"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}

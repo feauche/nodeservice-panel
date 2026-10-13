@@ -159,6 +159,23 @@ export class IncidentsService {
     return this.toDto(updated ?? row);
   }
 
+  /**
+   * Событие ноды, в хронологию которого пишут сценарии: открытое или в работе; с `resolvedWithinMs` — и закрытое
+   * не раньше этого срока (возврат Host после восстановления ноды). Нет такого — null.
+   */
+  async forNode(nodeUuid: string, resolvedWithinMs = 0): Promise<{ id: string; title: string } | null> {
+    const row = await this.repo.latestForNode(
+      nodeUuid,
+      resolvedWithinMs ? new Date(Date.now() - resolvedWithinMs) : null,
+    );
+    return row ? { id: row.id, title: row.title } : null;
+  }
+
+  /** Строка автоматики в «Что происходило» события (срабатывание сценария и его итог). */
+  async note(id: string, action: string, result: IncidentEvent['result']): Promise<void> {
+    await this.repo.appendTimeline(id, ev('auto', action, result));
+  }
+
   /** Ручное закрытие администратором. */
   async resolveManual(id: string): Promise<Incident> {
     const row0 = await this.repo.findById(id);

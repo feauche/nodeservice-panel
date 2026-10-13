@@ -18,7 +18,7 @@ describe('stages · поэтапное открытие разделов', () =>
       '/settings/notifications',
       '/settings/appearance',
       '/settings/security',
-      '/settings/autochecks',
+      '/settings/monitoring',
       '/settings/incidents',
     ])
       expect(isSectionOpen(to), to).toBe(true);

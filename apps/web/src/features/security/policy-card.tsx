@@ -1,8 +1,9 @@
 import { IDLE_MINUTES_OPTIONS, LOCK_AFTER_OPTIONS, type SecurityPolicy } from '@nodeservice/shared';
 import { useEffect, useState } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
-import { SaveBar, SettingsCard, SettingsRow, Toggle } from '@/features/settings/settings-ui';
+import { LoadError, SaveBar, SettingsCard, SettingsRow, Toggle } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { useSecurityOverview, useUpdatePolicy } from './security-api';
@@ -31,7 +32,7 @@ function MinutesSelect({
 }) {
   return (
     <Select value={String(value)} onValueChange={(v) => onChange(Number(v))}>
-      <SelectTrigger id={id} className="h-9 min-w-[170px]">
+      <SelectTrigger id={id} className="min-w-[170px]">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -76,50 +77,63 @@ export function PolicyCard() {
     <>
       <UnsavedChangesGuard dirty={dirty} />
       <SettingsCard title="Политика" hint="Действует для всех сессий сразу после сохранения.">
-        <div>
-          <SettingsRow
-            label="Завершать сессию при бездействии"
-            hint="Без запросов к панели дольше этого времени — вход заново. Пока панель открыта на экране, она сама продлевает сессию."
-          >
-            {d && (
-              <MinutesSelect
-                id="policy-idle"
-                value={d.idleMinutes}
-                options={IDLE_MINUTES_OPTIONS}
-                onChange={(v) => setDraft({ ...d, idleMinutes: v })}
-              />
-            )}
-          </SettingsRow>
-          <SettingsRow
-            label="Блокировать экран при бездействии"
-            hint="Только в этом браузере: экран блокировки, сессия живёт."
-          >
-            {d && (
-              <MinutesSelect
-                id="policy-lock"
-                value={d.lockAfterMinutes}
-                options={LOCK_AFTER_OPTIONS}
-                onChange={(v) => setDraft({ ...d, lockAfterMinutes: v })}
-              />
-            )}
-          </SettingsRow>
-          <SettingsRow label="Всегда спрашивать код 2FA" hint="Запомненные устройства перестают действовать.">
-            {d && (
-              <Toggle
-                id="policy-always-totp"
-                checked={d.alwaysAskTotp}
-                onChange={(v) => setDraft({ ...d, alwaysAskTotp: v })}
-              />
-            )}
-          </SettingsRow>
-        </div>
+        {overview.isError && !d ? (
+          <LoadError message={apiErrorMessage(overview.error)} onRetry={() => void overview.refetch()} />
+        ) : (
+          <div>
+            <SettingsRow
+              label="Завершать сессию при бездействии"
+              hint="Без запросов к панели дольше этого времени — вход заново. Пока панель открыта на экране, она сама продлевает сессию."
+            >
+              {d ? (
+                <MinutesSelect
+                  id="policy-idle"
+                  value={d.idleMinutes}
+                  options={IDLE_MINUTES_OPTIONS}
+                  onChange={(v) => setDraft({ ...d, idleMinutes: v })}
+                />
+              ) : (
+                <Skeleton className="h-10 w-[170px] rounded-[10px]" />
+              )}
+            </SettingsRow>
+            <SettingsRow
+              label="Блокировать экран при бездействии"
+              hint="Только в этом браузере: экран блокировки, сессия живёт."
+            >
+              {d ? (
+                <MinutesSelect
+                  id="policy-lock"
+                  value={d.lockAfterMinutes}
+                  options={LOCK_AFTER_OPTIONS}
+                  onChange={(v) => setDraft({ ...d, lockAfterMinutes: v })}
+                />
+              ) : (
+                <Skeleton className="h-10 w-[170px] rounded-[10px]" />
+              )}
+            </SettingsRow>
+            <SettingsRow
+              label="Всегда спрашивать код 2FA"
+              hint="Запомненные устройства перестают действовать."
+            >
+              {d ? (
+                <Toggle
+                  id="policy-always-totp"
+                  checked={d.alwaysAskTotp}
+                  onChange={(v) => setDraft({ ...d, alwaysAskTotp: v })}
+                />
+              ) : (
+                <Skeleton className="h-6 w-11 rounded-full" />
+              )}
+            </SettingsRow>
+          </div>
+        )}
       </SettingsCard>
       <SaveBar
         dirty={dirty}
         pending={update.isPending}
         onSave={() => void save()}
         onReset={() => saved && setDraft(saved)}
-        note="Сохраняет «Политику». Спросим пароль ещё раз."
+        note="при сохранении спросим пароль ещё раз"
       />
     </>
   );

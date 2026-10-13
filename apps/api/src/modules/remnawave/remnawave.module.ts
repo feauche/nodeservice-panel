@@ -54,6 +54,12 @@ import { RemnawaveTopologyService } from './remnawave-topology.service.js';
     { provide: REMNAWAVE_CLIENT, useClass: HttpRemnawaveClient },
     { provide: HOST_RESOLVER, useClass: DnsHostResolver },
   ],
-  exports: [NodePreferencesStore, RemnawaveSettingsStore, RemnawaveService, RemnawaveTopologyService],
+  exports: [
+    NodePreferencesStore,
+    RemnaPermissionsService,
+    RemnawaveSettingsStore,
+    RemnawaveService,
+    RemnawaveTopologyService,
+  ],
 })
 export class RemnawaveModule {}

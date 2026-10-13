@@ -123,7 +123,7 @@ function SitesDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
 
   const busy = update.isPending;
   const unavailable = sites.isPending || sites.isError || !sites.data;
-  const inputClass = 'h-9 rounded-[9px] bg-surface-2 text-[13px]';
+  const inputClass = 'h-10 rounded-[10px] bg-surface-2 text-[13px]';
 
   return (
     <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
@@ -238,7 +238,7 @@ function SitesDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
             type="button"
             disabled={busy || unavailable || rows.length >= CUSTOM_SITES_MAX}
             onClick={add}
-            className="mt-3 inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border bg-surface-2 px-3 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            className="mt-3 inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-3.5 text-[13px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
             <PlusIcon className="size-4" aria-hidden="true" />
             Добавить сайт

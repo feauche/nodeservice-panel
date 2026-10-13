@@ -18,7 +18,7 @@ import {
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { JarvisIcon } from '@/components/jarvis-icon';
-import { FormSkeleton, RowsSkeleton } from '@/components/ui/loading-state';
+import { Skeleton } from '@/components/ui/skeleton';
 import { type NodeDialogTab, NodeLinkContext } from '@/features/knowledge/markdown';
 import { nodeState } from '@/features/nodes/node-card';
 import { NodeDialog } from '@/features/nodes/node-dialog';
@@ -40,19 +40,45 @@ import { MessageRow, TypingRow } from './chat-messages';
 
 // Помним последнюю открытую беседу, чтобы вернуться и продолжить после ухода со страницы.
 
+/** Пока проверяем, подключён ли Ассистент, — силуэт чата той же раскладки: история, реплики, поле ввода. */
+function AssistantSkeleton() {
+  return (
+    <div role="status" aria-label="Загрузка ассистента" className={PAGE}>
+      <aside className="hidden min-h-0 flex-col gap-3 rounded-2xl border border-border bg-surface p-3.5 lg:flex">
+        <Skeleton className="h-9 w-full rounded-[10px]" />
+        <Skeleton className="mt-1 h-2.5 w-16" />
+        {[1, 2, 3, 4, 5].map((row) => (
+          <div key={row} className="flex items-center gap-2 px-1 py-1.5">
+            <Skeleton className="size-3.5 flex-none rounded-[4px]" />
+            <Skeleton className="h-3 flex-1" />
+          </div>
+        ))}
+      </aside>
+      <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-surface">
+        <div className="flex flex-none items-center gap-2 border-b border-border px-3 py-3">
+          <Skeleton className="h-3 w-32" />
+        </div>
+        <div className="flex flex-1 flex-col gap-4 p-5">
+          <Skeleton className="ml-auto h-10 w-[46%] rounded-[14px]" />
+          <div className="w-[72%] space-y-2">
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-[92%]" />
+            <Skeleton className="h-3 w-[60%]" />
+          </div>
+          <Skeleton className="ml-auto h-10 w-[34%] rounded-[14px]" />
+        </div>
+        <div className="flex-none p-4">
+          <Skeleton className="h-[88px] w-full rounded-[16px]" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AssistantPage() {
   const status = useAssistantStatus();
 
-  if (status.isPending)
-    return (
-      <div className="grid h-full grid-cols-[minmax(0,1fr)] gap-4 p-4 lg:grid-cols-[260px_minmax(0,1fr)]">
-        <RowsSkeleton rows={5} label="Загрузка диалогов" />
-        <div className="space-y-4">
-          <FormSkeleton />
-          <RowsSkeleton rows={4} label="Загрузка ассистента" />
-        </div>
-      </div>
-    );
+  if (status.isPending) return <AssistantSkeleton />;
 
   if (!status.data?.enabled) return <AssistantDisabled />;
 
@@ -618,9 +644,14 @@ function ConversationsPanel({ items, current, onSelect, close }: ConversationsPr
               </button>
             </li>
           ))}
-          {(items?.length ?? 0) === 0 && (
-            <li className="px-2 py-3 text-[12px] text-text-3">Бесед пока нет.</li>
-          )}
+          {items === undefined &&
+            [1, 2, 3, 4].map((row) => (
+              <li key={row} aria-hidden="true" className="flex items-center gap-2 px-2.5 py-2">
+                <Skeleton className="size-3.5 flex-none rounded-[4px]" />
+                <Skeleton className="h-3 flex-1" />
+              </li>
+            ))}
+          {items?.length === 0 && <li className="px-2 py-3 text-[12px] text-text-3">Бесед пока нет.</li>}
         </ul>
       </div>
     </>

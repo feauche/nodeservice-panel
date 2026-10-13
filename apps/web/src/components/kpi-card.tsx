@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
 export type KpiTone = 'ok' | 'warn' | 'crit' | 'info' | 'muted';
@@ -89,6 +90,26 @@ export function KpiCard({
           </span>
         )}
         {spark && <Sparkline values={spark} className="ml-auto h-9 w-28 flex-none opacity-80" />}
+      </div>
+    </section>
+  );
+}
+
+/** Силуэт плитки показателя того же размера: подпись, число, строка состояния и место под спарклайн. */
+export function KpiCardSkeleton({ className }: { className?: string }) {
+  return (
+    <section
+      aria-hidden="true"
+      className={cn(
+        'flex min-w-0 flex-col gap-3 rounded-2xl border border-border bg-surface px-4 pt-[18px] pb-4',
+        className,
+      )}
+    >
+      <Skeleton className="h-2.5 w-[42%]" />
+      <Skeleton className="h-[26px] w-[38%] rounded-[7px]" />
+      <div className="mt-auto flex min-h-[34px] items-end justify-between gap-2.5">
+        <Skeleton className="h-3 w-[36%]" />
+        <Skeleton className="h-9 w-28 rounded-[8px]" />
       </div>
     </section>
   );

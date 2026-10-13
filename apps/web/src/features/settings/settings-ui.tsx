@@ -1,40 +1,38 @@
-import type { ButtonHTMLAttributes, ComponentType, KeyboardEvent, ReactNode } from 'react';
+import { InfoIcon } from 'lucide-react';
+import type { ButtonHTMLAttributes, KeyboardEvent, ReactNode } from 'react';
 
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
 /**
- * Единый стиль «Настроек» (витрина `settings-unified-variants.html`, вариант A): шапка раздела, карточки
- * с заголовком обычным регистром, строки «подпись и пояснение слева — управление справа», одна липкая
- * панель «Сохранить» внизу справа на раздел. Мгновенные действия — кнопкой `RowButton` справа в строке.
+ * Единый вид «Настроек» (витрина redesign-2026-10, раздел «Настройки», вариант A): шапка раздела, карточки
+ * с заголовком и пояснением, строки «подпись и пояснение слева — управление справа», поля и кнопки 40 px.
+ * Сохранение одно: полоса «Сохранить» внизу появляется только после правки. Мгновенные действия — кнопкой
+ * `RowButton` справа в строке.
  */
 
-/** Шапка раздела: иконка, название, одно предложение о том, что тут настраивается; справа — статус. */
+/** Шапка раздела: название и одно предложение о том, что тут настраивается; справа — статус или действие. */
 export function SectionHeader({
-  icon: Icon,
   title,
   description,
   aside,
 }: {
-  icon: ComponentType<{ className?: string; 'aria-hidden'?: boolean | 'true' }>;
   title: string;
   description: ReactNode;
   aside?: ReactNode;
 }) {
   return (
-    <header className="mb-4 flex items-start gap-3">
-      <span className="grid size-9 flex-none place-items-center rounded-[10px] border border-border bg-surface-2 text-brand">
-        <Icon className="size-[18px]" aria-hidden="true" />
-      </span>
+    <header className="mb-1 flex items-start gap-3">
       <div className="min-w-0 flex-1">
-        <h2 className="m-0 font-heading text-[17px] font-semibold tracking-[-0.01em]">{title}</h2>
-        <p className="m-0 mt-0.5 text-[12.5px] text-text-3">{description}</p>
+        <h2 className="m-0 font-heading text-[18px] font-bold tracking-[-0.01em]">{title}</h2>
+        <div className="mt-1 text-[12.5px] text-text-3">{description}</div>
       </div>
-      {aside && <div className="flex-none pt-1">{aside}</div>}
+      {aside && <div className="flex flex-none items-center gap-2">{aside}</div>}
     </header>
   );
 }
 
-/** Карточка настроек: заголовок обычным регистром, пояснение, строки; `footer` — полоса действий справа. */
+/** Карточка настроек: шапка с заголовком и пояснением, под ней строки; `footer` — полоса действий справа. */
 export function SettingsCard({
   title,
   hint,
@@ -50,18 +48,58 @@ export function SettingsCard({
   className?: string;
 }) {
   return (
-    <section className={cn('overflow-hidden rounded-[14px] border border-border bg-surface', className)}>
-      <div className="px-[18px] pt-3.5 max-md:px-4">
-        <h3 className="m-0 font-heading text-[14.5px] font-semibold tracking-[-0.01em]">{title}</h3>
-        {hint && <p className="m-0 mt-0.5 text-[12.5px] text-text-3">{hint}</p>}
+    <section className={cn('overflow-hidden rounded-2xl border border-border bg-surface', className)}>
+      <div className="flex min-h-14 flex-col justify-center border-b border-border px-5 py-3 max-md:px-4">
+        <h3 className="m-0 font-heading text-[14.5px] font-semibold tracking-[-0.005em]">{title}</h3>
+        {/* Пояснение может быть разметкой (например, скелетон даты) — поэтому div, а не p. */}
+        {hint && <div className="mt-0.5 text-[12px] leading-snug text-text-3">{hint}</div>}
       </div>
-      <div className="px-[18px] pt-1 pb-1.5 max-md:px-4">{children}</div>
+      <div className="px-5 max-md:px-4">{children}</div>
       {footer && (
-        <div className="flex flex-wrap items-center justify-end gap-2.5 border-t border-border bg-bg-2 p-4 [&>button]:h-10">
+        <div className="flex flex-wrap items-center justify-end gap-2.5 border-t border-border bg-bg-2 px-5 py-3.5 max-md:px-4 [&>button]:h-10">
           {footer}
         </div>
       )}
     </section>
+  );
+}
+
+/** Скелетон карточки настроек: шапка и строки «подпись и пояснение — поле» той же высоты, что готовые. */
+export function SettingsCardSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <section aria-hidden="true" className="overflow-hidden rounded-2xl border border-border bg-surface">
+      <div className="flex min-h-14 flex-col justify-center gap-1.5 border-b border-border px-5 py-3 max-md:px-4">
+        <Skeleton className="h-3.5 w-40" />
+        <Skeleton className="h-3 w-72 max-w-full" />
+      </div>
+      <div className="px-5 max-md:px-4">
+        {Array.from({ length: rows }, (_, i) => i + 1).map((row) => (
+          <div
+            key={row}
+            className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 border-t border-border py-3.5 first:border-t-0"
+          >
+            <div className="space-y-2">
+              <Skeleton className="h-3.5 w-1/3" />
+              <Skeleton className="h-3 w-2/3" />
+            </div>
+            <Skeleton className="h-10 w-[150px] rounded-[10px] max-sm:w-24" />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** Скелетон раздела: карточки с заданным числом строк — по форме готового раздела. */
+export function SettingsSkeleton({ cards }: { cards: number[] }) {
+  return (
+    <div role="status" aria-label="Загрузка настроек" className="flex flex-col gap-3.5">
+      {cards
+        .map((rows, i) => ({ rows, key: `${i}:${rows}` }))
+        .map((c) => (
+          <SettingsCardSkeleton key={c.key} rows={c.rows} />
+        ))}
+    </div>
   );
 }
 
@@ -84,11 +122,11 @@ export function SettingsRow({
 }) {
   if (stack)
     return (
-      <div className="flex flex-col gap-1.5 border-t border-border py-3 first:border-t-0">
+      <div className="flex flex-col gap-1.5 border-t border-border py-3.5 first:border-t-0">
         {(label || action) && (
           <div className="flex min-h-[30px] items-center justify-between gap-3">
             {label && (
-              <label htmlFor={htmlFor} className="text-[12.5px] font-semibold">
+              <label htmlFor={htmlFor} className="text-[13.5px] font-semibold">
                 {label}
               </label>
             )}
@@ -96,26 +134,38 @@ export function SettingsRow({
           </div>
         )}
         {children}
-        {hint && <div className="text-[11.5px] text-text-3">{hint}</div>}
+        {hint && <div className="text-[12px] leading-relaxed text-text-3">{hint}</div>}
       </div>
     );
   const Label = htmlFor ? 'label' : 'div';
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 border-t border-border py-3 first:border-t-0 max-sm:grid-cols-1">
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-5 gap-y-2 border-t border-border py-3.5 first:border-t-0 max-sm:grid-cols-1">
       <div className="min-w-0">
         {label && (
           <Label {...(htmlFor ? { htmlFor } : {})} className="block text-[13.5px] font-semibold">
             {label}
           </Label>
         )}
-        {hint && <div className="mt-px text-[12px] text-text-3">{hint}</div>}
+        {hint && <div className="mt-0.5 text-[12.5px] leading-relaxed text-text-3">{hint}</div>}
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2 max-sm:justify-start">{children}</div>
     </div>
   );
 }
 
-/** Кнопка действия в строке («Завершить», «Забыть», «Перевыпустить»): небольшая, справа. */
+/** Не загрузилось: причина словами и «Повторить» — вместо вечного скелетона или пустой карточки. */
+export function LoadError({ message, onRetry }: { message: ReactNode; onRetry: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 py-3.5">
+      <p role="alert" className="m-0 min-w-0 flex-1 text-[12.5px] text-crit">
+        {message}
+      </p>
+      <RowButton onClick={onRetry}>Повторить</RowButton>
+    </div>
+  );
+}
+
+/** Кнопка действия в строке («Завершить», «Забыть», «Перевыпустить»): справа, высотой с поле. */
 export function RowButton({
   children,
   tone = 'default',
@@ -127,7 +177,7 @@ export function RowButton({
       type="button"
       {...rest}
       className={cn(
-        'inline-flex h-[30px] cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border bg-surface-2 px-[11px] text-[12.5px] font-medium whitespace-nowrap transition-colors disabled:cursor-default disabled:opacity-50 [&_svg]:size-3.5',
+        'inline-flex h-10 cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border bg-surface-2 px-3.5 text-[13px] font-medium whitespace-nowrap transition-colors disabled:cursor-default disabled:opacity-50 [&_svg]:size-3.5',
         tone === 'danger'
           ? 'border-crit/35 text-crit hover:border-crit/60'
           : 'border-border text-text-2 hover:border-border-2 hover:text-foreground',
@@ -168,7 +218,7 @@ export function NumberField({
       </span>
       <span
         className={cn(
-          'flex h-[34px] items-center overflow-hidden rounded-[9px] border bg-surface-2 focus-within:border-brand',
+          'flex h-10 items-center overflow-hidden rounded-[10px] border bg-surface-2 focus-within:border-brand',
           invalid ? 'border-crit' : 'border-border',
         )}
       >
@@ -189,16 +239,16 @@ export function NumberField({
 }
 
 /**
- * Одна панель «Сохранить» на раздел: липкая внизу, кнопки справа одного размера. Слева — что с
- * изменениями; `extra` — «По умолчанию» и подобные. «Отменить» показывается только при изменениях.
+ * Одна полоса «Сохранить» на раздел: появляется после первой правки и прилипает к низу экрана, кнопки
+ * справа одного размера. Слева — что с изменениями и пояснение `note`; `error` — почему сохранить нельзя
+ * (показывается и без правок, например после неудачного сохранения).
  */
 export function SaveBar({
   dirty,
   pending,
   onSave,
   onReset,
-  extra,
-  note = 'Изменения попадают в Журнал.',
+  note = 'попадут в Журнал',
   error,
   saveLabel = 'Сохранить',
 }: {
@@ -206,40 +256,34 @@ export function SaveBar({
   pending: boolean;
   onSave: () => void;
   onReset?: () => void;
-  extra?: ReactNode;
   note?: ReactNode;
   /** Нельзя сохранить: причина вместо заметки, кнопка неактивна. */
   error?: ReactNode;
   saveLabel?: string;
 }) {
+  if (!dirty && !error) return null;
   return (
-    // Без правок панель стоит в конце раздела; есть правки — прилипает к низу экрана, «Сохранить» под рукой.
-    <div
-      className={cn(
-        'z-10 mt-1 flex flex-wrap items-center justify-end gap-2.5 rounded-[13px] border border-border bg-bg-2 p-4',
-        dirty && 'sticky bottom-3 shadow-pop',
-      )}
-    >
-      <span className="min-w-0 flex-1 text-[12.5px] text-text-3" aria-live="polite">
+    <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-end gap-2.5 rounded-[14px] border border-border-2 bg-bg-2 px-4 py-3 shadow-pop duration-150 animate-in fade-in-0 slide-in-from-bottom-2 motion-reduce:animate-none">
+      <span className="flex min-w-0 flex-1 items-center gap-2 text-[12.5px] text-text-2" aria-live="polite">
         {error ? (
           <span className="text-crit">{error}</span>
-        ) : dirty ? (
-          <>
-            <span className="mr-1.5 inline-block size-1.5 rounded-full bg-warn align-middle" />
-            Есть несохранённые изменения
-          </>
         ) : (
-          note
+          <>
+            <InfoIcon className="size-4 flex-none text-warn" aria-hidden="true" />
+            <span className="min-w-0">
+              Есть несохранённые изменения
+              {note && <span className="text-text-3"> · {note}</span>}
+            </span>
+          </>
         )}
       </span>
-      <span className="flex flex-none flex-wrap items-center justify-end gap-2.5 [&>button]:h-10 max-sm:w-full max-sm:[&>button]:flex-1">
-        {extra}
+      <span className="flex flex-none flex-wrap items-center justify-end gap-2.5 max-sm:w-full max-sm:[&>button]:flex-1">
         {dirty && onReset && (
           <button
             type="button"
             disabled={pending}
             onClick={onReset}
-            className="inline-flex h-10 min-w-[128px] cursor-pointer items-center justify-center rounded-[9px] border border-border bg-surface-2 px-3.5 text-[13px] font-medium text-text-2 transition-colors hover:text-foreground disabled:opacity-50"
+            className="inline-flex h-10 min-w-[128px] cursor-pointer items-center justify-center rounded-[10px] border border-border bg-surface-2 px-3.5 text-[13px] font-medium text-text-2 transition-colors hover:text-foreground disabled:opacity-50"
           >
             Отменить
           </button>
@@ -248,7 +292,7 @@ export function SaveBar({
           type="button"
           disabled={pending || !dirty || Boolean(error)}
           onClick={onSave}
-          className="inline-flex h-10 min-w-[128px] cursor-pointer items-center justify-center rounded-[9px] border border-transparent bg-cta px-3.5 text-[13px] font-semibold text-cta-foreground transition-colors hover:bg-(--ns-cta-hover) disabled:cursor-default disabled:opacity-50"
+          className="inline-flex h-10 min-w-[128px] cursor-pointer items-center justify-center rounded-[10px] border border-transparent bg-cta px-3.5 text-[13px] font-semibold text-cta-foreground transition-colors hover:bg-(--ns-cta-hover) disabled:cursor-default disabled:opacity-50"
         >
           {pending ? 'Сохраняю…' : saveLabel}
         </button>
@@ -264,7 +308,7 @@ export function BarButton({ className, ...rest }: ButtonHTMLAttributes<HTMLButto
       type="button"
       {...rest}
       className={cn(
-        'inline-flex h-[34px] min-w-[128px] cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border border-border bg-surface-2 px-3.5 text-[13px] font-medium text-text-2 transition-colors hover:text-foreground disabled:cursor-default disabled:opacity-50 [&_svg]:size-3.5',
+        'inline-flex h-10 min-w-[128px] cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-3.5 text-[13px] font-medium text-text-2 transition-colors hover:text-foreground disabled:cursor-default disabled:opacity-50 [&_svg]:size-3.5',
         className,
       )}
     />
@@ -278,7 +322,7 @@ export function CardButton({ className, ...rest }: ButtonHTMLAttributes<HTMLButt
       type="button"
       {...rest}
       className={cn(
-        'inline-flex h-[34px] min-w-[128px] cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border border-transparent bg-cta px-3.5 text-[13px] font-semibold text-cta-foreground transition-colors hover:bg-(--ns-cta-hover) disabled:cursor-default disabled:opacity-50',
+        'inline-flex h-10 min-w-[128px] cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border border-transparent bg-cta px-3.5 text-[13px] font-semibold text-cta-foreground transition-colors hover:bg-(--ns-cta-hover) disabled:cursor-default disabled:opacity-50',
         className,
       )}
     />
@@ -352,53 +396,6 @@ export function Pill({
     >
       {children}
     </span>
-  );
-}
-
-/**
- * Навигация по разделам внутри одной страницы настроек: слева столбцом, на узком экране лентой.
- * Точка у пункта — в разделе есть несохранённые изменения.
- */
-export function SettingsRail<K extends string>({
-  label,
-  items,
-  value,
-  onChange,
-}: {
-  label: string;
-  items: ReadonlyArray<{ key: K; label: string; dirty?: boolean }>;
-  value: K;
-  onChange: (key: K) => void;
-}) {
-  return (
-    <nav
-      aria-label={label}
-      className="flex gap-1 overflow-x-auto max-lg:-mx-4 max-lg:px-4 max-lg:py-1 lg:sticky lg:top-4 lg:w-[210px] lg:flex-none lg:flex-col lg:self-start"
-    >
-      {items.map((it) => (
-        <button
-          key={it.key}
-          type="button"
-          aria-current={it.key === value ? 'true' : undefined}
-          onClick={() => onChange(it.key)}
-          className={cn(
-            'flex flex-none items-center justify-between gap-2 rounded-[9px] px-3 py-2 text-left text-[13px] whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
-            it.key === value
-              ? 'bg-brand-soft font-semibold text-brand'
-              : 'text-text-2 hover:bg-surface-2 hover:text-foreground',
-          )}
-        >
-          {it.label}
-          {it.dirty && (
-            <span
-              role="img"
-              aria-label="Есть несохранённые изменения"
-              className="size-1.5 flex-none rounded-full bg-warn"
-            />
-          )}
-        </button>
-      ))}
-    </nav>
   );
 }
 

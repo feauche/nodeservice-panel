@@ -114,7 +114,7 @@ export function useRemnaPermissions(enabled: boolean) {
     queryKey: ['nodes', 'permissions'],
     queryFn: ({ signal }) => api.get('/nodes/permissions', remnaPermissionsSchema, signal),
     enabled,
-    // Каждая перепроверка — шесть запросов в Remnawave; права меняются редко, раза в 30 секунд хватает.
+    // Каждая перепроверка — семь запросов чтения в Remnawave; права меняются редко, раза в 30 секунд хватает.
     refetchInterval: 30_000,
   });
 }
