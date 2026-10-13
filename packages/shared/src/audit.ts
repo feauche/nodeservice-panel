@@ -134,6 +134,27 @@ export const AUDIT_ACTIONS = {
   'integration.connected': { category: 'settings', label: 'Интеграция подключена' },
   'integration.refreshed': { category: 'settings', label: 'Интеграция обновлена' },
   'integration.disconnected': { category: 'settings', label: 'Интеграция отключена' },
+  'integration.dns.record_changed': { category: 'settings', label: 'DNS-запись изменена вручную' },
+  'integration.dns.autoreplace_changed': { category: 'settings', label: 'Автозамена DNS-записи переключена' },
+  'integration.dpi.check_started': { category: 'settings', label: 'Платная проверка DPI Checker запущена' },
+  'integration.dpi.check_cancelled': { category: 'settings', label: 'Проверка DPI Checker отменена' },
+  'integration.bs.check_started': { category: 'settings', label: 'Платная проверка BS Checker запущена' },
+  'integration.bs.targets_changed': {
+    category: 'settings',
+    label: 'Выходы точки аренды BS Checker изменены',
+  },
+  'integration.bs.ws_exits_changed': {
+    category: 'settings',
+    label: 'Серверы точки WebSocket BS Checker изменены',
+  },
+  'integration.bs.ws_connect_viewed': {
+    category: 'settings',
+    label: 'Просмотр настроек подключения точки WebSocket BS Checker',
+  },
+  'integration.dpi.probe_started': {
+    category: 'settings',
+    label: 'Платный зонд подсети DPI Checker запущен',
+  },
   'remnawave.provider_created': { category: 'settings', label: 'Провайдер создан в Remnawave' },
   'remnawave.provider_deleted': { category: 'settings', label: 'Провайдер удалён из Remnawave' },
   'remnawave.provider_updated': { category: 'settings', label: 'Провайдер обновлён в Remnawave' },

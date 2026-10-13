@@ -3,13 +3,14 @@ import { isIP } from 'node:net';
 import { domainToASCII } from 'node:url';
 import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
 import { type BsProbeInput, type BsRun, bsAccountSchema, bsUnitSchema } from '@nodeservice/shared';
-import { desc, eq, like } from 'drizzle-orm';
+import { and, desc, eq, like, lt, sql } from 'drizzle-orm';
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { appMeta } from '../../infra/db/schema/index.js';
 import { publicIp } from '../incidents/check-host.service.js';
 import { NodeEventsStore } from '../node-events/node-events.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
+import { bsErrorText } from './bs-errors.js';
 import { type IntegrationSession, IntegrationsService } from './integrations.service.js';
 
 type Stored = {
@@ -23,12 +24,21 @@ type Stored = {
 };
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-class BsError extends Error {
+/**
+ * Ошибка BS Checker. uncertain — итог неизвестен (платный запрос ушёл, ответа нет или он ещё идёт): повторять
+ * только тем же ключом идемпотентности. Иначе отказ окончательный и text — что сказать владельцу.
+ */
+export class BsError extends Error {
   constructor(
     public readonly code: string,
     public readonly uncertain: boolean,
+    public readonly status = 0,
+    public readonly details: unknown = null,
   ) {
     super(code);
+  }
+  get text() {
+    return bsErrorText(this.code, this.details, this.status);
   }
 }
 @Injectable()
@@ -87,7 +97,11 @@ export class BsCheckerService {
     if (!res.ok) {
       const error = obj(data.error);
       const code = typeof error.code === 'string' ? error.code : 'provider_error';
-      throw new BsError(code, Boolean(key) && (code === 'request_in_progress' || res.status >= 500));
+      // 503 — сервис не взялся (кредиты не списаны); 500 и непонятные 5xx на платном запросе — итог неизвестен:
+      // списание могло случиться, повторять только тем же ключом.
+      const uncertain =
+        Boolean(key) && (code === 'request_in_progress' || (res.status >= 500 && res.status !== 503));
+      throw new BsError(code, uncertain, res.status, error.details ?? null);
     }
     return data;
   }
@@ -133,13 +147,12 @@ export class BsCheckerService {
     try {
       return await this.request(session, path, body, key, method);
     } catch (e) {
-      if (e instanceof BsError && e.code === 'scope_required')
-        throw new BadRequestException('API-ключу нужно право rentals:write для изменения адресов аренды.');
       if (e instanceof BsError && e.uncertain) throw e;
+      // Окончательный отказ — понятной причиной: «нет права», «точка занята», «адрес в блок-листе».
+      if (e instanceof BsError) throw new BadRequestException(e.text);
       throw problem(502, {
         type: 'urn:nodeservice:bschecker:rentals',
-        detail:
-          'BS Checker не выполнил действие с точкой аренды. Проверьте состояние точки и права API-ключа.',
+        detail: 'BS Checker не выполнил действие с точкой. Проверьте её состояние и повторите.',
       });
     }
   }
@@ -168,16 +181,26 @@ export class BsCheckerService {
     if (operators.some((key) => !units.some((u) => u.op_key === key && u.probeable)))
       throw new BadRequestException('Выбранные единицы недоступны. Обновите список.');
     const target = `${host.includes(':') ? `[${host}]` : host}:${input.port}`;
-    const body = { target, operators, probes: { tcp: input.tcp, icmp: input.icmp, sni: false }, dpi: 'any' };
+    // Точки перечислены явно (op_key с режимом БС) — фильтр dpi «любые», иначе сервис отсеет точки без БС.
+    const body = {
+      target,
+      operators,
+      probes: { tcp: input.tcp, icmp: input.icmp, sni: Boolean(input.sniHost) },
+      ...(input.sniHost ? { sni_hosts: [input.sniHost] } : {}),
+      dpi: 'any',
+    };
     let answer: Record<string, unknown>;
     try {
       answer = await this.request(session, '/probe/preview', body);
-    } catch {
-      throw new BadRequestException('BS Checker не смог рассчитать стоимость. Проверка не запущена.');
+    } catch (e) {
+      throw new BadRequestException(
+        `${e instanceof BsError ? e.text : 'BS Checker не смог рассчитать стоимость.'} Проверка не запущена.`,
+      );
     }
     const cost = answer.cost_credits;
     if (typeof cost !== 'number' || !Number.isSafeInteger(cost) || cost < 0)
       throw new BadRequestException('Сервис не вернул корректную стоимость.');
+    await this.sweep();
     // Opaque preview binds exact target, units, price and credential identity; execute accepts only this id.
     const id = randomUUID(),
       expiresAt = new Date(Date.now() + 10 * 60000).toISOString();
@@ -198,7 +221,31 @@ export class BsCheckerService {
       expiresAt,
       run,
     });
-    return { id, costCredits: cost, units: operators, expiresAt };
+    const level = obj(answer.level);
+    return {
+      id,
+      costCredits: cost,
+      fullCredits: typeof answer.full_credits === 'number' ? answer.full_credits : null,
+      discountPct:
+        typeof level.discount_pct === 'number' && level.discount_pct > 0 ? level.discount_pct : null,
+      levelName: typeof level.name === 'string' && level.name ? level.name : null,
+      units: operators,
+      expiresAt,
+    };
+  }
+  /** Расчёт цены идёт сам при каждом изменении формы: незапущенные расчёты старше часа убираем. Сбой — не помеха. */
+  private async sweep() {
+    try {
+      await this.db
+        .delete(appMeta)
+        .where(
+          and(
+            like(appMeta.key, 'bschecker.run.%'),
+            lt(appMeta.updatedAt, new Date(Date.now() - 3_600_000)),
+            sql`${appMeta.value} LIKE '%"status":"ready"%'`,
+          ),
+        );
+    } catch {}
   }
   async history() {
     const identity = await this.integrations.identity('bschecker');
@@ -219,6 +266,8 @@ export class BsCheckerService {
               createdAt: saved.createdAt ?? new Date(Date.parse(saved.expiresAt) - 600000).toISOString(),
               units: Array.isArray(saved.body.operators) ? saved.body.operators.length : 0,
               estimatedCredits: saved.cost,
+              nodeName: saved.node?.name ?? null,
+              operators: Array.isArray(saved.body.operators) ? saved.body.operators.map(String) : [],
             },
           ];
         } catch {
@@ -268,6 +317,8 @@ export class BsCheckerService {
           const leg = obj(value),
             tcp = obj(leg.tcp),
             icmp = obj(leg.icmp);
+          // ok ноги — «проба выполнена», а не «цель доступна»: доступность — по вложенным TCP и ICMP.
+          const ms = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null);
           rows.push({
             unit,
             operator: String(leg.operator ?? unit),
@@ -276,6 +327,8 @@ export class BsCheckerService {
             tcp: typeof tcp.ok === 'boolean' ? tcp.ok : null,
             icmp: typeof icmp.ok === 'boolean' ? icmp.ok : null,
             tcpIsTls: leg.tcp_is_tls === true,
+            latency: ms(tcp.latency_ms) ?? ms(icmp.rtt_avg_ms) ?? ms(icmp.latency_ms),
+            dnsFail: leg.dns_fail === true,
             error:
               typeof tcp.error === 'string'
                 ? tcp.error.slice(0, 160)
@@ -284,7 +337,9 @@ export class BsCheckerService {
                   : null,
           });
         }
-      if (answer.outcome !== 'done') throw new BsError('no_result', false);
+      // 200 с outcome «no_dpi_on» — гонка: точки сменили режим белого списка перед самым стартом, списания нет.
+      if (answer.outcome !== 'done')
+        throw new BsError(answer.outcome === 'no_dpi_on' ? 'no_dpi_on' : 'request_denied', false);
       saved.run = {
         ...saved.run,
         status: 'done',
@@ -303,7 +358,7 @@ export class BsCheckerService {
         status: err.uncertain ? 'uncertain' : 'failed',
         error: err.uncertain
           ? 'Результат пока неизвестен. Получите его повторно: будет использован тот же ключ, без новой проверки.'
-          : `BS Checker отклонил проверку (${err.code.replace(/[^a-z_]/gi, '').slice(0, 60)}).`,
+          : `${err.text} Кредиты не списаны.`,
       };
     }
     await this.write(id, saved);

@@ -109,6 +109,13 @@ const KEY_LABELS: Record<string, string> = {
   checkedAt: 'Время проверки',
   ports: 'Порты и точки Check-Host',
   reports: 'Отчёты Check-Host',
+  domain: 'Домен',
+  from: 'Было',
+  to: 'Стало',
+  nodeName: 'Нода',
+  changed: 'Что сделано',
+  autoreplace: 'Автозамена',
+  points: 'Точек',
 };
 
 /** Записи о решениях по изменениям, которые предложил Ассистент (J5): показываются своей строкой. */

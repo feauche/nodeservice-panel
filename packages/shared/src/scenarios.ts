@@ -42,6 +42,48 @@ export const scenarioSchema = z
   .refine((r) => new Set(r.actions).size === r.actions.length, 'Действия не должны повторяться');
 export const scenariosSchema = z.object({ items: z.array(scenarioSchema).max(100) });
 export type Scenario = z.infer<typeof scenarioSchema>;
+/**
+ * Срабатывание сценария для журнала на странице «Сценарии»: когда, на какой ноде и чем кончился каждый шаг.
+ * `tone`: ok — хорошо, warn — неполно, crit — не вышло или нода недоступна, info — сведения, change — изменение в
+ * Remnawave (имя Host, скрытие).
+ */
+export const scenarioRunStepSchema = z.object({
+  text: z.string(),
+  tone: z.enum(['ok', 'warn', 'crit', 'info', 'change']),
+  /**
+   * С 0.94.0 — для журнала: шаг сценария и его номер в момент срабатывания, слово-итог («доступен», «не вышло»)
+   * и подробности после него. У записей до 0.94.0 их нет — журнал показывает `text`.
+   */
+  action: z.enum(['check_tcp', 'record_event', 'notify', 'hide_host', 'rename_host']).optional(),
+  n: z.number().int().min(1).optional(),
+  word: z.string().optional(),
+  detail: z.string().optional(),
+  /** Шаг не выполнен (ошибка), а не итог проверки вроде «недоступен из РФ». */
+  failed: z.boolean().optional(),
+  /** Шаг не выполнялся: перед ним не вышел другой шаг. */
+  skipped: z.boolean().optional(),
+  /** Событие, в которое записано срабатывание: ссылка из журнала. */
+  incidentId: z.string().optional(),
+});
+export const scenarioRunSchema = z.object({
+  id: z.string(),
+  ruleId: z.string(),
+  ruleName: z.string(),
+  t: z.number(),
+  nodeUuid: z.string(),
+  nodeName: z.string(),
+  /** run — сработал на сбое; restore — вернул Host после восстановления ноды (или сказал, почему нельзя). */
+  kind: z.enum(['run', 'restore']),
+  title: z.string(),
+  /** С 0.94.0: условие фразой («нода потеряла связь») и сколько минут оно держалось перед срабатыванием. */
+  condition: z.string().optional(),
+  holdMinutes: z.number().optional(),
+  steps: z.array(scenarioRunStepSchema),
+  failed: z.boolean(),
+});
+export const scenarioRunsSchema = z.object({ items: z.array(scenarioRunSchema) });
+export type ScenarioRun = z.infer<typeof scenarioRunSchema>;
+export type ScenarioRunStep = z.infer<typeof scenarioRunStepSchema>;
 export const scenarioLabels = {
   offline: 'Нода потеряла связь',
   online_drop: 'Подтверждено падение онлайна',

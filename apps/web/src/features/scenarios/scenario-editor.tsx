@@ -58,6 +58,7 @@ import { Pill, Segmented, Toggle } from '@/features/settings/settings-ui';
 import { useTelegramSettings } from '@/features/settings/telegram-api';
 import { api, apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { lower, pickedWord, scopePhrase } from './scenario-text';
 
 type Action = Scenario['actions'][number];
 type Condition = Scenario['trigger'];
@@ -93,13 +94,6 @@ const STEPS: Record<Action, { title: string; hint: string; icon: typeof RadarIco
 const ORDERABLE: Action[] = ['check_tcp', 'record_event', 'hide_host', 'rename_host'];
 const CHIP =
   'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border-2 bg-surface px-2.5 text-[13px] font-semibold whitespace-nowrap transition-colors hover:border-ai/50 focus-visible:outline-2 focus-visible:outline-ai [&_svg]:size-3.5 [&_svg]:text-text-3';
-/** Строчная первая буква в середине фразы — только у русского слова: «TCP недоступен» не трогаем. */
-const lower = (s: string) => (/^[А-ЯЁ][а-яё]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s);
-/** «на 1 выбранной ноде», «на 21 выбранной ноде», «на 3 выбранных нодах». */
-const pickedWord = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? 'выбранной ноде' : 'выбранных нодах');
-/** «А», «А и Б», «А, Б и В». */
-const listWords = (words: string[]) =>
-  words.length < 2 ? (words[0] ?? '') : `${words.slice(0, -1).join(', ')} и ${words.at(-1)}`;
 
 /** Шаг «То»: номер по порядку, название и пояснение, переключатель; включённый — с ручкой для перестановки. */
 function StepCard({
@@ -340,19 +334,11 @@ export function ScenarioEditor({
       (h) => !h.nodes.length || draft.scope === 'all' || h.nodes.some((id) => draft.nodes.includes(id)),
     );
   const willChange = targets.filter((h) => h.nodes.length === 1);
-  const picked = all.filter((n) => draft.nodes.includes(n.uuid));
   const count = draft.nodes.length;
   const scopeText =
     draft.scope === 'all' ? 'любой ноде' : count ? `${count} ${pickedWord(count)}` : 'выберите ноды';
   // В пересказе до трёх нод — по именам: «на нодах «Турция - 1» и «США - 1»».
-  const readScope =
-    draft.scope === 'all'
-      ? 'любой ноде'
-      : !count
-        ? null
-        : picked.length === count && count <= 3
-          ? `${count === 1 ? 'ноде' : 'нодах'} ${listWords(picked.map((n) => `«${n.name}»`))}`
-          : scopeText;
+  const readScope = scopePhrase(draft, all);
   const visibleNodes = all.filter((n) =>
     `${n.name} ${n.address}`.toLowerCase().includes(search.toLowerCase()),
   );
@@ -367,9 +353,8 @@ export function ScenarioEditor({
         }
       : !telegram.data?.destinations.length
         ? { tone: 'warn' as const, text: 'Сообщение не придёт: Telegram не подключён.' }
-        : !telegram.data.events.scenario
-          ? { tone: 'warn' as const, text: 'Сообщение не придёт: «Уведомления из сценариев» выключены.' }
-          : { tone: 'ok' as const, text: 'Уведомления из сценариев включены; действуют тихие часы.' };
+        : // Шаг сам и есть согласие на сообщение: отдельного переключателя в настройках Telegram нет.
+          { tone: 'ok' as const, text: 'Сообщение придёт в Telegram; в тихие часы — в утренней сводке.' };
   // Пример итога для ноды-образца — теми же словами, что пишет сервер: TCP, событие, Host (один раз на запуск).
   const sampleHosts = sample ? targets.filter((h) => h.nodes.includes(sample.uuid)) : [];
   const hostResult = !hosts.data

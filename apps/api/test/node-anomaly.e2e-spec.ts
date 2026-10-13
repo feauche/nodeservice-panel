@@ -47,7 +47,8 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
     usersOnline: 100,
     isConnected: true,
     isDisabled: false,
-    cpuPercent: 10,
+    cpuCount: 4,
+    loadAverage: [0.4, 0.4, 0.4],
     memoryTotalBytes: 100,
     memoryUsedBytes: 20,
   };
@@ -125,7 +126,7 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
     await db.execute(sql`delete from app_meta where key like 'monitor.%' or key like 'settings.node-view.%'`);
     Object.assign(node, {
       address: '198.51.100.9',
-      cpuPercent: 10,
+      loadAverage: [0.4, 0.4, 0.4],
       memoryUsedBytes: 20,
       port: 8443,
       usersOnline: 100,
@@ -335,18 +336,19 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
     expect((await list('resolved'))[0]).toMatchObject({ nodeUuid: uuid, resolvedBy: 'auto' });
     expect(notifications.push).toHaveBeenCalledTimes(2);
   });
-  it('индивидуальные пороги CPU/RAM создают устойчивые инциденты в настоящей БД', async () => {
+  it('свои пороги нагрузки на ядро и памяти создают устойчивые события в настоящей БД', async () => {
     await settings.set({
       cpuEnabled: true,
       memoryEnabled: true,
-      cpuPercent: 90,
+      loadPerCore: 1.5,
       memoryPercent: 90,
       resourceDurationMinutes: 1,
     });
     await db.execute(
-      sql`insert into app_meta(key,value) values(${`settings.node-view.panel.example.com:${uuid}`}, ${JSON.stringify({ cpuWarningPercent: 70, memoryWarningPercent: 75 })})`,
+      sql`insert into app_meta(key,value) values(${`settings.node-view.panel.example.com:${uuid}`}, ${JSON.stringify({ loadWarningPerCore: 1, memoryWarningPercent: 75 })})`,
     );
-    node.cpuPercent = 80;
+    // 4,8 за 15 минут на 4 ядра — 1,2 на ядро: выше своего порога 1,0, ниже общего 1,5.
+    node.loadAverage = [5, 5, 4.8];
     node.memoryUsedBytes = 80;
     await snapshot(100);
     expect(await list()).toHaveLength(0);
@@ -354,15 +356,15 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
     await snapshot(100);
     expect((await list()).map((i) => i.kind).sort()).toEqual(['cpu_high', 'mem_high']);
   });
-  it('без индивидуальных настроек CPU/RAM используют общий порог', async () => {
+  it('без своих порогов нагрузка на ядро и память берут общий порог', async () => {
     await settings.set({
       cpuEnabled: true,
       memoryEnabled: true,
-      cpuPercent: 90,
+      loadPerCore: 1.5,
       memoryPercent: 90,
       resourceDurationMinutes: 1,
     });
-    node.cpuPercent = 80;
+    node.loadAverage = [5, 5, 4.8];
     node.memoryUsedBytes = 80;
     await snapshot(100);
     stamp += 61000;

@@ -16,7 +16,8 @@ import {
   XIcon,
 } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { type ComponentType, type ReactNode, useEffect, useState } from 'react';
+import { type ComponentType, createContext, type ReactNode, useContext, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { BrandLogo, BrandName } from '@/components/brand-logo';
 import { JarvisIcon } from '@/components/jarvis-icon';
 import {
@@ -394,6 +395,17 @@ interface AppShellProps {
   children: ReactNode;
 }
 
+/** Место для кнопок раздела в шапке страницы справа: раздел кладёт их туда сам через PageActions. */
+const PageActionsSlot = createContext<HTMLElement | null>(null);
+/**
+ * Кнопки раздела в шапке страницы справа, рядом с заголовком («Подключения», «История замен»), когда их
+ * состояние живёт в самом разделе, а не в маршруте.
+ */
+export function PageActions({ children }: { children: ReactNode }) {
+  const slot = useContext(PageActionsSlot);
+  return slot ? createPortal(children, slot) : null;
+}
+
 export function AppShell({ title, subtitle, actions, aside, children }: AppShellProps) {
   // Живой поток: серверы, события и уведомления обновляются в момент изменения, без опроса.
   useEventsStream();
@@ -401,6 +413,7 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
   const security = useSecurityOverview();
   // Политика не загрузилась — блокируем по умолчанию (30 минут), а не выключаем автоблокировку молча.
   useIdleLock(security.data?.policy.lockAfterMinutes ?? SECURITY_POLICY_DEFAULTS.lockAfterMinutes);
+  const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
   const openIncidents = useOpenIncidentsCount();
   const navigationLayout = useNavigationLayout();
   const topLayout = navigationLayout === 'top';
@@ -546,9 +559,15 @@ export function AppShell({ title, subtitle, actions, aside, children }: AppShell
                 {subtitle && <p className="mt-[5px] text-[13.5px] text-text-2">{subtitle}</p>}
               </div>
               {aside && <div className="flex-none self-start pt-1 max-sm:w-full">{aside}</div>}
+              <div
+                ref={setActionsSlot}
+                className="flex flex-none flex-wrap items-center gap-2 self-start pt-1 empty:hidden max-sm:w-full"
+              />
             </div>
           )}
-          <div className="animate-fade">{children}</div>
+          <PageActionsSlot.Provider value={actionsSlot}>
+            <div className="animate-fade">{children}</div>
+          </PageActionsSlot.Provider>
         </main>
         {/* Запрос пароля — не здесь, а в корневом маршруте (SessionHosts): этот каркас каждый раздел
             рисует заново, и переход по меню пересоздавал бы окно. */}

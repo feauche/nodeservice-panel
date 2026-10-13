@@ -19,6 +19,58 @@ const empty = (provider: IntegrationProvider): IntegrationStatus => ({
 const object = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 const array = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.map(object) : []);
+/**
+ * Ошибки DPI Checker по их коду (`code` в теле ответа): английский `error` сервис может менять, код — нет.
+ * Неизвестный код — по HTTP-статусу ниже.
+ */
+const DPI_ERRORS: Record<string, string> = {
+  invalid_request: 'DPI Checker не принял запрос. Проверьте введённые данные.',
+  invalid_location: 'Такая страна проверки DPI Checker не поддерживается.',
+  invalid_pops: 'Часть точек DPI Checker сейчас недоступна. Обновите страницу и выберите точки заново.',
+  too_many_resources: 'Слишком много адресов за раз — не больше 50.',
+  private_target: 'Локальные и частные адреса DPI Checker не проверяет.',
+  blacklisted: 'DPI Checker не проверяет этот адрес: он в чёрном списке сервиса.',
+  missing_api_key: 'Ключ DPI Checker не задан. Подключите его заново.',
+  invalid_api_key: 'Ключ DPI Checker неверный или отключён. Обновите его в «Подключении».',
+  insufficient_balance: 'Недостаточно средств на балансе DPI Checker. Пополните баланс и повторите.',
+  account_banned: 'Аккаунт DPI Checker заблокирован сервисом.',
+  api_not_unlocked: 'Доступ к API DPI Checker откроется после пополнения баланса от 1 доллара.',
+  ip_not_allowed: 'Ключ DPI Checker ограничен по адресам, адреса сервера панели в списке нет.',
+  not_found: 'Проверка не найдена или принадлежит другому аккаунту DPI Checker.',
+  idempotency_conflict: 'Этот запуск уже был с другими данными. Обновите страницу.',
+  idempotency_in_flight: 'Запуск ещё обрабатывается. Подождите несколько секунд.',
+  not_cancellable: 'Отменить можно только ещё не начатую проверку.',
+  rate_limited: 'Слишком много запросов к DPI Checker — не больше 120 в минуту.',
+  quota_exceeded: 'Бесплатные проверки на сегодня закончились — попробуйте завтра.',
+  internal: 'DPI Checker временно не работает. Повторите позже.',
+  maintenance: 'DPI Checker на обслуживании. Повторите позже.',
+  bot_unavailable: 'DPI Checker временно не работает. Повторите позже.',
+};
+/** Текст ошибки сервиса для владельца: у DPI Checker — по коду, у остальных — по статусу. */
+export function providerErrorText(
+  provider: IntegrationProvider | undefined,
+  status: number,
+  code: string | null,
+  retryAfter: number | null,
+): string {
+  const wait = retryAfter ? ` Повторите через ${Math.ceil(retryAfter)} с.` : '';
+  if (provider === 'dpi') {
+    const known = code ? DPI_ERRORS[code] : undefined;
+    if (known) return code === 'rate_limited' ? known + wait : known;
+    if (status === 401) return DPI_ERRORS.invalid_api_key as string;
+    if (status === 402) return DPI_ERRORS.insufficient_balance as string;
+    if (status === 403) return 'DPI Checker отклонил доступ. Проверьте ключ в «Подключении».';
+    if (status === 429) return (DPI_ERRORS.rate_limited as string) + wait;
+    if (status >= 500) return 'DPI Checker временно не работает. Повторите позже.';
+    return `DPI Checker не выполнил запрос (код ответа ${status}).`;
+  }
+  if (status === 401 || status === 403)
+    return provider === 'bschecker'
+      ? 'BS Checker отклонил доступ. Проверьте ключ в «Подключении».'
+      : 'Сервис отклонил доступ. Проверьте API-токен и разрешения для нужных зон. Cloudflare: Zone Read для списка зон, DNS Read для записей, DNS Edit для изменения.';
+  if (status === 429) return `Лимит запросов сервиса.${wait || ' Повторите позже.'}`;
+  return `Внешний сервис вернул HTTP ${status}. Повторите запрос позже.`;
+}
 
 @Injectable()
 export class IntegrationsService {
@@ -66,17 +118,21 @@ export class IntegrationsService {
         : provider === 'dpi'
           ? 'https://dpichecker.st/api/v1'
           : 'https://api.cloudflare.com/client/v4';
-    return this.json(base + path, {
-      method,
-      headers: {
-        ...(provider === 'dpi'
-          ? { 'X-API-Key': credentials.apiKey ?? '' }
-          : { Authorization: `Bearer ${credentials.apiKey}` }),
-        ...(body ? { 'Content-Type': 'application/json' } : {}),
-        ...(idempotency ? { 'Idempotency-Key': idempotency } : {}),
+    return this.json(
+      base + path,
+      {
+        method,
+        headers: {
+          ...(provider === 'dpi'
+            ? { 'X-API-Key': credentials.apiKey ?? '' }
+            : { Authorization: `Bearer ${credentials.apiKey}` }),
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+          ...(idempotency ? { 'Idempotency-Key': idempotency } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
       },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
+      provider,
+    );
   }
   async reg(method: string, params: Record<string, unknown>, session?: IntegrationSession) {
     if (session && (await this.identity('regru')) !== session.identity)
@@ -122,6 +178,22 @@ export class IntegrationsService {
       ),
     };
   }
+  /**
+   * Свежий баланс без повторного подключения: из ответа сервиса (запуск, отмена, оценка) или профиля. Раньше баланс
+   * оставался таким, каким был в момент подключения.
+   */
+  async setBalance(provider: IntegrationProvider, balance: string) {
+    const saved = await this.stored(provider);
+    if (!saved || saved.status.balance === balance) return;
+    const value = JSON.stringify({
+      ...saved,
+      status: { ...saved.status, balance, checkedAt: new Date().toISOString() },
+    });
+    await this.db
+      .update(appMeta)
+      .set({ value, updatedAt: new Date() })
+      .where(eq(appMeta.key, this.key(provider)));
+  }
   async disconnect(provider: IntegrationProvider) {
     await this.db.delete(appMeta).where(eq(appMeta.key, this.key(provider)));
   }
@@ -151,18 +223,29 @@ export class IntegrationsService {
     return status;
   }
   /** Fixed provider URLs; no credential-bearing query strings or redirect following. */
-  async json(url: string, options: RequestInit = {}): Promise<Record<string, unknown>> {
+  async json(
+    url: string,
+    options: RequestInit = {},
+    provider?: IntegrationProvider,
+  ): Promise<Record<string, unknown>> {
     const response = await fetch(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(20_000) });
-    if (!response.ok)
+    if (!response.ok) {
+      // Тело ошибки — небольшое: {"error":"…","code":"…","retry_after":…}. Не JSON (шлюз) — только статус.
+      const raw = object(await response.json().catch(() => null));
+      const code = typeof raw.code === 'string' ? raw.code : null;
+      const header = Number(response.headers.get('retry-after'));
+      const retryAfter = Number.isFinite(Number(raw.retry_after))
+        ? Number(raw.retry_after)
+        : Number.isFinite(header) && header > 0
+          ? header
+          : null;
       throw problem(response.status === 429 ? 429 : 502, {
         type: 'urn:nodeservice:integration:provider',
-        detail:
-          response.status === 401 || response.status === 403
-            ? 'Сервис отклонил доступ. Проверьте API-токен и разрешения для нужных зон. Cloudflare: Zone Read для списка зон, DNS Read для записей, DNS Edit для изменения.'
-            : response.status === 429
-              ? 'Лимит запросов сервиса. Повторите позже.'
-              : `Внешний сервис вернул HTTP ${response.status}. Повторите запрос позже.`,
+        detail: providerErrorText(provider, response.status, code, retryAfter),
+        // Код сервиса — для фоновых задач: «нет денег» или «неверный ключ» останавливают расписание.
+        extensions: { providerStatus: response.status, ...(code ? { providerCode: code } : {}) },
       });
+    }
     if (!response.body) throw new Error('Empty response');
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];

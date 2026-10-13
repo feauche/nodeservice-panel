@@ -20,7 +20,7 @@ export class BsCheckerController {
   @Get('runs/:id') get(@Param('id', ParseUUIDPipe) id: string) {
     return this.bs.get(id);
   }
-  @Post('runs/:id/execute') @HttpCode(200) @Audit('integration.refreshed') execute(
+  @Post('runs/:id/execute') @HttpCode(200) @Audit('integration.bs.check_started') execute(
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.bs.execute(id);

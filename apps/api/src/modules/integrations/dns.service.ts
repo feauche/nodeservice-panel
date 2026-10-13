@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { desc, eq, like } from 'drizzle-orm';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { appMeta } from '../../infra/db/schema/index.js';
+import { AuditService } from '../audit/audit.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { getJson } from '../remnawave/remnawave-client.js';
 import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js';
@@ -49,6 +50,7 @@ export class DnsService {
     private integrations: IntegrationsService,
     private store: RemnawaveSettingsStore,
     private remna: RemnawaveService,
+    @Optional() private audit?: AuditService,
   ) {}
   private async read(key: string) {
     const row = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, key) });
@@ -71,9 +73,34 @@ export class DnsService {
     );
     return [await this.store.domain(), ...ids].join('.');
   }
+  /**
+   * Где лежат автозамена и связи «запись → нода»: по адресу панели Remnawave. До 0.94.0 ключ включал отпечаток
+   * доступов провайдеров, и новый токен Cloudflare или отключённый REG.RU молча выключали автозамену. Записи и так
+   * различаются провайдером, зоной и номером — чужой аккаунт с ними не совпадёт.
+   */
+  private async keyFor(kind: 'settings' | 'links') {
+    const domain = await this.store.domain();
+    const key = `dns.${kind}.${domain}`;
+    if ((await this.read(key)) === null) await this.carryOver(kind, domain, key);
+    return key;
+  }
+  /** Перенос со старых ключей: настройки — последние по времени, связи — все вместе (свежие поверх старых). */
+  private async carryOver(kind: 'settings' | 'links', domain: string | null, key: string) {
+    const rows = await this.db
+      .select()
+      .from(appMeta)
+      .where(like(appMeta.key, `dns.${kind}.${domain}.%`))
+      .orderBy(desc(appMeta.updatedAt));
+    const [latest] = rows;
+    if (!latest) return;
+    const value =
+      kind === 'settings'
+        ? JSON.parse(latest.value)
+        : Object.assign({}, ...rows.reverse().map((r) => JSON.parse(r.value)));
+    await this.write(key, value);
+  }
   async settings(): Promise<{ automaticNodes: string[]; automaticRecords: string[] }> {
-    const domain = await this.scope();
-    return { automaticNodes: [], automaticRecords: [], ...(await this.read(`dns.settings.${domain}`)) };
+    return { automaticNodes: [], automaticRecords: [], ...(await this.read(await this.keyFor('settings'))) };
   }
   private automatic(settings: { automaticNodes: string[]; automaticRecords: string[] }, record: DnsRecord) {
     return (
@@ -84,13 +111,19 @@ export class DnsService {
   async setSettings(recordId: string, enabled: boolean) {
     const scope = await this.scope();
     const data = await this.overview();
+    this.audit?.extend({
+      metadata: {
+        domain: data.records.find((r) => r.id === recordId)?.name ?? '—',
+        autoreplace: enabled ? 'включена' : 'выключена',
+      },
+    });
     if (
       enabled &&
       !data.records.some((r) => r.id === recordId && ['A', 'AAAA'].includes(r.type) && r.nodes.length === 1)
     )
       throw new BadRequestException('Выберите A/AAAA-запись с одной связанной нодой.');
     const status = await this.remna.status();
-    const key = `dns.settings.${scope}`;
+    const key = await this.keyFor('settings');
     const settings = await this.updateMetadata(key, async () => {
       if (scope !== (await this.scope()))
         throw new BadRequestException('Подключение изменилось. Обновите список.');
@@ -155,7 +188,7 @@ export class DnsService {
     const hosts = list(obj(raw.response).hosts ?? raw.response).filter(
       (h) => typeof h.address === 'string' && !isIP(String(h.address)),
     );
-    const inferredKey = `dns.links.${await this.scope()}`;
+    const inferredKey = await this.keyFor('links');
     const inferred = (await this.read(inferredKey)) ?? {};
     const nextInferred = { ...inferred };
     const names = new Map<string, string[]>();
@@ -302,7 +335,7 @@ export class DnsService {
     if (automatic && !this.automatic(await this.settings(), record))
       throw new BadRequestException('Автоматическое обновление этой записи выключено.');
     const remember = async () => {
-      const key = `dns.links.${scope}`;
+      const key = await this.keyFor('links');
       const id =
         record.provider === 'cloudflare'
           ? record.id
@@ -312,7 +345,7 @@ export class DnsService {
         await this.write(key, { ...links, [id]: node.uuid });
       });
       if (id !== record.id) {
-        const settingsKey = `dns.settings.${scope}`;
+        const settingsKey = await this.keyFor('settings');
         await this.updateMetadata(settingsKey, async () => {
           const settings = { automaticNodes: [], automaticRecords: [], ...(await this.read(settingsKey)) };
           if (settings.automaticRecords.includes(record.id)) {
@@ -325,9 +358,11 @@ export class DnsService {
       }
       this.cache = null;
     };
+    // Что и где поменяли — для «Журнала» (адреса и имя ноды, без внутренних номеров записи).
+    const what = { domain: record.name, from: record.content, to: node.address, nodeName: node.name };
     if (node.address === record.content) {
       await remember();
-      return { changed: false };
+      return { changed: false, ...what };
     }
     let partial = false;
     const change = {
@@ -405,7 +440,7 @@ export class DnsService {
       await remember();
       await this.log({ ...change, status: 'success' });
       this.cache = null;
-      return { changed: true };
+      return { changed: true, ...what };
     } catch (e) {
       await this.log({ ...change, status: partial ? 'partial' : 'error' });
       this.cache = null;

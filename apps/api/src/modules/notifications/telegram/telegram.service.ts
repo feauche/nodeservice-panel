@@ -2,6 +2,8 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   type IncidentKind,
+  isCheckHostReport,
+  type NodeTcpDiagnostics,
   type NotificationSeverity,
   parseTelegramUrl,
   TELEGRAM_EVENT_LABELS,
@@ -10,6 +12,7 @@ import {
   type TelegramSettingsUpdate,
   type TelegramTestRequest,
   type TelegramTestResponse,
+  tcpPortOf,
 } from '@nodeservice/shared';
 import { and, asc, desc, eq, lte, sql } from 'drizzle-orm';
 import { panelTimeZone } from '../../../common/panel-time-zone.js';
@@ -50,6 +53,8 @@ export interface TelegramDispatch {
   html?: string | null;
   /** Готовые rich блоки для специальных сообщений, структура которых не выводится из body. */
   rich?: RichBlock[] | null;
+  /** Проверка портов у события: таблица в сообщении и отчёты Check-Host кнопками. */
+  tcp?: NodeTcpDiagnostics | null;
   /**
    * Важность сбоя, о котором сообщение. Судим по ней, а не по типу события: первое сообщение о критичном
    * деле — его открытие, даже если оно пришло как «ждёт подтверждения» (панель сразу предложила шаг).
@@ -118,9 +123,12 @@ type SendResult =
   | { ok: false; error: string; retryAfterSeconds?: number };
 
 /** Уже подготовленное сообщение одному чату: правила и тихие часы второй раз к нему не применяются. */
+/** Кнопка-ссылка под сообщением; `row` — ряд (0 — первый). */
+type LinkButton = { text: string; url: string; row?: number };
+
 interface TelegramOutboxPayload {
   text: string;
-  buttons: Array<{ text: string; url: string }>;
+  buttons: LinkButton[];
   replyTo: number | null;
   silent: boolean;
   rich: RichBlock[] | null;
@@ -344,7 +352,7 @@ export class TelegramService {
   private async send(
     d: LiveDestination,
     text: string,
-    buttons: Array<{ text: string; url: string }>,
+    buttons: LinkButton[],
     replyTo: number | null,
     silent = false,
     rich: RichBlock[] | null = null,
@@ -354,7 +362,15 @@ export class TelegramService {
     if (d.topic !== null) common.message_thread_id = d.topic;
     if (replyTo !== null)
       common.reply_parameters = { message_id: replyTo, allow_sending_without_reply: true };
-    if (buttons.length > 0) common.reply_markup = { inline_keyboard: [buttons] };
+    if (buttons.length > 0) {
+      // Ряды кнопок: «Открыть событие» первым рядом, отчёты Check-Host — вторым.
+      const rows = new Map<number, Array<{ text: string; url: string }>>();
+      for (const { row = 0, text: label, url } of buttons)
+        rows.set(row, [...(rows.get(row) ?? []), { text: label, url }]);
+      common.reply_markup = {
+        inline_keyboard: [...rows.entries()].sort(([a], [b]) => a - b).map(([, r]) => r),
+      };
+    }
     // Штатная возможность Bot API: сообщение приходит, но телефон не звенит.
     if (silent) common.disable_notification = true;
     let plain: string | undefined;
@@ -566,21 +582,35 @@ export class TelegramService {
     }
   }
 
-  /** Кнопки-ссылки только для настоящего адреса по https: Telegram не принимает localhost и http. */
-  private buttons(
-    link: TelegramDispatch['link'],
-    incidentId?: string | null,
-  ): Array<{ text: string; url: string }> {
+  /**
+   * Кнопки под сообщением: ссылка в панель — только для настоящего адреса по https (Telegram не принимает
+   * localhost и http); отчёты Check-Host проверки портов — вторым рядом, у них свой адрес по https.
+   */
+  private buttons(link: TelegramDispatch['link'], tcp: NodeTcpDiagnostics | null = null): LinkButton[] {
     const base = this.config.get('PUBLIC_URL', { infer: true });
-    if (!base?.startsWith('https://')) return [];
-    const out: Array<{ text: string; url: string }> = [];
-    if (link) out.push({ text: link.label, url: new URL(link.to, base).toString() });
-    if (incidentId)
-      out.push({
-        text: 'Разбор Джарвиса',
-        url: new URL(`/incidents/${incidentId}#analysis`, base).toString(),
-      });
-    return out.slice(0, 2);
+    const out: LinkButton[] = [];
+    if (link && base?.startsWith('https://'))
+      out.push({ text: link.label, url: new URL(link.to, base).toString() });
+    const ports = tcp ? (tcp.report.ports ?? [tcp.report]) : [];
+    for (const p of ports.filter((x) => isCheckHostReport(x.link)).slice(0, 3))
+      out.push({ text: `Отчёт · порт ${tcpPortOf(p.target)}`, url: p.link as string, row: 1 });
+    return out;
+  }
+
+  /**
+   * Уйдёт ли сообщение этого типа прямо сейчас — чтобы журнал сценариев не писал «отправлено» вслепую.
+   * send — уйдёт; quiet — тихие часы, придёт в утренней сводке; off — нет ни одного чата; event_off — такие
+   * сообщения выключены в настройках.
+   */
+  async outlook(event: TelegramEvent): Promise<'send' | 'quiet' | 'off' | 'event_off'> {
+    const s = await this.store.load();
+    if (s.destinations.length === 0) return 'off';
+    if (event !== 'scenario' && !s.events[event]) return 'event_off';
+    const zone = (await panelTimeZone(this.db)) ?? s.quiet.timeZone;
+    const urgent = event === 'incident_crit' || NIGHT_NOW.has(event);
+    return s.quiet.enabled && !urgent && inQuietHours(new Date(), s.quiet.from, s.quiet.to, zone)
+      ? 'quiet'
+      : 'send';
   }
 
   /**
@@ -632,7 +662,8 @@ export class TelegramService {
       // Прошло только как открытие — и звук у него как у открытия: предупреждение остаётся тихим.
       const asOpening: TelegramEvent | null = opening ? (crit ? 'incident_crit' : 'incident_warn') : null;
       const soundAs = asOpening && !s.events[m.event] ? asOpening : m.event;
-      if (!s.events[soundAs] && !(m.replaces && s.events[m.replaces])) return;
+      // Сообщение сценария: шаг «Уведомить в Telegram» в самом сценарии и есть согласие — переключателя для них нет.
+      if (m.event !== 'scenario' && !s.events[soundAs] && !(m.replaces && s.events[m.replaces])) return;
       // Обычное «Починилось» имеет смысл только после доставленной тревоги. Если открытие
       // отсеяли настройки, тихие часы или оно не было доставлено, закрытие не должно приходить
       // одиноким. `replaces` — отдельный сценарий: одно тихое сообщение о коротком сбое вместо пары.
@@ -685,6 +716,7 @@ export class TelegramService {
           server: m.server ?? null,
           // Время — по поясу панели, как и в тексте сообщения (срок оплаты): иначе в одном сообщении два пояса.
           footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, zone)}`,
+          tcp: m.tcp ?? null,
         });
       // Специальное сообщение может передать готовую таблицу; для остальных блоки строятся из title/body.
       // Scenario results always use the approved rich presentation; the existing fallback still handles old Bot API servers.
@@ -698,10 +730,11 @@ export class TelegramService {
                   body: m.body ?? null,
                   server: m.server ?? null,
                   footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(now, zone)}`,
+                  tcp: m.tcp ?? null,
                 })
               : null))
           : null;
-      const buttons = this.buttons(m.link, m.incidentId ?? null);
+      const buttons = this.buttons(m.link, m.tcp ?? null);
       let anyFirst = false;
       const undelivered: DeliveryTrouble[] = [];
       for (const d of this.store.live(s)) {

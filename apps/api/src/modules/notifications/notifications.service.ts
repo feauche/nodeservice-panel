@@ -1,6 +1,7 @@
 import { type BeforeApplicationShutdown, Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import type {
   IncidentKind,
+  NodeTcpDiagnostics,
   NotificationLink,
   NotificationSeverity,
   TelegramEvent,
@@ -43,6 +44,8 @@ export interface PushInput {
     html?: string | null;
     /** Те же данные настоящими блоками Telegram: заголовки, таблицы и подпись. */
     rich?: RichBlock[] | null;
+    /** Проверка портов у события: в Telegram — таблица по портам и отчёты кнопками вместо строк со ссылками. */
+    tcp?: NodeTcpDiagnostics | null;
     /**
      * Инцидент сейчас разберёт Джарвис: в Telegram отправляем после разбора — уже с выводом
      * (releaseAfterAnalysis). Не дождались за ANALYSIS_WAIT_MS — уходит как есть. Колокольчик — сразу.
@@ -352,6 +355,11 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
     });
   }
 
+  /** Уйдёт ли в Telegram сообщение этого типа сейчас (см. TelegramService.outlook); не узнали — null. */
+  telegramOutlook(event: TelegramEvent) {
+    return this.telegram.outlook(event).catch(() => null);
+  }
+
   /** Серверное событие: тихо, без исключений наружу. */
   async push(input: PushInput): Promise<void> {
     if (input.telegram) {
@@ -371,6 +379,7 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
         link: input.link ?? null,
         html: t.html ?? null,
         rich: t.rich ?? null,
+        tcp: t.tcp ?? null,
         severity: t.severity ?? input.severity,
       };
       // Сообщения по делу идут по очереди дела (см. route): ждём только решения, сама отправка — в фоне.

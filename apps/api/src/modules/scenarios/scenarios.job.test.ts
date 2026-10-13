@@ -33,6 +33,8 @@ function fixture(
     patchStatus?: number;
     patchApply?: (body: Record<string, unknown>) => Record<string, unknown>;
     incident?: { id: string; title: string } | null;
+    /** Уйдёт ли сообщение в Telegram сейчас (TelegramService.outlook). */
+    telegram?: 'send' | 'quiet' | 'off' | 'event_off';
   } = {},
 ) {
   const data = new Map<string, unknown>();
@@ -69,6 +71,7 @@ function fixture(
     remove: async (k: string) => {
       data.delete(k);
     },
+    addRun: vi.fn(async () => {}),
   };
   const permissions = {
     observe: vi.fn(async (_scope: string, _c: unknown, action: () => Promise<unknown>) => action()),
@@ -78,7 +81,7 @@ function fixture(
     note: vi.fn(async () => {}),
   };
   const events = { append: vi.fn() },
-    notify = { push: vi.fn() },
+    notify = { push: vi.fn(), telegramOutlook: vi.fn(async () => opts.telegram ?? 'send') },
     tcp = { checkNode: vi.fn() };
   const job = new ScenariosJob(
     { execute: async () => ({ rows: [] }) } as never,
@@ -418,6 +421,14 @@ describe('Сценарии: реальные правила владения Hos
       'Сценарий «Скрыть при потере связи»: Host «Host» возвращён после восстановления ноды',
       'helped',
     );
+    expect(f.store.addRun).toHaveBeenLastCalledWith(
+      'panel.test',
+      expect.objectContaining({
+        kind: 'restore',
+        failed: false,
+        steps: [expect.objectContaining({ tone: 'ok', word: 'вернули', detail: '«Host»' })],
+      }),
+    );
   });
   it('имя изменили вручную после сценария — не возвращаем и говорим об этом в событии', async () => {
     const f = fixture({ uuid: 'host', nodes: [node.uuid], isDisabled: false, remark: 'Host' }, undefined, {
@@ -466,6 +477,14 @@ describe('Сценарии: реальные правила владения Hos
       expect.stringContaining('остаётся изменённым: возврат выключен в сценарии'),
       'failed',
     );
+    // Возврат выключен намеренно — это не сбой: в журнале жёлтым «не возвращали», а не красным.
+    expect(f.store.addRun).toHaveBeenLastCalledWith(
+      'panel.test',
+      expect.objectContaining({
+        kind: 'restore',
+        steps: [expect.objectContaining({ tone: 'warn', word: 'не возвращали' })],
+      }),
+    );
   });
   it('Remnawave не ответила на возврат — попытка повторяется на следующем опросе', async () => {
     const f = fixture();
@@ -495,6 +514,55 @@ describe('Сценарии: реальные правила владения Hos
     );
     expect(f.getHost().remark).toBe('Host ⚠️');
   });
+  it('каждое срабатывание попадает в журнал: шаги с итогом и уведомление в Telegram', async () => {
+    vi.useFakeTimers();
+    const start = Date.parse('2026-10-12T00:00:00Z');
+    vi.setSystemTime(start);
+    const f = fixture(undefined, undefined, { incident: { id: 'inc-1', title: 'Нода не на связи' } });
+    const r = {
+      ...rule,
+      holdMinutes: 1,
+      actions: ['record_event', 'hide_host', 'notify'] as ['record_event', 'hide_host', 'notify'],
+    };
+    f.setRules([r as never]);
+    for (let i = 0; i <= 3; i++) {
+      vi.setSystemTime(start + i * 60000);
+      f.current.checkedAt = new Date().toISOString();
+      await f.job.run();
+    }
+    expect(f.store.addRun).toHaveBeenCalledTimes(1);
+    expect(f.store.addRun).toHaveBeenCalledWith(
+      'panel.test',
+      expect.objectContaining({
+        kind: 'run',
+        ruleName: 'Скрыть при потере связи',
+        title: 'Сработал: нода потеряла связь, 1 мин',
+        failed: false,
+        condition: 'нода потеряла связь',
+        holdMinutes: 1,
+        steps: [
+          {
+            action: 'record_event',
+            n: 1,
+            tone: 'info',
+            word: 'записано',
+            detail: 'в «Нода не на связи»',
+            incidentId: 'inc-1',
+            text: 'Записано в событие «Нода не на связи»',
+          },
+          {
+            action: 'hide_host',
+            n: 2,
+            tone: 'change',
+            word: 'скрыт',
+            detail: '«Host»',
+            text: 'Скрыт Host: «Host»',
+          },
+          { action: 'notify', n: 3, tone: 'info', word: 'отправлено', text: 'Уведомление в Telegram' },
+        ],
+      }),
+    );
+  });
   it('«Записать событие» дописывает срабатывание и итог в открытое событие ноды', async () => {
     vi.useFakeTimers();
     const start = Date.parse('2026-10-12T00:00:00Z');
@@ -512,8 +580,68 @@ describe('Сценарии: реальные правила владения Hos
     expect(f.incidents.note).toHaveBeenCalledTimes(1);
     expect(f.incidents.note).toHaveBeenCalledWith(
       'inc-1',
-      'Сценарий «Скрыть при потере связи»: записано в событие «Нода не на связи»; Скрыто Host: «Host»',
+      'Сценарий «Скрыть при потере связи»: записано в событие «Нода не на связи»; Скрыт Host: «Host»',
       'applied',
     );
+  });
+  /** Сработать один раз: условие держится минуту, опросы раз в минуту. */
+  async function fire(f: ReturnType<typeof fixture>, actions: string[], extra: Record<string, unknown> = {}) {
+    vi.useFakeTimers();
+    const start = Date.parse('2026-10-12T00:00:00Z');
+    f.setRules([{ ...rule, holdMinutes: 1, renameText: '⚠️', actions, ...extra } as never]);
+    for (let i = 0; i <= 2; i++) {
+      vi.setSystemTime(start + i * 60000);
+      f.current.checkedAt = new Date().toISOString();
+      await f.job.run();
+    }
+    return (
+      f.store.addRun.mock.calls.at(-1) as unknown as [string, { steps: Array<Record<string, unknown>> }]
+    )[1];
+  }
+  it('шаг не вышел: красный «не вышло» с причиной, следующие шаги «не выполнялся», уведомление всё равно', async () => {
+    const f = fixture(undefined, undefined, { patchStatus: 403 });
+    const run = await fire(f, ['rename_host', 'hide_host', 'record_event', 'notify']);
+    expect(run).toMatchObject({ failed: true });
+    expect(run.steps.map((x) => [x.n, x.word])).toEqual([
+      [1, 'не вышло'],
+      [2, 'не выполнялся'],
+      [3, 'не выполнялся'],
+      [4, 'отправлено'],
+    ]);
+    expect(run.steps[0]).toMatchObject({ action: 'rename_host', tone: 'crit', failed: true });
+    expect(run.steps[1]).toMatchObject({ action: 'hide_host', skipped: true, detail: 'шаг 1 не вышел' });
+  });
+  it('«Уведомить в Telegram» не пишет «отправлено», если Telegram не подключён или тихие часы', async () => {
+    const off = await fire(fixture(undefined, undefined, { telegram: 'off' }), ['hide_host', 'notify']);
+    expect(off.steps.at(-1)).toMatchObject({
+      action: 'notify',
+      tone: 'warn',
+      word: 'не отправлено',
+      detail: 'Telegram не подключён — добавьте чат в «Настройки → Уведомления»',
+    });
+    const quiet = await fire(fixture(undefined, undefined, { telegram: 'quiet' }), ['hide_host', 'notify']);
+    expect(quiet.steps.at(-1)).toMatchObject({
+      word: 'отложено',
+      detail: 'тихие часы — придёт в утренней сводке',
+    });
+  });
+  it('скрытие и новое имя одним изменением — в журнале два шага со своими номерами', async () => {
+    const f = fixture();
+    const run = await fire(f, ['hide_host', 'rename_host']);
+    expect(run.steps).toEqual([
+      expect.objectContaining({ action: 'hide_host', n: 1, word: 'скрыт', detail: '«Host»' }),
+      expect.objectContaining({ action: 'rename_host', n: 2, word: 'изменено', detail: '«Host» → «Host ⚠️»' }),
+    ]);
+  });
+  it('у ноды нет своих Host — «не скрыт» и почему, жёлтым', async () => {
+    const f = fixture({ uuid: 'host', nodes: [node.uuid, 'another'], isDisabled: false, remark: 'Host' });
+    const run = await fire(f, ['hide_host']);
+    expect(run.steps).toEqual([
+      expect.objectContaining({
+        word: 'не скрыт',
+        tone: 'warn',
+        detail: 'у ноды только общие Host (1) — их не трогаем',
+      }),
+    ]);
   });
 });

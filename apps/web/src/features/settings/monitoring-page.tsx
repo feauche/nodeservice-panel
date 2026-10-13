@@ -22,7 +22,16 @@ import {
 } from './settings-ui';
 
 type Key = keyof MonitoringSettings;
-type Field = { key: Key; label: string; hint: string; unit?: string; min?: number; max?: number };
+type Field = {
+  key: Key;
+  label: string;
+  hint: string;
+  unit?: string;
+  min?: number;
+  max?: number;
+  /** Дробное число (нагрузка на ядро): в поле с запятой, на сервер — числом. */
+  decimal?: boolean;
+};
 const sections: Record<'checks' | 'incidents', { title: string; hint?: string; fields: Field[] }[]> = {
   checks: [
     {
@@ -37,9 +46,9 @@ const sections: Record<'checks' | 'incidents', { title: string; hint?: string; f
         {
           key: 'pollSeconds',
           label: 'Частота опроса',
-          hint: 'Каждый новый опрос считается одним подтверждением проблемы.',
+          hint: 'Remnawave сама обновляет ноды раз в 10 секунд, чаще опрашивать незачем. Каждый новый опрос — одно подтверждение проблемы.',
           unit: 'сек',
-          min: 30,
+          min: 10,
           max: 900,
         },
         {
@@ -133,7 +142,7 @@ const sections: Record<'checks' | 'incidents', { title: string; hint?: string; f
         {
           key: 'confirmSamples',
           label: 'Подтверждений проблемы',
-          hint: 'Для падения онлайна и потери связи с нодой. При опросе раз в минуту: 3 подтверждения — около 3 минут.',
+          hint: 'Для падения онлайна и потери связи с нодой. При опросе раз в 15 секунд: 4 подтверждения — около минуты.',
           unit: 'опроса',
           min: 2,
           max: 10,
@@ -158,20 +167,21 @@ const sections: Record<'checks' | 'incidents', { title: string; hint?: string; f
     },
     {
       title: 'Ресурсы нод',
-      hint: 'Только CPU и память из Remnawave. Отсутствующая метрика не считается нулём или перегрузкой.',
+      hint: 'Нагрузка процессора и память из Remnawave. Отсутствующая метрика не считается нулём или перегрузкой.',
       fields: [
         {
           key: 'cpuEnabled',
-          label: 'Следить за процессором',
-          hint: 'Проверять процент загрузки CPU, если он доступен в API.',
+          label: 'Следить за нагрузкой процессора',
+          hint: 'Процента процессора Remnawave не отдаёт — смотрим среднюю нагрузку за 15 минут на одно ядро.',
         },
         {
-          key: 'cpuPercent',
-          label: 'Порог CPU',
-          hint: 'Средняя нагрузка load average не заменяет процент CPU.',
-          unit: '%',
-          min: 50,
-          max: 100,
+          key: 'loadPerCore',
+          label: 'Порог нагрузки на ядро',
+          hint: '1,0 — ядро занято полностью. По умолчанию 1,5: задач в полтора раза больше, чем ядра успевают.',
+          unit: 'на ядро',
+          min: 0.5,
+          max: 10,
+          decimal: true,
         },
         {
           key: 'memoryEnabled',
@@ -207,7 +217,14 @@ export function MonitoringPage({ section }: { section: 'checks' | 'incidents' })
       Object.fromEntries(
         sections[section]
           .flatMap((group) => group.fields)
-          .map((f) => [f.key, typeof s[f.key] === 'boolean' ? Boolean(s[f.key]) : String(s[f.key])]),
+          .map((f) => [
+            f.key,
+            typeof s[f.key] === 'boolean'
+              ? Boolean(s[f.key])
+              : f.decimal
+                ? String(s[f.key]).replace('.', ',')
+                : String(s[f.key]),
+          ]),
       ),
     [section],
   );
@@ -234,7 +251,10 @@ export function MonitoringPage({ section }: { section: 'checks' | 'incidents' })
       return;
     }
     const body = Object.fromEntries(
-      fields.map((f) => [f.key, typeof draft[f.key] === 'boolean' ? draft[f.key] : Number(draft[f.key])]),
+      fields.map((f) => [
+        f.key,
+        typeof draft[f.key] === 'boolean' ? draft[f.key] : Number(String(draft[f.key]).replace(',', '.')),
+      ]),
     );
     const parsed = monitoringSettingsUpdateSchema.safeParse(body);
     if (!parsed.success) {
@@ -304,6 +324,7 @@ export function MonitoringPage({ section }: { section: 'checks' | 'incidents' })
                 ) : (
                   <NumberField
                     id={`monitor-${f.key}`}
+                    decimal={f.decimal}
                     value={String(draft[f.key])}
                     unit={f.unit ?? ''}
                     min={f.min ?? 0}

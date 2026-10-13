@@ -6,11 +6,15 @@ import {
   type MonitoringSettings,
   type RemnawaveNode,
   type Scenario,
+  type ScenarioRunStep,
   scenarioConditionLabel,
   scenarioConditionMatches,
   scenarioConditions,
+  scenarioLabels,
+  TCP_VERDICT_LABELS,
   type TcpCheckReport,
   tcpCheckReportSchema,
+  tcpReachSummary,
 } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import { DB, type Db } from '../../infra/db/db.module.js';
@@ -100,10 +104,96 @@ export const scenarioSignals = (node: RemnawaveNode, rows: Record<string, unknow
       ),
   ),
 });
+/** «нода потеряла связь и TCP недоступен» — условия сценария фразой для журнала. */
+const conditionPhrase = (rule: Scenario) =>
+  scenarioConditions(rule)
+    .map((c) => lowerFirst(scenarioLabels[c]))
+    .join(rule.conditionMode === 'all' ? ' и ' : ' или ');
 /** Название события без подстановки имени сервера: «Нода не на связи · {server}» → «Нода не на связи». */
 const incidentName = (title: string) => title.replace(/ · \{server\}$/, '');
 /** Первая буква строчной в середине фразы — только у русского слова: «TCP доступен» и «Host …» не трогаем. */
 const lowerFirst = (s: string) => (/^[А-ЯЁ][а-яё]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s);
+/** Что сделал шаг с Host: какие скрыты, какие переименованы и почему ничего, если ничего. */
+export type HostChange = {
+  /** Итог одной строкой — для события ноды и Telegram. */
+  text: string;
+  hidden: string[];
+  renamed: Array<{ from: string; to: string }>;
+  shared: number;
+  /** Своих Host у ноды (привязаны только к ней). */
+  own: number;
+  /** Своих Host, которые ещё держит прошлое срабатывание (не вернули). */
+  held: number;
+};
+/** До трёх имён — списком, больше — «и ещё N». */
+const someNames = (list: string[]) =>
+  list.length <= 3 ? list.join(', ') : `${list.slice(0, 3).join(', ')} и ещё ${list.length - 3}`;
+/** Шаг «Скрыть Host» или «Изменить имя Host» для журнала: слово-итог и какие Host. */
+export function hostStep(action: 'hide_host' | 'rename_host', n: number, d: HostChange): ScenarioRunStep {
+  const shared = d.shared ? `общих Host пропущено: ${d.shared}` : '';
+  const hide = action === 'hide_host';
+  const done = hide ? d.hidden.map((h) => `«${h}»`) : d.renamed.map((r) => `«${r.from}» → «${r.to}»`);
+  if (done.length) {
+    const word = hide ? (done.length === 1 ? 'скрыт' : `скрыто ${done.length}`) : 'изменено';
+    const detail = [someNames(done), shared].filter(Boolean).join('; ');
+    const what = hide
+      ? done.length === 1
+        ? 'Скрыт Host'
+        : `Скрыто Host (${done.length})`
+      : 'Изменено имя Host';
+    return { action, n, tone: 'change', word, detail, text: `${what}: ${detail}` };
+  }
+  const word = hide ? 'не скрыт' : 'не изменено';
+  const why = !d.own
+    ? d.shared
+      ? `у ноды только общие Host (${d.shared}) — их не трогаем`
+      : 'у ноды нет своих Host'
+    : d.held
+      ? 'Host ещё не вернули после прошлого срабатывания'
+      : hide
+        ? 'Host уже скрыт'
+        : 'метка уже есть в имени';
+  return {
+    action,
+    n,
+    tone: d.own ? 'info' : 'warn',
+    word,
+    detail: why,
+    text: `${hide ? 'Host не скрыт' : 'Имя Host не изменено'}: ${why}`,
+  };
+}
+/**
+ * Шаг «Уведомить в Telegram»: «отправлено» — только если сообщение действительно уйдёт сейчас. Выключенных
+ * сообщений сценариев не бывает: шаг сам и есть согласие (event_off для них не приходит).
+ */
+export function notifyStep(
+  n: number,
+  outlook: 'send' | 'quiet' | 'off' | 'event_off' | null,
+): ScenarioRunStep {
+  const base = { action: 'notify' as const, n };
+  if (outlook === 'quiet')
+    return {
+      ...base,
+      tone: 'info',
+      word: 'отложено',
+      detail: 'тихие часы — придёт в утренней сводке',
+      text: 'Уведомление в Telegram отложено до утра',
+    };
+  if (outlook === 'off')
+    return {
+      ...base,
+      tone: 'warn',
+      word: 'не отправлено',
+      detail: 'Telegram не подключён — добавьте чат в «Настройки → Уведомления»',
+      text: 'Уведомление в Telegram не отправлено: Telegram не подключён',
+    };
+  return {
+    ...base,
+    tone: 'info',
+    word: outlook === 'send' ? 'отправлено' : 'передано',
+    text: 'Уведомление в Telegram',
+  };
+}
 @Injectable()
 export class ScenariosJob {
   private busy = false;
@@ -140,7 +230,8 @@ export class ScenariosJob {
       throw e;
     }
   }
-  @Interval(30000) async tick() {
+  // Сценарии смотрят свежий снимок раз в 5 секунд: без нового снимка проход почти ничего не стоит.
+  @Interval(5000) async tick() {
     if (process.env.NODE_ENV !== 'test') await this.run();
   }
   private async hosts(domain: string, key: string) {
@@ -283,46 +374,112 @@ export class ScenariosJob {
             state.lastRun = Date.now();
             await this.store.write(stateKey, state);
             const runId = randomUUID(),
-              results: string[] = [];
-            let hostActionDone = false,
-              failed = false,
+              steps: ScenarioRunStep[] = [];
+            let failed = false,
               incident: { id: string; title: string } | null = null;
-            for (const action of rule.actions.filter((a) => a !== 'notify'))
+            // Номер шага — как в сценарии на момент срабатывания: журнал показывает те же номера, что и список.
+            const n = (a: Scenario['actions'][number]) => rule.actions.indexOf(a) + 1;
+            // «Скрыть Host» и «Изменить имя Host» — одно изменение Host, на месте первого из них.
+            const hostActions = rule.actions.filter(
+              (a): a is 'hide_host' | 'rename_host' => a === 'hide_host' || a === 'rename_host',
+            );
+            for (const action of rule.actions.filter((a) => a !== 'notify' && a !== hostActions[1]))
               try {
                 const current = await this.remna.status();
                 if (current.domain !== panel || current.error) throw new Error('Подключение изменилось');
                 if (action === 'check_tcp') {
                   const report = await this.tcpReport(panel, node, cfg, true, 60000);
                   if (!report) throw new Error('TCP-проверки выключены в настройках');
-                  results.push(
-                    report.verdict === 'reachable'
-                      ? 'TCP доступен'
-                      : report.verdict === 'unknown'
-                        ? 'TCP: недостаточно данных'
-                        : 'TCP недоступен',
-                  );
+                  const word = lowerFirst(TCP_VERDICT_LABELS[report.verdict]),
+                    detail = tcpReachSummary(report);
+                  steps.push({
+                    action,
+                    n: n(action),
+                    tone:
+                      report.verdict === 'reachable' ? 'ok' : report.verdict === 'unknown' ? 'warn' : 'crit',
+                    word,
+                    detail,
+                    text: `TCP ${word}${detail ? `: ${detail}` : ''}`,
+                  });
                 }
                 if (action === 'record_event') {
                   // Событие заводит мониторинг; сценарий дописывает в него, что сделал. Нет события — только «Метрики».
                   incident = (await this.incidents?.forNode(node.uuid)) ?? null;
-                  results.push(
+                  steps.push(
                     incident
-                      ? `Записано в событие «${incidentName(incident.title)}»`
-                      : 'Открытого события у ноды нет — запись только в «Метриках»',
+                      ? {
+                          action,
+                          n: n(action),
+                          tone: 'info',
+                          word: 'записано',
+                          detail: `в «${incidentName(incident.title)}»`,
+                          incidentId: incident.id,
+                          text: `Записано в событие «${incidentName(incident.title)}»`,
+                        }
+                      : {
+                          action,
+                          n: n(action),
+                          tone: 'info',
+                          word: 'события нет',
+                          detail: 'запись только в «Метриках»',
+                          text: 'Открытого события у ноды нет — запись только в «Метриках»',
+                        },
                   );
                 }
-                if ((action === 'hide_host' || action === 'rename_host') && !hostActionDone) {
-                  hostActionDone = true;
-                  results.push(await this.hide(panel, scope, rule, node));
+                if (action === 'hide_host' || action === 'rename_host') {
+                  const change = await this.hideHosts(panel, scope, rule, node);
+                  for (const a of hostActions) steps.push(hostStep(a, n(a), change));
                   state.pendingRestore = true;
                 }
               } catch (e) {
                 failed = true;
-                results.push(e instanceof Error ? e.message : 'Действие не выполнено');
+                const message = e instanceof Error ? e.message : 'Действие не выполнено';
+                steps.push({
+                  action,
+                  n: n(action),
+                  tone: 'crit',
+                  failed: true,
+                  word: 'не вышло',
+                  detail: message,
+                  text: message,
+                });
+                // Шаги после него не выполнялись — журнал так и скажет.
+                for (const rest of rule.actions)
+                  if (rest !== 'notify' && n(rest) > n(action) && !steps.some((x) => x.action === rest))
+                    steps.push({
+                      action: rest,
+                      n: n(rest),
+                      tone: 'info',
+                      skipped: true,
+                      word: 'не выполнялся',
+                      detail: `шаг ${n(action)} не вышел`,
+                      text: '',
+                    });
                 break;
               }
-            const summary = results.join('; ');
+            // Уведомление уходит и после ошибки шага — журнал скажет, ушло ли оно на самом деле.
+            if (rule.actions.includes('notify'))
+              steps.push(notifyStep(n('notify'), await this.notify.telegramOutlook('scenario')));
+            steps.sort((a, b) => (a.n ?? 0) - (b.n ?? 0));
+            const summary = steps
+              .filter((x) => !x.skipped && x.action !== 'notify')
+              .map((x) => x.text)
+              .join('; ');
             await this.event(panel, rule, node, summary, runId);
+            await this.store.addRun(panel, {
+              id: runId,
+              ruleId: rule.id,
+              ruleName: rule.name,
+              t: Date.now(),
+              nodeUuid: node.uuid,
+              nodeName: node.name,
+              kind: 'run',
+              title: `Сработал: ${conditionPhrase(rule)}, ${rule.holdMinutes} мин`,
+              condition: conditionPhrase(rule),
+              holdMinutes: rule.holdMinutes,
+              steps,
+              failed,
+            });
             if (incident)
               await this.incidents?.note(
                 incident.id,
@@ -438,13 +595,22 @@ export class ScenariosJob {
       ),
     };
   }
+  /** Изменить Host ноды по сценарию; итог одной строкой (для события ноды и Telegram). */
   async hide(panel: string, scope: string, rule: Scenario, node: RemnawaveNode) {
+    return (await this.hideHosts(panel, scope, rule, node)).text;
+  }
+  /** Скрыть и (или) переименовать Host ноды; что вышло — по Host, для журнала срабатываний. */
+  async hideHosts(panel: string, scope: string, rule: Scenario, node: RemnawaveNode): Promise<HostChange> {
     const c = await this.credentials.credentials();
     if (!c || c.domain !== panel) throw new Error('Подключение изменилось');
     const [hosts, links] = await Promise.all([this.hosts(panel, c.apiKey), this.hostLinks()]);
     let changed = 0,
-      shared = 0;
-    const names: string[] = [];
+      shared = 0,
+      own = 0,
+      held = 0;
+    const names: string[] = [],
+      hidden: string[] = [],
+      renamed: HostChange['renamed'] = [];
     for (const host of hosts) {
       const nodes = this.linkedNodes(host, links, rule);
       if (!nodes.includes(node.uuid)) continue;
@@ -453,6 +619,7 @@ export class ScenariosJob {
         continue;
       }
       if (typeof host.uuid !== 'string') continue;
+      own++;
       const patch: { isDisabled?: boolean; remark?: string } = {},
         original: { isDisabled?: boolean; remark?: string } = {};
       if (rule.actions.includes('hide_host') && !host.isDisabled) {
@@ -476,7 +643,10 @@ export class ScenariosJob {
       const key = `scenarios.host.${scope}.${host.uuid}`,
         old = await this.store.read<Ledger>(key);
       // Неподтверждённая прошлая попытка, а Host как был: изменение тогда не прошло — Host снова свободен.
-      if (old && !old.restored && (old.confirmed || !untouched(host, old.original))) continue;
+      if (old && !old.restored && (old.confirmed || !untouched(host, old.original))) {
+        held++;
+        continue;
+      }
       const ledger: Ledger = {
         ruleId: rule.id,
         nodeUuid: node.uuid,
@@ -544,6 +714,8 @@ export class ScenariosJob {
       names.push(
         patch.remark ? `«${original.remark}» → «${patch.remark.trim()}»` : `«${previousName(host)}»`,
       );
+      if (patch.isDisabled) hidden.push(previousName(host));
+      if (patch.remark) renamed.push({ from: original.remark ?? '', to: patch.remark.trim() });
     }
     const what = rule.actions.includes('rename_host')
       ? rule.actions.includes('hide_host')
@@ -551,7 +723,8 @@ export class ScenariosJob {
         : 'Изменено имя'
       : 'Скрыто';
     // До трёх Host — по именам, больше — числом: строка уходит и в событие, и в Telegram.
-    return `${what} Host: ${changed > 0 && changed <= 3 ? names.join(', ') : changed}${shared ? `; общих Host пропущено: ${shared}` : ''}`;
+    const text = `${what} Host: ${changed > 0 && changed <= 3 ? names.join(', ') : changed}${shared ? `; общих Host пропущено: ${shared}` : ''}`;
+    return { text, hidden, renamed, shared, own, held };
   }
   /**
    * После восстановления ноды: вернуть Host, которые менял этот сценарий, или сказать в событии ноды, почему
@@ -567,8 +740,32 @@ export class ScenariosJob {
     if (!c || c.domain !== panel) return 'retry';
     const hosts = await this.hosts(panel, c.apiKey);
     let retry = false;
-    const report = async (text: string, result: 'helped' | 'failed') => {
+    /** Итог возврата: фраза — в событие ноды, слово-итог и подробности — в журнал срабатываний. */
+    const report = async (
+      text: string,
+      result: 'helped' | 'failed',
+      step: { word: string; detail: string; tone?: ScenarioRunStep['tone'] },
+    ) => {
       await this.event(panel, rule, node, text);
+      await this.store.addRun(panel, {
+        id: randomUUID(),
+        ruleId: rule.id,
+        ruleName: rule.name,
+        t: Date.now(),
+        nodeUuid: node.uuid,
+        nodeName: node.name,
+        kind: 'restore',
+        title: result === 'helped' ? 'Host вернули после восстановления ноды' : 'Host не вернули',
+        steps: [
+          {
+            text,
+            tone: step.tone ?? (result === 'helped' ? 'ok' : 'crit'),
+            word: step.word,
+            detail: step.detail,
+          },
+        ],
+        failed: result === 'failed',
+      });
       // Событие ноды к этому времени обычно уже закрыто — дописываем в недавнее (за последние сутки).
       const incident = await this.incidents?.forNode(node.uuid, 86_400_000);
       if (incident)
@@ -596,13 +793,21 @@ export class ScenariosJob {
         await report(
           `Host «${name}» остаётся изменённым: возврат выключен в сценарии. Верните его в Remnawave сами.`,
           'failed',
+          {
+            word: 'не возвращали',
+            detail: `«${name}»: возврат выключен в сценарии — верните его в Remnawave сами`,
+            tone: 'warn',
+          },
         );
         continue;
       }
       if (untouched(host, ledger.original)) {
         // Host уже такой, каким был до сценария (вернули вручную) — возвращать нечего.
         await release();
-        await report(`Host «${name}» уже в исходном виде — его вернули вручную`, 'helped');
+        await report(`Host «${name}» уже в исходном виде — его вернули вручную`, 'helped', {
+          word: 'уже на месте',
+          detail: `«${name}» вернули вручную`,
+        });
         continue;
       }
       if (!stillOurs(host, ledger)) {
@@ -610,6 +815,10 @@ export class ScenariosJob {
         await report(
           `Host «${name}» не возвращён: после сценария его изменили вручную. Проверьте его в Remnawave.`,
           'failed',
+          {
+            word: 'не вернули',
+            detail: `«${name}»: после сценария его изменили вручную. Проверьте его в Remnawave.`,
+          },
         );
         continue;
       }
@@ -626,6 +835,7 @@ export class ScenariosJob {
         await report(
           `Host «${name}» не возвращён: его изменили вручную. Проверьте его в Remnawave.`,
           'failed',
+          { word: 'не вернули', detail: `«${name}»: его изменили вручную. Проверьте его в Remnawave.` },
         );
         continue;
       }
@@ -642,16 +852,23 @@ export class ScenariosJob {
         await report(
           `Host «${name}» не возвращён: ${lowerFirst(e.message)} Верните его в Remnawave сами.`,
           'failed',
+          { word: 'не вернули', detail: `«${name}»: ${lowerFirst(e.message)} Верните его в Remnawave сами.` },
         );
         continue;
       }
       const after = (await this.hosts(panel, c.apiKey)).find((h) => h.uuid === host.uuid);
       await release();
       if (!after || Object.entries(back).some(([k, value]) => !sameHostValue(k, after[k], value))) {
-        await report(`Возврат Host «${name}» не подтверждён — проверьте его в Remnawave.`, 'failed');
+        await report(`Возврат Host «${name}» не подтверждён — проверьте его в Remnawave.`, 'failed', {
+          word: 'не подтверждён',
+          detail: `«${name}» — проверьте его в Remnawave`,
+        });
         continue;
       }
-      await report(`Host «${previousName(after)}» возвращён после восстановления ноды`, 'helped');
+      await report(`Host «${previousName(after)}» возвращён после восстановления ноды`, 'helped', {
+        word: 'вернули',
+        detail: `«${previousName(after)}»`,
+      });
     }
     return retry ? 'retry' : 'done';
   }

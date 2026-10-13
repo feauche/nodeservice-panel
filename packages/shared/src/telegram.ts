@@ -30,7 +30,7 @@ export const telegramEventSchema = z.enum(TELEGRAM_EVENTS);
 export type TelegramEvent = z.infer<typeof telegramEventSchema>;
 
 export const TELEGRAM_EVENT_LABELS: Record<TelegramEvent, string> = {
-  incident_crit: 'Критичный инцидент',
+  incident_crit: 'Критичное событие',
   incident_warn: 'Предупреждение',
   scenario: 'Сценарий',
   needs_confirm: 'Нужно ваше «Да»',
@@ -52,12 +52,12 @@ export const TELEGRAM_EVENT_HINTS: Record<TelegramEvent, string> = {
     'Сработал сценарий: нода, условия, выполненные действия и результаты. Независимо от уведомлений о событиях.',
   incident_warn: 'Устойчивая перегрузка CPU или памяти по данным Remnawave.',
   needs_confirm:
-    'Автопочинка предлагает шаг и ждёт подтверждения — или нужно вмешаться вручную. Первое сообщение о новом инциденте приходит, даже если этот тумблер выключен: за него отвечают «Критичный инцидент» и «Предупреждение».',
+    'Автопочинка предлагает шаг и ждёт подтверждения — или нужно вмешаться вручную. Первое сообщение о новом инциденте приходит, даже если этот тумблер выключен: за него отвечают «Критичное событие» и «Предупреждение».',
   resolved:
     'Инцидент закрыт — сам или после шага. Приходит ответом на исходное сообщение. Короткий сбой, который закончился раньше, чем о нём сообщили, приходит одним тихим сообщением.',
   autofix_started: '«Чиню автоматически»: какой шаг панель запустила сама.',
   fix_failed: 'Что пробовали и что предлагаем дальше.',
-  reminder: 'Критичный инцидент всё ещё открыт — напоминание ответом на исходное сообщение.',
+  reminder: 'Критичное событие всё ещё открыто — напоминание ответом на исходное сообщение.',
   maintenance: 'Есть обновления безопасности, нужна перезагрузка, агент устарел. Раз в сутки, не чаще.',
   jarvis_card: 'Ассистент предложил изменение или тяжёлую проверку.',
   check_failed: 'Лёгкая проверка (геоблок, DPI и другие) упала или не уложилась во время.',
@@ -87,8 +87,8 @@ export const TELEGRAM_EVENT_TONE: Record<TelegramEvent, 'crit' | 'warn' | 'ok' |
   billing_overdue: 'crit',
   panel_health: 'warn',
 };
+// Сообщений сценариев здесь нет: шаг «Уведомить в Telegram» в самом сценарии и есть согласие на них (0.94.0).
 export const TELEGRAM_EVENT_GROUPS: ReadonlyArray<{ title: string; keys: readonly TelegramEvent[] }> = [
-  { title: 'Сценарии', keys: ['scenario'] },
   { title: 'Биллинг', keys: ['billing_soon', 'billing_overdue'] },
   { title: 'Панель', keys: ['login', 'panel_health'] },
 ];

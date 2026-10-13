@@ -16,7 +16,7 @@ function Page() {
   const { node } = Route.useSearch();
   const navigate = Route.useNavigate();
   return (
-    <AppShell title="BS Checker" subtitle="Ручная проверка доступности IP у операторов">
+    <AppShell title="BS Checker" subtitle="Проходит ли нода белые списки мобильных операторов">
       <IntegrationsPage
         kind="bschecker"
         initialNode={node}

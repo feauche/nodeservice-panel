@@ -21,6 +21,8 @@ import { type CapacityPoint, estimateCapacity } from './node-capacity.logic.js';
 import { NodeMetricHistoryService, parseMetricHistoryRange } from './node-metric-history.service.js';
 import { NodeStatsService } from './node-stats.service.js';
 
+/** Замер в базу — не чаще раза в минуту (чуть меньше, чтобы опоздавший опрос не пропускал минуту). */
+const RECORD_EVERY_MS = 55_000;
 const PRUNE_EVERY_MS = 10 * 60_000;
 
 type LocalHistory = {
@@ -44,6 +46,9 @@ export class NodeMetricsService {
   private pending: Promise<void> | null = null;
   /** Последний записанный снимок: тот же снимок повторно не пишем — его замер уже в базе. */
   private recorded: string | null = null;
+  /** Время и подключение последнего записанного замера: замеры — не чаще раза в минуту. */
+  private recordedAt = 0;
+  private recordedDomain: string | null = null;
   /** Старые замеры чистим не на каждом тике, а раз в 10 минут: удаление проходит по всей таблице. */
   private prunedAt = 0;
   constructor(
@@ -76,6 +81,9 @@ export class NodeMetricsService {
     if (status.domain !== domain || status.error || !status.checkedAt) return;
     const snapshot = `${domain}:${status.checkedAt}`;
     if (snapshot === this.recorded) return;
+    // Опрос теперь каждые 15 секунд, а графикам хватает замера в минуту: чаще писать — раздувать базу вчетверо.
+    const at = Date.parse(status.checkedAt);
+    if (this.recordedDomain === domain && at - this.recordedAt < RECORD_EVERY_MS) return;
     // Точное время снимка, а не начало минуты: два снимка в одной минуте больше не вытесняют друг друга,
     // и у соседней минуты не появляется ложный пропуск. Все ноды одного снимка получают одно время.
     const t = new Date(Date.parse(status.checkedAt));
@@ -102,6 +110,8 @@ export class NodeMetricsService {
         sql`INSERT INTO remna_metric_samples(panel,node_uuid,sampled_at,values) VALUES ${sql.join(inserts, sql`, `)} ON CONFLICT DO NOTHING`,
       );
     this.recorded = snapshot;
+    this.recordedAt = at;
+    this.recordedDomain = domain;
     if (Date.now() - this.prunedAt < PRUNE_EVERY_MS) return;
     await this.db.execute(
       sql`DELETE FROM remna_metric_samples WHERE sampled_at < now() - interval '30 days'`,

@@ -1,48 +1,27 @@
-import type { NodeTcpDiagnostics, TcpCheckReport } from '@nodeservice/shared';
+import {
+  isCheckHostReport,
+  type NodeTcpDiagnostics,
+  TCP_VERDICT_EXPLANATIONS,
+  TCP_VERDICT_HEADLINES,
+  TCP_VERDICT_LABELS,
+  type TcpCheckReport,
+  tcpRegionSummary,
+  tcpRegions,
+} from '@nodeservice/shared';
 import { ExternalLinkIcon, NetworkIcon } from 'lucide-react';
 import { CountryFlag } from '@/components/country-flag';
 import { formatDate } from '@/features/security/security-format';
 import { Pill } from '@/features/settings/settings-ui';
 
-const labels = {
-  reachable: 'Доступен',
-  russia_unreachable: 'Недоступен из РФ',
-  port_unreachable: 'Не отвечает',
-  unknown: 'Нет полного результата',
-} as const;
+const labels = TCP_VERDICT_LABELS;
 const tones = {
   reachable: 'ok',
   russia_unreachable: 'crit',
   port_unreachable: 'crit',
   unknown: 'warn',
 } as const;
-const headlines = {
-  reachable: 'IP доступен: хотя бы один порт отвечает',
-  russia_unreachable: 'Вероятное ограничение доступа из РФ',
-  port_unreachable: 'Проверенные TCP-порты не отвечают',
-  unknown: 'Доступность пока не подтверждена',
-} as const;
-const explanations = {
-  reachable:
-    'Есть успешные подключения из РФ и других стран. Если онлайн упал, причина требует отдельной проверки.',
-  russia_unreachable: 'Проверенные порты недоступны из российских точек, но есть ответы из других стран.',
-  port_unreachable:
-    'Нет успешных подключений ни из РФ, ни из других стран. Возможны недоступность ноды, закрытые порты или фильтрация.',
-  unknown:
-    'Часть точек не ответила или результаты расходятся. Таких данных недостаточно для вывода о недоступности IP.',
-} as const;
 function Group({ rows }: { rows: TcpCheckReport['observations'] }) {
-  const ok = rows.filter((r) => r.state === 'ok').length,
-    failed = rows.filter((r) => r.state === 'failed').length;
-  return (
-    <span className="text-[12px]">
-      {ok
-        ? `Ответили ${ok} из ${rows.length}`
-        : rows.length && failed === rows.length
-          ? `Не ответили ${failed} из ${rows.length}`
-          : 'Недостаточно данных'}
-    </span>
-  );
+  return <span className="text-[12px]">{tcpRegionSummary(rows)}</span>;
 }
 export function TcpResults({
   report,
@@ -58,8 +37,12 @@ export function TcpResults({
         <div className="flex items-start gap-3">
           <NetworkIcon className="mt-0.5 size-5 flex-none text-brand" />
           <div className="min-w-0 flex-1">
-            <h3 className="font-heading text-[15px] font-semibold">{headlines[report.verdict]}</h3>
-            <p className="mt-1 text-[12.5px] leading-5 text-text-2">{explanations[report.verdict]}</p>
+            <h3 className="font-heading text-[15px] font-semibold">
+              {TCP_VERDICT_HEADLINES[report.verdict]}
+            </h3>
+            <p className="mt-1 text-[12.5px] leading-5 text-text-2">
+              {TCP_VERDICT_EXPLANATIONS[report.verdict]}
+            </p>
           </div>
         </div>
         {online && (
@@ -80,7 +63,7 @@ export function TcpResults({
           <div className="flex flex-wrap items-center gap-2 px-4 py-3">
             <b className="min-w-0 flex-1 break-all font-mono text-[13px]">{p.target}</b>
             <Pill tone={tones[p.verdict]}>{labels[p.verdict]}</Pill>
-            {p.link && /^https:\/\/check-host\.net\/check-report\/[a-zA-Z0-9_-]+$/.test(p.link) && (
+            {isCheckHostReport(p.link) && (
               <a
                 href={p.link}
                 target="_blank"
@@ -96,11 +79,11 @@ export function TcpResults({
             <div className="flex flex-wrap items-center gap-2 bg-surface-2/80 px-4 py-3">
               <CountryFlag code="RU" />
               <span className="text-[12px] text-text-3">РФ</span>
-              <Group rows={p.observations.filter((r) => r.country === 'ru')} />
+              <Group rows={tcpRegions(p).ru} />
             </div>
             <div className="flex flex-wrap items-center gap-2 bg-surface-2/80 px-4 py-3">
               <span className="text-[12px] text-text-3">Другие страны</span>
-              <Group rows={p.observations.filter((r) => r.country !== 'ru')} />
+              <Group rows={tcpRegions(p).other} />
             </div>
           </div>
           {p.error && <p className="break-words px-4 py-3 text-[12px] leading-5 text-warn">{p.error}</p>}

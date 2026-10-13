@@ -1,5 +1,12 @@
+import {
+  type NodeTcpDiagnostics,
+  TCP_VERDICT_EXPLANATIONS,
+  TCP_VERDICT_HEADLINES,
+  TCP_VERDICT_LABELS,
+  tcpRegions,
+} from '@nodeservice/shared';
 import type { TelegramMessageInput } from './telegram.format.js';
-import { LABEL_LINE, TELEGRAM_EVENT_ICON } from './telegram.format.js';
+import { LABEL_LINE, onlineDrop, TELEGRAM_EVENT_ICON, tcpShort } from './telegram.format.js';
 
 /**
  * Расширенное оформление сообщений Telegram (Bot API 10.1+, метод sendRichMessage): заголовки и настоящие
@@ -114,8 +121,49 @@ export function bodyBlocks(body: string): RichBlock[] {
 }
 
 /**
+ * Проверка портов блоками: онлайн, вывод с пояснением и таблица «Порт / РФ / Другие страны / Итог»; разделы
+ * отделены пустой строкой. Отчёты Check-Host — кнопками под сообщением (в блоках ссылки не нажимаются).
+ */
+export function tcpBlocks(t: NodeTcpDiagnostics): RichBlock[] {
+  const r = t.report;
+  const out: RichBlock[] = [];
+  if (t.online)
+    out.push(
+      {
+        type: 'paragraph',
+        text: [bold('Онлайн:'), ` ${t.online.before} → ${t.online.after} (${onlineDrop(t.online)})`],
+      },
+      spacer(),
+    );
+  out.push(
+    { type: 'paragraph', text: bold(TCP_VERDICT_HEADLINES[r.verdict]) },
+    { type: 'paragraph', text: TCP_VERDICT_EXPLANATIONS[r.verdict] },
+    spacer(),
+    {
+      type: 'table',
+      is_bordered: true,
+      is_striped: true,
+      is_compact: true,
+      cells: [
+        [cell('Порт', true), cell('РФ', true), cell('Другие страны', true), cell('Итог', true)],
+        ...(r.ports ?? [r]).map((p) => {
+          const { ru, other } = tcpRegions(p);
+          return [
+            cell({ type: 'code', text: p.target }),
+            cell(tcpShort(ru)),
+            cell(tcpShort(other)),
+            cell(TCP_VERDICT_LABELS[p.verdict]),
+          ];
+        }),
+      ],
+    },
+  );
+  return out;
+}
+
+/**
  * То же сообщение, что formatTelegramMessage, но блоками: заголовок — что случилось; сервер и адрес; текст дела
- * с таблицами проверок; хвост («Критичный инцидент · 17:12») мелкой строкой.
+ * с таблицами проверок; хвост («Критичное событие · 17:12») мелкой строкой.
  */
 export function richMessageBlocks(m: TelegramMessageInput): RichBlock[] {
   const name = m.server?.name;
@@ -131,7 +179,10 @@ export function richMessageBlocks(m: TelegramMessageInput): RichBlock[] {
         : bold(m.server.name),
     });
   const body = m.body?.trim();
-  if (body) {
+  if (m.tcp) {
+    if (m.server) blocks.push(spacer());
+    blocks.push(...tcpBlocks(m.tcp));
+  } else if (body) {
     if (m.server) blocks.push(spacer());
     const clipped = body.length > TEXT_MAX ? `${body.slice(0, TEXT_MAX)}…` : body;
     const parsed = bodyBlocks(clipped);
@@ -139,7 +190,7 @@ export function richMessageBlocks(m: TelegramMessageInput): RichBlock[] {
     if (parsed.length > BLOCKS_MAX) blocks.push({ type: 'paragraph', text: '…остальное — в панели.' });
   }
   if (m.footer) {
-    if (body && !isSpacer(blocks.at(-1))) blocks.push(spacer());
+    if ((body || m.tcp) && !isSpacer(blocks.at(-1))) blocks.push(spacer());
     blocks.push({ type: 'footer', text: m.footer });
   }
   return blocks;

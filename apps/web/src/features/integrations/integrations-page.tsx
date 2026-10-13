@@ -18,7 +18,8 @@ import { formatDate } from '@/features/security/security-format';
 import { Pill, RowButton, SettingsCard } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage, request } from '@/lib/api';
 import { BsBalanceSkeleton, BsCheckerWorkspace } from './bschecker-workspace';
-import { DnsWorkspace, DpiWorkspace, DpiWorkspaceSkeleton } from './workspace';
+import { DnsWorkspace } from './dns-workspace';
+import { DpiWorkspace, DpiWorkspaceSkeleton } from './dpi-workspace';
 
 const key = ['integrations'] as const;
 const names = { dpi: 'DPI Checker', regru: 'REG.RU', cloudflare: 'Cloudflare', bschecker: 'BS Checker' };
@@ -268,13 +269,12 @@ export function IntegrationsPage({
             />
           ) : kind === 'dpi' ? (
             <DpiWorkspace
-              balance={query.data?.items.find((s) => s.provider === 'dpi')?.balance ?? null}
               settings={() => setSettingsOpen(true)}
               initialNode={initialNode}
               onInitialNodeUsed={onInitialNodeUsed}
             />
           ) : (
-            <DnsWorkspace settings={() => setSettingsOpen(true)} />
+            <DnsWorkspace />
           )}
         </div>
         <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>

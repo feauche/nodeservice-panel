@@ -167,7 +167,7 @@ describe('справочник Ассистента', () => {
     expect(text).toContain('история прежних версий');
     expect(text).toContain(`${M.confirmSamples} опросами подряд`);
     expect(text).toContain(`не меньше чем на ${M.dropPercent} %`);
-    expect(text).toContain(`Процессор — ${M.cpuPercent} %, память — ${M.memoryPercent} %`);
+    expect(text).toContain(`Нагрузка на ядро (средняя за 15 минут) — 1,5, память — ${M.memoryPercent} %`);
     expect(text).toContain('«Взять в работу»');
     expect(text).toContain('«Закрыть»');
     for (const p of PLAYBOOKS) expect(text).toContain(p.id);
@@ -178,7 +178,7 @@ describe('справочник Ассистента', () => {
     expect(text).toContain('Все метрики — из Remnawave');
     expect(text).toContain('Диск, процессы, журналы ноды и сеть внутри сервера панель не видит');
     expect(text).toContain('процессор 80 %, память 85 %, канал 90 %');
-    expect(text).toContain('Процент процессора она не заменяет');
+    expect(text).toContain('Процента процессора Remnawave не отдаёт');
   });
 
   it('сценарии: условия и действия названы как в интерфейсе', () => {
@@ -195,7 +195,7 @@ describe('справочник Ассистента', () => {
       '## DPI Checker',
       '## DNS интеграции',
       '## BS Checker',
-      '«Все DNS-записи»',
+      '«История этой записи»',
       '«Арендованные точки входа»',
     ])
       expect(text).toContain(part);

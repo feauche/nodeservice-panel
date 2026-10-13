@@ -11,7 +11,7 @@ describe('Условия событий Remnawave', () => {
   it('содержит падение онлайна, ресурсы и выбор Telegram без автопочинки', async () => {
     renderPage(IncidentsSettingsPage, '/settings/incidents');
     expect(await screen.findByLabelText('Падение онлайна')).toHaveValue('80');
-    expect(screen.getByLabelText('Порог CPU')).toHaveValue('90');
+    expect(screen.getByLabelText('Порог нагрузки на ядро')).toHaveValue('1,5');
     expect(await screen.findByText('События в Telegram')).toBeInTheDocument();
     expect(screen.queryByText('Автопочинка')).not.toBeInTheDocument();
     expect(screen.queryByText('Порог диска')).not.toBeInTheDocument();
@@ -19,11 +19,13 @@ describe('Условия событий Remnawave', () => {
   it('меняет порог без сброса интервала проверок', async () => {
     renderPage(IncidentsSettingsPage, '/settings/incidents');
     const user = userEvent.setup();
-    const f = await screen.findByLabelText('Порог CPU');
+    // Порог нагрузки на ядро — дробный: с запятой в поле, числом на сервере.
+    const f = await screen.findByLabelText('Порог нагрузки на ядро');
+    expect(f).toHaveValue('1,5');
     await user.clear(f);
-    await user.type(f, '85');
+    await user.type(f, '2,5');
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
-    await waitFor(() => expect(mockMonitoring.value.cpuPercent).toBe(85));
+    await waitFor(() => expect(mockMonitoring.value.loadPerCore).toBe(2.5));
     expect(mockMonitoring.value.checkHostHours).toBe(24);
   });
   it('виды уведомлений сохраняются общей полосой «Сохранить» раздела, своей кнопки у карточки нет', async () => {

@@ -16,7 +16,14 @@ import { NodePreferencesStore } from '../remnawave/node-preferences.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
 import { CheckHostService, describeTcp, type TcpReport } from './check-host.service.js';
-import { dropDetected, memoryPercent, type Sample, stableBaseline } from './fleet-monitor.logic.js';
+import {
+  dropDetected,
+  loadPerCore,
+  memoryPercent,
+  perCoreText,
+  type Sample,
+  stableBaseline,
+} from './fleet-monitor.logic.js';
 import { IncidentsRepository } from './incidents.repository.js';
 
 type State = {
@@ -86,7 +93,8 @@ export class FleetMonitorJob {
         set: { value: JSON.stringify(value), updatedAt: new Date() },
       });
   }
-  @Interval(10000)
+  // Новый снимок разбирается в течение 5 секунд после опроса.
+  @Interval(5000)
   async tick() {
     if (process.env.NODE_ENV !== 'test') await this.run();
   }
@@ -174,7 +182,8 @@ export class FleetMonitorJob {
           st.dropSeen = 0;
           st.recovered = 0;
         }
-        const cpu = typeof node.cpuPercent === 'number' ? node.cpuPercent : null,
+        // Процента процессора Remnawave не отдаёт: судим по средней нагрузке за 15 минут на одно ядро.
+        const load = loadPerCore(node),
           mem = memoryPercent(node);
         const thresholds = this.preferences
           ? await this.preferences.forMonitoring(status.domain, node.uuid)
@@ -182,9 +191,9 @@ export class FleetMonitorJob {
         st.cpuSince = await this.resource(
           node,
           'cpu_high',
-          cpu,
+          load,
           cfg.cpuEnabled,
-          thresholds?.cpuWarningPercent ?? cfg.cpuPercent,
+          thresholds?.loadWarningPerCore ?? cfg.loadPerCore,
           st.cpuSince,
           stamp,
           cfg,
@@ -219,18 +228,29 @@ export class FleetMonitorJob {
     cfg: MonitoringSettings,
   ): Promise<number | null> {
     if (!enabled || value === null) return null;
+    const cpu = kind === 'cpu_high';
     if (value >= threshold) {
       const start = since ?? at;
       if (at - start >= cfg.resourceDurationMinutes * 60000)
         await this.open(
           node,
           kind,
-          kind === 'cpu_high' ? 'Высокая загрузка процессора' : 'Высокая занятость памяти',
-          `${Math.round(value)}% в течение ${cfg.resourceDurationMinutes} мин. Источник: Remnawave API.`,
+          cpu ? 'Высокая нагрузка на процессор' : 'Высокая занятость памяти',
+          cpu
+            ? `Средняя нагрузка за 15 минут — ${perCoreText(value)} на ядро (порог ${perCoreText(threshold)}, ядер: ${node.cpuCount}) дольше ${cfg.resourceDurationMinutes} мин. Источник: Remnawave.`
+            : `${Math.round(value)}% в течение ${cfg.resourceDurationMinutes} мин. Источник: Remnawave API.`,
         );
       return start;
     }
-    if (value <= threshold - 5) await this.resolve(node, kind, 'Метрика вернулась ниже порога с запасом 5%.');
+    // Закрываем с запасом, чтобы событие не мигало у порога: память — на 5 %, нагрузка — на десятую часть порога.
+    if (value <= (cpu ? threshold * 0.9 : threshold - 5))
+      await this.resolve(
+        node,
+        kind,
+        cpu
+          ? 'Нагрузка на ядро вернулась ниже порога с запасом.'
+          : 'Метрика вернулась ниже порога с запасом 5%.',
+      );
     return null;
   }
   private verifyDrop(
@@ -351,6 +371,7 @@ export class FleetMonitorJob {
           serverKey: `node:${node.uuid}`,
           server: { name: node.name, host: node.address },
           awaitAnalysis: false,
+          tcp: diagnostics ?? null,
         },
       });
   }

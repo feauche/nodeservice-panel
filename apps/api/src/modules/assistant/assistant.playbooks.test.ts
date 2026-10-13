@@ -29,6 +29,7 @@ const LATIN_OK = new Set([
   'Check-Host',
   'Remnawave',
   'TCP',
+  'TLS',
   'DNS',
   'IP',
   'VLESS',
@@ -148,19 +149,19 @@ describe('плейбуки по нодам', () => {
     expect(textOf('node_offline')).toContain('«Ноды» → окно ноды → «Подключение» → «Проверить порт»');
     const drop = textOf('online_drop');
     expect(drop).toContain('«DPI Checker» → «Новая проверка»');
-    expect(drop).toContain('«IP — доступность адреса»');
-    expect(drop).toContain('«VLESS — подключение к VPN»');
+    expect(drop).toContain('«Адрес и порт · IP»');
+    expect(drop).toContain('«Подключение · VLESS»');
     expect(drop).toContain('не доказывает, что VPN проходит ТСПУ');
     expect(textOf('server_unreachable')).toContain('DPI Checker и BS Checker не советуйте');
     const bs = textOf('whitelist_server');
     expect(bs).toContain(`«${FLEET_RULES_WHITELIST_SECTION}»`);
     expect(bs).toContain('По названию ноды не угадывайте');
-    expect(bs).toContain('«БС активен»');
-    expect(bs).toContain('«Без БС»');
-    expect(bs).toContain('«Рассчитать стоимость» (бесплатно)');
+    expect(bs).toContain('«С белым списком»');
+    expect(bs).toContain('«Без белого списка»');
+    expect(bs).toContain('цена видна сама (бесплатно)');
     expect(bs).toContain('«Арендованные точки входа»');
     expect(textOf('high_load')).toContain('«Обзор» → «Ёмкость»');
-    expect(textOf('domain_blocked')).toContain('«DNS интеграции» → «Все DNS-записи»');
+    expect(textOf('domain_blocked')).toContain('«DNS интеграции» → фильтр «Отличаются»');
   });
 
   it('окно оплаты: вид оплаты важен, неполная проверка — без «вероятнее всего», ограничение важнее оплаты', () => {

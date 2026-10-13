@@ -20,3 +20,14 @@ export function dropDetected(online: number, baseline: number | null, cfg: Monit
     ((baseline - online) / baseline) * 100 >= cfg.dropPercent
   );
 }
+/**
+ * Нагрузка на одно ядро: средняя за 15 минут (нет — за 5 или за минуту), делённая на число ядер. Процента
+ * процессора Remnawave не отдаёт; 1,0 — ядро занято полностью. Нет данных — null.
+ */
+export function loadPerCore(node: RemnawaveNode): number | null {
+  const avg = node.loadAverage?.[2] ?? node.loadAverage?.[1] ?? node.loadAverage?.[0] ?? null;
+  return typeof avg === 'number' && node.cpuCount ? avg / node.cpuCount : null;
+}
+/** «1,5» — нагрузка на ядро с одним знаком после запятой. */
+export const perCoreText = (v: number): string =>
+  v.toLocaleString('ru-RU', { maximumFractionDigits: 1, minimumFractionDigits: 1 });

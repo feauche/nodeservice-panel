@@ -23,6 +23,7 @@ function fixture() {
         },
       }),
     }),
+    delete: () => ({ where: async () => undefined }),
   };
   const integrations = {
     session: async () => ({ identity: 'credential-1', credentials: { apiKey: 'bsk_live_secret' } }),
@@ -134,6 +135,43 @@ describe('BS Checker: стоимость и повтор без второго �
     ]);
     await service.execute(preview.id);
     expect(probes).toBe(2);
+  });
+  it('503 «нет подходящих точек» — окончательно и «кредиты не списаны»; 500 — итог неизвестен, повтор тем же ключом', async () => {
+    let status = 503;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/operators')) return json({ units: [unit] });
+        if (url.endsWith('/probe/preview'))
+          return json({ cost_credits: 25, level: { name: 'Platinum', discount_pct: 15 }, full_credits: 30 });
+        return json(
+          {
+            error: {
+              code: status === 503 ? 'worker_unavailable' : 'internal_error',
+              message: 'x',
+              details: {},
+            },
+          },
+          status,
+        );
+      }),
+    );
+    const { service } = fixture();
+    const preview = await service.preview(input);
+    expect(preview).toMatchObject({
+      costCredits: 25,
+      fullCredits: 30,
+      discountPct: 15,
+      levelName: 'Platinum',
+    });
+    const failed = await service.execute(preview.id);
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: 'Сейчас нет подходящих точек проверки. Повторите позже. Кредиты не списаны.',
+    });
+    status = 500;
+    const second = await service.preview(input);
+    expect((await service.execute(second.id)).status).toBe('uncertain');
   });
   it('не запускает проверку, если цена выросла после подтверждения', async () => {
     let prices = 0;

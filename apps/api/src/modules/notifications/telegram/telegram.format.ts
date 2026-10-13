@@ -1,4 +1,12 @@
-import type { TelegramEvent } from '@nodeservice/shared';
+import {
+  isCheckHostReport,
+  type NodeTcpDiagnostics,
+  TCP_VERDICT_EXPLANATIONS,
+  TCP_VERDICT_HEADLINES,
+  TCP_VERDICT_LABELS,
+  type TelegramEvent,
+  tcpRegions,
+} from '@nodeservice/shared';
 
 /** Экранирование для parse_mode=HTML: Telegram понимает только &lt; &gt; &amp;. */
 export const esc = (s: string): string =>
@@ -29,6 +37,39 @@ export interface TelegramMessageInput {
   server?: { name: string; host?: string | null } | null;
   /** Хвост сообщения курсивом: «инцидент открыт в 17:12 · критичный». */
   footer?: string | null;
+  /**
+   * Проверка портов Check-Host у события: вместо строк со ссылками — онлайн, вывод и порты по странам
+   * (в расширенном оформлении — таблица), отчёты — кнопками и ссылками.
+   */
+  tcp?: NodeTcpDiagnostics | null;
+}
+
+/** Сколько точек ответило — коротко для строки и ячейки: «3 из 3», «0 из 3», «нет данных». */
+export function tcpShort(rows: Array<{ state: string }>): string {
+  if (!rows.length) return 'нет данных';
+  const ok = rows.filter((r) => r.state === 'ok').length,
+    failed = rows.filter((r) => r.state === 'failed').length;
+  return ok || failed === rows.length ? `${ok} из ${rows.length}` : 'нет данных';
+}
+/** «−100 %» — насколько упал онлайн. */
+export const onlineDrop = (o: { before: number; after: number }): string =>
+  `−${Math.round(((o.before - o.after) / Math.max(o.before, 1)) * 100)} %`;
+/** Проверка портов обычным сообщением: онлайн, вывод с пояснением, строка на порт со ссылкой на отчёт. */
+function tcpHtml(t: NodeTcpDiagnostics): string[] {
+  const r = t.report;
+  const out: string[] = [];
+  if (t.online)
+    out.push(`<b>Онлайн:</b> ${t.online.before} → ${t.online.after} (${onlineDrop(t.online)})`, '');
+  out.push(`<b>${esc(TCP_VERDICT_HEADLINES[r.verdict])}</b>`, esc(TCP_VERDICT_EXPLANATIONS[r.verdict]), '');
+  out.push('<b>Порты · Check-Host:</b>');
+  for (const p of r.ports ?? [r]) {
+    const { ru, other } = tcpRegions(p);
+    const link = isCheckHostReport(p.link) ? ` · <a href="${esc(p.link)}">отчёт</a>` : '';
+    out.push(
+      `• <code>${esc(p.target)}</code> — ${TCP_VERDICT_LABELS[p.verdict].toLowerCase()}: РФ ${tcpShort(ru)}, другие страны ${tcpShort(other)}${link}`,
+    );
+  }
+  return out;
 }
 
 /** Строка — подпись целиком: кончается двоеточием, не пункт списка и не ссылка. */
@@ -59,7 +100,8 @@ export function formatTelegramMessage(m: TelegramMessageInput): string {
   if (m.server)
     parts.push(`<b>${esc(m.server.name)}</b>${m.server.host ? ` · <code>${esc(m.server.host)}</code>` : ''}`);
   const body = m.body?.trim();
-  if (body) parts.push('', body.split('\n').map(formatLine).join('\n'));
+  if (m.tcp) parts.push('', ...tcpHtml(m.tcp));
+  else if (body) parts.push('', body.split('\n').map(formatLine).join('\n'));
   if (m.footer) parts.push('', `<i>${esc(m.footer)}</i>`);
   const text = parts.join('\n');
   return text.length > 4000 ? `${text.slice(0, 3990)}…` : text;

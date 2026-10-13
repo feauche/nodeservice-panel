@@ -13,6 +13,9 @@ function setup(current?: string, legacy?: string, concurrent?: string) {
         if (concurrent !== undefined) rows.set(value.key, concurrent);
         if (!rows.has(value.key)) rows.set(value.key, value.value);
       },
+      onConflictDoUpdate: async () => {
+        rows.set(value.key, value.value);
+      },
     }),
   }));
   const findFirst = vi.fn(async (args: { where: never }) => {
@@ -58,6 +61,33 @@ describe('MonitoringStore upgrade compatibility', () => {
   it('uses optimal defaults for a fresh installation and valid enabled legacy metrics', async () => {
     expect(await setup().store.get()).toEqual(MONITORING_DEFAULTS);
     expect(await setup(undefined, '{"metricsEnabled":true}').store.get()).toEqual(MONITORING_DEFAULTS);
+  });
+  it('0.94.0: прежние значения по умолчанию переходят на быстрые один раз, изменённые вручную — нет', async () => {
+    const before = {
+      ...MONITORING_DEFAULTS,
+      pollSeconds: 60,
+      apiTimeoutSeconds: 15,
+      staleAfterMinutes: 5,
+      confirmSamples: 3,
+      recoverySamples: 3,
+      checkHostCooldownMinutes: 30,
+      cpuPercent: 90,
+    };
+    const { store, rows } = setup(JSON.stringify(before));
+    const got = await store.get();
+    expect(got).toMatchObject({
+      pollSeconds: 15,
+      apiTimeoutSeconds: 10,
+      staleAfterMinutes: 2,
+      confirmSamples: 4,
+    });
+    // Своё значение (30 мин вместо прежних 15) осталось; процента процессора больше нет, порог — нагрузка на ядро.
+    expect(got.checkHostCooldownMinutes).toBe(30);
+    expect(got.loadPerCore).toBe(1.5);
+    expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).not.toHaveProperty('cpuPercent');
+    // Сохранённое после переноса — с версией: позднее «60 секунд» вручную больше не переносится.
+    await store.set({ pollSeconds: 60 });
+    expect((await store.get()).pollSeconds).toBe(60);
   });
   it('does not enable monitoring when the current record is damaged', async () => {
     expect((await setup('bad json').store.get()).enabled).toBe(false);

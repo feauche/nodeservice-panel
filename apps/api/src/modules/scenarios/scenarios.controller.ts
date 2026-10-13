@@ -18,6 +18,11 @@ export class ScenariosController {
     const st = await this.remna.status();
     return { items: await this.store.list(st.domain) };
   }
+  /** Журнал срабатываний для страницы «Сценарии»: последние 100, свежие первыми. */
+  @Get('runs') async runs() {
+    const st = await this.remna.status();
+    return { items: await this.store.runs(st.domain) };
+  }
   @Get('hosts') async hosts() {
     try {
       return await this.job.previewHosts();

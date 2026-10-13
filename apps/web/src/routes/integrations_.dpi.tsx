@@ -16,7 +16,7 @@ function Page() {
   const { node } = Route.useSearch();
   const navigate = Route.useNavigate();
   return (
-    <AppShell title="DPI Checker" subtitle="Подключение сервиса проверки доступности">
+    <AppShell title="DPI Checker" subtitle="Открывается ли нода у домашних провайдеров в регионах России">
       <IntegrationsPage
         kind="dpi"
         initialNode={node}

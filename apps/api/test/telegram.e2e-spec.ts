@@ -253,7 +253,65 @@ describe('telegram e2e', () => {
     });
   });
 
-  it('категория сценариев независима от событий и приходит расширенным сообщением', async () => {
+  it('событие с проверкой портов: отчёты Check-Host кнопками, без «Разбора Джарвиса»', async () => {
+    const tgs = app.get(TelegramService);
+    const row = await app.get(IncidentsRepository).open({
+      serverId: null,
+      nodeUuid: '0192c000-0000-7000-8000-0000000000ab',
+      serverName: 'tcp-host',
+      kind: 'node_blocked',
+      severity: 'crit',
+      title: 'Падение онлайна',
+      detail: 'Онлайн: 286 → 0.',
+      timeline: [],
+    });
+    if (!row) throw new Error('событие не открылось');
+    const report = (target: string, link: string) => ({
+      verdict: 'reachable' as const,
+      checkedAt: new Date().toISOString(),
+      target,
+      link,
+      observations: [{ node: 'ru1', country: 'ru', city: '', state: 'ok' as const, error: null }],
+      error: null,
+    });
+    await tgs.dispatch({
+      event: 'incident_crit',
+      kind: 'node_blocked',
+      incidentId: row.id,
+      title: row.title,
+      body: row.detail,
+      server: { name: 'tcp-host', host: '198.51.100.7' },
+      link: { to: `/incidents/${row.id}`, label: 'Открыть событие' },
+      tcp: {
+        source: 'checkhost',
+        online: { before: 286, after: 0 },
+        report: {
+          ...report('198.51.100.7:5492', 'https://check-host.net/check-report/aa11'),
+          ports: [
+            report('198.51.100.7:5492', 'https://check-host.net/check-report/aa11'),
+            report('198.51.100.7:26572', 'https://check-host.net/check-report/bb22'),
+          ],
+        },
+      },
+    });
+    const last = [...tg.calls]
+      .reverse()
+      .find((c) => c.method === 'sendMessage' || c.method === 'sendRichMessage');
+    const markup = last?.body.reply_markup as
+      | { inline_keyboard: Array<Array<{ text: string; url: string }>> }
+      | undefined;
+    const keyboard = markup?.inline_keyboard ?? [];
+    const flat = keyboard.flat();
+    expect(flat.map((b) => b.text)).toContain('Отчёт · порт 5492');
+    expect(flat.find((b) => b.text === 'Отчёт · порт 26572')?.url).toBe(
+      'https://check-host.net/check-report/bb22',
+    );
+    expect(flat.some((b) => b.text.includes('Джарвис'))).toBe(false);
+    // Отчёты — отдельным рядом под «Открыть событие» (если у панели есть адрес по https).
+    expect(keyboard.at(-1)?.map((b) => b.text)).toEqual(['Отчёт · порт 5492', 'Отчёт · порт 26572']);
+  });
+
+  it('сообщение сценария приходит без отдельного переключателя и расширенным сообщением', async () => {
     await put({
       events: { incident_crit: false, incident_warn: false, scenario: true },
       quiet: { ...TELEGRAM_QUIET_DEFAULT, enabled: false },
@@ -270,9 +328,11 @@ describe('telegram e2e', () => {
     expect(tg.rich().length).toBe(before + 1);
     expect(JSON.stringify(tg.rich().at(-1)?.body)).toContain('Сценарий: Резерв');
     expect(JSON.stringify(tg.rich().at(-1)?.body)).toContain('Сценарий ·');
+    // Шаг «Уведомить в Telegram» в сценарии — уже согласие: старый переключатель ни на что не влияет.
     await put({ events: { incident_warn: true, scenario: false } });
-    await service.dispatch({ event: 'scenario', title: 'Сценарий: не отправлять' });
-    expect(tg.rich().length).toBe(before + 1);
+    expect(await service.outlook('scenario')).toBe('send');
+    await service.dispatch({ event: 'scenario', title: 'Сценарий: всё равно отправить' });
+    expect(tg.rich().length).toBe(before + 2);
     await put({ delivery: { ...TELEGRAM_DELIVERY_DEFAULT, rich: false } });
   });
 

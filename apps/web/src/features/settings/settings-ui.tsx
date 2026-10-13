@@ -199,6 +199,7 @@ export function NumberField({
   max,
   invalid,
   disabled,
+  decimal,
   'aria-label': ariaLabel,
 }: {
   id: string;
@@ -209,12 +210,14 @@ export function NumberField({
   max: number;
   invalid?: boolean;
   disabled?: boolean;
+  /** Дробное число: клавиатура с запятой, диапазон — с запятой. */
+  decimal?: boolean;
   'aria-label'?: string;
 }) {
   return (
     <span className={cn('flex items-center gap-2', disabled && 'opacity-50')}>
       <span className="min-w-[62px] text-right text-[11px] text-text-3 tabular-nums">
-        {min}–{max}
+        {decimal ? `${String(min).replace('.', ',')}–${String(max).replace('.', ',')}` : `${min}–${max}`}
       </span>
       <span
         className={cn(
@@ -224,7 +227,7 @@ export function NumberField({
       >
         <input
           id={id}
-          inputMode="numeric"
+          inputMode={decimal ? 'decimal' : 'numeric'}
           aria-label={ariaLabel}
           aria-invalid={invalid || undefined}
           disabled={disabled}
@@ -367,13 +370,17 @@ export function Toggle({
   );
 }
 
-type PillTone = 'ok' | 'warn' | 'crit' | 'muted';
+type PillTone = 'ok' | 'warn' | 'crit' | 'muted' | 'teal' | 'info';
 
 const PILL: Record<PillTone, string> = {
   ok: 'bg-ok-soft text-ok',
   warn: 'bg-warn-soft text-warn',
   crit: 'bg-crit-soft text-crit',
   muted: 'bg-surface-2 text-text-3',
+  // Изменение в Remnawave (Host изменён сценарием) — цвет шагов сценария.
+  teal: 'bg-teal/15 text-teal',
+  // Идёт прямо сейчас (проверка в работе).
+  info: 'bg-brand-soft text-brand',
 };
 
 export function Pill({

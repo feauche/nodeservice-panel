@@ -310,7 +310,8 @@ export const nodePreferencesSchema = z.object({
   whitelist: z.boolean().default(false),
   channelMbps: z.number().positive().max(1000000).nullable().default(null),
   note: z.string().trim().max(1000).default(''),
-  cpuWarningPercent: z.number().int().min(1).max(100).nullable().default(null),
+  /** Свой порог нагрузки на ядро (средняя за 15 минут на одно ядро); null — общий из «Мониторинга нод». */
+  loadWarningPerCore: z.number().min(0.1).max(20).nullable().default(null),
   memoryWarningPercent: z.number().int().min(1).max(100).nullable().default(null),
 });
 export type NodePreferences = z.infer<typeof nodePreferencesSchema>;

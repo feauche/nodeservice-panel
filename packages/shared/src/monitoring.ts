@@ -3,7 +3,7 @@ import { z } from 'zod';
 const integer = (min: number, max: number) => z.number().int().min(min).max(max);
 export const monitoringSettingsSchema = z.object({
   enabled: z.boolean(),
-  pollSeconds: integer(30, 900),
+  pollSeconds: integer(10, 900),
   apiTimeoutSeconds: integer(5, 60),
   staleAfterMinutes: integer(2, 60),
   dropPercent: integer(30, 100),
@@ -13,7 +13,11 @@ export const monitoringSettingsSchema = z.object({
   recoverySamples: integer(2, 10),
   recoveryPercent: integer(30, 100),
   cpuEnabled: z.boolean(),
-  cpuPercent: integer(50, 100),
+  /**
+   * Порог нагрузки на ядро: средняя нагрузка за 15 минут, делённая на число ядер. Процента процессора Remnawave
+   * не отдаёт, поэтому предупреждение — по нагрузке (1,0 — ядро занято полностью).
+   */
+  loadPerCore: z.number().min(0.5).max(10),
   memoryEnabled: z.boolean(),
   memoryPercent: integer(50, 100),
   resourceDurationMinutes: integer(1, 60),
@@ -24,19 +28,23 @@ export const monitoringSettingsSchema = z.object({
   checkHostCooldownMinutes: integer(5, 1440),
 });
 export type MonitoringSettings = z.infer<typeof monitoringSettingsSchema>;
+/**
+ * По умолчанию — быстро (0.94.0): Remnawave сама обновляет ноды раз в 10 секунд, опрос раз в 15 секунд и четыре
+ * подтверждения подряд узнают о сбое примерно за минуту. Графики пишутся по-прежнему раз в минуту.
+ */
 export const MONITORING_DEFAULTS: MonitoringSettings = {
   enabled: true,
-  pollSeconds: 60,
-  apiTimeoutSeconds: 15,
-  staleAfterMinutes: 5,
+  pollSeconds: 15,
+  apiTimeoutSeconds: 10,
+  staleAfterMinutes: 2,
   dropPercent: 80,
   minOnline: 30,
   dropWindowMinutes: 60,
-  confirmSamples: 3,
-  recoverySamples: 3,
+  confirmSamples: 4,
+  recoverySamples: 4,
   recoveryPercent: 70,
   cpuEnabled: true,
-  cpuPercent: 90,
+  loadPerCore: 1.5,
   memoryEnabled: true,
   memoryPercent: 90,
   resourceDurationMinutes: 5,
@@ -44,6 +52,18 @@ export const MONITORING_DEFAULTS: MonitoringSettings = {
   checkHostHours: 24,
   checkHostPort: 5492,
   checkHostOnDrop: true,
+  checkHostCooldownMinutes: 5,
+};
+/**
+ * Значения по умолчанию до 0.94.0. Сохранённая настройка, равная прежнему значению, при обновлении переходит
+ * на новое; изменённое вручную остаётся как было.
+ */
+export const MONITORING_DEFAULTS_BEFORE_0_94: Partial<MonitoringSettings> = {
+  pollSeconds: 60,
+  apiTimeoutSeconds: 15,
+  staleAfterMinutes: 5,
+  confirmSamples: 3,
+  recoverySamples: 3,
   checkHostCooldownMinutes: 15,
 };
 export const monitoringSettingsUpdateSchema = monitoringSettingsSchema.partial().strict();

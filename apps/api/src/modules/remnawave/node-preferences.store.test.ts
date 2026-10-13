@@ -4,14 +4,14 @@ import { NodePreferencesStore } from './node-preferences.store.js';
 
 describe('Пороги мониторинга из одного снимка', () => {
   it('не запрашивает второй снимок и сохраняет доменную изоляцию', async () => {
-    const findFirst = vi.fn(async () => ({ value: '{"cpuWarningPercent":75,"memoryWarningPercent":80}' }));
+    const findFirst = vi.fn(async () => ({ value: '{"loadWarningPerCore":1.2,"memoryWarningPercent":80}' }));
     const snapshot = vi.fn();
     const store = new NodePreferencesStore(
       { query: { appMeta: { findFirst } } } as never,
       { snapshot } as never,
     );
     expect(await store.forMonitoring('panel.example', 'node')).toMatchObject({
-      cpuWarningPercent: 75,
+      loadWarningPerCore: 1.2,
       memoryWarningPercent: 80,
     });
     expect(snapshot).not.toHaveBeenCalled();
@@ -19,7 +19,7 @@ describe('Пороги мониторинга из одного снимка', (
       'settings.node-view.panel.example:node',
     );
   });
-  it.each([null, { value: '{}' }, { value: 'broken' }, { value: '{"cpuWarningPercent":900}' }])(
+  it.each([null, { value: '{}' }, { value: 'broken' }, { value: '{"loadWarningPerCore":900}' }])(
     'отсутствующие или повреждённые настройки наследуют общие: %j',
     async (row) => {
       const store = new NodePreferencesStore(
@@ -27,7 +27,7 @@ describe('Пороги мониторинга из одного снимка', (
         {} as never,
       );
       expect(await store.forMonitoring('panel', 'node')).toMatchObject({
-        cpuWarningPercent: null,
+        loadWarningPerCore: null,
         memoryWarningPercent: null,
       });
     },

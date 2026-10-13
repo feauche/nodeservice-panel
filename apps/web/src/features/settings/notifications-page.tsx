@@ -492,7 +492,7 @@ export function NotificationsPage() {
                     htmlFor={`tg-ev-${k}`}
                     label={
                       <>
-                        {k === 'scenario' ? 'Уведомления из сценариев' : TELEGRAM_EVENT_LABELS[k]}
+                        {TELEGRAM_EVENT_LABELS[k]}
                         {tone && (
                           <span
                             className={cn(

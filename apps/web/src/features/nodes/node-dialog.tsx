@@ -714,10 +714,16 @@ export function NodeDialog({
                     <div className="grid gap-3.5 sm:grid-cols-2">
                       {(
                         [
-                          ['cpuWarningPercent', 'Процессор выше, %', monitoring.data?.cpuPercent],
-                          ['memoryWarningPercent', 'Память выше, %', monitoring.data?.memoryPercent],
+                          [
+                            'loadWarningPerCore',
+                            'Нагрузка на ядро выше',
+                            monitoring.data?.loadPerCore?.toLocaleString('ru-RU'),
+                            0.1,
+                            20,
+                          ],
+                          ['memoryWarningPercent', 'Память выше, %', monitoring.data?.memoryPercent, 1, 100],
                         ] as const
-                      ).map(([key, title, common]) => (
+                      ).map(([key, title, common, min, max]) => (
                         <div key={key}>
                           <label htmlFor={key} className={label}>
                             {title}
@@ -725,8 +731,9 @@ export function NodeDialog({
                           <Input
                             id={key}
                             type="number"
-                            min={1}
-                            max={100}
+                            min={min}
+                            max={max}
+                            step={min < 1 ? 0.1 : 1}
                             className="h-10"
                             placeholder={common ? `Общий порог · ${common}` : 'Общий порог'}
                             value={form[key] ?? ''}
@@ -738,8 +745,8 @@ export function NodeDialog({
                       ))}
                     </div>
                     <p className="mt-2.5 text-[12px] text-text-3">
-                      Процент процессора Remnawave сейчас не передаёт, поэтому предупреждение о процессоре не
-                      срабатывает. Нагрузку на ядро видно на вкладке «Метрики» и в «Ёмкости».
+                      Нагрузка на ядро — средняя за 15 минут, делённая на число ядер: 1,0 — ядро занято
+                      полностью. Процента процессора Remnawave не отдаёт.
                     </p>
                   </SettingsCard>
                   <SettingsCard title="Заметка" optional>

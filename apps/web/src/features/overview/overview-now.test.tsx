@@ -323,7 +323,7 @@ describe('Обзор, «Ёмкость»', () => {
           whitelist: true,
           channelMbps: null,
           note: 'заметка',
-          cpuWarningPercent: 90,
+          loadWarningPerCore: 1.8,
           memoryWarningPercent: null,
         }),
       ),
@@ -345,7 +345,7 @@ describe('Обзор, «Ёмкость»', () => {
       whitelist: true,
       channelMbps: 2500,
       note: 'заметка',
-      cpuWarningPercent: 90,
+      loadWarningPerCore: 1.8,
       memoryWarningPercent: null,
     });
   });
