@@ -2,10 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
+import type { IncidentEvent } from '@nodeservice/shared';
 import { desc, eq, like } from 'drizzle-orm';
+import { errorText } from '../../common/filters/problem-details.filter.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { appMeta } from '../../infra/db/schema/index.js';
 import { AuditService } from '../audit/audit.service.js';
+import { IncidentsService } from '../incidents/incidents.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { getJson } from '../remnawave/remnawave-client.js';
 import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js';
@@ -51,7 +54,21 @@ export class DnsService {
     private store: RemnawaveSettingsStore,
     private remna: RemnawaveService,
     @Optional() private audit?: AuditService,
+    @Optional() private incidents?: IncidentsService,
   ) {}
+  /** Что уже написано в событие ноды по каждой записи: одна строка на состояние, а не на каждую минуту. */
+  private noted = new Map<string, string>();
+  /** Строка о DNS-записи в незакрытые события ноды; повтор того же состояния не пишется. */
+  private async note(nodeUuid: string, key: string, e: Omit<IncidentEvent, 'at' | 'by' | 'result' | 'step'>) {
+    const mark = `${nodeUuid}|${key}`,
+      sign = `${e.action}|${e.detail ?? ''}`;
+    if (!this.incidents || this.noted.get(mark) === sign) return;
+    this.noted.set(mark, sign);
+    if (this.noted.size > 500) this.noted.clear();
+    await this.incidents
+      .noteNode(nodeUuid, { at: new Date().toISOString(), by: 'auto', result: 'notify', step: 'dns', ...e })
+      .catch(() => undefined);
+  }
   private async read(key: string) {
     const row = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, key) });
     return row ? JSON.parse(row.value) : null;
@@ -440,6 +457,12 @@ export class DnsService {
       await remember();
       await this.log({ ...change, status: 'success' });
       this.cache = null;
+      if (!automatic)
+        await this.note(node.uuid, record.id, {
+          action: `DNS-запись ${record.name} обновлена вручную`,
+          tone: 'ok',
+          detail: `${record.content} → ${node.address}`,
+        });
       return { changed: true, ...what };
     } catch (e) {
       await this.log({ ...change, status: partial ? 'partial' : 'error' });
@@ -448,7 +471,14 @@ export class DnsService {
     }
   }
   @Interval(60000) async tick() {
-    if (this.busy || process.env.NODE_ENV === 'test') return;
+    if (process.env.NODE_ENV !== 'test') await this.runTick();
+  }
+  /**
+   * Раз в минуту: адрес ноды в Remnawave сменился — записи с автозаменой обновляются, и каждый шаг (запись уже на
+   * новом адресе, обновлена, не вышло, автозамена не включена) пишется в незакрытое событие этой ноды.
+   */
+  async runTick() {
+    if (this.busy) return;
     this.busy = true;
     try {
       const status = await this.remna.status();
@@ -459,23 +489,75 @@ export class DnsService {
       const previous = (await this.read(key)) ?? {};
       const next = { ...previous };
       for (const n of status.nodes) {
-        if (previous[n.uuid] && previous[n.uuid] !== n.address) {
+        const old = previous[n.uuid];
+        if (old && old !== n.address) {
           if (scope !== (await this.scope())) break;
           const data = await this.overview(true);
-          if (data.errors.length) continue;
-          const records = data.records.filter(
-            (r) =>
-              this.automatic(settings, r) &&
-              r.nodes.some((node) => node.uuid === n.uuid) &&
-              r.nodes.every((node) => node.address === n.address) &&
-              r.content === previous[n.uuid],
+          if (data.errors.length) {
+            await this.note(n.uuid, 'read', {
+              action: 'Не удалось прочитать DNS-записи ноды',
+              tone: 'crit',
+              detail: `${data.errors.join(' ')} Повторю через минуту.`,
+              link: { label: 'Открыть DNS-интеграции', to: '/integrations/dns' },
+            });
+            continue;
+          }
+          const linked = data.records.filter(
+            (r) => ['A', 'AAAA'].includes(r.type) && r.nodes.some((node) => node.uuid === n.uuid),
           );
+          if (!linked.length && data.domains.length)
+            await this.note(n.uuid, 'none', {
+              action: 'В подключённых DNS-сервисах нет записей этой ноды',
+              tone: 'info',
+            });
           let failed = false;
-          for (const r of records) {
+          for (const r of linked) {
+            const open = {
+              label: 'Открыть запись в DNS-интеграциях',
+              to: '/integrations/dns',
+              search: { record: r.id },
+            };
+            if (r.content === n.address) {
+              await this.note(n.uuid, r.id, {
+                action: `DNS-запись ${r.name} уже ведёт на новый адрес`,
+                tone: 'ok',
+              });
+              continue;
+            }
+            if (r.content !== old) {
+              await this.note(n.uuid, r.id, {
+                action: `DNS-запись ${r.name} ведёт на другой адрес: ${r.content}`,
+                tone: 'warn',
+                detail: 'Это не прежний и не новый адрес ноды — проверьте, нужна ли запись.',
+                link: open,
+              });
+              continue;
+            }
+            if (!this.automatic(settings, r) || !r.nodes.every((node) => node.address === n.address)) {
+              await this.note(n.uuid, r.id, {
+                action: `DNS-запись ${r.name} ведёт на старый адрес`,
+                tone: 'warn',
+                detail: `Автозамена для этой записи не включена. Замените ${old} на ${n.address} вручную или включите автозамену — дальше событие закроется само.`,
+                link: open,
+              });
+              continue;
+            }
             try {
               await this.apply({ recordId: r.id, nodeUuid: n.uuid, expected: r.content }, true, scope);
-            } catch {
+              await this.note(n.uuid, r.id, {
+                action: `DNS-запись ${r.name} обновлена автоматически`,
+                tone: 'ok',
+                detail: `${old} → ${n.address}`,
+              });
+            } catch (e) {
               failed = true;
+              const why = errorText(e);
+              await this.note(n.uuid, r.id, {
+                action: `Не удалось обновить DNS-запись ${r.name}`,
+                tone: 'crit',
+                detail: `${/[А-Яа-яЁё]/.test(why) ? why : 'DNS-сервис отклонил изменение.'} Повторю через минуту; запись можно заменить вручную.`,
+                link: open,
+              });
             }
           }
           if (failed) continue;

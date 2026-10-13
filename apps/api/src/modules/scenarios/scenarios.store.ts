@@ -14,6 +14,10 @@ function legacyTone(text: string): ScenarioRun['steps'][number]['tone'] {
   return 'crit';
 }
 
+/** Версия записи сценариев: 2 — с 0.95.0 (ожидание по умолчанию 1 минута); у прежних записей её нет. */
+const RULES_VERSION_KEY = '_v';
+const RULES_VERSION = 2;
+
 @Injectable()
 export class ScenariosStore {
   constructor(@Inject(DB) private db: Db) {}
@@ -43,9 +47,18 @@ export class ScenariosStore {
   }
   async list(panel: string | null): Promise<Scenario[]> {
     if (!panel) return [];
-    const raw = await this.read(`scenarios.rules.${this.scope(panel)}`);
+    const key = `scenarios.rules.${this.scope(panel)}`;
+    const raw = await this.read<Record<string, unknown>>(key);
     const parsed = scenariosSchema.safeParse(raw ?? { items: [] });
-    return parsed.success ? parsed.data.items : [];
+    if (!parsed.success) return [];
+    // До 0.95.0 «держится» по умолчанию было 5 минут, а новая форма давала 1: сохранённые 5 минут — прежнее
+    // значение по умолчанию, переводим один раз. После этого запись с версией — выбранное позже не трогаем.
+    if (raw && raw[RULES_VERSION_KEY] !== RULES_VERSION) {
+      const items = parsed.data.items.map((r) => (r.holdMinutes === 5 ? { ...r, holdMinutes: 1 } : r));
+      await this.write(key, { items, [RULES_VERSION_KEY]: RULES_VERSION });
+      return items;
+    }
+    return parsed.data.items;
   }
   /** Журнал срабатываний: запись на срабатывание, ключ по времени — свежие первыми одним запросом. */
   async addRun(panel: string, run: ScenarioRun) {
@@ -124,7 +137,10 @@ export class ScenariosStore {
     const parsed = scenariosSchema.parse({ items });
     if (new Set(parsed.items.map((i) => i.id)).size !== parsed.items.length)
       throw new Error('Повторяющийся идентификатор сценария.');
-    await this.write(`scenarios.rules.${this.scope(panel)}`, parsed);
+    await this.write(`scenarios.rules.${this.scope(panel)}`, {
+      ...parsed,
+      [RULES_VERSION_KEY]: RULES_VERSION,
+    });
     return parsed;
   }
 }

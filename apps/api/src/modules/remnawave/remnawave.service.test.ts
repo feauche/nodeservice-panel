@@ -129,14 +129,16 @@ function make() {
       return world.fullProfile;
     },
   };
+  const events: Array<Record<string, unknown>> = [];
   const svc = new RemnawaveService(
     store as never,
     client as never,
     { record: async (e: Record<string, unknown>) => void audit.push(e) } as never,
     { get: () => undefined } as never,
     { push: async (e: Record<string, unknown>) => void notifications.push(e) } as never,
+    { emit: (e: Record<string, unknown>) => void events.push(e) } as never,
   );
-  return { svc, world, audit, notifications };
+  return { svc, world, audit, notifications, events };
 }
 
 afterEach(() => vi.useRealTimers());
@@ -290,23 +292,67 @@ describe('RemnawaveService: тихая перепроверка (джоба)', (
     expect(ctx.audit.filter((a) => a.action === 'remnawave.reconnected')).toHaveLength(1);
   });
 
-  it('после пяти минут сбоя сообщает один раз и отдельно говорит о восстановлении', async () => {
+  it('после двух минут сбоя сообщает один раз и отдельно говорит о восстановлении', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-02T12:00:00.000Z'));
     ctx.world.fetchError = new HttpException({ detail: 'DNS не отвечает' }, 502) as unknown as Error;
     await ctx.svc.syncQuiet();
     expect(ctx.notifications).toEqual([]);
+    // Полторы минуты — ещё рано: обновление Remnawave обычно укладывается в минуту.
+    vi.setSystemTime(new Date('2026-10-02T12:01:30.000Z'));
+    await ctx.svc.syncQuiet();
+    expect(ctx.notifications).toEqual([]);
 
-    vi.setSystemTime(new Date('2026-10-02T12:05:00.000Z'));
+    vi.setSystemTime(new Date('2026-10-02T12:02:00.000Z'));
     await ctx.svc.syncQuiet();
     await ctx.svc.syncQuiet();
     expect(ctx.notifications).toHaveLength(1);
     expect(ctx.notifications[0]).toMatchObject({ severity: 'warn', title: 'Remnawave не отвечает' });
 
     ctx.world.fetchError = null;
-    vi.setSystemTime(new Date('2026-10-02T12:06:00.000Z'));
+    vi.setSystemTime(new Date('2026-10-02T12:03:00.000Z'));
     await ctx.svc.syncQuiet();
     expect(ctx.notifications).toHaveLength(2);
     expect(ctx.notifications[1]).toMatchObject({ severity: 'ok', title: 'Remnawave снова отвечает' });
+  });
+});
+
+describe('RemnawaveService: падение ноды видно сразу', () => {
+  let ctx: ReturnType<typeof make>;
+  beforeEach(async () => {
+    ctx = make();
+    await ctx.svc.connect({ domain: 'x.example.com', apiKey: 'k' });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('смена статуса ноды — событие «nodes» открытым страницам; смена онлайна — нет', async () => {
+    ctx.world.fetchResult = { stats: STATS, nodes: [NODE({ usersOnline: 7 })] };
+    await ctx.svc.syncQuiet();
+    expect(ctx.events).toEqual([]);
+    ctx.world.fetchResult = { stats: STATS, nodes: [NODE({ isConnected: false, usersOnline: 0 })] };
+    await ctx.svc.syncQuiet();
+    expect(ctx.events).toEqual([{ type: 'nodes', data: { at: expect.any(String) } }]);
+  });
+
+  it('две перепроверки подряд — один запрос к Remnawave', async () => {
+    await Promise.all([ctx.svc.syncQuiet(), ctx.svc.syncQuiet()]);
+    expect(ctx.world.fetchCalls).toBe(2); // подключение + одна перепроверка
+  });
+
+  it('живая сверка: статус в Remnawave другой — сразу полная перепроверка; тот же — ничего', async () => {
+    const live = (isConnected: boolean) =>
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(JSON.stringify({ response: [{ ...NODE(), isConnected }] }))),
+      );
+    live(true);
+    await ctx.svc.liveCheck(4000);
+    expect(ctx.world.fetchCalls).toBe(1);
+    live(false);
+    ctx.world.fetchResult = { stats: STATS, nodes: [NODE({ isConnected: false })] };
+    await ctx.svc.liveCheck(4000);
+    expect(ctx.world.fetchCalls).toBe(2);
+    expect((await ctx.svc.status()).nodes[0]?.isConnected).toBe(false);
+    expect(ctx.events).toHaveLength(1);
   });
 });

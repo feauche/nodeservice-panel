@@ -6,7 +6,10 @@ import { ReplaySubject } from 'rxjs';
  * Живые события панели для браузера (SSE). Сервер шлёт только при изменениях, браузер перечитывает
  * лишь затронутое — дешевле опроса раз в 15 с. In-memory, один процесс API.
  */
-export type PanelEvent = { type: 'incident'; data: { id: string } };
+export type PanelEvent =
+  | { type: 'incident'; data: { id: string } }
+  /** Статус ноды в Remnawave изменился (на связи, выключена, подключается): браузер перечитывает ноды. */
+  | { type: 'nodes'; data: { at: string } };
 
 @Injectable()
 export class EventsService implements BeforeApplicationShutdown {
@@ -20,6 +23,11 @@ export class EventsService implements BeforeApplicationShutdown {
 
   emit(event: PanelEvent): void {
     this.emitter.emit('event', event);
+  }
+
+  /** Сколько открытых вкладок слушают поток: без них живая сверка нод не нужна. */
+  viewers(): number {
+    return this.emitter.listenerCount('event');
   }
 
   on(listener: (e: PanelEvent) => void): () => void {

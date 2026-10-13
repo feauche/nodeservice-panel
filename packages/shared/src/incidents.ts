@@ -308,6 +308,16 @@ export const incidentEventResultSchema = z.enum([
 ]);
 export type IncidentEventResult = z.infer<typeof incidentEventResultSchema>;
 
+/**
+ * Шаг восстановления ноды, к которому относится строка: из последних строк по шагу складывается «что готово, чего
+ * ждём, что сделать». address — адрес ноды в Remnawave, port — проверка порта, dns — DNS-запись ноды, node — связь
+ * с Remnawave, online — онлайн, close — итог.
+ */
+export const INCIDENT_STEPS = ['address', 'port', 'dns', 'node', 'online', 'close'] as const;
+export type IncidentStep = (typeof INCIDENT_STEPS)[number];
+/** Итог строки цветом: ok — готово, wait — ждём, warn — нужно внимание, crit — ошибка, change — изменение. */
+export const INCIDENT_TONES = ['ok', 'wait', 'warn', 'crit', 'change', 'info'] as const;
+export type IncidentTone = (typeof INCIDENT_TONES)[number];
 export const incidentEventSchema = z.object({
   at: z.iso.datetime(),
   by: z.enum(['auto', 'manual']),
@@ -315,6 +325,22 @@ export const incidentEventSchema = z.object({
   result: incidentEventResultSchema,
   /** Уровень действия, к которому относится событие (пред-проверка, шаг, пост-проверка). */
   level: z.enum(ACTION_LEVELS).optional(),
+  step: z.enum(INCIDENT_STEPS).optional(),
+  tone: z.enum(INCIDENT_TONES).optional(),
+  /** Подробности второй строкой: «94.183.152.24 → 45.12.8.77», «Из РФ 3 из 3, из других стран 3 из 3». */
+  detail: z.string().max(1000).optional(),
+  /**
+   * Кнопка у строки: в панели — путь и параметры (DNS-запись в «DNS интеграциях»), снаружи — адрес (отчёт
+   * Check-Host).
+   */
+  link: z
+    .object({
+      label: z.string().max(80),
+      to: z.string().max(200).optional(),
+      search: z.record(z.string(), z.string().max(500)).optional(),
+      href: z.url().optional(),
+    })
+    .optional(),
 });
 export type IncidentEvent = z.infer<typeof incidentEventSchema>;
 
@@ -449,6 +475,14 @@ export const incidentSchema = z.object({
   snapshot: incidentSnapshotSchema.nullable(),
   /** Разбор Ассистентом: вывод, доказательства, шаг, вопросы; null — ещё не разбирали. */
   analysis: incidentAnalysisSchema.nullable(),
+  /**
+   * Чего ждёт мониторинг, чтобы закрыть падение онлайна: онлайн не ниже target (обычно в этот час — usual, до
+   * падения было before). Только у незакрытого события о доступности; тот же расчёт, что у мониторинга.
+   */
+  recovery: z
+    .object({ target: z.number().int(), usual: z.number().int().nullable(), before: z.number().int() })
+    .nullable()
+    .optional(),
 });
 export type Incident = z.infer<typeof incidentSchema>;
 

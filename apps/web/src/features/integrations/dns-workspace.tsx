@@ -18,7 +18,15 @@ import {
   SearchIcon,
   XIcon,
 } from 'lucide-react';
-import { type FormEvent, type KeyboardEvent, type ReactNode, useId, useMemo, useState } from 'react';
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+} from 'react';
 import { z } from 'zod';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { CountryFlag } from '@/components/country-flag';
@@ -805,7 +813,14 @@ export function DnsWorkspaceSkeleton() {
  * в строке — домен → нода, адрес и совпадает ли он с нодой, автозамена или «Заменить». Сверху показатели и
  * фильтры. Кнопки «Подключения», «История замен» и «Обновить» — в шапке страницы.
  */
-export function DnsWorkspace() {
+export function DnsWorkspace({
+  initialRecord,
+  onInitialRecordUsed,
+}: {
+  /** Запись из события ноды («Открыть запись в DNS-интеграциях»): окно открывается само, когда записи загружены. */
+  initialRecord?: string | undefined;
+  onInitialRecordUsed?: (() => void) | undefined;
+} = {}) {
   const client = useQueryClient();
   const query = useQuery({
     queryKey: ['dns-workspace'],
@@ -829,6 +844,12 @@ export function DnsWorkspace() {
     [error, setError] = useState('');
   const data = query.data;
   const records = data?.records ?? [];
+  // Пришли из события ноды: запись загружена — открываем её окно один раз и убираем её из адреса.
+  useEffect(() => {
+    if (!initialRecord || !data) return;
+    if (data.records.some((r) => r.id === initialRecord)) setOpenId(initialRecord);
+    onInitialRecordUsed?.();
+  }, [initialRecord, data, onInitialRecordUsed]);
   const auto = (r: DnsRecord) =>
     Boolean(
       data?.settings.automaticRecords.includes(r.id) ||

@@ -4,13 +4,15 @@ import { useEffect } from 'react';
 import { incidentsKeys } from '@/features/incidents/incidents-api';
 import { API_BASE } from '@/lib/api';
 
+/** Ключ статуса нод (useNodes): строка списка, окно ноды, «Обзор». */
+const NODES_STATUS_KEY = ['nodes', 'status'] as const;
 /** События одного типа, пришедшие подряд, схлопываются в одно перечитывание. */
 const COALESCE_MS = 250;
 const RECONNECT_MAX_MS = 15_000;
 
 /**
  * Живой поток панели (SSE): сервер шлёт событие только при изменении, браузер перечитывает лишь
- * затронутое — события. Опрос остаётся страховкой раз в минуту.
+ * затронутое — события и статус нод. Опрос остаётся страховкой.
  * Переподключение контролируем сами: после восстановления API перечитываем актуальное состояние,
  * поэтому открытая страница не остаётся со старыми данными. В тестовых моках поток выключен.
  */
@@ -37,6 +39,7 @@ export function useEventsStream(enabled = true): void {
     };
     const refreshAfterReconnect = () => {
       void qc.invalidateQueries({ queryKey: incidentsKeys.all });
+      void qc.invalidateQueries({ queryKey: NODES_STATUS_KEY });
     };
     const connect = () => {
       if (stopped) return;
@@ -57,6 +60,10 @@ export function useEventsStream(enabled = true): void {
       };
       stream.addEventListener('incident', () =>
         later('incident', () => void qc.invalidateQueries({ queryKey: incidentsKeys.all })),
+      );
+      // Нода упала или поднялась в Remnawave — статус и цвет в списке меняются сразу, без ожидания опроса.
+      stream.addEventListener('nodes', () =>
+        later('nodes', () => void qc.invalidateQueries({ queryKey: NODES_STATUS_KEY })),
       );
     };
     const reconnectNow = () => {

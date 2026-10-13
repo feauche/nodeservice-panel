@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   MONITORING_DEFAULTS,
   MONITORING_DEFAULTS_BEFORE_0_94,
+  MONITORING_DEFAULTS_BEFORE_0_95,
   type MonitoringSettings,
   monitoringSettingsSchema,
 } from '@nodeservice/shared';
@@ -27,9 +28,29 @@ const legacyAutochecksSchema = z.object({
   serverChecksEnabled: z.boolean().default(true),
 });
 
-/** Версия записи настроек: с 0.94.0 (быстрые значения по умолчанию) — 2; у прежних записей её нет. */
+/**
+ * Версия записи настроек: 2 — 0.94.0 (быстрые значения по умолчанию), 3 — 0.95.0 (в записи только отличия от
+ * значений по умолчанию); у записей до 0.94.0 её нет.
+ */
 const VERSION_KEY = '_v';
-const SETTINGS_VERSION = 2;
+const SETTINGS_VERSION = 3;
+/**
+ * Прежние значения по умолчанию: у записи версии ниже `before` такое значение считается нетронутым и переходит
+ * на нынешнее. Записи версии `before` и новее — уже сохранённые после смены, их значения выбраны вручную.
+ */
+const OLD_DEFAULTS: { before: number; values: Partial<MonitoringSettings> }[] = [
+  { before: 2, values: MONITORING_DEFAULTS_BEFORE_0_94 },
+  { before: 3, values: MONITORING_DEFAULTS_BEFORE_0_95 },
+];
+/** Только отличия от значений по умолчанию: остальное следует за ними и после будущих обновлений. */
+function compact(values: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(values).filter(
+      ([key, value]) =>
+        key in MONITORING_DEFAULTS && value !== MONITORING_DEFAULTS[key as keyof MonitoringSettings],
+    ),
+  );
+}
 
 @Injectable()
 export class MonitoringStore {
@@ -53,7 +74,7 @@ export class MonitoringStore {
         } catch {
           /* Damaged legacy settings must not silently enable new monitoring. */
         }
-        const initial = { ...MONITORING_DEFAULTS, enabled };
+        const initial = { ...compact({ ...MONITORING_DEFAULTS, enabled }), [VERSION_KEY]: SETTINGS_VERSION };
         // A concurrent explicit save always wins over this one-time migration.
         await this.db
           .insert(appMeta)
@@ -69,7 +90,7 @@ export class MonitoringStore {
       return { ...MONITORING_DEFAULTS, enabled: false };
     }
     if (row && stored && typeof stored === 'object' && !Array.isArray(stored))
-      stored = await this.fastDefaults(stored as Record<string, unknown>);
+      stored = await this.upgrade(stored as Record<string, unknown>);
     if (row && (!stored || typeof stored !== 'object' || Array.isArray(stored)))
       return { ...MONITORING_DEFAULTS, enabled: false };
     const parsed = monitoringSettingsSchema.safeParse({
@@ -79,34 +100,27 @@ export class MonitoringStore {
     return parsed.success ? parsed.data : { ...MONITORING_DEFAULTS, enabled: false };
   }
   /**
-   * Один раз при обновлении до 0.94.0: значения, равные прежним «по умолчанию» (опрос раз в минуту, три
-   * подтверждения…), переходят на новые быстрые, а прежний порог процента процессора уходит. Изменённое владельцем
-   * вручную не трогаем. Записи с отметкой версии (сохранённые уже в 0.94.0 и позже) не переносятся: значение,
-   * выбранное позже вручную, даже совпавшее с прежним «по умолчанию», остаётся.
+   * Один раз при обновлении: значения, равные прежним «по умолчанию» своей версии (опрос раз в минуту, три
+   * подтверждения, 5 минут превышения…), переходят на нынешние; изменённое владельцем вручную не трогаем. Запись
+   * сжимается до отличий от значений по умолчанию — иначе после любого сохранения новые значения по умолчанию
+   * больше не доходили бы (так было до 0.95.0).
    */
-  private async fastDefaults(stored: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (stored[VERSION_KEY] === SETTINGS_VERSION) return stored;
+  private async upgrade(stored: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const version = typeof stored[VERSION_KEY] === 'number' ? (stored[VERSION_KEY] as number) : 1;
+    if (version >= SETTINGS_VERSION) return stored;
     const next: Record<string, unknown> = { ...stored };
-    let changed = false;
-    for (const [key, old] of Object.entries(MONITORING_DEFAULTS_BEFORE_0_94))
-      if (next[key] === old) {
-        next[key] = MONITORING_DEFAULTS[key as keyof MonitoringSettings];
-        changed = true;
-      }
-    if ('cpuPercent' in next) {
-      delete next.cpuPercent;
-      changed = true;
-    }
-    if (!changed) return stored;
-    next[VERSION_KEY] = SETTINGS_VERSION;
+    for (const step of OLD_DEFAULTS)
+      if (version < step.before)
+        for (const [key, old] of Object.entries(step.values)) if (next[key] === old) delete next[key];
+    const value = { ...compact(next), [VERSION_KEY]: SETTINGS_VERSION };
     await this.db
       .insert(appMeta)
-      .values({ key: 'settings.monitoring', value: JSON.stringify(next) })
+      .values({ key: 'settings.monitoring', value: JSON.stringify(value) })
       .onConflictDoUpdate({
         target: appMeta.key,
-        set: { value: JSON.stringify(next), updatedAt: new Date() },
+        set: { value: JSON.stringify(value), updatedAt: new Date() },
       });
-    return next;
+    return value;
   }
   async set(patch: { [K in keyof MonitoringSettings]?: MonitoringSettings[K] | undefined }) {
     const before = await this.get();
@@ -114,7 +128,7 @@ export class MonitoringStore {
       ...before,
       ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)),
     });
-    const value = JSON.stringify({ ...after, [VERSION_KEY]: SETTINGS_VERSION });
+    const value = JSON.stringify({ ...compact(after), [VERSION_KEY]: SETTINGS_VERSION });
     await this.db
       .insert(appMeta)
       .values({ key: 'settings.monitoring', value })

@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, Optional } from '@nestjs/common';
 import {
   type AutofixPolicy,
   actionByKey,
@@ -23,6 +23,7 @@ import { AuditService } from '../audit/audit.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
 import { SettingsService } from '../settings/settings.service.js';
+import { FleetMonitorJob } from './fleet-monitor.job.js';
 import { IncidentRunnerService } from './incident-runner.service.js';
 import { IncidentsRepository } from './incidents.repository.js';
 
@@ -50,6 +51,7 @@ export class IncidentsService {
     private readonly audit: AuditService,
     private readonly runner: IncidentRunnerService,
     private readonly notifications: NotificationsService,
+    @Optional() private readonly monitor?: FleetMonitorJob,
   ) {}
 
   toDto(row: IncidentRow): Incident {
@@ -141,17 +143,20 @@ export class IncidentsService {
   async get(id: string): Promise<Incident> {
     const row = await this.repo.findById(id);
     if (!row) throw problem(HttpStatus.NOT_FOUND, { detail: 'Событие не найдено.' });
-    return this.toDto(row);
+    const dto = this.toDto(row);
+    // Незакрытое падение онлайна: странице — чего ждёт мониторинг (тот же расчёт, что при закрытии).
+    if (dto.status !== 'resolved' && dto.nodeUuid && ['node_blocked', 'server_down'].includes(dto.kind))
+      dto.recovery = (await this.monitor?.recoveryGoal(dto.nodeUuid).catch(() => null)) ?? null;
+    return dto;
   }
 
   async acknowledge(id: string): Promise<Incident> {
     const row = await this.repo.findById(id);
     if (!row) throw problem(HttpStatus.NOT_FOUND, { detail: 'Событие не найдено.' });
     if (row.status !== 'open') return this.toDto(row);
-    const updated = await this.repo.update(id, {
-      status: 'acknowledged',
-      timeline: [...row.timeline, ev('manual', 'Взято в работу администратором', 'notify')],
-    });
+    // Строка — атомарно: параллельные строки мониторинга и «DNS интеграций» не затираются.
+    await this.repo.appendTimeline(id, ev('manual', 'Взято в работу администратором', 'notify'));
+    const updated = await this.repo.update(id, { status: 'acknowledged' });
     await this.audit.record({
       action: 'incident.acknowledged',
       target: { type: 'incident', id, display: row.title },
@@ -171,6 +176,18 @@ export class IncidentsService {
     return row ? { id: row.id, title: row.title } : null;
   }
 
+  /**
+   * Строка во все незакрытые события ноды (нужных видов): «DNS интеграции» пишут свои шаги — запись уже на новом
+   * адресе, обновлена, не вышло, автозамена не включена — в событие этой ноды. Сколько событий получили строку.
+   */
+  async noteNode(nodeUuid: string, event: IncidentEvent, kinds?: string[]): Promise<number> {
+    const rows = (await this.repo.list('open')).filter(
+      (r) => r.nodeUuid === nodeUuid && (!kinds || kinds.includes(r.kind)),
+    );
+    for (const r of rows) await this.repo.appendTimeline(r.id, event);
+    return rows.length;
+  }
+
   /** Строка автоматики в «Что происходило» события (срабатывание сценария и его итог). */
   async note(id: string, action: string, result: IncidentEvent['result']): Promise<void> {
     await this.repo.appendTimeline(id, ev('auto', action, result));
@@ -184,12 +201,12 @@ export class IncidentsService {
     // Идущую попытку обрываем (она дописывает хронологию) и перечитываем, чтобы не затереть.
     await this.runner.cancelRunning(id, 'Прервано: инцидент закрыт администратором');
     const row = (await this.repo.findById(id)) ?? row0;
+    await this.repo.appendTimeline(id, ev('manual', 'Закрыт администратором', 'resolved'));
     const updated = await this.repo.update(id, {
       status: 'resolved',
       resolvedAt: new Date(),
       resolvedBy: 'manual',
       proposal: null,
-      timeline: [...row.timeline, ev('manual', 'Закрыт администратором', 'resolved')],
     });
     // Тревога в Telegram могла ещё ждать разбора: дело закрыто в панели — присылать её уже незачем.
     await this.notifications.dropDeferred(id);

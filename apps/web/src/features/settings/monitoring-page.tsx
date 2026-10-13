@@ -172,7 +172,7 @@ const sections: Record<'checks' | 'incidents', { title: string; hint?: string; f
         {
           key: 'cpuEnabled',
           label: 'Следить за нагрузкой процессора',
-          hint: 'Процента процессора Remnawave не отдаёт — смотрим среднюю нагрузку за 15 минут на одно ядро.',
+          hint: 'Процента процессора Remnawave не отдаёт — смотрим нагрузку на ядро, как в строке ноды: среднюю за минуту, делённую на число ядер.',
         },
         {
           key: 'loadPerCore',
@@ -199,7 +199,7 @@ const sections: Record<'checks' | 'incidents', { title: string; hint?: string; f
         {
           key: 'resourceDurationMinutes',
           label: 'Длительность превышения',
-          hint: 'Создавать событие только при устойчивой перегрузке.',
+          hint: 'Событие — только если перегрузка держится столько минут подряд; закрывается, когда столько же держится ниже порога с запасом. По умолчанию 2.',
           unit: 'мин',
           min: 1,
           max: 60,

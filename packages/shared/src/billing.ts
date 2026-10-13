@@ -342,11 +342,12 @@ export const billingStatsQuerySchema = z.object({
 
 const BILLING_DAY_MS = 86_400_000;
 
-/** «через 2 дня», «сегодня в 12:00», «просрочено на 3 дня». Для текстов Ассистента и Telegram. */
+/** «через 2 дня», «через 40 минут», «просрочено на 3 дня». Для карточек, текстов Ассистента и Telegram. */
 export function billingDueInWords(paidUntil: Date, now: Date): string {
   const ms = paidUntil.getTime() - now.getTime();
   const days = Math.floor(Math.abs(ms) / BILLING_DAY_MS);
   const hours = Math.floor(Math.abs(ms) / 3_600_000);
+  const minutes = Math.floor(Math.abs(ms) / 60_000);
   const dayWord = (n: number) =>
     n % 10 === 1 && n % 100 !== 11
       ? 'день'
@@ -359,16 +360,29 @@ export function billingDueInWords(paidUntil: Date, now: Date): string {
       : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)
         ? 'часа'
         : 'часов';
+  // «на 1 минуту», «через 2 минуты», «на 52 минуты», «через 11 минут».
+  const minuteWord = (n: number) =>
+    n % 10 === 1 && n % 100 !== 11
+      ? 'минуту'
+      : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)
+        ? 'минуты'
+        : 'минут';
   if (ms <= 0)
     return days >= 1
       ? `просрочено на ${days} ${dayWord(days)}`
       : hours >= 1
         ? `просрочено на ${hours} ${hourWord(hours)}`
-        : 'просрочено только что';
+        : minutes >= 1
+          ? `просрочено на ${minutes} ${minuteWord(minutes)}`
+          : 'просрочено только что';
   // В будущее округляем: «через 1 день 23 часа» — это «через 2 дня».
   const ahead = Math.round(ms / BILLING_DAY_MS);
   if (ms >= 20 * 3_600_000) return `через ${Math.max(1, ahead)} ${dayWord(Math.max(1, ahead))}`;
-  return hours >= 1 ? `через ${hours} ${hourWord(hours)}` : 'меньше чем через час';
+  return hours >= 1
+    ? `через ${hours} ${hourWord(hours)}`
+    : minutes >= 1
+      ? `через ${minutes} ${minuteWord(minutes)}`
+      : 'меньше чем через минуту';
 }
 
 /** Одна будущая оплата в прогнозе. */

@@ -205,7 +205,19 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
       latched: false,
       lastRun: 0,
     });
-    await app.get(ScenariosJob).run();
+    // Проверка порта для условия идёт в фоне: первый проход её запускает, следующий снимок срабатывает по ней.
+    const job = app.get(ScenariosJob);
+    await job.run();
+    await job.idle();
+    await store.write(`scenarios.state.${scope}.${rule.id}.${uuid}`, {
+      since: Date.now() - 61000,
+      stamp: Date.now() - 61000,
+      latched: false,
+      lastRun: 0,
+    });
+    status.checkedAt = new Date(Date.now() + 1).toISOString();
+    await job.run();
+    await job.idle();
     expect(tcp.checkNode).toHaveBeenCalledTimes(1);
     const events = await app
       .get(NodeEventsStore)

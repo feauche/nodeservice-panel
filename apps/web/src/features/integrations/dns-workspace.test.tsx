@@ -184,6 +184,22 @@ describe('DNS интеграции (вариант A): домены карточ
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
+  it('из события ноды: «Открыть запись в DNS-интеграциях» сразу открывает окно этой записи', async () => {
+    let used = 0;
+    function FromIncident() {
+      return (
+        <AppShell title="DNS интеграции">
+          <DnsWorkspace initialRecord={records[1]?.id} onInitialRecordUsed={() => (used += 1)} />
+        </AppShell>
+      );
+    }
+    renderPage(FromIncident, '/integrations/dns');
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('hy-o.axelvryn.ru');
+    expect(dialog).toHaveTextContent('В DNS сейчас147.45.126.11');
+    expect(used).toBe(1);
+  });
+
   it('кнопки в шапке страницы: «Подключения» с аккаунтами и «История замен»', async () => {
     const user = userEvent.setup();
     renderPage(Page, '/integrations/dns');

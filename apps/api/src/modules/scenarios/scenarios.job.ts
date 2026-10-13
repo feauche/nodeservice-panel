@@ -194,10 +194,38 @@ export function notifyStep(
     text: 'Уведомление в Telegram',
   };
 }
+/**
+ * Шаг «Проверить TCP»: проверка — сведения для журнала, а не условие действий. Не вышла (Check-Host выключен или не
+ * ответил) — замечание жёлтым, остальные шаги уже выполнены.
+ */
+export function tcpStep(
+  n: number,
+  result: { report: TcpCheckReport | null } | { error: string },
+): ScenarioRunStep {
+  const base = { action: 'check_tcp' as const, n };
+  if ('error' in result || !result.report) {
+    const why = 'error' in result ? result.error : 'TCP-проверки выключены в настройках';
+    return { ...base, tone: 'warn', word: 'не проверили', detail: why, text: `TCP не проверили: ${why}` };
+  }
+  const { report } = result,
+    word = lowerFirst(TCP_VERDICT_LABELS[report.verdict]),
+    detail = tcpReachSummary(report);
+  return {
+    ...base,
+    tone: report.verdict === 'reachable' ? 'ok' : report.verdict === 'unknown' ? 'warn' : 'crit',
+    word,
+    detail,
+    text: `TCP ${word}${detail ? `: ${detail}` : ''}`,
+  };
+}
 @Injectable()
 export class ScenariosJob {
   private busy = false;
   private log = new Logger(ScenariosJob.name);
+  /** Завершения срабатываний, ждущие проверку порта: журнал и сообщение дописываются, не задерживая другие ноды. */
+  private inflight = new Set<Promise<unknown>>();
+  /** Ноды, у которых сейчас идёт фоновая проверка порта для условия «TCP недоступен». */
+  private probing = new Set<string>();
   constructor(
     @Inject(DB) private db: Db,
     private store: ScenariosStore,
@@ -229,6 +257,22 @@ export class ScenariosJob {
         );
       throw e;
     }
+  }
+  /** Дождаться фоновых проверок и завершений срабатываний (тесты, остановка). */
+  async idle() {
+    while (this.inflight.size) await Promise.allSettled([...this.inflight]);
+  }
+  private track(work: Promise<unknown>) {
+    const p = work
+      .catch((e) => this.log.warn(e instanceof Error ? e.message : 'Сценарий не завершён'))
+      .finally(() => this.inflight.delete(p));
+    this.inflight.add(p);
+  }
+  /** Проверка порта для условия — в фоне: результат подхватит следующий снимок, остальные сценарии не ждут. */
+  private probeLater(panel: string, node: RemnawaveNode, cfg: MonitoringSettings) {
+    if (this.probing.has(node.uuid)) return;
+    this.probing.add(node.uuid);
+    this.track(this.tcpReport(panel, node, cfg, true).finally(() => this.probing.delete(node.uuid)));
   }
   // Сценарии смотрят свежий снимок раз в 5 секунд: без нового снимка проход почти ничего не стоит.
   @Interval(5000) async tick() {
@@ -297,6 +341,22 @@ export class ScenariosJob {
     });
     return report;
   }
+  /** Сохранённая проверка порта ноды: свежая или устаревшая; для другого адреса или порта её нет. */
+  private async tcpKnown(
+    panel: string,
+    node: RemnawaveNode,
+    cfg: MonitoringSettings,
+  ): Promise<{ report: TcpCheckReport; fresh: boolean } | null> {
+    const cached = await this.store.read<{ target: string; report: unknown }>(
+      `scenarios.tcp.${this.store.scope(panel)}.${node.uuid}`,
+    );
+    const parsed = tcpCheckReportSchema.safeParse(cached?.report);
+    if (!parsed.success || cached?.target !== `${node.address}:${cfg.checkHostPort}:${node.port ?? ''}`)
+      return null;
+    const age = Date.now() - Date.parse(parsed.data.checkedAt),
+      ttl = parsed.data.verdict === 'unknown' ? 60000 : cfg.checkHostCooldownMinutes * 60000;
+    return { report: parsed.data, fresh: age >= 0 && age < ttl };
+  }
   private async signals(
     panel: string,
     rule: Scenario,
@@ -307,9 +367,12 @@ export class ScenariosJob {
   ) {
     const signals = scenarioSignals(node, rows);
     if (scenarioConditions(rule).includes('tcp_unreachable')) {
-      const report = cfg.checkHostEnabled ? await this.tcpReport(panel, node, cfg, probe) : null;
-      signals.tcp_unreachable =
-        report?.verdict === 'russia_unreachable' || report?.verdict === 'port_unreachable';
+      const known = cfg.checkHostEnabled ? await this.tcpKnown(panel, node, cfg) : null;
+      // Устаревшая проверка того же адреса действует, пока новая идёт в фоне: условие не «мигает» раз в 5 минут
+      // и отсчёт «держится» не сбрасывается.
+      if (cfg.checkHostEnabled && probe && !known?.fresh) this.probeLater(panel, node, cfg);
+      const verdict = known?.report.verdict;
+      signals.tcp_unreachable = verdict === 'russia_unreachable' || verdict === 'port_unreachable';
     }
     return signals;
   }
@@ -357,8 +420,10 @@ export class ScenariosJob {
             state.since = null;
             state.latched = false;
           } else state.since ??= Math.min(stamp, Date.now());
+          // Здоровые опросы считаем сразу, а не после закрытия «нода не на связи» (раньше подтверждение шло
+          // дважды). Пока открыто падение онлайна или недоступен порт — Host не возвращаем: нода ещё не в порядке.
           state.healthySamples =
-            !condition && node.isConnected && !issue(node.uuid, ['node_down', 'node_blocked', 'server_down'])
+            !condition && node.isConnected && !issue(node.uuid, ['node_blocked', 'server_down'])
               ? (state.healthySamples ?? 0) + 1
               : 0;
           state.stamp = stamp;
@@ -383,25 +448,20 @@ export class ScenariosJob {
             const hostActions = rule.actions.filter(
               (a): a is 'hide_host' | 'rename_host' => a === 'hide_host' || a === 'rename_host',
             );
-            for (const action of rule.actions.filter((a) => a !== 'notify' && a !== hostActions[1]))
+            const firedAt = Date.now();
+            // Проверка порта идёт параллельно и не задерживает смену Host; её итог встанет в журнал под своим номером.
+            const tcpCheck = rule.actions.includes('check_tcp')
+              ? this.tcpReport(panel, node, cfg, true, 60000).then(
+                  (report) => ({ report }),
+                  (e: unknown) => ({ error: e instanceof Error ? e.message : 'проверка не выполнена' }),
+                )
+              : null;
+            for (const action of rule.actions.filter(
+              (a) => a !== 'notify' && a !== 'check_tcp' && a !== hostActions[1],
+            ))
               try {
                 const current = await this.remna.status();
                 if (current.domain !== panel || current.error) throw new Error('Подключение изменилось');
-                if (action === 'check_tcp') {
-                  const report = await this.tcpReport(panel, node, cfg, true, 60000);
-                  if (!report) throw new Error('TCP-проверки выключены в настройках');
-                  const word = lowerFirst(TCP_VERDICT_LABELS[report.verdict]),
-                    detail = tcpReachSummary(report);
-                  steps.push({
-                    action,
-                    n: n(action),
-                    tone:
-                      report.verdict === 'reachable' ? 'ok' : report.verdict === 'unknown' ? 'warn' : 'crit',
-                    word,
-                    detail,
-                    text: `TCP ${word}${detail ? `: ${detail}` : ''}`,
-                  });
-                }
                 if (action === 'record_event') {
                   // Событие заводит мониторинг; сценарий дописывает в него, что сделал. Нет события — только «Метрики».
                   incident = (await this.incidents?.forNode(node.uuid)) ?? null;
@@ -445,7 +505,12 @@ export class ScenariosJob {
                 });
                 // Шаги после него не выполнялись — журнал так и скажет.
                 for (const rest of rule.actions)
-                  if (rest !== 'notify' && n(rest) > n(action) && !steps.some((x) => x.action === rest))
+                  if (
+                    rest !== 'notify' &&
+                    rest !== 'check_tcp' &&
+                    n(rest) > n(action) &&
+                    !steps.some((x) => x.action === rest)
+                  )
                     steps.push({
                       action: rest,
                       n: n(rest),
@@ -457,54 +522,60 @@ export class ScenariosJob {
                     });
                 break;
               }
-            // Уведомление уходит и после ошибки шага — журнал скажет, ушло ли оно на самом деле.
-            if (rule.actions.includes('notify'))
-              steps.push(notifyStep(n('notify'), await this.notify.telegramOutlook('scenario')));
-            steps.sort((a, b) => (a.n ?? 0) - (b.n ?? 0));
-            const summary = steps
-              .filter((x) => !x.skipped && x.action !== 'notify')
-              .map((x) => x.text)
-              .join('; ');
-            await this.event(panel, rule, node, summary, runId);
-            await this.store.addRun(panel, {
-              id: runId,
-              ruleId: rule.id,
-              ruleName: rule.name,
-              t: Date.now(),
-              nodeUuid: node.uuid,
-              nodeName: node.name,
-              kind: 'run',
-              title: `Сработал: ${conditionPhrase(rule)}, ${rule.holdMinutes} мин`,
-              condition: conditionPhrase(rule),
-              holdMinutes: rule.holdMinutes,
-              steps,
-              failed,
-            });
-            if (incident)
-              await this.incidents?.note(
-                incident.id,
-                `Сценарий «${rule.name}»: ${lowerFirst(summary)}`,
-                failed ? 'failed' : 'applied',
-              );
-            if (rule.actions.includes('notify'))
-              await this.notify.push({
-                severity: 'warn',
-                title: `Сценарий: ${rule.name}`,
-                // Сценарий только с уведомлением: шагов нет — строки «Результат:» без значения тоже нет.
-                body: [
-                  `Нода: ${node.name}`,
-                  `Условие: ${scenarioConditionLabel(rule)}`,
-                  summary && `Результат: ${summary}`,
-                ]
-                  .filter(Boolean)
-                  .join('\n'),
-                link: { to: '/scenarios', label: 'Открыть сценарии' },
-                telegram: {
-                  event: 'scenario',
-                  serverKey: `node:${node.uuid}`,
-                  server: { name: node.name, host: node.address },
-                },
+            const finish = async () => {
+              if (tcpCheck) steps.push(tcpStep(n('check_tcp'), await tcpCheck));
+              // Уведомление уходит и после ошибки шага — журнал скажет, ушло ли оно на самом деле.
+              if (rule.actions.includes('notify'))
+                steps.push(notifyStep(n('notify'), await this.notify.telegramOutlook('scenario')));
+              steps.sort((a, b) => (a.n ?? 0) - (b.n ?? 0));
+              const summary = steps
+                .filter((x) => !x.skipped && x.action !== 'notify')
+                .map((x) => x.text)
+                .join('; ');
+              await this.event(panel, rule, node, summary, runId);
+              await this.store.addRun(panel, {
+                id: runId,
+                ruleId: rule.id,
+                ruleName: rule.name,
+                t: firedAt,
+                nodeUuid: node.uuid,
+                nodeName: node.name,
+                kind: 'run',
+                title: `Сработал: ${conditionPhrase(rule)}, ${rule.holdMinutes} мин`,
+                condition: conditionPhrase(rule),
+                holdMinutes: rule.holdMinutes,
+                steps,
+                failed,
               });
+              if (incident)
+                await this.incidents?.note(
+                  incident.id,
+                  `Сценарий «${rule.name}»: ${lowerFirst(summary)}`,
+                  failed ? 'failed' : 'applied',
+                );
+              if (rule.actions.includes('notify'))
+                await this.notify.push({
+                  severity: 'warn',
+                  title: `Сценарий: ${rule.name}`,
+                  // Сценарий только с уведомлением: шагов нет — строки «Результат:» без значения тоже нет.
+                  body: [
+                    `Нода: ${node.name}`,
+                    `Условие: ${scenarioConditionLabel(rule)}`,
+                    summary && `Результат: ${summary}`,
+                  ]
+                    .filter(Boolean)
+                    .join('\n'),
+                  link: { to: '/scenarios', label: 'Открыть сценарии' },
+                  telegram: {
+                    event: 'scenario',
+                    serverKey: `node:${node.uuid}`,
+                    server: { name: node.name, host: node.address },
+                  },
+                });
+            };
+            // Ждём проверку порта — дописываем в фоне: следующие ноды не стоят в очереди за Check-Host.
+            if (tcpCheck) this.track(finish());
+            else await finish();
           }
           // Возврат Host — когда нода здорова нужное число опросов подряд; не вышло (нет ответа) — на следующем опросе.
           // Состояния до 0.93.0 без отметки проверяются один раз.
@@ -514,7 +585,7 @@ export class ScenariosJob {
             state.lastRun > 0 &&
             (state.healthySamples ?? 0) >= cfg.recoverySamples &&
             node.isConnected &&
-            !issue(node.uuid, ['node_down', 'node_blocked', 'server_down'])
+            !issue(node.uuid, ['node_blocked', 'server_down'])
           )
             state.pendingRestore = (await this.restore(panel, scope, rule, node)) === 'retry';
           await this.store.write(stateKey, state);

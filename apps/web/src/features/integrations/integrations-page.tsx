@@ -238,11 +238,14 @@ function ConnectionCard({
 export function IntegrationsPage({
   kind,
   initialNode,
+  initialRecord,
   onInitialNodeUsed,
 }: {
   kind: 'dpi' | 'dns' | 'bschecker';
   /** Нода из совета Ассистента: открыть проверку сразу с ней. */
   initialNode?: string;
+  /** DNS-запись из события ноды: открыть её окно сразу. */
+  initialRecord?: string | undefined;
   onInitialNodeUsed?: () => void;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -274,7 +277,7 @@ export function IntegrationsPage({
               onInitialNodeUsed={onInitialNodeUsed}
             />
           ) : (
-            <DnsWorkspace />
+            <DnsWorkspace initialRecord={initialRecord} onInitialRecordUsed={onInitialNodeUsed} />
           )}
         </div>
         <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>

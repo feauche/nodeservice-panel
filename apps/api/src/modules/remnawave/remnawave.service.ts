@@ -1,4 +1,4 @@
-import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   REMNAWAVE_CERT_CHECK_INTERVAL_MIN,
@@ -10,8 +10,10 @@ import {
 import { errorText, problem } from '../../common/filters/problem-details.filter.js';
 import type { Env } from '../../config/env.schema.js';
 import { AuditService } from '../audit/audit.service.js';
+import { EventsService } from '../events/events.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import {
+  getJson,
   REMNAWAVE_CLIENT,
   RemnawaveApiError,
   type RemnawaveClient,
@@ -19,6 +21,18 @@ import {
   type RemnawaveProfileKind,
 } from './remnawave-client.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
+
+/** Remnawave не отвечает столько подряд — сообщение в Telegram и колокольчик. */
+const REMNAWAVE_OUTAGE_NOTIFY_MS = 2 * 60_000;
+/** Статусы нод одной строкой: на связи, выключена, подключается. Онлайн и метрики сюда не входят. */
+export function nodeStatusKey(
+  nodes: { uuid: string; isConnected: boolean; isDisabled: boolean; isConnecting?: boolean }[],
+): string {
+  return nodes
+    .map((n) => `${n.uuid}:${Number(n.isConnected)}${Number(n.isDisabled)}${Number(Boolean(n.isConnecting))}`)
+    .sort()
+    .join('|');
+}
 
 const HIDDEN = '[скрыто]';
 const SECRET_FIELDS = new Set([
@@ -127,7 +141,10 @@ export class RemnawaveService {
     private readonly audit: AuditService,
     private readonly config: ConfigService<Env, true>,
     private readonly notifications: NotificationsService,
+    @Optional() private readonly events?: EventsService,
   ) {}
+  /** Идущая перепроверка: второй вызов ждёт её, а не запускает параллельную запись снимка. */
+  private syncing: Promise<void> | null = null;
 
   /** J10: SNI и порт ноды для проверки блокировки — только когда проверка реально запускается. */
   async nodeInbound(nodeUuid: string): Promise<RemnawaveNodeInbound | null> {
@@ -306,18 +323,57 @@ export class RemnawaveService {
 
   /** Плановая перепроверка (джоба): тихо пишет ошибку в снимок, не роняет и не шумит в Журнале на каждый тик. */
   async syncQuiet(timeoutMs?: number): Promise<void> {
+    this.syncing ??= this.syncQuietOnce(timeoutMs).finally(() => {
+      this.syncing = null;
+    });
+    return this.syncing;
+  }
+  /**
+   * Живая сверка, пока панель открыта: один лёгкий запрос нод. Статус какой-то ноды в Remnawave уже другой —
+   * сразу полная перепроверка, и открытые страницы узнают об этом без ожидания своего опроса.
+   */
+  async liveCheck(timeoutMs: number): Promise<void> {
+    const creds = await this.store.credentials();
+    const snapshot = await this.store.snapshot();
+    if (!creds || !snapshot || snapshot.error || this.syncing) return;
+    try {
+      const raw = await getJson(`https://${creds.domain}/api/nodes`, creds.apiKey, undefined, timeoutMs);
+      const live = Array.isArray(raw.response) ? (raw.response as Record<string, unknown>[]) : [];
+      if (!live.length) return;
+      if (
+        nodeStatusKey(
+          live.map((n) => ({
+            uuid: String(n.uuid),
+            isConnected: Boolean(n.isConnected),
+            isDisabled: Boolean(n.isDisabled),
+            isConnecting: Boolean(n.isConnecting),
+          })),
+        ) !== nodeStatusKey(snapshot.nodes)
+      )
+        await this.syncQuiet(timeoutMs);
+    } catch {
+      /* Сверка — подсказка; ошибку связи покажет плановая перепроверка. */
+    }
+  }
+  private async syncQuietOnce(timeoutMs?: number): Promise<void> {
     const creds = await this.store.credentials();
     if (!creds) return;
     const before = await this.store.snapshot();
     const wasOk = before ? !before.error : true;
     try {
       await this.sync(creds.domain, creds.apiKey, timeoutMs);
+      const after = await this.store.snapshot();
+      // Нода упала или поднялась — открытые страницы перечитают ноды сразу, а не через свои 15 секунд.
+      if (after && nodeStatusKey(after.nodes) !== nodeStatusKey(before?.nodes ?? []))
+        this.events?.emit({ type: 'nodes', data: { at: after.checkedAt ?? new Date().toISOString() } });
     } catch (err) {
       const message = errorText(err);
       const attemptedAt = new Date().toISOString();
       const failureSince = before?.failureSince ?? attemptedAt;
+      // Две минуты подряд без ответа — сообщаем: обновление Remnawave обычно укладывается в минуту.
       const shouldNotify =
-        !before?.outageNotified && Date.parse(attemptedAt) - Date.parse(failureSince) >= 5 * 60_000;
+        !before?.outageNotified &&
+        Date.parse(attemptedAt) - Date.parse(failureSince) >= REMNAWAVE_OUTAGE_NOTIFY_MS;
       await this.store.updateSnapshot({
         checkedAt: before?.checkedAt ?? attemptedAt,
         lastAttemptAt: attemptedAt,
@@ -340,7 +396,7 @@ export class RemnawaveService {
           .push({
             severity: 'warn',
             title: 'Remnawave не отвечает',
-            body: `Больше пяти минут панель не может прочитать ${creds.domain}. Онлайн нод и резкие падения сейчас не отслеживаются. Причина: ${message}`,
+            body: `Больше двух минут панель не может прочитать ${creds.domain}. Онлайн нод и резкие падения сейчас не отслеживаются. Причина: ${message}`,
             link: { to: '/nodes', label: 'Открыть Remnawave' },
             telegram: { event: 'panel_health' },
           })

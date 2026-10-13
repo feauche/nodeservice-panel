@@ -38,6 +38,8 @@ function fixture(
   } = {},
 ) {
   const data = new Map<string, unknown>();
+  /** Открытые события нод, как их видит сценарий (node_uuid, kind). */
+  let incidentRows: Array<{ node_uuid: string; kind: string }> = [];
   let rules = [{ ...rule }],
     current = {
       domain: 'panel.test',
@@ -84,7 +86,7 @@ function fixture(
     notify = { push: vi.fn(), telegramOutlook: vi.fn(async () => opts.telegram ?? 'send') },
     tcp = { checkNode: vi.fn() };
   const job = new ScenariosJob(
-    { execute: async () => ({ rows: [] }) } as never,
+    { execute: async () => ({ rows: incidentRows }) } as never,
     store as never,
     { status: async () => current } as never,
     { credentials: async () => ({ domain: 'panel.test', apiKey: 'secret' }) } as never,
@@ -122,6 +124,9 @@ function fixture(
     current,
     setRules: (r: typeof rules) => {
       rules = r;
+    },
+    setIncidents: (rows: typeof incidentRows) => {
+      incidentRows = rows;
     },
   };
 }
@@ -643,5 +648,139 @@ describe('Сценарии: реальные правила владения Hos
         detail: 'у ноды только общие Host (1) — их не трогаем',
       }),
     ]);
+  });
+  /** Опросы раз в минуту с i-й по j-ю минуту от start. */
+  async function polls(f: ReturnType<typeof fixture>, start: number, from: number, to: number) {
+    for (let i = from; i <= to; i++) {
+      vi.setSystemTime(start + i * 60000);
+      f.current.checkedAt = new Date().toISOString();
+      await f.job.run();
+    }
+  }
+  it('Host возвращается по своим здоровым опросам, не дожидаясь закрытия «нода не на связи»; при падении онлайна — ждёт', async () => {
+    vi.useFakeTimers();
+    const start = Date.parse('2026-10-12T00:00:00Z');
+    const f = fixture();
+    await polls(f, start, 0, 6);
+    expect(f.calls).toHaveLength(1);
+    f.current.nodes[0].isConnected = true;
+    // Событие «нода не на связи» ещё открыто — его закроет мониторинг своими опросами; Host ждать его не должен.
+    f.setIncidents([{ node_uuid: node.uuid, kind: 'node_down' }]);
+    await polls(f, start, 7, 8);
+    expect(f.calls).toHaveLength(1);
+    await polls(f, start, 9, 9);
+    expect(f.calls).toHaveLength(2);
+
+    const g = fixture();
+    await polls(g, start, 0, 6);
+    g.current.nodes[0].isConnected = true;
+    // Нода на связи, но открыто падение онлайна: пользователей обратно не отправляем.
+    g.setIncidents([{ node_uuid: node.uuid, kind: 'node_blocked' }]);
+    await polls(g, start, 7, 11);
+    expect(g.calls).toHaveLength(1);
+    g.setIncidents([]);
+    await polls(g, start, 12, 14);
+    expect(g.calls).toHaveLength(2);
+  });
+  it('проверка порта не задерживает смену Host; не вышла — замечание, остальные шаги выполнены', async () => {
+    vi.useFakeTimers();
+    const start = Date.parse('2026-10-12T00:00:00Z');
+    const f = fixture();
+    let release: (v: unknown) => void = () => undefined;
+    f.tcp.checkNode.mockImplementation(() => new Promise((r) => (release = r)));
+    f.setRules([
+      { ...rule, holdMinutes: 1, renameText: '⚠️', actions: ['check_tcp', 'rename_host', 'notify'] } as never,
+    ]);
+    await polls(f, start, 0, 2);
+    // Check-Host ещё отвечает, а имя Host уже изменено; журнал и сообщение дождутся проверки.
+    expect(f.calls).toHaveLength(1);
+    expect(f.store.addRun).not.toHaveBeenCalled();
+    release({
+      verdict: 'reachable',
+      checkedAt: new Date().toISOString(),
+      target: '8.8.8.8:5492',
+      link: null,
+      observations: [],
+      error: null,
+    });
+    await f.job.idle();
+    const run = (
+      f.store.addRun.mock.calls.at(-1) as unknown as [
+        string,
+        { steps: Array<Record<string, unknown>>; failed: boolean },
+      ]
+    )[1];
+    expect(run.steps.map((x) => [x.n, x.action])).toEqual([
+      [1, 'check_tcp'],
+      [2, 'rename_host'],
+      [3, 'notify'],
+    ]);
+    expect(run.steps[0]).toMatchObject({ tone: 'ok' });
+
+    const g = fixture();
+    g.tcp.checkNode.mockRejectedValue(new Error('Check-Host не ответил'));
+    g.setRules([
+      { ...rule, holdMinutes: 1, renameText: '⚠️', actions: ['check_tcp', 'rename_host'] } as never,
+    ]);
+    await polls(g, start, 0, 2);
+    await g.job.idle();
+    expect(g.calls).toHaveLength(1);
+    const failed = (
+      g.store.addRun.mock.calls.at(-1) as unknown as [
+        string,
+        { steps: Array<Record<string, unknown>>; failed: boolean },
+      ]
+    )[1];
+    expect(failed.failed).toBe(false);
+    expect(failed.steps[0]).toMatchObject({
+      action: 'check_tcp',
+      tone: 'warn',
+      word: 'не проверили',
+      detail: 'Check-Host не ответил',
+    });
+    expect(failed.steps[1]).toMatchObject({ action: 'rename_host', word: 'изменено' });
+  });
+  it('условие «TCP недоступен» проверяется в фоне: сценарии не ждут Check-Host', async () => {
+    const f = fixture();
+    f.setRules([{ ...rule, conditions: ['tcp_unreachable'], conditionMode: 'all' } as never]);
+    f.tcp.checkNode.mockImplementation(() => new Promise(() => undefined));
+    // Проверка не закончится никогда — проход всё равно завершается.
+    await f.job.run();
+    expect(f.tcp.checkNode).toHaveBeenCalledTimes(1);
+    expect(f.calls).toEqual([]);
+  });
+  it('устаревшая проверка порта действует, пока новая идёт в фоне: отсчёт «держится» не сбрасывается', async () => {
+    vi.useFakeTimers();
+    const start = Date.parse('2026-10-12T00:00:00Z');
+    vi.setSystemTime(start);
+    const f = fixture();
+    f.setRules([
+      { ...rule, conditions: ['offline', 'tcp_unreachable'], conditionMode: 'all', holdMinutes: 10 } as never,
+    ]);
+    // Проверка была 20 минут назад (запас — 15): устарела, но тот же адрес и порт.
+    f.data.set(`scenarios.tcp.scope.${node.uuid}`, {
+      target: `${node.address}:5492:`,
+      report: {
+        verdict: 'port_unreachable',
+        checkedAt: new Date(start - 20 * 60000).toISOString(),
+        target: `${node.address}:5492`,
+        link: null,
+        observations: [],
+        error: null,
+      },
+    });
+    f.data.set(`scenarios.state.scope.${rule.id}.${node.uuid}`, {
+      since: start - 9 * 60000,
+      stamp: start - 15000,
+      latched: false,
+      lastRun: 0,
+    });
+    f.tcp.checkNode.mockImplementation(() => new Promise(() => undefined));
+    await f.job.run();
+    // Новая проверка ушла в фон, а отсчёт «держится» (9 минут из 10) сохранился.
+    expect(f.tcp.checkNode).toHaveBeenCalledTimes(1);
+    expect((f.data.get(`scenarios.state.scope.${rule.id}.${node.uuid}`) as { since: number }).since).toBe(
+      start - 9 * 60000,
+    );
   });
 });

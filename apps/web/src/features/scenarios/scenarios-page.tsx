@@ -34,7 +34,7 @@ const make = (): Scenario => ({
   renameMode: 'append',
   renameText: '',
   hostBindings: [],
-  autoRestore: false,
+  autoRestore: true,
   cooldownMinutes: 30,
 });
 

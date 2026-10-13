@@ -155,7 +155,9 @@ export class NodeMetricsService {
     if (!domain) return null;
     const historyKey = `${domain}:${minutes}`;
     let local = this.historyCache.get(historyKey);
-    if (!local || Date.now() - local.at >= 60000) {
+    // Час — по минутам: новая минута должна появиться на графике сразу (кэш 15 с, график перечитывается так же);
+    // сутки и дольше меняются медленно — минуты кэша хватает.
+    if (!local || Date.now() - local.at >= (minutes <= 60 ? 15_000 : 60_000)) {
       const first = await this.db.execute(
         sql`SELECT min(sampled_at) AS first FROM remna_metric_samples WHERE panel=${domain}`,
       );
@@ -225,6 +227,10 @@ export class NodeMetricsService {
     return { ...local, panel: domain };
   }
 
+  /** Обычный онлайн ноды в этот час суток (10-й и 90-й процентили за 7 дней); мало истории — null. */
+  async typicalOnline(domain: string, uuid: string): Promise<{ low: number; high: number } | null> {
+    return (await this.onlineTypical(domain)).onlineTypicalByNode[uuid] ?? null;
+  }
   /**
    * Обычный онлайн в этот час суток — у парка и у каждой ноды: 10-й и 90-й процентили замеров за 7 дней в тот же
    * час. Меньше трёх дней истории — не знаем, что обычно.

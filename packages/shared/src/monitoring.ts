@@ -14,8 +14,8 @@ export const monitoringSettingsSchema = z.object({
   recoveryPercent: integer(30, 100),
   cpuEnabled: z.boolean(),
   /**
-   * Порог нагрузки на ядро: средняя нагрузка за 15 минут, делённая на число ядер. Процента процессора Remnawave
-   * не отдаёт, поэтому предупреждение — по нагрузке (1,0 — ядро занято полностью).
+   * Порог нагрузки на ядро: средняя нагрузка за минуту, делённая на число ядер, — как в строке ноды. Процента
+   * процессора Remnawave не отдаёт, поэтому предупреждение — по нагрузке (1,0 — ядро занято полностью).
    */
   loadPerCore: z.number().min(0.5).max(10),
   memoryEnabled: z.boolean(),
@@ -29,8 +29,9 @@ export const monitoringSettingsSchema = z.object({
 });
 export type MonitoringSettings = z.infer<typeof monitoringSettingsSchema>;
 /**
- * По умолчанию — быстро (0.94.0): Remnawave сама обновляет ноды раз в 10 секунд, опрос раз в 15 секунд и четыре
- * подтверждения подряд узнают о сбое примерно за минуту. Графики пишутся по-прежнему раз в минуту.
+ * По умолчанию — быстро: Remnawave сама обновляет ноды раз в 10 секунд, опрос раз в 15 секунд и четыре
+ * подтверждения подряд узнают о сбое примерно за минуту (0.94.0); нагрузка и память — за 2 минуты (0.95.0).
+ * Графики пишутся по-прежнему раз в минуту.
  */
 export const MONITORING_DEFAULTS: MonitoringSettings = {
   enabled: true,
@@ -47,7 +48,7 @@ export const MONITORING_DEFAULTS: MonitoringSettings = {
   loadPerCore: 1.5,
   memoryEnabled: true,
   memoryPercent: 90,
-  resourceDurationMinutes: 5,
+  resourceDurationMinutes: 2,
   checkHostEnabled: true,
   checkHostHours: 24,
   checkHostPort: 5492,
@@ -65,5 +66,9 @@ export const MONITORING_DEFAULTS_BEFORE_0_94: Partial<MonitoringSettings> = {
   confirmSamples: 3,
   recoverySamples: 3,
   checkHostCooldownMinutes: 15,
+};
+/** Значения по умолчанию до 0.95.0: превышение нагрузки и памяти ждали 5 минут. */
+export const MONITORING_DEFAULTS_BEFORE_0_95: Partial<MonitoringSettings> = {
+  resourceDurationMinutes: 5,
 };
 export const monitoringSettingsUpdateSchema = monitoringSettingsSchema.partial().strict();

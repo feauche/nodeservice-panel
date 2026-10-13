@@ -198,3 +198,114 @@ describe('DNS: автозамена и связи не теряются при �
     expect(f.store.get('dns.links.panel.test')).toEqual({ r1: 'node-1', r2: 'node-2', r3: 'node-3' });
   });
 });
+
+describe('DNS: шаги в событии ноды после смены адреса', () => {
+  function moved(automatic: boolean) {
+    const noteNode = vi.fn(async () => 1);
+    const providerRequest = vi.fn().mockResolvedValue({ success: true });
+    const service = new DnsService(
+      {} as never,
+      { session: async () => ({ identity: 'account-a' }), providerRequest } as never,
+      {} as never,
+      {
+        status: async () => ({
+          connected: true,
+          error: null,
+          domain: 'panel',
+          nodes: [{ uuid: 'node-b', address: '192.0.2.2' }],
+        }),
+      } as never,
+      undefined,
+      { noteNode } as never,
+    );
+    const record = {
+      id: 'cloudflare|zone|record',
+      provider: 'cloudflare',
+      zoneId: 'zone',
+      recordId: 'record',
+      name: 'nl1.example.ru',
+      type: 'A',
+      content: '192.0.2.1',
+      nodes: [{ uuid: 'node-b', address: '192.0.2.2' }],
+    };
+    const internals = service as unknown as Record<string, unknown>;
+    internals.scope = vi.fn().mockResolvedValue('scope-a');
+    internals.keyFor = vi.fn(async (kind: string) => `dns.${kind}.panel`);
+    // Прежний адрес ноды — 192.0.2.1: в Remnawave его сменили на 192.0.2.2.
+    internals.read = vi.fn(async (key: string) =>
+      key === 'dns.addresses.panel' ? { 'node-b': '192.0.2.1' } : { [record.id]: 'node-b' },
+    );
+    internals.write = vi.fn().mockResolvedValue(undefined);
+    internals.log = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(service, 'overview').mockResolvedValue({
+      records: [record],
+      domains: [{ name: 'example.ru', provider: 'cloudflare', hosts: [] }],
+      errors: [],
+    } as never);
+    vi.spyOn(service, 'settings').mockResolvedValue({
+      automaticNodes: [],
+      automaticRecords: automatic ? [record.id] : [],
+    });
+    return { service, noteNode, providerRequest, record };
+  }
+  it('автозамена включена: запись обновляется, в событии «обновлена автоматически»; тот же шаг дважды не пишется', async () => {
+    const f = moved(true);
+    await f.service.runTick();
+    expect(f.providerRequest).toHaveBeenCalledOnce();
+    expect(f.noteNode).toHaveBeenCalledWith(
+      'node-b',
+      expect.objectContaining({
+        step: 'dns',
+        tone: 'ok',
+        action: 'DNS-запись nl1.example.ru обновлена автоматически',
+        detail: '192.0.2.1 → 192.0.2.2',
+      }),
+    );
+    await f.service.runTick();
+    expect(f.noteNode).toHaveBeenCalledOnce();
+  });
+  it('автозамена не включена: «ведёт на старый адрес», что сделать, и кнопка к записи', async () => {
+    const f = moved(false);
+    await f.service.runTick();
+    expect(f.providerRequest).not.toHaveBeenCalled();
+    expect(f.noteNode).toHaveBeenCalledWith(
+      'node-b',
+      expect.objectContaining({
+        tone: 'warn',
+        action: 'DNS-запись nl1.example.ru ведёт на старый адрес',
+        detail:
+          'Автозамена для этой записи не включена. Замените 192.0.2.1 на 192.0.2.2 вручную или включите автозамену — дальше событие закроется само.',
+        link: {
+          label: 'Открыть запись в DNS-интеграциях',
+          to: '/integrations/dns',
+          search: { record: 'cloudflare|zone|record' },
+        },
+      }),
+    );
+  });
+  it('сервис отказал: «не удалось обновить» с причиной по-русски, повтор через минуту', async () => {
+    const f = moved(true);
+    f.providerRequest.mockResolvedValue({ success: false });
+    await f.service.runTick();
+    expect(f.noteNode).toHaveBeenCalledWith(
+      'node-b',
+      expect.objectContaining({
+        tone: 'crit',
+        action: 'Не удалось обновить DNS-запись nl1.example.ru',
+        detail: 'DNS-сервис отклонил изменение. Повторю через минуту; запись можно заменить вручную.',
+      }),
+    );
+  });
+  it('ручная замена в «DNS интеграциях» — строка «обновлена вручную» в событии ноды', async () => {
+    const f = moved(false);
+    await f.service.apply({ recordId: f.record.id, nodeUuid: 'node-b', expected: '192.0.2.1' });
+    expect(f.noteNode).toHaveBeenCalledWith(
+      'node-b',
+      expect.objectContaining({
+        tone: 'ok',
+        action: 'DNS-запись nl1.example.ru обновлена вручную',
+        detail: '192.0.2.1 → 192.0.2.2',
+      }),
+    );
+  });
+});

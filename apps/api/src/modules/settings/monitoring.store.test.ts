@@ -34,18 +34,22 @@ describe('MonitoringStore upgrade compatibility', () => {
       expect((await store.get()).enabled).toBe(false);
       expect((await store.get()).enabled).toBe(false);
       expect(insert).toHaveBeenCalledOnce();
-      expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).toEqual({
-        ...MONITORING_DEFAULTS,
-        enabled: false,
-      });
+      // В записи — только отличие от значений по умолчанию и версия.
+      expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).toEqual({ enabled: false, _v: 3 });
       expect(rows.get('settings.autochecks')).toBe(JSON.stringify(legacy));
     },
   );
   it('keeps explicit current settings, even when the old settings were disabled', async () => {
     const explicit = { ...MONITORING_DEFAULTS, enabled: true, pollSeconds: 180 };
-    const { store, insert } = setup(JSON.stringify(explicit), JSON.stringify({ metricsEnabled: false }));
+    const { store, rows, insert } = setup(
+      JSON.stringify(explicit),
+      JSON.stringify({ metricsEnabled: false }),
+    );
     expect(await store.get()).toEqual(explicit);
-    expect(insert).not.toHaveBeenCalled();
+    // Один раз запись сжимается до отличий; дальше не переписывается.
+    expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).toEqual({ pollSeconds: 180, _v: 3 });
+    await store.get();
+    expect(insert).toHaveBeenCalledOnce();
   });
   it('does not overwrite an explicit save racing the first legacy migration', async () => {
     const explicit = { ...MONITORING_DEFAULTS, enabled: true, pollSeconds: 120 };
@@ -88,6 +92,24 @@ describe('MonitoringStore upgrade compatibility', () => {
     // Сохранённое после переноса — с версией: позднее «60 секунд» вручную больше не переносится.
     await store.set({ pollSeconds: 60 });
     expect((await store.get()).pollSeconds).toBe(60);
+  });
+  it('0.95.0: 5 минут превышения из 0.94.0 переходят на 2, ручные значения 0.94.0 остаются, новые значения по умолчанию доходят', async () => {
+    const saved094 = { ...MONITORING_DEFAULTS, resourceDurationMinutes: 5, pollSeconds: 60, _v: 2 };
+    const { store, rows } = setup(JSON.stringify(saved094));
+    const got = await store.get();
+    expect(got.resourceDurationMinutes).toBe(2);
+    // «60 секунд» сохранено уже в 0.94.0 — выбрано вручную, не переносится.
+    expect(got.pollSeconds).toBe(60);
+    expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).toEqual({ pollSeconds: 60, _v: 3 });
+    // Сохранение пишет только отличия: значения по умолчанию в запись не попадают.
+    await store.set({ memoryPercent: 85, confirmSamples: MONITORING_DEFAULTS.confirmSamples });
+    expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).toEqual({
+      pollSeconds: 60,
+      memoryPercent: 85,
+      _v: 3,
+    });
+    const own = setup(JSON.stringify({ ...MONITORING_DEFAULTS, resourceDurationMinutes: 10, _v: 2 }));
+    expect((await own.store.get()).resourceDurationMinutes).toBe(10);
   });
   it('does not enable monitoring when the current record is damaged', async () => {
     expect((await setup('bad json').store.get()).enabled).toBe(false);

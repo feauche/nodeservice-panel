@@ -18,6 +18,7 @@ import { useNow } from '@/lib/use-now';
 import { cn } from '@/lib/utils';
 import { Timeline } from './incident-blocks';
 import { durationText, outcomeSentence } from './incident-format';
+import { NodeNow, RECOVERY_KINDS, RecoveryCard } from './incident-recovery';
 import {
   useAcknowledgeIncident,
   useDeleteIncident,
@@ -108,7 +109,13 @@ export function IncidentCasePage({ id }: { id: string }) {
           <span
             className={cn(
               'mt-[7px] size-2.5 flex-none self-start rounded-full',
-              inc.severity === 'crit' ? 'bg-crit' : inc.severity === 'warn' ? 'bg-warn' : 'bg-brand',
+              inc.status === 'resolved'
+                ? 'bg-ok'
+                : inc.severity === 'crit'
+                  ? 'bg-crit'
+                  : inc.severity === 'warn'
+                    ? 'bg-warn'
+                    : 'bg-brand',
             )}
             aria-hidden="true"
           />
@@ -190,6 +197,8 @@ export function IncidentCasePage({ id }: { id: string }) {
         <div className="grid grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,1fr)_300px]">
           {/* Основная колонка */}
           <div className="flex flex-col gap-4 px-5 py-4 md:border-r md:border-border">
+            {/* Доступность ноды: сверху шаги восстановления — что готово, чего ждём, что сделать (витрина, B). */}
+            {RECOVERY_KINDS.includes(inc.kind) && inc.nodeUuid && <RecoveryCard inc={inc} node={node} />}
             {/* Текст бывает блоками по строкам (падение онлайна: откуда проверяли, вывод) — строки сохраняем. */}
             {inc.diagnostics ? (
               <TcpResults report={inc.diagnostics.report} online={inc.diagnostics.online} />
@@ -200,17 +209,19 @@ export function IncidentCasePage({ id }: { id: string }) {
               <h3 className="mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
                 Что происходило
               </h3>
-              <Timeline events={inc.timeline} />
+              <Timeline events={inc.timeline} severity={inc.severity} />
             </section>
           </div>
 
           {/* Правая колонка: короткие значения, цепочка списком — ничего не переносится «в кашу» */}
           <aside className="flex flex-col gap-5 border-t border-border bg-bg-2 px-5 py-4 md:border-t-0">
-            <section>
-              <h3 className="mb-2.5 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
-                Сигналы в момент сбоя
-              </h3>
-              {inc.snapshot ? (
+            {inc.nodeUuid && <NodeNow inc={inc} node={node} />}
+            {/* Снимок от агента на сервере — только у старых событий, когда агенты ещё были. */}
+            {inc.snapshot && (
+              <section>
+                <h3 className="mb-2.5 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
+                  Сигналы в момент сбоя
+                </h3>
                 <dl className="text-[12.5px]">
                   <Kv
                     k="Контейнер ноды"
@@ -221,13 +232,8 @@ export function IncidentCasePage({ id }: { id: string }) {
                   <Kv k="Память" v={pct(inc.snapshot.mem)} />
                   <Kv k="Диск" v={pct(inc.snapshot.disk)} />
                 </dl>
-              ) : (
-                <p className="text-[12.5px] leading-snug text-text-3">
-                  Отдельный снимок ресурсов отсутствует. Данные TCP-проверки показаны в описании, если
-                  проверка выполнялась.
-                </p>
-              )}
-            </section>
+              </section>
+            )}
             <section>
               <h3 className="mb-2.5 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
                 Похожие

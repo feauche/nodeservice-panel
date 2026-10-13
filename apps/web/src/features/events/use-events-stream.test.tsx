@@ -58,8 +58,9 @@ describe('useEventsStream', () => {
     act(() => vi.advanceTimersByTime(1_000));
     expect(EventSourceStub.instances).toHaveLength(2);
     act(() => EventSourceStub.instances[1]?.onopen?.());
-    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledTimes(2);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['incidents'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['nodes', 'status'] });
 
     hook.unmount();
     expect(EventSourceStub.instances[1]?.closed).toBe(true);
@@ -78,7 +79,7 @@ describe('useEventsStream: только события', () => {
     vi.unstubAllGlobals();
   });
 
-  it('слушает только «incident»: серверов, переименований и хода Ассистента больше нет', () => {
+  it('слушает «incident» и «nodes»: серверов, переименований и хода Ассистента больше нет', () => {
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, 'invalidateQueries').mockResolvedValue();
     const wrapper = ({ children }: { children: ReactNode }) => (
@@ -86,10 +87,17 @@ describe('useEventsStream: только события', () => {
     );
     const hook = renderHook(() => useEventsStream(), { wrapper });
     const stream = EventSourceStub.instances[0];
-    expect([...(stream?.listeners.keys() ?? [])]).toEqual(['incident']);
+    expect([...(stream?.listeners.keys() ?? [])]).toEqual(['incident', 'nodes']);
     act(() => stream?.listeners.get('incident')?.(new Event('incident')));
     act(() => vi.advanceTimersByTime(300));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['incidents'] });
+    // Нода упала в Remnawave: статус в списке перечитывается сразу, несколько событий подряд — одним запросом.
+    invalidate.mockClear();
+    act(() => stream?.listeners.get('nodes')?.(new Event('nodes')));
+    act(() => stream?.listeners.get('nodes')?.(new Event('nodes')));
+    act(() => vi.advanceTimersByTime(300));
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['nodes', 'status'] });
     hook.unmount();
   });
 });

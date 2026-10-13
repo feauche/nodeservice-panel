@@ -17,7 +17,7 @@ export const Route = createFileRoute('/incidents_/$id')({
 function IncidentCaseRoute() {
   const { id } = Route.useParams();
   return (
-    <AppShell title="Событие" subtitle="Хронология и сигналы в момент сбоя">
+    <AppShell title="Событие" subtitle="Что случилось, шаги восстановления и хронология">
       <IncidentCasePage id={id} />
     </AppShell>
   );

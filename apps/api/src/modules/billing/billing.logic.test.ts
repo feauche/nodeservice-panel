@@ -117,6 +117,13 @@ describe('billing.logic', () => {
     expect(dueInWords(new Date('2026-09-29T14:00:00Z'), now)).toBe('через 5 часов');
     expect(dueInWords(new Date('2026-09-26T08:00:00Z'), now)).toBe('просрочено на 3 дня');
     expect(dueInWords(new Date('2026-09-28T08:00:00Z'), now)).toBe('просрочено на 1 день');
+    // Меньше часа — минутами: «только что» — лишь первая минута (было: 52 минуты — «только что»).
+    expect(dueInWords(new Date('2026-09-29T08:08:00Z'), now)).toBe('просрочено на 52 минуты');
+    expect(dueInWords(new Date('2026-09-29T08:39:00Z'), now)).toBe('просрочено на 21 минуту');
+    expect(dueInWords(new Date('2026-09-29T08:59:30Z'), now)).toBe('просрочено только что');
+    expect(dueInWords(new Date('2026-09-29T07:55:00Z'), now)).toBe('просрочено на 1 час');
+    expect(dueInWords(new Date('2026-09-29T09:40:00Z'), now)).toBe('через 40 минут');
+    expect(dueInWords(new Date('2026-09-29T09:00:30Z'), now)).toBe('меньше чем через минуту');
   });
 
   it('даты будущих оплат: просроченная — сейчас, дальше по периоду; разовая — один раз', () => {

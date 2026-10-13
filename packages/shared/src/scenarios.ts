@@ -16,14 +16,14 @@ export const scenarioSchema = z
       .max(3)
       .default([]),
     conditionMode: z.enum(['all', 'any']).default('all'),
-    holdMinutes: z.number().int().min(1).max(60).default(5),
+    holdMinutes: z.number().int().min(1).max(60).default(1),
     actions: z
       .array(z.enum(['check_tcp', 'record_event', 'notify', 'hide_host', 'rename_host']))
       .min(1)
       .max(5),
     renameMode: z.enum(['replace', 'prepend', 'append']).default('append'),
     renameText: z.string().trim().max(200).default(''),
-    autoRestore: z.boolean().default(false),
+    autoRestore: z.boolean().default(true),
     cooldownMinutes: z.number().int().min(5).max(1440).default(30),
   })
   .refine(

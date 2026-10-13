@@ -167,7 +167,12 @@ describe('справочник Ассистента', () => {
     expect(text).toContain('история прежних версий');
     expect(text).toContain(`${M.confirmSamples} опросами подряд`);
     expect(text).toContain(`не меньше чем на ${M.dropPercent} %`);
-    expect(text).toContain(`Нагрузка на ядро (средняя за 15 минут) — 1,5, память — ${M.memoryPercent} %`);
+    expect(text).toContain(
+      `Нагрузка на ядро (средняя за минуту, как в строке ноды) — 1,5, память — ${M.memoryPercent} %`,
+    );
+    // Событие следит за нодой: смена адреса и DNS-шаги описаны, закрытие — по обычному для часа онлайну.
+    expect(text).toContain('**Смена адреса ноды.**');
+    expect(text).toContain('не выше обычного для этого часа');
     expect(text).toContain('«Взять в работу»');
     expect(text).toContain('«Закрыть»');
     for (const p of PLAYBOOKS) expect(text).toContain(p.id);
