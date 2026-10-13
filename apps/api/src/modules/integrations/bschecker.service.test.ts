@@ -81,6 +81,18 @@ describe('BS Checker: стоимость и повтор без второго �
     await expect(service.preview({ ...input, operators: ['guessed-operator'] })).rejects.toThrow();
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+  it('точка каталога в незнакомом виде не ломает расчёт цены — она пропускается', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        url.includes('/operators')
+          ? json({ units: [unit, { op_key: 5, probeable: 'да' }] })
+          : json({ cost_credits: 25 }),
+      ),
+    );
+    const { service } = fixture();
+    await expect(service.preview(input)).resolves.toMatchObject({ costCredits: 25, units: [unit.op_key] });
+  });
   it('предпросмотр не вызывает платный probe; потерянный ответ повторяется с тем же UUID', async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     let probes = 0;

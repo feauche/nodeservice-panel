@@ -1,4 +1,5 @@
 import {
+  type BsFirewallCommands,
   type BsRental,
   type BsRentalTarget,
   type BsWs,
@@ -404,6 +405,16 @@ function CodeBlock({ label, code }: { label: string; code: string | null | undef
   );
 }
 
+/** Команды проверки и отката: по инструменту (ufw, nftables, «снаружи») или одной строкой — прежний вид. */
+function byTool(v: BsFirewallCommands | null | undefined): {
+  common?: string | null;
+  ufw?: string | null;
+  nftables?: string | null;
+  outside?: string | null;
+} {
+  return typeof v === 'string' ? { common: v } : (v ?? {});
+}
+
 /** «Настройки подключения» точки WebSocket: адрес для клиента, inbound для Xray, команды файрвола. Секреты. */
 function WsConnectDialog({ ws, onClose }: { ws: BsWs; onClose: () => void }) {
   const q = useQuery({
@@ -476,15 +487,30 @@ function WsConnectDialog({ ws, onClose }: { ws: BsWs; onClose: () => void }) {
               {(c.firewall?.by_port.length ?? 0) > 0 && (
                 <div className="flex flex-col gap-2.5">
                   <Kick>Открыть порт только адресам точки</Kick>
-                  {c.firewall?.by_port.map((f) => (
-                    <div key={f.port} className="flex flex-col gap-2 rounded-[12px] border border-border p-3">
-                      <b className="text-[13px] font-semibold">Порт {f.port}</b>
-                      <CodeBlock label="ufw" code={f.ufw} />
-                      <CodeBlock label="nftables" code={f.nftables} />
-                      <CodeBlock label="Проверить" code={f.check} />
-                      <CodeBlock label="Откатить" code={f.rollback} />
-                    </div>
-                  ))}
+                  {c.firewall?.by_port.map((f) => {
+                    const check = byTool(f.check);
+                    const rollback = byTool(f.rollback);
+                    return (
+                      <div
+                        key={f.port}
+                        className="flex flex-col gap-2 rounded-[12px] border border-border p-3"
+                      >
+                        <b className="text-[13px] font-semibold">Порт {f.port}</b>
+                        <CodeBlock label="ufw" code={f.ufw} />
+                        <CodeBlock label="nftables" code={f.nftables} />
+                        <CodeBlock label="Проверить" code={check.common} />
+                        <CodeBlock label="Проверить · ufw" code={check.ufw} />
+                        <CodeBlock label="Проверить · nftables" code={check.nftables} />
+                        <CodeBlock
+                          label="Проверить с другого компьютера — порт не должен отвечать"
+                          code={check.outside}
+                        />
+                        <CodeBlock label="Откатить" code={rollback.common} />
+                        <CodeBlock label="Откатить · ufw" code={rollback.ufw} />
+                        <CodeBlock label="Откатить · nftables" code={rollback.nftables} />
+                      </div>
+                    );
+                  })}
                 </div>
               )}
               {c.cert?.expires_at && (

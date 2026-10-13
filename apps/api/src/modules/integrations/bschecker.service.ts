@@ -176,7 +176,13 @@ export class BsCheckerService {
     }
     const session = await this.integrations.session('bschecker');
     const catalog = await this.request(session, '/operators?dpi=any&probeable=true');
-    const units = Array.isArray(catalog.units) ? catalog.units.map((x) => bsUnitSchema.parse(x)) : [];
+    // Точка в незнакомом виде пропускается, как в workspace(): если её выбрали — «единицы недоступны».
+    const units = Array.isArray(catalog.units)
+      ? catalog.units.flatMap((x) => {
+          const p = bsUnitSchema.safeParse(x);
+          return p.success ? [p.data] : [];
+        })
+      : [];
     const operators = [...new Set(input.operators)];
     if (operators.some((key) => !units.some((u) => u.op_key === key && u.probeable)))
       throw new BadRequestException('Выбранные единицы недоступны. Обновите список.');

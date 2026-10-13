@@ -202,9 +202,22 @@ describe('BS Checker (вариант A)', () => {
           inbound_port: 441,
           inbound: { port: 441, protocol: 'vless' },
           bridges: ['91.240.12.7'],
+          // Вид ответа на 13.10.2026: проверка и откат — по инструменту, у проверки есть «снаружи».
           firewall: {
             ips: ['91.240.12.7'],
-            by_port: [{ port: 441, ufw: 'ufw allow from 91.240.12.7 to any port 441' }],
+            by_port: [
+              {
+                port: 441,
+                ufw: 'ufw allow from 91.240.12.7 to any port 441',
+                nftables: 'systemctl restart wsin-441',
+                check: {
+                  ufw: 'ufw status numbered | grep -w 441',
+                  nftables: 'nft list table inet wsin_441',
+                  outside: 'nc -vz -w 5 2.26.101.44 441',
+                },
+                rollback: { ufw: 'ufw delete deny 441/tcp', nftables: 'systemctl disable --now wsin-441' },
+              },
+            ],
           },
         }),
       ),
@@ -221,6 +234,17 @@ describe('BS Checker (вариант A)', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Настройки подключения · WS-5' });
     expect(await within(dialog).findByText('/secret-path')).toBeVisible();
     expect(dialog).toHaveTextContent('ufw allow from 91.240.12.7 to any port 441');
+    const command = (label: string) =>
+      within(dialog)
+        .getByRole('button', { name: `Скопировать: ${label}` })
+        .closest('div')?.parentElement;
+    expect(command('Проверить · ufw')).toHaveTextContent('ufw status numbered | grep -w 441');
+    expect(command('Проверить · nftables')).toHaveTextContent('nft list table inet wsin_441');
+    expect(command('Проверить с другого компьютера — порт не должен отвечать')).toHaveTextContent(
+      'nc -vz -w 5 2.26.101.44 441',
+    );
+    expect(command('Откатить · ufw')).toHaveTextContent('ufw delete deny 441/tcp');
+    expect(command('Откатить · nftables')).toHaveTextContent('systemctl disable --now wsin-441');
     expect(dialog).toHaveTextContent('Просмотр настроек записан в «Журнал».');
   });
 });

@@ -1,5 +1,6 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, HttpException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
+import { errorText } from '../../common/filters/problem-details.filter.js';
 import { BsRentalsService } from './bs-rentals.service.js';
 
 const target = { host: '8.8.8.8', port: 443, weight: 1, backup: false };
@@ -158,5 +159,81 @@ describe('BS Checker: аренда и точки WebSocket читаются по
     await expect(service.wsPrepare('41', { exits: [exit, exit] })).rejects.toThrow('не должны повторяться');
     const ok = await service.wsPrepare('41', { exits: [exit], balancing: 'weighted' });
     expect(ok).toMatchObject({ wsId: '41', after: [exit] });
+  });
+});
+describe('BS Checker: ответ сервиса в незнакомом виде', () => {
+  // Вид ответа /v1/ws/{id}/connect на 13.10.2026: проверка и откат — по инструменту, у проверки есть «снаружи».
+  const connect = {
+    id: 5,
+    name: 'WS-5',
+    address: 'radio.example',
+    host: {
+      address: 'radio.example',
+      port: 443,
+      security: 'tls',
+      network: 'ws',
+      alpn: ['http/1.1'],
+      mux: { enabled: true, concurrency: 8 },
+    },
+    inbound_ready: true,
+    inbound_wait: null,
+    inbound_port: 441,
+    inbound: { port: 441, protocol: 'vless' },
+    inbound_by_port: [],
+    bridges: ['91.240.12.7'],
+    firewall: {
+      ips: ['91.240.12.7'],
+      by_port: [
+        {
+          port: 441,
+          exits: ['2.26.101.44'],
+          ips: ['91.240.12.7'],
+          nftables: 'systemctl restart wsin-441',
+          ufw: 'ufw allow from 91.240.12.7 to any port 441 proto tcp',
+          allow: { ufw: 'ufw allow from 91.240.12.7', firewalld: 'firewall-cmd --reload' },
+          check: {
+            nftables: 'nft list table inet wsin_441',
+            ufw: 'ufw status numbered | grep -w 441',
+            outside: 'nc -vz -w 5 2.26.101.44 441',
+          },
+          rollback: { nftables: 'systemctl disable --now wsin-441', ufw: 'ufw delete deny 441/tcp' },
+        },
+      ],
+    },
+    cert: { issued: true, expires_at: '2027-01-10T00:00:00Z', names: ['radio.example'] },
+  };
+  it('настройки подключения: проверка и откат по инструменту читаются', async () => {
+    const { service, request } = fixture();
+    request.mockResolvedValue(connect);
+    const c = await service.wsConnect('5');
+    expect(c.firewall?.by_port[0]).toMatchObject({
+      check: { ufw: 'ufw status numbered | grep -w 441', outside: 'nc -vz -w 5 2.26.101.44 441' },
+      rollback: { nftables: 'systemctl disable --now wsin-441', ufw: 'ufw delete deny 441/tcp' },
+    });
+    expect(request).toHaveBeenLastCalledWith('/ws/5/connect');
+  });
+  it('незнакомый вид — «формат изменился» (502), а не «проверьте поля» с английским текстом разбора', async () => {
+    const { service, request } = fixture();
+    const reject = async (call: Promise<unknown>) => {
+      const e = await call.then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(e).toBeInstanceOf(HttpException);
+      expect((e as HttpException).getStatus()).toBe(502);
+      return errorText(e);
+    };
+    request.mockResolvedValue({ ...connect, firewall: { by_port: 'не список' } });
+    expect(await reject(service.wsConnect('5'))).toBe(
+      'Формат настроек подключения BS Checker изменился — панель не смогла их прочитать.',
+    );
+    request.mockResolvedValue({ id: 5, exits: 'не список' });
+    expect(await reject(service.wsGet('5'))).toBe(
+      'Формат точки WebSocket BS Checker изменился — панель не смогла её прочитать.',
+    );
+    request.mockResolvedValue({ id: '1', targets: 'не список' });
+    expect(await reject(service.get('1'))).toBe(
+      'Формат точки аренды BS Checker изменился — панель не смогла её прочитать.',
+    );
   });
 });

@@ -158,6 +158,19 @@ export const bsWsChangeResultSchema = z.object({
   warnings: z.array(z.string()),
 });
 /**
+ * Команды проверки и отката порта: сервис присылает их по инструменту — { nftables, ufw }, у проверки ещё
+ * outside (с другого компьютера). Одной строкой — прежний вид.
+ */
+const bsFirewallCommandsSchema = z.union([
+  z.string(),
+  z.object({
+    nftables: z.string().nullable().optional(),
+    ufw: z.string().nullable().optional(),
+    outside: z.string().nullable().optional(),
+  }),
+]);
+export type BsFirewallCommands = z.infer<typeof bsFirewallCommandsSchema>;
+/**
  * Настройки подключения точки WebSocket — секреты (путь точки работает как пароль, в inbound — ключ сертификата).
  * Нужно право ключа «Может менять адреса точек аренды».
  */
@@ -196,8 +209,8 @@ export const bsWsConnectSchema = z.object({
             port: z.number(),
             ufw: z.string().nullable().optional(),
             nftables: z.string().nullable().optional(),
-            check: z.string().nullable().optional(),
-            rollback: z.string().nullable().optional(),
+            check: bsFirewallCommandsSchema.nullable().optional(),
+            rollback: bsFirewallCommandsSchema.nullable().optional(),
           }),
         )
         .default([]),

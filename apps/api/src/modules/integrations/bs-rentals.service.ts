@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import {
   type BsRental,
   type BsRentalTarget,
@@ -10,6 +10,8 @@ import {
   bsWsSchema,
 } from '@nodeservice/shared';
 import { eq } from 'drizzle-orm';
+import type { z } from 'zod';
+import { problem } from '../../common/filters/problem-details.filter.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { appMeta } from '../../infra/db/schema/index.js';
 import { BsCheckerService } from './bschecker.service.js';
@@ -46,12 +48,25 @@ const validId = (id: string) => {
 };
 @Injectable()
 export class BsRentalsService {
+  private readonly log = new Logger(BsRentalsService.name);
   private active = new Map<string, Promise<NonNullable<Change['result']>>>();
   constructor(
     @Inject(DB) private db: Db,
     private bs: BsCheckerService,
     private integrations: IntegrationsService,
   ) {}
+  /**
+   * Ответ BS Checker — не ввод владельца: незнакомый вид даёт 502 «формат изменился», а не «проверьте поля»
+   * с английским текстом разбора. В журнал сервера — только пути полей: в ответах бывают секреты.
+   */
+  private read<T>(schema: z.ZodType<T>, data: unknown, detail: string): T {
+    const parsed = schema.safeParse(data);
+    if (parsed.success) return parsed.data;
+    this.log.warn(
+      `${detail} Поля: ${parsed.error.issues.map((i) => i.path.join('.') || 'ответ').join(', ')}`,
+    );
+    throw problem(502, { type: 'urn:nodeservice:bschecker:format', detail });
+  }
   private async save(id: string, change: Change) {
     const value = JSON.stringify(change);
     await this.db
@@ -80,7 +95,11 @@ export class BsRentalsService {
     };
   }
   async get(id: string): Promise<BsRental> {
-    return bsRentalSchema.parse(await this.bs.rentalRequest(`/rentals/${validId(id)}`));
+    return this.read(
+      bsRentalSchema,
+      await this.bs.rentalRequest(`/rentals/${validId(id)}`),
+      'Формат точки аренды BS Checker изменился — панель не смогла её прочитать.',
+    );
   }
   async prepare(id: string, targets: BsRentalTarget[]) {
     const rental = await this.get(id),
@@ -191,11 +210,19 @@ export class BsRentalsService {
     };
   }
   async wsGet(id: string): Promise<BsWs> {
-    return bsWsSchema.parse(await this.bs.rentalRequest(`/ws/${validId(id)}`));
+    return this.read(
+      bsWsSchema,
+      await this.bs.rentalRequest(`/ws/${validId(id)}`),
+      'Формат точки WebSocket BS Checker изменился — панель не смогла её прочитать.',
+    );
   }
   /** Настройки подключения — секреты (путь точки работает как пароль). Нужно право ключа на изменение точек. */
   async wsConnect(id: string) {
-    return bsWsConnectSchema.parse(await this.bs.rentalRequest(`/ws/${validId(id)}/connect`));
+    return this.read(
+      bsWsConnectSchema,
+      await this.bs.rentalRequest(`/ws/${validId(id)}/connect`),
+      'Формат настроек подключения BS Checker изменился — панель не смогла их прочитать.',
+    );
   }
   /** Подготовка смены серверов точки: что было и что станет — владелец подтверждает. */
   async wsPrepare(
