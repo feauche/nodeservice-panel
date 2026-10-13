@@ -537,6 +537,69 @@ function WsConnectDialog({ ws, onClose }: { ws: BsWs; onClose: () => void }) {
 
 type Row<T> = T & { rowId: string };
 const withId = <T,>(list: T[]): Array<Row<T>> => list.map((t) => ({ ...t, rowId: crypto.randomUUID() }));
+
+/** Число из поля: только цифры; пусто — null. */
+const digits = (v: string) => v.replace(/\D/g, '');
+const intOf = (v: string): number | null => (v === '' ? null : Number(v));
+const inRange = (v: string, min: number, max: number) => {
+  const n = intOf(v);
+  return n !== null && Number.isInteger(n) && n >= min && n <= max;
+};
+const fieldLabel = 'mb-1.5 block text-[12.5px] font-medium text-text-2';
+/**
+ * Поле числа в карточке сервера: подпись сверху, ввод цифрами без подстановок — можно стереть всё и набрать
+ * заново; ошибка — под полем, после ухода из поля или попытки сохранить.
+ */
+function NumField({
+  id,
+  label,
+  ariaLabel,
+  value,
+  onChange,
+  onBlur,
+  error,
+  placeholder,
+  disabled,
+  maxLength,
+}: {
+  id: string;
+  label: string;
+  ariaLabel: string;
+  value: string;
+  onChange: (v: string) => void;
+  onBlur: () => void;
+  error: string | null;
+  placeholder?: string;
+  disabled?: boolean;
+  maxLength: number;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col">
+      <label htmlFor={id} className={fieldLabel}>
+        {label}
+      </label>
+      <Input
+        id={id}
+        aria-label={ariaLabel}
+        inputMode="numeric"
+        maxLength={maxLength}
+        placeholder={placeholder}
+        disabled={disabled}
+        value={value}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
+        onChange={(ev) => onChange(digits(ev.target.value))}
+        onBlur={onBlur}
+        className={cn('h-10 rounded-[10px] bg-surface-2', error && 'border-crit')}
+      />
+      {error && (
+        <p id={`${id}-error`} className="mt-1 text-[11.5px] leading-snug text-crit">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
 /** Выбор ноды для выхода: подставляет её адрес и порт; «вручную» — адрес вводится сам. */
 function NodePick({
   nodes,
@@ -568,21 +631,54 @@ function NodePick({
   );
 }
 
+/** Сервер точки, пока его правят: числа — строками, как их набирают. */
+type ExitDraft = Omit<BsWsExitInput, 'port' | 'weight' | 'max_connections'> & {
+  port: string;
+  weight: string;
+  limit: string;
+};
+type ExitErrors = Partial<Record<'host' | 'port' | 'weight' | 'limit', string>>;
+/** Что не так с сервером: пустой адрес, порт вне 1–65 535 или 22, вес вне 1–100, лимит вне 1–100 000. */
+function exitErrors(e: ExitDraft): ExitErrors {
+  const out: ExitErrors = {};
+  if (e.host.trim().length < 3) out.host = 'Укажите IP или домен сервера';
+  if (!inRange(e.port, 1, 65_535) || e.port === '22') out.port = 'Порт — от 1 до 65 535, не 22';
+  if (!e.backup && !inRange(e.weight, 1, 100)) out.weight = 'Вес — от 1 до 100';
+  if (e.limit !== '' && !inRange(e.limit, 1, 100_000)) out.limit = 'Лимит — от 1 до 100 000 или пусто';
+  return out;
+}
+/** Сервер для сервиса: у запасного вес не нужен — прежний, если он верный, иначе 1; пустой лимит — без лимита. */
+function toExit({ rowId, port, weight, limit, ...e }: Row<ExitDraft>): BsWsExitInput {
+  return {
+    ...e,
+    port: Number(port),
+    weight: inRange(weight, 1, 100) ? Number(weight) : 1,
+    max_connections: limit === '' ? null : Number(limit),
+  };
+}
+
 /** Смена серверов точки WebSocket: целиком, с подтверждением «было → станет»; повтор — тем же ключом. */
 function WsExitsEditor({ ws, nodes, onClose }: { ws: BsWs; nodes: RemnawaveNode[]; onClose: () => void }) {
   const client = useQueryClient();
-  const [exits, setExits] = useState<Array<Row<BsWsExitInput>>>(
+  // Числа — строками, пока их правят: поле можно очистить и набрать заново; проверка — при уходе и сохранении.
+  const [exits, setExits] = useState<Array<Row<ExitDraft>>>(
     withId(
       ws.exits.map((e) => ({
         host: e.host,
-        port: e.port,
-        weight: e.weight ?? 1,
-        max_connections: e.max_connections ?? null,
+        port: String(e.port),
+        weight: String(e.weight ?? 1),
+        limit: e.max_connections == null ? '' : String(e.max_connections),
         backup: e.backup,
         enabled: e.enabled,
       })),
     ),
   );
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [tried, setTried] = useState(false);
+  const shown = (rowId: string, field: keyof ExitErrors, errors: ExitErrors) =>
+    tried || touched[`${rowId}:${field}`] ? (errors[field] ?? null) : null;
+  const touch = (rowId: string, field: keyof ExitErrors) =>
+    setTouched((t) => ({ ...t, [`${rowId}:${field}`]: true }));
   const [balancing, setBalancing] = useState<'weighted' | 'sticky'>(
     ws.balancing === 'sticky' ? 'sticky' : 'weighted',
   );
@@ -595,7 +691,7 @@ function WsExitsEditor({ ws, nodes, onClose }: { ws: BsWs; nodes: RemnawaveNode[
     mutationFn: () =>
       api.post(
         `/integrations/bschecker/ws/${ws.id}/changes`,
-        { exits: exits.map(({ rowId, ...e }) => e), balancing, health_check: health },
+        { exits: exits.map(toExit), balancing, health_check: health },
         bsWsChangePreviewSchema,
       ),
     onSuccess: () => setConfirm(true),
@@ -608,13 +704,19 @@ function WsExitsEditor({ ws, nodes, onClose }: { ws: BsWs; nodes: RemnawaveNode[
   const uncertain = apply.data?.status === 'uncertain';
   const busy = prepare.isPending || apply.isPending;
   const locked = busy || uncertain || apply.data?.status === 'submitted';
-  function update(i: number, patch: Partial<BsWsExitInput>) {
+  function update(i: number, patch: Partial<ExitDraft>) {
     setExits(exits.map((e, at) => (at === i ? { ...e, ...patch } : e)));
     prepare.reset();
     setError(null);
   }
   async function submit() {
     setError(null);
+    setTried(true);
+    // Неверное число не подменяем молча: показываем, что исправить, и не отправляем.
+    if (exits.some((e) => Object.keys(exitErrors(e)).length)) {
+      setError('Исправьте поля, отмеченные красным.');
+      return;
+    }
     try {
       await prepare.mutateAsync();
     } catch (e) {
@@ -646,186 +748,216 @@ function WsExitsEditor({ ws, nodes, onClose }: { ws: BsWs; nodes: RemnawaveNode[
           title={`Серверы точки · ${ws.name}`}
           description="Список заменяется целиком: до 16 серверов, порт не 22 и не порт вашего VPN, нужен включённый основной."
         />
-        <fieldset
-          disabled={locked}
-          className="m-0 flex min-h-0 flex-col gap-3.5 overflow-y-auto border-0 px-6 py-5 max-sm:px-4"
-        >
-          <div className="flex flex-wrap gap-4">
-            <div>
-              <Kick>Распределение</Kick>
-              <Segmented<'weighted' | 'sticky'>
-                label="Распределение"
-                value={balancing}
-                onChange={(v) => {
-                  setBalancing(v);
-                  prepare.reset();
-                }}
-                items={[
-                  { key: 'weighted', label: 'По весу' },
-                  { key: 'sticky', label: 'Закреплять клиента' },
-                ]}
-              />
-            </div>
-            <div>
-              <Kick>Проверка серверов</Kick>
-              <Segmented<'fast' | 'standard' | 'tolerant'>
-                label="Проверка серверов"
-                value={health}
-                onChange={(v) => {
-                  setHealth(v);
-                  prepare.reset();
-                }}
-                items={[
-                  { key: 'fast', label: 'Быстрая' },
-                  { key: 'standard', label: 'Обычная' },
-                  { key: 'tolerant', label: 'Терпеливая' },
-                ]}
-              />
-            </div>
-          </div>
-          <p className="text-[12px] text-text-3">
-            «Закреплять клиента» — клиент держится одного сервера, запасные тогда не используются. «Быстрая»
-            проверка быстрее снимает упавший сервер, «Терпеливая» — реже ошибается на коротких перебоях.
-          </p>
-          {exits.map((e, i) => (
-            <section
-              key={e.rowId}
-              aria-label={`Сервер ${i + 1}`}
-              className="flex flex-col gap-2.5 rounded-[12px] border border-border p-3.5"
-            >
-              <div className="flex items-center gap-2">
-                <b className="flex-1 text-[13px] font-semibold">Сервер {i + 1}</b>
-                <Button
-                  variant="outline"
-                  className={small}
-                  onClick={() => {
-                    setExits(exits.filter((_, at) => at !== i));
+        {/* Прокручивается обёртка, а не fieldset: у fieldset прокрутка в Chromium не работает — на телефоне нижние
+            поля уходили под кнопки. */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <fieldset
+            disabled={locked}
+            className="m-0 flex min-w-0 flex-col gap-3.5 border-0 px-6 py-5 max-sm:px-4"
+          >
+            <div className="flex flex-wrap gap-4">
+              <div>
+                <Kick>Распределение</Kick>
+                <Segmented<'weighted' | 'sticky'>
+                  label="Распределение"
+                  value={balancing}
+                  onChange={(v) => {
+                    setBalancing(v);
                     prepare.reset();
                   }}
-                >
-                  <Trash2Icon className="size-3.5" aria-hidden="true" />
-                  Убрать
-                </Button>
-              </div>
-              <NodePick
-                nodes={nodes}
-                host={e.host}
-                disabled={locked}
-                label={`Нода сервера ${i + 1}`}
-                onPick={(n) => update(i, n ? { host: n.address, port: n.port ?? e.port } : { host: '' })}
-              />
-              <div className="grid grid-cols-[minmax(0,1fr)_96px_96px_130px] gap-2.5 max-sm:grid-cols-2">
-                <Input
-                  aria-label={`Адрес сервера ${i + 1}`}
-                  value={e.host}
-                  onChange={(ev) => update(i, { host: ev.target.value.trim() })}
-                  className="h-10 rounded-[10px] bg-surface-2 max-sm:col-span-2"
-                  placeholder="IP или домен"
-                />
-                <Input
-                  aria-label={`Порт сервера ${i + 1}`}
-                  inputMode="numeric"
-                  value={String(e.port)}
-                  onChange={(ev) => update(i, { port: Number(ev.target.value.replace(/\D/g, '')) || 0 })}
-                  className="h-10 rounded-[10px] bg-surface-2"
-                />
-                <Input
-                  aria-label={`Вес сервера ${i + 1}`}
-                  inputMode="numeric"
-                  disabled={e.backup || locked}
-                  value={String(e.weight)}
-                  onChange={(ev) =>
-                    update(i, {
-                      weight: Math.min(100, Math.max(1, Number(ev.target.value.replace(/\D/g, '')) || 1)),
-                    })
-                  }
-                  className="h-10 rounded-[10px] bg-surface-2"
-                />
-                <Input
-                  aria-label={`Лимит подключений сервера ${i + 1}`}
-                  inputMode="numeric"
-                  placeholder="без лимита"
-                  value={e.max_connections === null ? '' : String(e.max_connections)}
-                  onChange={(ev) =>
-                    update(i, {
-                      max_connections: ev.target.value
-                        ? Number(ev.target.value.replace(/\D/g, '')) || null
-                        : null,
-                    })
-                  }
-                  className="h-10 rounded-[10px] bg-surface-2"
+                  items={[
+                    { key: 'weighted', label: 'По весу' },
+                    { key: 'sticky', label: 'Закреплять клиента' },
+                  ]}
                 />
               </div>
-              <div className="flex flex-wrap gap-5 text-[12.5px]">
-                <label htmlFor={`ws-backup-${e.rowId}`} className="flex items-center gap-2">
-                  <Toggle
-                    id={`ws-backup-${e.rowId}`}
-                    checked={e.backup}
-                    disabled={locked}
-                    onChange={(v) => update(i, { backup: v })}
-                  />
-                  Запасной
-                </label>
-                <label htmlFor={`ws-enabled-${e.rowId}`} className="flex items-center gap-2">
-                  <Toggle
-                    id={`ws-enabled-${e.rowId}`}
-                    checked={e.enabled}
-                    disabled={locked}
-                    onChange={(v) => update(i, { enabled: v })}
-                  />
-                  Включён
-                </label>
+              <div>
+                <Kick>Проверка серверов</Kick>
+                <Segmented<'fast' | 'standard' | 'tolerant'>
+                  label="Проверка серверов"
+                  value={health}
+                  onChange={(v) => {
+                    setHealth(v);
+                    prepare.reset();
+                  }}
+                  items={[
+                    { key: 'fast', label: 'Быстрая' },
+                    { key: 'standard', label: 'Обычная' },
+                    { key: 'tolerant', label: 'Терпеливая' },
+                  ]}
+                />
               </div>
-            </section>
-          ))}
-          <Button
-            variant="outline"
-            className={cn(small, 'self-start')}
-            disabled={exits.length >= 16 || locked}
-            onClick={() => {
-              setExits([
-                ...exits,
-                ...withId([
-                  { host: '', port: 443, weight: 1, max_connections: null, backup: false, enabled: true },
-                ]),
-              ]);
-              prepare.reset();
-            }}
-          >
-            <PlusIcon className="size-3.5" aria-hidden="true" />
-            Добавить сервер
-          </Button>
-          {error && (
-            <p
-              role="alert"
-              className="rounded-[10px] border border-crit/30 bg-crit-soft px-3 py-2 text-[12.5px] text-crit"
-            >
-              {error}
-            </p>
-          )}
-          {apply.data && (
-            <div
-              role="status"
-              className="rounded-[12px] border border-border bg-surface-2/60 px-3.5 py-3 text-[12.5px]"
-            >
-              <b className="font-semibold">
-                {uncertain ? 'Итог изменения пока неизвестен' : 'Серверы сохранены'}
-              </b>
-              <p className="mt-0.5 text-text-3">
-                {uncertain
-                  ? 'Повтор использует тот же ключ изменения — второго изменения не будет.'
-                  : apply.data.applied
-                    ? 'Изменение уже применено на точке.'
-                    : 'Точка применит изменение за несколько секунд — состояние видно в карточке.'}
-              </p>
-              {apply.data.warnings.map((w) => (
-                <p key={w} className="mt-1 text-warn">
-                  {w}
-                </p>
-              ))}
             </div>
-          )}
-        </fieldset>
+            <p className="text-[12px] text-text-3">
+              «Закреплять клиента» — клиент держится одного сервера, запасные тогда не используются. «Быстрая»
+              проверка быстрее снимает упавший сервер, «Терпеливая» — реже ошибается на коротких перебоях.
+            </p>
+            <p className="text-[12px] text-text-3">
+              <b className="font-medium text-text-2">Вес</b> — какую долю новых клиентов получает сервер при
+              «По весу»: с весом 2 — вдвое больше, чем с весом 1; от 1 до 100.{' '}
+              <b className="font-medium text-text-2">Лимит подключений</b> — сколько клиентов сервер держит
+              одновременно; пусто — без лимита. <b className="font-medium text-text-2">Запасной</b> получает
+              клиентов, только когда основные недоступны; вес ему не нужен.
+            </p>
+            {exits.map((e, i) => (
+              <section
+                key={e.rowId}
+                aria-label={`Сервер ${i + 1}`}
+                className="flex flex-col gap-2.5 rounded-[12px] border border-border p-3.5"
+              >
+                <div className="flex items-center gap-2">
+                  <b className="flex-1 text-[13px] font-semibold">Сервер {i + 1}</b>
+                  <Button
+                    variant="outline"
+                    className={small}
+                    onClick={() => {
+                      setExits(exits.filter((_, at) => at !== i));
+                      prepare.reset();
+                    }}
+                  >
+                    <Trash2Icon className="size-3.5" aria-hidden="true" />
+                    Убрать
+                  </Button>
+                </div>
+                <NodePick
+                  nodes={nodes}
+                  host={e.host}
+                  disabled={locked}
+                  label={`Нода сервера ${i + 1}`}
+                  onPick={(n) =>
+                    update(i, n ? { host: n.address, port: n.port ? String(n.port) : e.port } : { host: '' })
+                  }
+                />
+                {(() => {
+                  const errors = exitErrors(e);
+                  const hostError = shown(e.rowId, 'host', errors);
+                  return (
+                    <div className="grid grid-cols-[minmax(0,1fr)_112px_112px_160px] items-start gap-2.5 max-sm:grid-cols-2">
+                      <div className="flex min-w-0 flex-col max-sm:col-span-2">
+                        <label htmlFor={`ws-host-${e.rowId}`} className={fieldLabel}>
+                          Адрес
+                        </label>
+                        <Input
+                          id={`ws-host-${e.rowId}`}
+                          aria-label={`Адрес сервера ${i + 1}`}
+                          value={e.host}
+                          aria-invalid={hostError ? true : undefined}
+                          onChange={(ev) => update(i, { host: ev.target.value.trim() })}
+                          onBlur={() => touch(e.rowId, 'host')}
+                          className={cn('h-10 rounded-[10px] bg-surface-2', hostError && 'border-crit')}
+                          placeholder="IP или домен"
+                        />
+                        {hostError && (
+                          <p className="mt-1 text-[11.5px] leading-snug text-crit">{hostError}</p>
+                        )}
+                      </div>
+                      <NumField
+                        id={`ws-port-${e.rowId}`}
+                        label="Порт"
+                        ariaLabel={`Порт сервера ${i + 1}`}
+                        maxLength={5}
+                        value={e.port}
+                        error={shown(e.rowId, 'port', errors)}
+                        onChange={(port) => update(i, { port })}
+                        onBlur={() => touch(e.rowId, 'port')}
+                      />
+                      <NumField
+                        id={`ws-weight-${e.rowId}`}
+                        label="Вес"
+                        ariaLabel={`Вес сервера ${i + 1}`}
+                        maxLength={3}
+                        disabled={e.backup || locked}
+                        value={e.backup ? '' : e.weight}
+                        placeholder={e.backup ? 'не нужен' : undefined}
+                        error={shown(e.rowId, 'weight', errors)}
+                        onChange={(weight) => update(i, { weight })}
+                        onBlur={() => touch(e.rowId, 'weight')}
+                      />
+                      <NumField
+                        id={`ws-limit-${e.rowId}`}
+                        label="Лимит подключений"
+                        ariaLabel={`Лимит подключений сервера ${i + 1}`}
+                        maxLength={6}
+                        placeholder="без лимита"
+                        value={e.limit}
+                        error={shown(e.rowId, 'limit', errors)}
+                        onChange={(limit) => update(i, { limit })}
+                        onBlur={() => touch(e.rowId, 'limit')}
+                      />
+                    </div>
+                  );
+                })()}
+                <div className="flex flex-wrap gap-5 text-[12.5px]">
+                  <label htmlFor={`ws-backup-${e.rowId}`} className="flex items-center gap-2">
+                    <Toggle
+                      id={`ws-backup-${e.rowId}`}
+                      checked={e.backup}
+                      disabled={locked}
+                      onChange={(v) => update(i, { backup: v })}
+                    />
+                    Запасной
+                  </label>
+                  <label htmlFor={`ws-enabled-${e.rowId}`} className="flex items-center gap-2">
+                    <Toggle
+                      id={`ws-enabled-${e.rowId}`}
+                      checked={e.enabled}
+                      disabled={locked}
+                      onChange={(v) => update(i, { enabled: v })}
+                    />
+                    Включён
+                  </label>
+                </div>
+              </section>
+            ))}
+            <Button
+              variant="outline"
+              className={cn(small, 'self-start')}
+              disabled={exits.length >= 16 || locked}
+              onClick={() => {
+                setExits([
+                  ...exits,
+                  ...withId([
+                    { host: '', port: '443', weight: '1', limit: '', backup: false, enabled: true },
+                  ]),
+                ]);
+                prepare.reset();
+              }}
+            >
+              <PlusIcon className="size-3.5" aria-hidden="true" />
+              Добавить сервер
+            </Button>
+            {error && (
+              <p
+                role="alert"
+                className="rounded-[10px] border border-crit/30 bg-crit-soft px-3 py-2 text-[12.5px] text-crit"
+              >
+                {error}
+              </p>
+            )}
+            {apply.data && (
+              <div
+                role="status"
+                className="rounded-[12px] border border-border bg-surface-2/60 px-3.5 py-3 text-[12.5px]"
+              >
+                <b className="font-semibold">
+                  {uncertain ? 'Итог изменения пока неизвестен' : 'Серверы сохранены'}
+                </b>
+                <p className="mt-0.5 text-text-3">
+                  {uncertain
+                    ? 'Повтор использует тот же ключ изменения — второго изменения не будет.'
+                    : apply.data.applied
+                      ? 'Изменение уже применено на точке.'
+                      : 'Точка применит изменение за несколько секунд — состояние видно в карточке.'}
+                </p>
+                {apply.data.warnings.map((w) => (
+                  <p key={w} className="mt-1 text-warn">
+                    {w}
+                  </p>
+                ))}
+              </div>
+            )}
+          </fieldset>
+        </div>
         <div className={dialogFoot}>
           <p className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">
             Изменение записывается в «Журнал».
@@ -860,6 +992,21 @@ function WsExitsEditor({ ws, nodes, onClose }: { ws: BsWs; nodes: RemnawaveNode[
   );
 }
 
+/** Выход точки TCP/UDP, пока его правят: порт и вес — строками. */
+type TargetDraft = Omit<BsRentalTarget, 'port' | 'weight'> & { port: string; weight: string };
+type TargetErrors = Partial<Record<'host' | 'port' | 'weight', string>>;
+function targetErrors(t: TargetDraft): TargetErrors {
+  const out: TargetErrors = {};
+  if (t.host.trim().length < 3) out.host = 'Укажите IP или домен выхода';
+  if (!inRange(t.port, 1, 65_535)) out.port = 'Порт — от 1 до 65 535';
+  if (!t.backup && !inRange(t.weight, 1, 256)) out.weight = 'Вес — от 1 до 256';
+  return out;
+}
+/** Выход для сервиса: у резервного вес не нужен — прежний, если он верный, иначе 1. */
+function toTarget({ rowId, port, weight, ...t }: Row<TargetDraft>): BsRentalTarget {
+  return { ...t, port: Number(port), weight: inRange(weight, 1, 256) ? Number(weight) : 1 };
+}
+
 /** Выходные адреса точки TCP/UDP: целиком, с подтверждением; отказ сервиса снова открывает правку. */
 function RentalEditor({
   rental,
@@ -871,14 +1018,23 @@ function RentalEditor({
   onClose: () => void;
 }) {
   const client = useQueryClient();
-  const [targets, setTargets] = useState<Array<Row<BsRentalTarget>>>(withId(rental.targets));
+  // Числа — строками, пока их правят: поле можно очистить и набрать заново; проверка — при уходе и сохранении.
+  const [targets, setTargets] = useState<Array<Row<TargetDraft>>>(
+    withId(rental.targets.map((t) => ({ ...t, port: String(t.port), weight: String(t.weight) }))),
+  );
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [tried, setTried] = useState(false);
+  const shown = (rowId: string, field: keyof TargetErrors, errors: TargetErrors) =>
+    tried || touched[`${rowId}:${field}`] ? (errors[field] ?? null) : null;
+  const touch = (rowId: string, field: keyof TargetErrors) =>
+    setTouched((t) => ({ ...t, [`${rowId}:${field}`]: true }));
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const prepare = useMutation({
     mutationFn: () =>
       api.post(
         `/integrations/bschecker/rentals/${rental.id}/changes`,
-        { targets: targets.map(({ rowId, ...t }) => t) },
+        { targets: targets.map(toTarget) },
         bsRentalChangePreviewSchema,
       ),
     onSuccess: () => setConfirm(true),
@@ -892,13 +1048,18 @@ function RentalEditor({
   const busy = prepare.isPending || apply.isPending;
   const locked = busy || uncertain || apply.data?.status === 'submitted';
   const tcp = rental.proto === 'tcp';
-  function update(i: number, patch: Partial<BsRentalTarget>) {
+  function update(i: number, patch: Partial<TargetDraft>) {
     setTargets(targets.map((t, at) => (at === i ? { ...t, ...patch } : t)));
     prepare.reset();
     setError(null);
   }
   async function submit() {
     setError(null);
+    setTried(true);
+    if (targets.some((t) => Object.keys(targetErrors(t)).length)) {
+      setError('Исправьте поля, отмеченные красным.');
+      return;
+    }
     try {
       await prepare.mutateAsync();
     } catch (e) {
@@ -925,117 +1086,147 @@ function RentalEditor({
           title={`Выходные адреса · ${rental.label || rental.endpoint}`}
           description={`Вход ${rental.endpoint} → ваши ноды. Список заменяется целиком: ${tcp ? 'до 3 основных и 2 резервных' : '1 основной и 1 резервный'}.`}
         />
-        <fieldset
-          disabled={locked}
-          className="m-0 flex min-h-0 flex-col gap-3 overflow-y-auto border-0 px-6 py-5 max-sm:px-4"
-        >
-          {targets.map((t, i) => (
-            <section
-              key={t.rowId}
-              aria-label={`Выход ${i + 1}`}
-              className="flex flex-col gap-2.5 rounded-[12px] border border-border p-3.5"
-            >
-              <div className="flex items-center gap-2">
-                <b className="flex-1 text-[13px] font-semibold">Выход {i + 1}</b>
-                <Button
-                  variant="outline"
-                  className={small}
-                  onClick={() => {
-                    setTargets(targets.filter((_, at) => at !== i));
-                    prepare.reset();
-                  }}
-                >
-                  <Trash2Icon className="size-3.5" aria-hidden="true" />
-                  Убрать
-                </Button>
-              </div>
-              <NodePick
-                nodes={nodes}
-                host={t.host}
-                disabled={locked}
-                label={`Нода выхода ${i + 1}`}
-                onPick={(n) => update(i, n ? { host: n.address, port: n.port ?? 443 } : { host: '' })}
-              />
-              <div className="grid grid-cols-[minmax(0,1fr)_96px_96px] gap-2.5 max-sm:grid-cols-2">
-                <Input
-                  aria-label={`Адрес выхода ${i + 1}`}
-                  value={t.host}
-                  onChange={(e) => update(i, { host: e.target.value.trim() })}
-                  className="h-10 rounded-[10px] bg-surface-2 max-sm:col-span-2"
-                  placeholder="IP или домен"
-                />
-                <Input
-                  aria-label={`Порт выхода ${i + 1}`}
-                  inputMode="numeric"
-                  value={String(t.port)}
-                  onChange={(e) => update(i, { port: Number(e.target.value.replace(/\D/g, '')) || 0 })}
-                  className="h-10 rounded-[10px] bg-surface-2"
-                />
-                <Input
-                  aria-label={`Вес выхода ${i + 1}`}
-                  inputMode="numeric"
-                  disabled={t.backup || locked}
-                  value={String(t.weight)}
-                  onChange={(e) =>
-                    update(i, {
-                      weight: Math.min(256, Math.max(1, Number(e.target.value.replace(/\D/g, '')) || 1)),
-                    })
-                  }
-                  className="h-10 rounded-[10px] bg-surface-2"
-                />
-              </div>
-              <label htmlFor={`rental-backup-${t.rowId}`} className="flex items-center gap-2 text-[12.5px]">
-                <Toggle
-                  id={`rental-backup-${t.rowId}`}
-                  checked={t.backup}
-                  disabled={locked}
-                  onChange={(v) => update(i, { backup: v })}
-                />
-                Резервный выход
-              </label>
-            </section>
-          ))}
-          <Button
-            variant="outline"
-            className={cn(small, 'self-start')}
-            disabled={targets.length >= (tcp ? 5 : 2) || locked}
-            onClick={() => {
-              setTargets([...targets, ...withId([{ host: '', port: 443, weight: 1, backup: false }])]);
-              prepare.reset();
-            }}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <fieldset
+            disabled={locked}
+            className="m-0 flex min-w-0 flex-col gap-3 border-0 px-6 py-5 max-sm:px-4"
           >
-            <PlusIcon className="size-3.5" aria-hidden="true" />
-            Добавить выход
-          </Button>
-          {error && (
-            <p
-              role="alert"
-              className="rounded-[10px] border border-crit/30 bg-crit-soft px-3 py-2 text-[12.5px] text-crit"
-            >
-              {error}
+            <p className="text-[12px] text-text-3">
+              <b className="font-medium text-text-2">Вес</b> — какую долю подключений получает выход: с весом
+              2 — вдвое больше, чем с весом 1; от 1 до 256.{' '}
+              <b className="font-medium text-text-2">Резервный</b> получает подключения, только когда основные
+              недоступны; вес ему не нужен.
             </p>
-          )}
-          {apply.data && (
-            <div
-              role="status"
-              className="rounded-[12px] border border-border bg-surface-2/60 px-3.5 py-3 text-[12.5px]"
+            {targets.map((t, i) => (
+              <section
+                key={t.rowId}
+                aria-label={`Выход ${i + 1}`}
+                className="flex flex-col gap-2.5 rounded-[12px] border border-border p-3.5"
+              >
+                <div className="flex items-center gap-2">
+                  <b className="flex-1 text-[13px] font-semibold">Выход {i + 1}</b>
+                  <Button
+                    variant="outline"
+                    className={small}
+                    onClick={() => {
+                      setTargets(targets.filter((_, at) => at !== i));
+                      prepare.reset();
+                    }}
+                  >
+                    <Trash2Icon className="size-3.5" aria-hidden="true" />
+                    Убрать
+                  </Button>
+                </div>
+                <NodePick
+                  nodes={nodes}
+                  host={t.host}
+                  disabled={locked}
+                  label={`Нода выхода ${i + 1}`}
+                  onPick={(n) =>
+                    update(i, n ? { host: n.address, port: String(n.port ?? 443) } : { host: '' })
+                  }
+                />
+                {(() => {
+                  const errors = targetErrors(t);
+                  const hostError = shown(t.rowId, 'host', errors);
+                  return (
+                    <div className="grid grid-cols-[minmax(0,1fr)_112px_112px] items-start gap-2.5 max-sm:grid-cols-2">
+                      <div className="flex min-w-0 flex-col max-sm:col-span-2">
+                        <label htmlFor={`rental-host-${t.rowId}`} className={fieldLabel}>
+                          Адрес
+                        </label>
+                        <Input
+                          id={`rental-host-${t.rowId}`}
+                          aria-label={`Адрес выхода ${i + 1}`}
+                          value={t.host}
+                          aria-invalid={hostError ? true : undefined}
+                          onChange={(e) => update(i, { host: e.target.value.trim() })}
+                          onBlur={() => touch(t.rowId, 'host')}
+                          className={cn('h-10 rounded-[10px] bg-surface-2', hostError && 'border-crit')}
+                          placeholder="IP или домен"
+                        />
+                        {hostError && (
+                          <p className="mt-1 text-[11.5px] leading-snug text-crit">{hostError}</p>
+                        )}
+                      </div>
+                      <NumField
+                        id={`rental-port-${t.rowId}`}
+                        label="Порт"
+                        ariaLabel={`Порт выхода ${i + 1}`}
+                        maxLength={5}
+                        value={t.port}
+                        error={shown(t.rowId, 'port', errors)}
+                        onChange={(port) => update(i, { port })}
+                        onBlur={() => touch(t.rowId, 'port')}
+                      />
+                      <NumField
+                        id={`rental-weight-${t.rowId}`}
+                        label="Вес"
+                        ariaLabel={`Вес выхода ${i + 1}`}
+                        maxLength={3}
+                        disabled={t.backup || locked}
+                        value={t.backup ? '' : t.weight}
+                        placeholder={t.backup ? 'не нужен' : undefined}
+                        error={shown(t.rowId, 'weight', errors)}
+                        onChange={(weight) => update(i, { weight })}
+                        onBlur={() => touch(t.rowId, 'weight')}
+                      />
+                    </div>
+                  );
+                })()}
+                <label htmlFor={`rental-backup-${t.rowId}`} className="flex items-center gap-2 text-[12.5px]">
+                  <Toggle
+                    id={`rental-backup-${t.rowId}`}
+                    checked={t.backup}
+                    disabled={locked}
+                    onChange={(v) => update(i, { backup: v })}
+                  />
+                  Резервный выход
+                </label>
+              </section>
+            ))}
+            <Button
+              variant="outline"
+              className={cn(small, 'self-start')}
+              disabled={targets.length >= (tcp ? 5 : 2) || locked}
+              onClick={() => {
+                setTargets([...targets, ...withId([{ host: '', port: '443', weight: '1', backup: false }])]);
+                prepare.reset();
+              }}
             >
-              <b className="font-semibold">
-                {uncertain ? 'Итог изменения пока неизвестен' : 'Адреса сохранены'}
-              </b>
-              <p className="mt-0.5 text-text-3">
-                {uncertain
-                  ? 'Повтор использует тот же ключ изменения — второго изменения не будет.'
-                  : 'Сервер точки применит их за 10–20 секунд — состояние видно в карточке.'}
+              <PlusIcon className="size-3.5" aria-hidden="true" />
+              Добавить выход
+            </Button>
+            {error && (
+              <p
+                role="alert"
+                className="rounded-[10px] border border-crit/30 bg-crit-soft px-3 py-2 text-[12.5px] text-crit"
+              >
+                {error}
               </p>
-              {apply.data.warnings.map((w) => (
-                <p key={w} className="mt-1 text-warn">
-                  {w}
+            )}
+            {apply.data && (
+              <div
+                role="status"
+                className="rounded-[12px] border border-border bg-surface-2/60 px-3.5 py-3 text-[12.5px]"
+              >
+                <b className="font-semibold">
+                  {uncertain ? 'Итог изменения пока неизвестен' : 'Адреса сохранены'}
+                </b>
+                <p className="mt-0.5 text-text-3">
+                  {uncertain
+                    ? 'Повтор использует тот же ключ изменения — второго изменения не будет.'
+                    : 'Сервер точки применит их за 10–20 секунд — состояние видно в карточке.'}
                 </p>
-              ))}
-            </div>
-          )}
-        </fieldset>
+                {apply.data.warnings.map((w) => (
+                  <p key={w} className="mt-1 text-warn">
+                    {w}
+                  </p>
+                ))}
+              </div>
+            )}
+          </fieldset>
+        </div>
         <div className={dialogFoot}>
           <p className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">
             Изменение записывается в «Журнал».

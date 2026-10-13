@@ -1,21 +1,47 @@
-import { scenarioActionLabels, scenarioConditionLabel } from '@nodeservice/shared';
+import type { Scenario } from '@nodeservice/shared';
 import { Link } from '@tanstack/react-router';
-import { ArrowUpRightIcon, ChevronRightIcon } from 'lucide-react';
+import { ChevronRightIcon, GitBranchIcon, PlusIcon } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Pill, Toggle } from '@/features/settings/settings-ui';
+import { Toggle } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
-import { useSaveScenarios, useScenarios } from './scenarios-api';
+import { RunList } from './scenario-journal';
+import { conditionsPhrase } from './scenario-text';
+import { useSaveScenarios, useScenarioJournal, useScenarios } from './scenarios-api';
+import { StepIcons } from './scenarios-page';
 
-/** Сценарии, которые касаются ноды: общие и выбранные для неё. Переключатель включает сценарий целиком. */
+const LINK_BTN =
+  'inline-flex h-10 w-fit items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3.5 text-[13px] font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground';
+
+/** Последние три срабатывания сценария на этой ноде — или «ещё не срабатывал». */
+function NodeRuns({ rule, node }: { rule: Scenario; node: string }) {
+  const q = useScenarioJournal({ rule: rule.id, node, tone: [], period: '30d' });
+  if (q.isPending) return <Skeleton className="h-[46px] rounded-[12px]" />;
+  if (q.isError)
+    return (
+      <p role="alert" className="text-[12.5px] text-crit">
+        {apiErrorMessage(q.error)}
+      </p>
+    );
+  const first = q.data.pages[0];
+  const items = first?.items.slice(0, 3) ?? [];
+  if (!items.length) return <p className="text-[12.5px] text-text-3">На этой ноде ещё не срабатывал.</p>;
+  return <RunList items={items} rule={rule} timeZone={first?.timeZone ?? 'UTC'} />;
+}
+
+/**
+ * Вкладка «Автоматизация» окна ноды (витрина scenarios-2026-10b, вариант D, как у референса): сценарии, которые
+ * действуют на эту ноду, и что они на ней делали. Переключатель включает сценарий целиком; настраиваются сценарии
+ * на странице «Сценарии» — туда ведут ссылки.
+ */
 export function NodeScenarios({ uuid }: { uuid: string }) {
   const q = useScenarios();
   const save = useSaveScenarios();
   if (q.isPending)
     return (
-      <div role="status" aria-label="Загрузка сценариев ноды" className="flex flex-col gap-2.5">
-        {[0, 1, 2].map((i) => (
-          <Skeleton key={i} className="h-[68px] rounded-2xl" />
+      <div role="status" aria-label="Загрузка сценариев ноды" className="flex flex-col gap-3">
+        {[0, 1].map((i) => (
+          <Skeleton key={i} className="h-[150px] rounded-2xl" />
         ))}
       </div>
     );
@@ -33,52 +59,61 @@ export function NodeScenarios({ uuid }: { uuid: string }) {
       { onError: (err) => toast.error(apiErrorMessage(err)) },
     );
   return (
-    <div className="flex flex-col gap-2.5">
+    <div className="flex flex-col gap-3">
+      <p className="text-[13px] text-text-3">
+        Сценарии, которые действуют на эту ноду, и что они на ней делали. Настраиваются на странице
+        «Сценарии».
+      </p>
       {!items.length ? (
         <p className="rounded-2xl border border-dashed border-border px-4 py-6 text-center text-[13px] text-text-3">
           Сценариев для этой ноды пока нет: ни общих, ни выбранных для неё.
         </p>
       ) : (
         items.map((r) => (
-          <div
+          <section
             key={r.id}
-            className="flex items-center gap-3.5 rounded-2xl border border-border bg-surface px-4 py-3.5"
+            className="flex flex-col gap-3 rounded-2xl border border-border bg-surface px-4 py-3.5"
           >
-            <Toggle
-              id={`node-scenario-${r.id}`}
-              checked={r.enabled}
-              disabled={save.isPending}
-              aria-label={`Сценарий «${r.name}»${r.scope === 'all' ? ' для всех нод' : ''}`}
-              onChange={(enabled) => toggle(r.id, enabled)}
-            />
-            <div className="min-w-0 flex-1">
-              <b className="block truncate text-[14px] font-semibold">{r.name}</b>
-              <span className="mt-[3px] block text-[12px] text-text-3">
-                {scenarioConditionLabel(r)} · {r.holdMinutes} мин ·{' '}
-                {r.scope === 'all' ? 'общий для всех нод' : 'выбран для этой ноды'}
+            <header className="flex items-start gap-3">
+              <span className="grid size-9 flex-none place-items-center rounded-[10px] bg-ai-soft text-ai">
+                <GitBranchIcon className="size-4" aria-hidden="true" />
               </span>
-            </div>
-            <div className="flex max-w-[45%] flex-wrap justify-end gap-1.5 max-md:hidden">
-              {r.actions.map((a) => (
-                <Pill key={a}>{scenarioActionLabels[a]}</Pill>
-              ))}
-            </div>
+              <div className="min-w-0 flex-1">
+                <b className="block truncate text-[14px] font-semibold">{r.name}</b>
+                <span className="mt-0.5 block text-[12.5px] text-text-3">
+                  <b className="font-semibold text-text-2">{conditionsPhrase(r)}</b> · держится{' '}
+                  {r.holdMinutes} мин · {r.scope === 'all' ? 'общий для всех нод' : 'выбран для этой ноды'}
+                </span>
+              </div>
+              <span className="flex h-10 flex-none items-center gap-2.5 rounded-[10px] border border-border px-3">
+                <span className="text-[13px] text-text-2 max-sm:hidden">
+                  {r.enabled ? 'Включён' : 'Выключен'}
+                </span>
+                <Toggle
+                  id={`node-scenario-${r.id}`}
+                  checked={r.enabled}
+                  disabled={save.isPending}
+                  aria-label={`Сценарий «${r.name}»${r.scope === 'all' ? ' для всех нод' : ''}`}
+                  onChange={(enabled) => toggle(r.id, enabled)}
+                />
+              </span>
+            </header>
+            <StepIcons actions={r.actions} />
+            <NodeRuns rule={r} node={uuid} />
             <Link
               to="/scenarios"
-              aria-label={`Открыть сценарий «${r.name}» в разделе «Сценарии»`}
-              className="grid size-8 flex-none place-items-center rounded-[9px] text-text-3 hover:bg-surface-2 hover:text-foreground"
+              search={{ open: r.id, tab: 'runs', node: uuid }}
+              className="inline-flex w-fit items-center gap-1 text-[12.5px] font-medium text-brand hover:underline"
             >
-              <ChevronRightIcon className="size-4" aria-hidden="true" />
+              Все срабатывания сценария на этой ноде
+              <ChevronRightIcon className="size-3.5" aria-hidden="true" />
             </Link>
-          </div>
+          </section>
         ))
       )}
-      <Link
-        to="/scenarios"
-        className="inline-flex h-9 w-fit items-center gap-1.5 rounded-[10px] border border-border bg-surface px-3.5 text-[12.5px] font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-      >
-        <ArrowUpRightIcon className="size-3.5" aria-hidden="true" />
-        Открыть «Сценарии»
+      <Link to="/scenarios" search={{ create: 1, node: uuid }} className={LINK_BTN}>
+        <PlusIcon className="size-4" aria-hidden="true" />
+        Сценарий для этой ноды
       </Link>
     </div>
   );

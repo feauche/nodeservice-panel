@@ -71,6 +71,15 @@ export class ScenariosStore {
       sql`DELETE FROM app_meta WHERE key LIKE ${`${prefix}%`} AND key < ${prefix + cutoff}`,
     );
   }
+  /** Сколько пар «сценарий + нода» сейчас держат Host изменённым и вернут его после восстановления ноды. */
+  async markedHosts(panel: string | null): Promise<number> {
+    if (!panel) return 0;
+    const rows = await this.db.execute(
+      sql`SELECT count(*)::int AS n FROM app_meta WHERE key LIKE ${`scenarios.state.${this.scope(panel)}.%`}
+        AND value::jsonb->>'pendingRestore' = 'true'`,
+    );
+    return Number(rows.rows[0]?.n ?? 0);
+  }
   async runs(panel: string | null, limit = 100): Promise<ScenarioRun[]> {
     if (!panel) return [];
     await this.backfill(panel);

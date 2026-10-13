@@ -1,25 +1,22 @@
-import { type Scenario, scenarioActionLabels } from '@nodeservice/shared';
-import { ChevronRightIcon, GitBranchIcon, PlusIcon, Settings2Icon } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import type { RunTone, Scenario, ScenarioOverview } from '@nodeservice/shared';
+import { ChevronRightIcon, GitBranchIcon, PlusIcon, SearchIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { KpiCard, KpiCardSkeleton } from '@/components/kpi-card';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useNodes } from '@/features/nodes/nodes-api';
-import { Pill, Segmented, Toggle } from '@/features/settings/settings-ui';
+import { Segmented, Toggle } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { ScenarioEditor } from './scenario-editor';
-import {
-  Journal,
-  type JournalEntry,
-  JournalSkeleton,
-  journalEntries,
-  OUTCOME_DOT,
-  runOutcome,
-  when,
-} from './scenario-journal';
+import { type EditorTab, ScenarioEditor, STEPS } from './scenario-editor';
+import { OUTCOME_DOT, RunStrip, RunsPanel, when } from './scenario-journal';
 import { conditionsPhrase, scopePhrase } from './scenario-text';
-import { useSaveScenarios, useScenarioRuns, useScenarios } from './scenarios-api';
+import { useSaveScenarios, useScenarioOverview, useScenarios } from './scenarios-api';
 
-const make = (): Scenario => ({
+/** Адрес страницы: открыть сценарий (из окна ноды — на срабатываниях этой ноды) или создать новый для ноды. */
+export type ScenariosSearch = { open?: string; tab?: EditorTab; node?: string; create?: 1 };
+
+const make = (over: Partial<Scenario> = {}): Scenario => ({
   id: crypto.randomUUID(),
   name: 'Новый сценарий',
   enabled: false,
@@ -36,56 +33,129 @@ const make = (): Scenario => ({
   hostBindings: [],
   autoRestore: true,
   cooldownMinutes: 30,
+  ...over,
 });
 
-/**
- * Шаги по порядку: номер в бирюзовом квадрате и название. Стрелка держится за шагом перед ней: при переносе
- * строка начинается с шага, а не со стрелки.
- */
-function Steps({ actions }: { actions: Scenario['actions'] }) {
+/** Готовые сценарии для пустой страницы: условие и шаги уже выбраны — остаётся проверить и сохранить. */
+const TEMPLATES: Array<{ title: string; text: string; make: () => Scenario }> = [
+  {
+    title: 'Нода потеряла связь — скрыть Host',
+    text: 'Клиенты не попадают на упавшую ноду: Host скрывается и возвращается, когда нода снова на связи.',
+    make: () =>
+      make({
+        name: 'Нода потеряла связь — скрыть Host',
+        trigger: 'offline',
+        actions: ['record_event', 'hide_host', 'notify'],
+      }),
+  },
+  {
+    title: 'Падение онлайна — пометить Host',
+    text: 'Проверить TCP, записать в событие, поставить ⚠️ в имя Host и написать в Telegram.',
+    make: () =>
+      make({
+        name: 'Падение онлайна — пометить Host',
+        trigger: 'online_drop',
+        actions: ['check_tcp', 'record_event', 'rename_host', 'notify'],
+        renameText: '⚠️',
+      }),
+  },
+  {
+    title: 'Блокировка из РФ — предупредить',
+    text: 'Когда TCP недоступен из РФ, прислать сообщение в Telegram с таблицей портов.',
+    make: () =>
+      make({
+        name: 'Блокировка из РФ — предупредить',
+        trigger: 'tcp_unreachable',
+        holdMinutes: 5,
+        actions: ['check_tcp', 'notify'],
+      }),
+  },
+];
+
+/** Сутки по 2 часа: столбик — худший итог в промежутке, пустой — срабатываний не было. */
+function DayBars({ slots }: { slots: ReadonlyArray<RunTone | null> }) {
+  const color: Record<RunTone, string> = { ok: 'bg-ok', warn: 'bg-warn', crit: 'bg-crit', teal: 'bg-teal' };
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {actions.map((a, i) => (
-        <span key={a} className="inline-flex items-center gap-1.5">
-          <span className="inline-flex h-7 items-center gap-1.5 rounded-[9px] border border-border bg-surface pr-2.5 pl-1 text-[12.5px] whitespace-nowrap">
-            <i className="grid size-5 place-items-center rounded-[6px] bg-teal text-[11px] font-extrabold text-bg not-italic">
-              {i + 1}
-            </i>
-            {scenarioActionLabels[a]}
-          </span>
-          {i < actions.length - 1 && <ChevronRightIcon className="size-3.5 text-text-3" aria-hidden="true" />}
-        </span>
+    <div className="flex h-9 items-end gap-[3px]" aria-hidden="true">
+      {slots.map((tone, i) => (
+        <i
+          // biome-ignore lint/suspicious/noArrayIndexKey: промежуток суток — постоянный порядок
+          key={i}
+          className={cn('block h-[30px] w-[7px] rounded-[2px]', tone ? color[tone] : 'bg-surface-3')}
+        />
       ))}
     </div>
   );
 }
 
-/** Последнее срабатывание сценария под его строкой: когда, на какой ноде и чем кончилось — как плашка в журнале. */
-function LastRun({ rule, entries }: { rule: Scenario; entries: JournalEntry[] }) {
-  const mine = entries.filter((e) => e.run.ruleId === rule.id && e.run.kind === 'run');
-  const last = mine[0];
-  if (!last)
+/** Плитки сверху (витрина scenarios-2026-10b, страница A): что включено, сколько срабатываний, замечания, Host. */
+function Tiles({ o }: { o: ScenarioOverview | undefined }) {
+  if (!o)
     return (
-      <p className="flex items-start gap-2.5 text-[12.5px] text-text-2">
-        <span className="mt-1.5 size-2 flex-none rounded-full bg-text-3" aria-hidden="true" />
-        <span>
-          Ещё не срабатывал
-          <small className="block text-[12px] text-text-3">
-            {rule.enabled ? 'Сработает, когда выполнится условие' : 'Выключен — не срабатывает'}
-          </small>
-        </span>
-      </p>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <KpiCardSkeleton key={i} />
+        ))}
+      </div>
     );
-  const o = runOutcome(last, rule);
-  const day = mine.filter((e) => e.run.t > Date.now() - 86_400_000).length;
+  const t = o.tiles;
+  const remarks = t.weekWarn + t.weekCrit;
   return (
-    <p className="flex items-start gap-2.5 text-[12.5px] leading-relaxed text-text-2">
-      <span className={cn('mt-1.5 size-2 flex-none rounded-full', OUTCOME_DOT[o.tone])} aria-hidden="true" />
-      <span className="min-w-0">
-        <b className="font-semibold text-foreground">{when(last.run.t)}</b> · {last.run.nodeName} — {o.text}
-        <small className="block text-[12px] text-text-3">срабатываний за сутки: {day}</small>
-      </span>
-    </p>
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <KpiCard
+        label="Включено"
+        value={t.enabled}
+        unit={`из ${t.total}`}
+        status={t.enabled ? 'работают сами' : t.total ? 'все выключены' : 'сценариев пока нет'}
+        tone={t.enabled ? 'ok' : 'muted'}
+      />
+      <KpiCard
+        label="Срабатываний за сутки"
+        value={t.day}
+        status={t.day ? 'по 2 часа' : 'не срабатывали'}
+        tone={t.day ? 'info' : 'muted'}
+        extra={<DayBars slots={t.daySlots} />}
+      />
+      <KpiCard
+        label="С замечаниями за 7 дней"
+        value={<span className={cn(remarks > 0 && 'text-warn')}>{remarks}</span>}
+        unit={`из ${t.week}`}
+        status={remarks ? `${t.weekCrit} не вышло · ${t.weekWarn} с замечанием` : 'замечаний не было'}
+        tone={t.weekCrit ? 'crit' : remarks ? 'warn' : 'ok'}
+      />
+      <KpiCard
+        label="Host помечен сейчас"
+        value={t.marked}
+        status={t.marked ? 'вернётся сам после восстановления' : 'помеченных Host нет'}
+        tone={t.marked ? 'info' : 'ok'}
+      />
+    </div>
+  );
+}
+
+/** Шаги значками по порядку — подсказка с названием шага при наведении. */
+export function StepIcons({ actions }: { actions: Scenario['actions'] }) {
+  return (
+    <span
+      className="flex items-center gap-1"
+      role="img"
+      aria-label={`Шаги: ${actions.map((a) => STEPS[a].title).join(', ')}`}
+    >
+      {actions.map((a, i) => {
+        const Icon = STEPS[a].icon;
+        return (
+          <span key={a} className="flex items-center gap-1">
+            <i
+              title={`${i + 1}. ${STEPS[a].title}`}
+              className="grid size-8 place-items-center rounded-[9px] bg-teal/12 text-teal not-italic"
+            >
+              <Icon className="size-4" aria-hidden="true" />
+            </i>
+            {i < actions.length - 1 && <ChevronRightIcon className="size-3 text-text-3" aria-hidden="true" />}
+          </span>
+        );
+      })}
+    </span>
   );
 }
 
@@ -93,237 +163,370 @@ function ListSkeleton() {
   return (
     <div role="status" aria-label="Загрузка сценариев">
       {[1, 2, 3].map((row) => (
-        <div
-          key={row}
-          className="flex flex-col gap-2.5 border-t border-border px-[18px] py-3.5 first:border-t-0"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <Skeleton className="h-4 w-48" />
-            <Skeleton className="h-6 w-11 rounded-full" />
+        <div key={row} className="flex items-center gap-4 border-t border-border px-4 py-4 first:border-t-0">
+          <Skeleton className="h-6 w-11 rounded-full" />
+          <div className="flex flex-1 flex-col gap-2">
+            <Skeleton className="h-4 w-56" />
+            <Skeleton className="h-3 w-2/3" />
           </div>
-          <Skeleton className="h-3 w-2/3" />
-          <div className="flex gap-2">
-            <Skeleton className="h-7 w-32 rounded-[9px]" />
-            <Skeleton className="h-7 w-36 rounded-[9px]" />
-          </div>
-          <Skeleton className="h-3 w-1/2" />
+          <Skeleton className="h-8 w-40 rounded-[9px] max-lg:hidden" />
+          <Skeleton className="h-8 w-48 max-lg:hidden" />
         </div>
       ))}
     </div>
   );
 }
+
+type ListFilter = 'all' | 'on' | 'off' | 'warn';
+type Editing = { draft: Scenario; original: Scenario | null; tab: EditorTab; node?: string };
+
 /**
- * «Сценарии» (витрина scenarios-list-2026-10, вариант C): слева список с условием фразой, шагами по порядку и
- * последним срабатыванием, справа журнал срабатываний (витрина runs, вариант B) — что сделано и чем кончилось.
- * `createSignal` — нажатие «Создать сценарий» в шапке страницы.
+ * «Сценарии» (витрина scenarios-2026-10b, страница A): плитки сверху, вкладки «Сценарии | Журнал срабатываний»,
+ * сценарий — строкой (условие, шаги значками, последнее срабатывание, полоска последних 20). Срабатывания одного
+ * сценария — в его окне, всех — во вкладке «Журнал», порциями. `createSignal` — «Создать сценарий» в шапке.
  */
-export function ScenariosPage({ createSignal = 0 }: { createSignal?: number }) {
+export function ScenariosPage({
+  createSignal = 0,
+  search = {},
+  clearSearch,
+}: {
+  createSignal?: number;
+  search?: ScenariosSearch;
+  clearSearch?: () => void;
+}) {
   const q = useScenarios(),
     save = useSaveScenarios(),
-    runsQuery = useScenarioRuns(),
+    overview = useScenarioOverview(),
     nodes = useNodes();
-  const [draft, setDraft] = useState<Scenario | null>(null),
+  const [editing, setEditing] = useState<Editing | null>(null),
     [error, setError] = useState<string | null>(null),
-    [selected, setSelected] = useState<string | null>(null),
-    [only, setOnly] = useState<'all' | 'one'>('all'),
-    [shown, setShown] = useState(20);
+    [tab, setTab] = useState<'list' | 'journal'>('list'),
+    [filter, setFilter] = useState<ListFilter>('all'),
+    [query, setQuery] = useState('');
   const items = q.data?.items ?? [];
-  const entries = useMemo(() => journalEntries(runsQuery.data?.items ?? []), [runsQuery.data]);
   const allNodes = nodes.data?.nodes ?? [];
-  const current = items.find((r) => r.id === selected) ?? items[0] ?? null;
-  const journal = only === 'one' && current ? entries.filter((e) => e.run.ruleId === current.id) : entries;
+  const stats = new Map((overview.data?.items ?? []).map((i) => [i.ruleId, i]));
   useEffect(() => {
-    if (createSignal > 0) setDraft(make());
+    if (createSignal > 0) setEditing({ draft: make(), original: null, tab: 'rule' });
   }, [createSignal]);
-  async function persist(next: Scenario[]) {
+  // Переход по ссылке из окна ноды: открыть сценарий или новый — для этой ноды; адрес после этого очищается.
+  useEffect(() => {
+    if (!q.data) return;
+    if (search.create) {
+      setEditing({
+        draft: make(search.node ? { scope: 'selected', nodes: [search.node] } : {}),
+        original: null,
+        tab: 'rule',
+      });
+      clearSearch?.();
+    } else if (search.open) {
+      const rule = q.data.items.find((r) => r.id === search.open);
+      if (rule)
+        setEditing({
+          draft: rule,
+          original: rule,
+          tab: search.tab ?? 'rule',
+          ...(search.node ? { node: search.node } : {}),
+        });
+      clearSearch?.();
+    }
+  }, [q.data, search.create, search.open, search.tab, search.node, clearSearch]);
+
+  async function persist(next: Scenario[], close = true) {
     try {
       await save.mutateAsync(next);
-      setDraft(null);
+      if (close) setEditing(null);
       setError(null);
+      return true;
     } catch (e) {
       setError(apiErrorMessage(e));
+      return false;
     }
   }
+  const remarked = (r: Scenario) => (stats.get(r.id)?.dayWarn ?? 0) > 0;
+  const counts = {
+    on: items.filter((r) => r.enabled).length,
+    off: items.filter((r) => !r.enabled).length,
+    warn: items.filter(remarked).length,
+  };
+  const needle = query.trim().toLowerCase();
+  const shown = items.filter(
+    (r) =>
+      (filter === 'all' ||
+        (filter === 'on' && r.enabled) ||
+        (filter === 'off' && !r.enabled) ||
+        (filter === 'warn' && remarked(r))) &&
+      (!needle || `${r.name} ${conditionsPhrase(r)}`.toLowerCase().includes(needle)),
+  );
+  const open = (rule: Scenario, editorTab: EditorTab = 'rule') =>
+    setEditing({ draft: rule, original: rule, tab: editorTab });
+
   return (
-    <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_380px]">
-      <section
-        className="overflow-hidden rounded-2xl border border-border bg-surface"
-        aria-label="Список сценариев"
-      >
-        <header className="flex min-h-14 items-center gap-2.5 border-b border-border px-[18px] py-3">
-          <h2 className="font-heading text-[14.5px] font-semibold">Сценарии</h2>
-          {q.data && <Pill>{items.length}</Pill>}
-          <span className="flex-1" />
-          {q.data && (
-            <span className="text-[12px] text-text-3">включено {items.filter((r) => r.enabled).length}</span>
+    <div className="flex flex-col gap-3">
+      <Tiles o={overview.data} />
+      <section className="overflow-hidden rounded-2xl border border-border bg-surface" aria-label="Сценарии">
+        <header className="flex flex-wrap items-center gap-2.5 border-b border-border px-4 py-3">
+          <Segmented<'list' | 'journal'>
+            label="Что показать"
+            value={tab}
+            onChange={setTab}
+            items={[
+              { key: 'list', label: `Сценарии${q.data ? ` · ${items.length}` : ''}` },
+              { key: 'journal', label: 'Журнал срабатываний' },
+            ]}
+          />
+          {tab === 'list' && (
+            <>
+              <Segmented<ListFilter>
+                label="Какие сценарии"
+                value={filter}
+                onChange={setFilter}
+                items={[
+                  { key: 'all', label: 'Все' },
+                  { key: 'on', label: `Включены · ${counts.on}` },
+                  { key: 'off', label: `Выключены · ${counts.off}` },
+                  {
+                    key: 'warn',
+                    label: `С замечаниями · ${counts.warn}`,
+                    title: 'Замечание или ошибка за сутки',
+                  },
+                ]}
+              />
+              <div className="relative ml-auto w-[260px] max-md:ml-0 max-md:w-full">
+                <SearchIcon
+                  className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-text-3"
+                  aria-hidden="true"
+                />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Найти сценарий"
+                  aria-label="Найти сценарий"
+                  className="h-10 pl-9"
+                />
+              </div>
+            </>
           )}
         </header>
-        {q.isPending ? (
+
+        {tab === 'journal' ? (
+          <div className="p-4">
+            <RunsPanel
+              rules={items}
+              nodes={allNodes}
+              emptyText="Срабатываний за этот период нет — сценарии сработают, когда выполнится условие."
+            />
+          </div>
+        ) : q.isPending ? (
           <ListSkeleton />
         ) : q.isError ? (
-          <p role="alert" className="px-[18px] py-4 text-[13px] text-crit">
+          <p role="alert" className="px-4 py-4 text-[13px] text-crit">
             {apiErrorMessage(q.error)}
           </p>
         ) : !items.length ? (
-          <div className="grid min-h-52 place-content-center gap-2 px-6 py-8 text-center">
-            <GitBranchIcon className="mx-auto size-7 text-ai" aria-hidden="true" />
-            <h3 className="font-medium">Сценариев пока нет</h3>
-            <p className="text-[13px] text-text-3">
-              Например: при потере связи проверить TCP, изменить имя Host и написать в Telegram.
-            </p>
-          </div>
-        ) : (
-          items.map((rule) => {
-            const scope = scopePhrase(rule, allNodes);
-            const on = rule.id === current?.id;
-            return (
-              // biome-ignore lint/a11y/useSemanticElements: строка — выбор сценария для журнала, внутри свои кнопки
-              <div
-                key={rule.id}
-                role="button"
-                tabIndex={0}
-                aria-pressed={on}
-                aria-label={`Сценарий «${rule.name}»`}
-                onClick={() => setSelected(rule.id)}
-                onKeyDown={(e) => {
-                  if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
-                    e.preventDefault();
-                    setSelected(rule.id);
-                  }
-                }}
-                className={cn(
-                  'grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3.5 gap-y-2.5 border-t border-border px-[18px] py-3.5 transition-colors first:border-t-0 hover:bg-surface-2/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
-                  on && 'bg-brand/[0.06] shadow-[inset_3px_0_0_var(--ns-accent)]',
-                )}
-              >
-                <div className="min-w-0">
-                  <b className="block text-[14px] font-semibold">{rule.name}</b>
-                  <p className="mt-0.5 text-[12.5px] leading-relaxed text-text-3">
-                    Если <b className="font-semibold text-text-2">{conditionsPhrase(rule)}</b> держится{' '}
-                    <b className="font-semibold text-text-2">{rule.holdMinutes} мин</b>{' '}
-                    {scope ? (
-                      <>
-                        на <b className="font-semibold text-text-2">{scope}</b>
-                      </>
-                    ) : (
-                      <b className="font-semibold text-warn">(ноды не выбраны)</b>
-                    )}
-                  </p>
-                </div>
-                {/* Переключатель и «Настроить» не выбирают строку: у них своё действие. */}
-                {/* biome-ignore lint/a11y/noStaticElementInteractions: обёртка только гасит всплытие нажатия */}
-                <div
-                  className="flex items-center gap-2"
-                  onClick={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
+          <div className="flex flex-col items-center gap-4 px-6 py-10 text-center">
+            <span className="grid size-11 place-items-center rounded-full bg-ai-soft text-ai">
+              <GitBranchIcon className="size-5" aria-hidden="true" />
+            </span>
+            <div>
+              <h3 className="font-heading text-[16px] font-semibold">Сценариев пока нет</h3>
+              <p className="mt-1 text-[13px] text-text-3">
+                Сценарий сам выполнит шаги, когда с нодой что-то случится. Начните с готового:
+              </p>
+            </div>
+            <div className="grid w-full max-w-[920px] gap-3 md:grid-cols-3">
+              {TEMPLATES.map((t) => (
+                <button
+                  key={t.title}
+                  type="button"
+                  onClick={() => setEditing({ draft: t.make(), original: null, tab: 'rule' })}
+                  className="flex cursor-pointer flex-col gap-1.5 rounded-2xl border border-border bg-surface-2 p-4 text-left transition-colors hover:border-ai/50 hover:bg-surface-3"
                 >
-                  <Toggle
-                    id={`scenario-on-${rule.id}`}
-                    checked={rule.enabled}
-                    disabled={save.isPending}
-                    aria-label={`Сценарий «${rule.name}» включён`}
-                    onChange={(enabled) =>
-                      void persist(items.map((r) => (r.id === rule.id ? { ...r, enabled } : r)))
-                    }
-                  />
-                  <button
-                    type="button"
-                    aria-label={`Настроить сценарий «${rule.name}»`}
-                    onClick={() => setDraft(rule)}
-                    className="grid size-9 cursor-pointer place-items-center rounded-[10px] border border-border bg-surface-2 text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground"
-                  >
-                    <Settings2Icon className="size-4" aria-hidden="true" />
-                  </button>
-                </div>
-                <div className="col-span-2">
-                  <Steps actions={rule.actions} />
-                </div>
-                <div className="col-span-2">
-                  {runsQuery.isPending ? (
-                    <Skeleton className="h-3 w-1/2" />
-                  ) : (
-                    <LastRun rule={rule} entries={entries} />
-                  )}
-                </div>
-              </div>
-            );
-          })
-        )}
-      </section>
-
-      <section
-        className="overflow-hidden rounded-2xl border border-border bg-surface"
-        aria-label="Срабатывания"
-      >
-        <header className="flex min-h-14 items-center gap-3 border-b border-border px-[18px] py-2.5">
-          <h2 className="flex-1 font-heading text-[14.5px] font-semibold">Срабатывания</h2>
-          <Segmented<'all' | 'one'>
-            label="Чьи срабатывания"
-            value={only}
-            onChange={setOnly}
-            items={[
-              { key: 'all', label: 'Все' },
-              { key: 'one', label: 'Этот сценарий', disabled: !current },
-            ]}
-          />
-        </header>
-        {runsQuery.isPending ? (
-          <JournalSkeleton />
-        ) : runsQuery.isError ? (
-          <p role="alert" className="px-[18px] py-4 text-[13px] text-crit">
-            {apiErrorMessage(runsQuery.error)}
-          </p>
-        ) : !journal.length ? (
-          <p className="px-[18px] py-6 text-[13px] text-text-3">
-            {only === 'one' && current
-              ? `«${current.name}» ещё не срабатывал.`
-              : 'Срабатываний пока нет — сценарии сработают, когда выполнится условие.'}
-          </p>
-        ) : (
-          // Имя сценария в записи нужно, только когда в «Все» сценариев несколько.
-          <Journal
-            entries={journal.slice(0, shown)}
-            rules={items}
-            showRule={only === 'all' && items.length > 1}
-          />
-        )}
-        {journal.length > shown && (
-          <div className="border-t border-border px-[18px] py-3">
-            <button
-              type="button"
-              onClick={() => setShown((n) => n + 20)}
-              className="h-10 w-full cursor-pointer rounded-[10px] border border-border bg-surface-2 text-[13px] font-medium text-text-2 transition-colors hover:text-foreground"
-            >
-              Показать ещё {Math.min(20, journal.length - shown)}
-            </button>
+                  <b className="text-[13.5px] font-semibold">{t.title}</b>
+                  <span className="text-[12.5px] leading-relaxed text-text-3">{t.text}</span>
+                </button>
+              ))}
+            </div>
           </div>
+        ) : !shown.length ? (
+          <p className="px-4 py-8 text-center text-[13px] text-text-3">По этому отбору сценариев нет.</p>
+        ) : (
+          <ul>
+            {shown.map((rule) => {
+              const scope = scopePhrase(rule, allNodes);
+              const st = stats.get(rule.id);
+              return (
+                <li key={rule.id} className="border-t border-border first:border-t-0">
+                  {/* biome-ignore lint/a11y/useSemanticElements: строка — открытие окна, внутри свой переключатель */}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Открыть сценарий «${rule.name}»`}
+                    onClick={() => open(rule)}
+                    onKeyDown={(e) => {
+                      if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault();
+                        open(rule);
+                      }
+                    }}
+                    className="grid cursor-pointer grid-cols-[44px_minmax(0,1fr)_auto_190px_190px_16px] items-center gap-x-4 px-4 py-3.5 transition-colors hover:bg-surface-2/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand max-xl:grid-cols-[44px_minmax(0,1fr)_190px_16px] max-md:grid-cols-[44px_minmax(0,1fr)_16px]"
+                  >
+                    {/* Переключатель не открывает окно: у него своё действие. */}
+                    {/* biome-ignore lint/a11y/noStaticElementInteractions: обёртка только гасит всплытие нажатия */}
+                    <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                      <Toggle
+                        id={`scenario-on-${rule.id}`}
+                        checked={rule.enabled}
+                        disabled={save.isPending}
+                        aria-label={`Сценарий «${rule.name}» включён`}
+                        onChange={(enabled) =>
+                          void persist(
+                            items.map((r) => (r.id === rule.id ? { ...r, enabled } : r)),
+                            false,
+                          )
+                        }
+                      />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-2">
+                        <b className="truncate text-[14px] font-semibold">{rule.name}</b>
+                        {!rule.enabled && (
+                          <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-semibold text-text-3">
+                            Выключен
+                          </span>
+                        )}
+                      </span>
+                      <span className="mt-0.5 line-clamp-2 text-[12.5px] leading-relaxed text-text-3">
+                        <b className="font-semibold text-text-2">{conditionsPhrase(rule)}</b> · держится{' '}
+                        {rule.holdMinutes} мин ·{' '}
+                        {scope ?? <span className="font-semibold text-warn">ноды не выбраны</span>}
+                      </span>
+                    </span>
+                    <span className="max-xl:hidden">
+                      <StepIcons actions={rule.actions} />
+                    </span>
+                    <span className="min-w-0 text-[12.5px] max-md:hidden">
+                      {!overview.data ? (
+                        <Skeleton className="h-3 w-32" />
+                      ) : st?.last ? (
+                        <>
+                          <span className="flex items-center gap-2">
+                            <i
+                              className={cn('size-2 flex-none rounded-full', OUTCOME_DOT[st.last.tone])}
+                              aria-hidden="true"
+                            />
+                            <span className="truncate text-text-2">{when(st.last.t)}</span>
+                          </span>
+                          <span className="mt-0.5 block truncate pl-4 text-text-3">{st.last.nodeName}</span>
+                        </>
+                      ) : (
+                        <span className="text-text-3">
+                          {rule.enabled ? 'ещё не срабатывал' : 'выключен — не срабатывает'}
+                        </span>
+                      )}
+                    </span>
+                    <span className="flex flex-col gap-1.5 max-xl:hidden">
+                      {overview.data && st && (
+                        <>
+                          <RunStrip strip={st.strip} size="sm" timeZone={overview.data.timeZone} />
+                          <span className="text-[12px] text-text-3">
+                            {st.day ? (
+                              <>
+                                <b className="font-semibold text-text-2">{st.day}</b> за сутки
+                                {st.dayWarn > 0 && (
+                                  <span className="text-warn"> · {st.dayWarn} с замечанием</span>
+                                )}
+                              </>
+                            ) : (
+                              'за сутки — 0'
+                            )}
+                          </span>
+                        </>
+                      )}
+                    </span>
+                    <ChevronRightIcon className="size-4 text-text-3" aria-hidden="true" />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </section>
 
-      {error && (
-        <p role="alert" className="text-[13px] text-crit lg:col-span-2">
+      {error && !editing && (
+        <p role="alert" className="text-[13px] text-crit">
           {error}
         </p>
       )}
-      {draft && (
+      {editing && (
         <ScenarioEditor
-          draft={draft}
-          setDraft={setDraft}
+          draft={editing.draft}
+          original={editing.original}
+          initialTab={editing.tab}
+          {...(editing.node ? { runsNode: editing.node } : {})}
+          summary={stats.get(editing.draft.id) ?? null}
+          {...(overview.data ? { timeZone: overview.data.timeZone } : {})}
+          setDraft={(next) =>
+            setEditing((cur) =>
+              cur
+                ? {
+                    ...cur,
+                    draft: typeof next === 'function' ? (next(cur.draft) ?? cur.draft) : (next ?? cur.draft),
+                  }
+                : cur,
+            )
+          }
           busy={save.isPending}
-          onClose={() => setDraft(null)}
+          onClose={() => {
+            setEditing(null);
+            setError(null);
+          }}
           // Правленый сценарий остаётся на своём месте в списке, новый — в конце.
           onSave={() =>
             void persist(
-              items.some((r) => r.id === draft.id)
-                ? items.map((r) => (r.id === draft.id ? draft : r))
-                : [...items, draft],
+              items.some((r) => r.id === editing.draft.id)
+                ? items.map((r) => (r.id === editing.draft.id ? editing.draft : r))
+                : [...items, editing.draft],
             )
           }
-          onDelete={
-            items.some((r) => r.id === draft.id)
-              ? () => void persist(items.filter((r) => r.id !== draft.id))
+          // «Включён» в окне сохраняется сразу — отдельно от остальных правок.
+          onToggleEnabled={
+            editing.original
+              ? async (enabled) => {
+                  const ok = await persist(
+                    items.map((r) => (r.id === editing.draft.id ? { ...r, enabled } : r)),
+                    false,
+                  );
+                  if (ok)
+                    setEditing((cur) =>
+                      cur?.original
+                        ? { ...cur, draft: { ...cur.draft, enabled }, original: { ...cur.original, enabled } }
+                        : cur,
+                    );
+                }
               : undefined
           }
+          onDuplicate={
+            editing.original
+              ? () =>
+                  setEditing({
+                    draft: {
+                      ...editing.draft,
+                      id: crypto.randomUUID(),
+                      name: `${editing.draft.name} (копия)`,
+                      enabled: false,
+                    },
+                    original: null,
+                    tab: 'rule',
+                  })
+              : undefined
+          }
+          onDelete={
+            items.some((r) => r.id === editing.draft.id)
+              ? () => void persist(items.filter((r) => r.id !== editing.draft.id))
+              : undefined
+          }
+          rules={items}
           error={error}
         />
       )}

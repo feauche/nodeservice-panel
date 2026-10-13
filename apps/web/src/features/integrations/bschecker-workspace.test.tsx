@@ -248,3 +248,87 @@ describe('BS Checker (вариант A)', () => {
     expect(dialog).toHaveTextContent('Просмотр настроек записан в «Журнал».');
   });
 });
+
+describe('Серверы точки WebSocket: поля с подписями и свободным вводом', () => {
+  const ws = {
+    id: '5',
+    name: 'WS-5',
+    address: 'radio.example',
+    state: 'active',
+    ready: true,
+    applied: true,
+    exits: [{ host: '2.26.101.44', port: 441, weight: 1, backup: false, enabled: true, state: 'up' }],
+    bridges: [],
+  };
+  /** Открыть окно серверов и запомнить, что ушло на подготовку изменения. */
+  async function open() {
+    const sent: Array<{ exits: Array<Record<string, unknown>> }> = [];
+    server.use(
+      http.get('*/api/integrations/bschecker/ws', () => HttpResponse.json({ ws: [ws], unreadable: 0 })),
+      http.post('*/api/integrations/bschecker/ws/5/changes', async ({ request }) => {
+        const body = (await request.json()) as { exits: Array<Record<string, unknown>> };
+        sent.push(body);
+        return HttpResponse.json({
+          id: '9b2f3c1e-7d4a-4e8b-9a6c-1f2e3d4c5b6a',
+          wsId: '5',
+          before: ws.exits.map(({ state, ...e }) => ({ ...e, max_connections: null })),
+          after: body.exits,
+          expiresAt: '2026-10-13T12:00:00Z',
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage(Page, '/bs');
+    const card = await screen.findByRole('article', { name: 'Точка WS-5' });
+    await user.click(within(card).getByRole('button', { name: 'Изменить выходы' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Серверы точки · WS-5' });
+    return { user, dialog, sent };
+  }
+
+  it('у полей подписи и пояснение; вес стирается целиком и набирается заново; пустой лимит — без лимита', async () => {
+    const { user, dialog, sent } = await open();
+    for (const label of ['Адрес', 'Порт', 'Вес', 'Лимит подключений'])
+      expect(within(dialog).getByText(label, { selector: 'label' })).toBeVisible();
+    expect(dialog).toHaveTextContent('с весом 2 — вдвое больше, чем с весом 1; от 1 до 100');
+    expect(dialog).toHaveTextContent('пусто — без лимита');
+    const weight = within(dialog).getByRole('textbox', { name: 'Вес сервера 1' });
+    await user.clear(weight);
+    expect(weight).toHaveValue('');
+    await user.type(weight, '2');
+    expect(weight).toHaveValue('2');
+    expect(within(dialog).getByRole('textbox', { name: 'Лимит подключений сервера 1' })).toHaveValue('');
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить серверы' }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]?.exits[0]).toMatchObject({
+      host: '2.26.101.44',
+      port: 441,
+      weight: 2,
+      max_connections: null,
+    });
+  });
+
+  it('вес пустой, 0 или 101 — ошибка под полем, и ничего не отправляется', async () => {
+    const { user, dialog, sent } = await open();
+    const weight = within(dialog).getByRole('textbox', { name: 'Вес сервера 1' });
+    await user.clear(weight);
+    await user.tab();
+    expect(within(dialog).getByText('Вес — от 1 до 100')).toBeVisible();
+    expect(weight).toHaveAttribute('aria-invalid', 'true');
+    for (const bad of ['0', '101']) {
+      await user.clear(weight);
+      await user.type(weight, bad);
+      expect(within(dialog).getByText('Вес — от 1 до 100')).toBeVisible();
+      await user.click(within(dialog).getByRole('button', { name: 'Сохранить серверы' }));
+      expect(within(dialog).getByRole('alert')).toHaveTextContent('Исправьте поля, отмеченные красным.');
+    }
+    expect(sent).toHaveLength(0);
+    // Исправили — ошибка уходит, лимит набирается числом.
+    await user.clear(weight);
+    await user.type(weight, '100');
+    expect(within(dialog).queryByText('Вес — от 1 до 100')).toBeNull();
+    await user.type(within(dialog).getByRole('textbox', { name: 'Лимит подключений сервера 1' }), '50');
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить серверы' }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]?.exits[0]).toMatchObject({ weight: 100, max_connections: 50 });
+  });
+});

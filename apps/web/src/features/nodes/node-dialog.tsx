@@ -49,7 +49,7 @@ const TABS = [
   ['metrics', 'Метрики', ActivityIcon],
   ['connection', 'Подключение', CableIcon],
   ['settings', 'Настройки', Settings2Icon],
-  ['scenarios', 'Сценарии', GitBranchIcon],
+  ['scenarios', 'Автоматизация', GitBranchIcon],
 ] as const;
 
 /** Кнопки паспорта — одной высоты и ширины, как в окне 0.67.0. */

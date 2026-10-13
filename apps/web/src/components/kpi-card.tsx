@@ -55,6 +55,7 @@ export function KpiCard({
   status,
   tone = 'ok',
   spark,
+  extra,
   className,
 }: {
   label: string;
@@ -64,6 +65,8 @@ export function KpiCard({
   status?: ReactNode;
   tone?: KpiTone;
   spark?: Array<number | null>;
+  /** Своё содержимое справа внизу вместо мини-графика: например, полоска срабатываний. */
+  extra?: ReactNode;
   className?: string;
 }) {
   return (
@@ -90,6 +93,7 @@ export function KpiCard({
           </span>
         )}
         {spark && <Sparkline values={spark} className="ml-auto h-9 w-28 flex-none opacity-80" />}
+        {extra != null && <div className="ml-auto flex-none">{extra}</div>}
       </div>
     </section>
   );

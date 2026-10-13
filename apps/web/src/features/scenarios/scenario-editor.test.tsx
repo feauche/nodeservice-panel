@@ -52,6 +52,26 @@ function Harness({ withDelete = false }: { withDelete?: boolean }) {
     )
   );
 }
+const onClose = vi.fn();
+/** Окно сохранённого сценария: есть с чем сравнить правки. */
+function SavedHarness() {
+  const [draft, setDraft] = useState<typeof initial | null>(initial);
+  return (
+    draft && (
+      <ScenarioEditor
+        draft={draft}
+        original={initial}
+        setDraft={setDraft}
+        busy={false}
+        onSave={() => {
+          saved = draft;
+        }}
+        onClose={onClose}
+        error={null}
+      />
+    )
+  );
+}
 const step = (title: string) => screen.getByRole('switch', { name: `Шаг «${title}»` });
 const reading = () => screen.getByText(/Повтор не раньше чем через/);
 
@@ -59,6 +79,7 @@ beforeEach(() => {
   resetMockState({ authenticated: true });
   saved = null;
   onDelete.mockReset();
+  onClose.mockReset();
   server.use(
     http.get('*/api/scenarios/hosts', () => HttpResponse.json({ hosts: [] })),
     http.get('*/api/nodes/status', () =>
@@ -102,7 +123,7 @@ describe('Редактор сценария «Если → то»', () => {
     renderPage(() => <Harness />, '/scenarios');
     await screen.findByRole('dialog');
     const hold = screen.getByRole('textbox', { name: 'Подтверждение, минут' });
-    const save = screen.getByRole('button', { name: 'Сохранить сценарий' });
+    const save = screen.getByRole('button', { name: 'Сохранить' });
     await user.clear(hold);
     expect(hold).toHaveValue('');
     expect(save).toBeDisabled();
@@ -154,7 +175,7 @@ describe('Редактор сценария «Если → то»', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('group', { name: 'Ноды сценария' })).toBeNull();
     expect(screen.getByRole('dialog')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Сохранить сценарий' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
     expect(screen.getByText('Выберите ноды')).toBeVisible();
     expect(reading()).toHaveTextContent('(ноды не выбраны)');
     await user.click(screen.getByRole('button', { name: /выберите ноды/ }));
@@ -166,7 +187,7 @@ describe('Редактор сценария «Если → то»', () => {
     await user.keyboard('{Escape}');
     expect(screen.getByRole('button', { name: /2 выбранных нодах/ })).toBeVisible();
     expect(reading()).toHaveTextContent('на нодах «Германия - 1» и «Турция - 1»');
-    expect(screen.getByRole('button', { name: 'Сохранить сценарий' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: /2 выбранных нодах/ }));
     list = await screen.findByRole('group', { name: 'Ноды сценария' });
     await user.click(screen.getByRole('button', { name: 'Очистить' }));
@@ -183,6 +204,8 @@ describe('Редактор сценария «Если → то»', () => {
     renderPage(() => <Harness />, '/scenarios');
     await screen.findByRole('dialog');
     await user.click(step('Уведомить в Telegram'));
+    // Пример сообщения — на своей вкладке окна.
+    await user.click(screen.getByRole('tab', { name: /Сообщение/ }));
     const preview = (await screen.findByText(/🟡 Сценарий: Проверка/)).parentElement;
     if (!preview) throw Error('Нет примера сообщения');
     // Строка на шаг со значком, под ними таблица портов; отдельной строки «Нода: …» нет — нода под заголовком.
@@ -220,5 +243,35 @@ describe('Редактор сценария «Если → то»', () => {
     expect(onDelete).not.toHaveBeenCalled();
     await user.click(await screen.findByRole('button', { name: 'Да, удалить' }));
     expect(onDelete).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Окно сценария: вкладки и полоса сохранения (витрина scenarios-2026-10b, окно A)', () => {
+  it('новый сценарий — без вкладки «Срабатывания»; у сохранённого она есть', async () => {
+    renderPage(() => <Harness />, '/scenarios');
+    await screen.findByRole('dialog');
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Правило', 'Сообщение']);
+  });
+  it('правок нет — «Изменений нет» и сохранять нечего; правка — что именно, закрыть — только после вопроса', async () => {
+    const user = userEvent.setup();
+    renderPage(() => <SavedHarness />, '/scenarios');
+    await screen.findByRole('dialog');
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
+      'Правило',
+      'Срабатывания',
+      'Сообщение',
+    ]);
+    expect(screen.getByText('Изменений нет')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
+    const pause = screen.getByRole('textbox', { name: /Пауза между повторными сбоями/ });
+    await user.clear(pause);
+    await user.type(pause, '45');
+    expect(screen.getByText(/Есть несохранённые изменения: пауза 30 → 45 мин/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Отмена' }));
+    expect(await screen.findByText('Закрыть без сохранения?')).toBeVisible();
+    expect(onClose).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Закрыть' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
