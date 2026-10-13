@@ -43,7 +43,7 @@ export const MONITORING_DEFAULTS: MonitoringSettings = {
   dropWindowMinutes: 60,
   confirmSamples: 4,
   recoverySamples: 4,
-  recoveryPercent: 70,
+  recoveryPercent: 50,
   cpuEnabled: true,
   loadPerCore: 1.5,
   memoryEnabled: true,
@@ -70,5 +70,9 @@ export const MONITORING_DEFAULTS_BEFORE_0_94: Partial<MonitoringSettings> = {
 /** Значения по умолчанию до 0.95.0: превышение нагрузки и памяти ждали 5 минут. */
 export const MONITORING_DEFAULTS_BEFORE_0_95: Partial<MonitoringSettings> = {
   resourceDurationMinutes: 5,
+};
+/** Значения по умолчанию до 0.97.0: падение онлайна закрывалось, когда возвращалось 70 % прежнего уровня. */
+export const MONITORING_DEFAULTS_BEFORE_0_97: Partial<MonitoringSettings> = {
+  recoveryPercent: 70,
 };
 export const monitoringSettingsUpdateSchema = monitoringSettingsSchema.partial().strict();

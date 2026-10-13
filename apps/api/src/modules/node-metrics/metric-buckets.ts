@@ -13,6 +13,16 @@ export const UP_SQL = sql.raw(`COALESCE((values->>'up')::float,
   CASE WHEN values->>'ram' IS NOT NULL OR values->>'load' IS NOT NULL OR COALESCE((values->>'online')::float, 0) > 0
   THEN 1 ELSE 0 END)`);
 
+/**
+ * Скорость за корзину, байт в секунду: сумма байт за промежутки, делённая на сумму их длительности по часам ноды
+ * (с 0.96.0 замер хранит разницу счётчиков). Замеры до 0.96.0 — секундный снимок скорости Remnawave: считаем его
+ * минутой с этой скоростью, пока такие замеры не уйдут из 30-дневной истории. Замер без промежутка не участвует.
+ */
+export const rateSql = (dir: 'rx' | 'tx') =>
+  sql.raw(`(sum(CASE WHEN values ? 'dt' THEN (values->>'${dir}Bytes')::float ELSE (values->>'${dir}')::float * 60 END)
+    / nullif(sum(CASE WHEN values ? 'dt' THEN CASE WHEN values->>'${dir}Bytes' IS NOT NULL THEN (values->>'dt')::float END
+      WHEN values->>'${dir}' IS NOT NULL THEN 60 END), 0))`);
+
 /** Корзина без единого замера. У выключенной ноды онлайн 0, а не пусто: такая корзина не пустая. */
 export const isMissing = (p: Values): boolean => METRIC_FIELDS.every((f) => p[f] == null);
 

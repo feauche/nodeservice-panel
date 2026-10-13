@@ -17,6 +17,7 @@ const labels = TCP_VERDICT_LABELS;
 const tones = {
   reachable: 'ok',
   russia_unreachable: 'crit',
+  russia_partial: 'warn',
   port_unreachable: 'crit',
   unknown: 'warn',
 } as const;
@@ -43,6 +44,11 @@ export function TcpResults({
             <p className="mt-1 text-[12.5px] leading-5 text-text-2">
               {TCP_VERDICT_EXPLANATIONS[report.verdict]}
             </p>
+            {report.verdict === 'russia_partial' && report.confirmed && (
+              <p className="mt-1 text-[12.5px] leading-5 font-medium text-crit">
+                Повторная проверка через минуту показала то же — это не сбой одной точки.
+              </p>
+            )}
           </div>
         </div>
         {online && (

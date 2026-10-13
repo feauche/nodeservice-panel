@@ -1,4 +1,5 @@
 import type { NodeMetricHistory } from '@nodeservice/shared';
+import { mbitText } from '@/lib/units';
 
 export type Metric = 'online' | 'load' | 'ram' | 'rx' | 'tx';
 export type HistoryNode = NodeMetricHistory['nodes'][number];
@@ -11,6 +12,14 @@ export const METRICS: Record<Metric, { label: string; title: string; unit: strin
   rx: { label: 'Приём', title: 'Приём', unit: ' Мбит/с', sum: true },
   tx: { label: 'Отдача', title: 'Отдача', unit: ' Мбит/с', sum: true },
 };
+
+/** Значение метрики текстом: скорость — по общему правилу панели, онлайн — целыми, остальное — с десятыми. */
+export function metricText(metric: Metric, v: number | null | undefined): string {
+  if (metric === 'rx' || metric === 'tx') return mbitText(v);
+  return v == null || !Number.isFinite(v)
+    ? '—'
+    : v.toLocaleString('ru-RU', { maximumFractionDigits: metric === 'online' ? 0 : 1 });
+}
 
 /** Цвет ноды: равномерно по кругу оттенков (золотой угол), у ноды он постоянный — по порядку её идентификатора. */
 export const nodeColor = (index: number) => `hsl(${Math.round((index * 137.5 + 200) % 360)} 70% 62%)`;

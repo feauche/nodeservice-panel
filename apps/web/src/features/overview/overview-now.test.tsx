@@ -171,11 +171,26 @@ const STATS = {
   timeZone: 'Asia/Omsk',
   collectedSince: '2026-10-11T08:05:00.000Z',
   traffic: {
-    total: 2 * 1024 ** 5,
+    total: 41 * 1024 ** 4,
     days: [
-      { date: '2026-10-11', total: 1024 ** 5, rx: null, tx: null },
-      { date: '2026-10-12', total: 1024 ** 5, rx: 0.5 * 1024 ** 5, tx: 0.5 * 1024 ** 5 },
+      // Итог Remnawave за сутки по Гринвичу и замеры панели с полуночи по Гринвичу до конца периода: 24 + 17 часов.
+      {
+        date: '2026-10-11',
+        total: 24 * 1024 ** 4,
+        source: 'remnawave',
+        from: '2026-10-11T00:00:00.000Z',
+        to: '2026-10-12T00:00:00.000Z',
+      },
+      {
+        date: '2026-10-12',
+        total: 17 * 1024 ** 4,
+        source: 'panel',
+        from: '2026-10-12T00:00:00.000Z',
+        to: '2026-10-12T17:00:00.000Z',
+      },
     ],
+    measuredSince: '2026-10-11T08:05:00.000Z',
+    removed: 0,
     error: null,
   },
   online: {
@@ -233,6 +248,9 @@ describe('Обзор, «Статистика»', () => {
     expect(screen.getByText('минимум 4 574')).toBeInTheDocument();
     expect(screen.getByText(/Пик — 21:00–01:00, тише всего — 06:00–10:00/)).toBeInTheDocument();
     expect(screen.getByText(/по поясу панели, UTC\+6/)).toBeInTheDocument();
+    // В среднем за сутки — итог на время, которое покрывают столбики (41 час), а не на их число и не на 30 дней.
+    expect(screen.getByText('в среднем 24 ТБ в сутки')).toBeInTheDocument();
+    expect(screen.getByText(/итоги Remnawave по Гринвичу/)).toBeInTheDocument();
     const locked = screen.getByRole('radio', { name: /90 дней/ });
     expect(locked).toHaveAttribute('aria-disabled', 'true');
     expect(locked).toHaveAttribute('title', 'Панель хранит замеры 30 дней');
@@ -251,6 +269,46 @@ describe('Обзор, «Статистика»', () => {
     await userEvent.setup().click(within(table).getByRole('button', { name: /Пиковый онлайн/ }));
     expect(names()[0]).toContain('Бета');
     expect(screen.getByRole('button', { name: 'Скачать таблицу' })).toBeInTheDocument();
+  });
+
+  it('«Сутки»: трафик за последние 24 часа — два неполных столбика, без «в среднем»', async () => {
+    server.use(
+      http.get('/api/nodes/stats', ({ request }) =>
+        HttpResponse.json(
+          new URL(request.url).searchParams.get('days') === '1'
+            ? {
+                ...STATS,
+                days: 1,
+                from: '2026-10-11T17:00:00.000Z',
+                traffic: {
+                  ...STATS.traffic,
+                  total: 3 * 1024 ** 4,
+                  days: [
+                    {
+                      date: '2026-10-11',
+                      total: 1024 ** 4,
+                      source: 'panel',
+                      from: '2026-10-11T17:00:00.000Z',
+                      to: '2026-10-11T18:00:00.000Z',
+                    },
+                    {
+                      date: '2026-10-12',
+                      total: 2 * 1024 ** 4,
+                      source: 'panel',
+                      from: '2026-10-11T18:00:00.000Z',
+                      to: '2026-10-12T17:00:00.000Z',
+                    },
+                  ],
+                },
+              }
+            : STATS,
+        ),
+      ),
+    );
+    renderPage(OverviewStats, '/');
+    await screen.findByText('в среднем 24 ТБ в сутки');
+    await userEvent.setup().click(screen.getByRole('radio', { name: 'Сутки' }));
+    expect(await screen.findByText('за последние 24 ч')).toBeInTheDocument();
   });
 });
 

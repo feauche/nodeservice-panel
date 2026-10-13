@@ -13,16 +13,18 @@ import { CAPACITY_DAYS, NODE_STATS_DAYS, type NodeCapacity, type NodeMetrics } f
 import { sql } from 'drizzle-orm';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { NodePreferencesStore } from '../remnawave/node-preferences.store.js';
+import { NodeRatesStore } from '../remnawave/node-rates.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
-import { bridgeSingleGaps, fillPoint, fleetSeries, mean2, UP_SQL } from './metric-buckets.js';
+import { type CounterReading, counterDelta } from './counter-delta.js';
+import { bridgeSingleGaps, fillPoint, fleetSeries, mean2, rateSql, UP_SQL } from './metric-buckets.js';
 import { type CapacityPoint, estimateCapacity } from './node-capacity.logic.js';
 import { NodeMetricHistoryService, parseMetricHistoryRange } from './node-metric-history.service.js';
 import { NodeStatsService } from './node-stats.service.js';
 
-/** Замер в базу — не чаще раза в минуту (чуть меньше, чтобы опоздавший опрос не пропускал минуту). */
-const RECORD_EVERY_MS = 55_000;
+/** Замер в базу — один на календарную минуту: точка графика за час — ровно один замер, как «сейчас» у ноды. */
+const MINUTE_MS = 60_000;
 const PRUNE_EVERY_MS = 10 * 60_000;
 
 type LocalHistory = {
@@ -46,17 +48,59 @@ export class NodeMetricsService {
   private pending: Promise<void> | null = null;
   /** Последний записанный снимок: тот же снимок повторно не пишем — его замер уже в базе. */
   private recorded: string | null = null;
-  /** Время и подключение последнего записанного замера: замеры — не чаще раза в минуту. */
-  private recordedAt = 0;
-  private recordedDomain: string | null = null;
+  /** Последняя записанная минута по подключениям: второй замер в ту же минуту не пишется. */
+  private recordedMinutes = new Map<string, number>();
   /** Старые замеры чистим не на каждом тике, а раз в 10 минут: удаление проходит по всей таблице. */
   private prunedAt = 0;
+  /** Точка отсчёта счётчиков по нодам: последнее принятое показание и время его замера (по подключению). */
+  private bases = new Map<string, Map<string, { reading: CounterReading; at: number }>>();
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly store: RemnawaveSettingsStore,
     private readonly remna: RemnawaveService,
     @Optional() private readonly monitoring?: MonitoringStore,
+    @Optional() private readonly rates?: NodeRatesStore,
   ) {}
+  /**
+   * Точки отсчёта после перезапуска панели — из последнего записанного показания каждой ноды: первая минута после
+   * перезапуска тоже считается (за весь перерыв), а скорость «сейчас» видна сразу.
+   */
+  private async basesFor(domain: string) {
+    const known = this.bases.get(domain);
+    if (known) return known;
+    const bases = new Map<string, { reading: CounterReading; at: number }>();
+    const rows = await this.db.execute(sql`SELECT DISTINCT ON (node_uuid) node_uuid, sampled_at, values
+      FROM remna_metric_samples WHERE panel=${domain} AND values->>'rxTotal' IS NOT NULL
+      ORDER BY node_uuid, sampled_at DESC`);
+    // Минута последнего замера до перезапуска: в неё второй замер не пишем, иначе в точке графика их два.
+    const latest = Math.max(0, ...rows.rows.map((r) => new Date(String(r.sampled_at)).getTime()));
+    if (latest) this.recordedMinutes.set(domain, Math.floor(latest / MINUTE_MS));
+    const num = (v: unknown) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+    for (const row of rows.rows) {
+      const v = (typeof row.values === 'string' ? JSON.parse(row.values) : row.values) as Record<
+        string,
+        unknown
+      >;
+      const at = new Date(String(row.sampled_at)).getTime();
+      const [rxTotal, txTotal, uptime] = [num(v.rxTotal), num(v.txTotal), num(v.uptime)];
+      if (rxTotal == null || txTotal == null || uptime == null) continue;
+      const uuid = String(row.node_uuid);
+      bases.set(uuid, {
+        reading: {
+          rxTotal,
+          txTotal,
+          uptime,
+          iface: typeof v.iface === 'string' ? v.iface : null,
+          used: num(v.used),
+        },
+        at,
+      });
+      this.rates?.set(domain, uuid, { rx: num(v.rx), tx: num(v.tx) }, at);
+    }
+    if (this.bases.size > 4) this.bases.clear();
+    this.bases.set(domain, bases);
+    return bases;
+  }
   @Interval(15000) async tick() {
     if (process.env.NODE_ENV !== 'test')
       await this.collect().catch(() =>
@@ -81,16 +125,35 @@ export class NodeMetricsService {
     if (status.domain !== domain || status.error || !status.checkedAt) return;
     const snapshot = `${domain}:${status.checkedAt}`;
     if (snapshot === this.recorded) return;
-    // Опрос теперь каждые 15 секунд, а графикам хватает замера в минуту: чаще писать — раздувать базу вчетверо.
+    // Опрос каждые 15 секунд, а замер — один на календарную минуту: первый снимок новой минуты. Тогда точка
+    // графика за час — ровно один замер, и «сейчас» у ноды совпадает с краем графика; разница счётчиков точная
+    // при любом промежутке. Все ноды одного снимка получают одно время — точное время снимка.
     const at = Date.parse(status.checkedAt);
-    if (this.recordedDomain === domain && at - this.recordedAt < RECORD_EVERY_MS) return;
-    // Точное время снимка, а не начало минуты: два снимка в одной минуте больше не вытесняют друг друга,
-    // и у соседней минуты не появляется ложный пропуск. Все ноды одного снимка получают одно время.
-    const t = new Date(Date.parse(status.checkedAt));
+    const bases = await this.basesFor(domain);
+    const minute = Math.floor(at / MINUTE_MS);
+    if ((this.recordedMinutes.get(domain) ?? -1) >= minute) return;
+    const t = new Date(at);
     const inserts = status.nodes.map((n) => {
       const online = n.isConnected && !n.isDisabled;
-      // Нода не на связи или выключена: в сумме онлайна и трафика она даёт ноль, в среднем памяти и нагрузки
-      // не участвует (там пусто).
+      // Трафик — по разнице счётчиков ноды с прошлого принятого показания: байты и секунды по часам ноды.
+      const reading: CounterReading | null =
+        n.rxTotalBytes != null && n.txTotalBytes != null && n.systemUptimeSec != null
+          ? {
+              rxTotal: n.rxTotalBytes,
+              txTotal: n.txTotalBytes,
+              uptime: n.systemUptimeSec,
+              iface: n.netInterface ?? null,
+              used: n.trafficUsedBytes ?? null,
+            }
+          : null;
+      const base = bases.get(n.uuid) ?? null;
+      const step = counterDelta(base?.reading ?? null, reading, base ? (t.getTime() - base.at) / 1000 : 0);
+      if (step.advance && reading) bases.set(n.uuid, { reading, at: t.getTime() });
+      const rx = step.net ? step.net.rxBytes / step.net.dt : null,
+        tx = step.net ? step.net.txBytes / step.net.dt : null;
+      this.rates?.set(domain, n.uuid, { rx, tx }, t.getTime());
+      // Нода не на связи или выключена: в сумме онлайна она даёт ноль, в среднем памяти и нагрузки не участвует
+      // (там пусто). Скорость — средняя за промежуток; нет промежутка — пусто, а не ноль.
       const values = {
         cpu: online ? (n.cpuPercent ?? null) : null,
         ram:
@@ -98,10 +161,21 @@ export class NodeMetricsService {
             ? (n.memoryUsedBytes / n.memoryTotalBytes) * 100
             : null,
         load: online ? (n.loadAverage?.[0] ?? null) : null,
-        rx: online ? (n.rxBytesPerSec ?? null) : 0,
-        tx: online ? (n.txBytesPerSec ?? null) : 0,
+        rx,
+        tx,
         online: online ? (n.usersOnline ?? null) : 0,
         up: online ? 1 : 0,
+        rxBytes: step.net?.rxBytes ?? null,
+        txBytes: step.net?.txBytes ?? null,
+        dt: step.net?.dt ?? null,
+        // Принятое показание — точка отсчёта следующего замера; не принято (Remnawave не обновила) — пусто.
+        rxTotal: step.advance ? (reading?.rxTotal ?? null) : null,
+        txTotal: step.advance ? (reading?.txTotal ?? null) : null,
+        uptime: step.advance ? (reading?.uptime ?? null) : null,
+        iface: step.advance ? (reading?.iface ?? null) : null,
+        used: step.advance ? (reading?.used ?? null) : null,
+        // Трафик пользователей за промежуток — по счётчику Remnawave, как в самой Remnawave.
+        usedBytes: step.usedBytes,
       };
       return sql`(${domain},${n.uuid},${t.toISOString()},${JSON.stringify(values)}::jsonb)`;
     });
@@ -110,8 +184,9 @@ export class NodeMetricsService {
         sql`INSERT INTO remna_metric_samples(panel,node_uuid,sampled_at,values) VALUES ${sql.join(inserts, sql`, `)} ON CONFLICT DO NOTHING`,
       );
     this.recorded = snapshot;
-    this.recordedAt = at;
-    this.recordedDomain = domain;
+    this.recordedMinutes.set(domain, minute);
+    // Новая точка видна на графиках сразу, а не после кэша.
+    this.historyCache.clear();
     if (Date.now() - this.prunedAt < PRUNE_EVERY_MS) return;
     await this.db.execute(
       sql`DELETE FROM remna_metric_samples WHERE sampled_at < now() - interval '30 days'`,
@@ -167,7 +242,7 @@ export class NodeMetricsService {
       const bucket = Math.max(Math.ceil(pollSeconds / 60) * 60, Math.ceil(span / 240 / 60) * 60);
       const rows = await this.db.execute(sql`SELECT node_uuid AS uuid, bucket_t AS t,
       avg((values->>'cpu')::float) AS cpu, avg((values->>'ram')::float) AS ram, avg((values->>'load')::float) AS load,
-      avg((values->>'rx')::float) AS rx, avg((values->>'tx')::float) AS tx, avg((values->>'online')::float) AS online,
+      ${rateSql('rx')} AS rx, ${rateSql('tx')} AS tx, avg((values->>'online')::float) AS online,
       avg(${UP_SQL}) AS up
       FROM (SELECT node_uuid, values, floor(extract(epoch FROM sampled_at)/${bucket})*${bucket} AS bucket_t FROM remna_metric_samples WHERE panel=${domain} AND sampled_at >= ${new Date(Date.now() - minutes * 60000).toISOString()}::timestamptz) samples GROUP BY node_uuid,bucket_t ORDER BY t`);
       const history: NodeMetrics['history'] = [];
@@ -283,7 +358,7 @@ export class NodeMetricsService {
     const rows =
       await this.db.execute(sql`SELECT node_uuid AS uuid, floor(extract(epoch FROM sampled_at)/900)*900 AS t,
       avg((values->>'online')::float) AS online, avg((values->>'ram')::float) AS ram, avg((values->>'load')::float) AS load,
-      avg((values->>'rx')::float) AS rx, avg((values->>'tx')::float) AS tx
+      ${rateSql('rx')} AS rx, ${rateSql('tx')} AS tx
       FROM remna_metric_samples WHERE panel=${domain} AND sampled_at >= ${new Date(Date.now() - CAPACITY_DAYS * 86_400_000).toISOString()}::timestamptz
       GROUP BY 1, 2 ORDER BY 2`);
     const num = (x: unknown) => (x == null ? null : Number(x));

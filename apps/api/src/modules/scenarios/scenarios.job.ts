@@ -13,6 +13,7 @@ import {
   scenarioLabels,
   TCP_VERDICT_LABELS,
   type TcpCheckReport,
+  tcpBlockedInRussia,
   tcpCheckReportSchema,
   tcpReachSummary,
 } from '@nodeservice/shared';
@@ -95,14 +96,18 @@ export const scenarioSignals = (node: RemnawaveNode, rows: Record<string, unknow
   online_drop: rows.some(
     (i) => i.node_uuid === node.uuid && ['node_blocked', 'server_down'].includes(String(i.kind)),
   ),
-  tcp_unreachable: rows.some(
-    (i) =>
+  // Событие о падении онлайна, а проверка порта показала блокировку из РФ (полную или частичную, подтверждённую
+  // повтором через минуту) или что порт не отвечает вовсе.
+  tcp_unreachable: rows.some((i) => {
+    const report = (i.diagnostics as { report?: { verdict?: string; confirmed?: boolean } } | null)?.report;
+    return (
       i.node_uuid === node.uuid &&
       ['node_blocked', 'server_down'].includes(String(i.kind)) &&
-      ['russia_unreachable', 'port_unreachable'].includes(
-        String((i.diagnostics as { report?: { verdict?: string } } | null)?.report?.verdict),
-      ),
-  ),
+      !!report?.verdict &&
+      (tcpBlockedInRussia({ verdict: report.verdict, confirmed: report.confirmed }) ||
+        report.verdict === 'port_unreachable')
+    );
+  }),
 });
 /** «нода потеряла связь и TCP недоступен» — условия сценария фразой для журнала. */
 const conditionPhrase = (rule: Scenario) =>
@@ -336,7 +341,7 @@ export class ScenariosJob {
       nodeName: node.name,
       type: 'tcp_check',
       title: 'TCP-проверка условия сценария',
-      summary: `${report.target}: ${report.verdict === 'reachable' ? 'доступен' : report.verdict === 'unknown' ? 'недостаточно данных' : report.verdict === 'russia_unreachable' ? 'недоступен из РФ' : 'порты недоступны'}`,
+      summary: `${report.target}: ${report.verdict === 'reachable' ? 'доступен' : report.verdict === 'unknown' ? 'недостаточно данных' : report.verdict === 'russia_unreachable' ? 'недоступен из РФ' : report.verdict === 'russia_partial' ? `частично недоступен из РФ${report.confirmed ? ', подтверждено повтором' : ''}` : 'порты недоступны'}`,
       link: report.link,
     });
     return report;
@@ -372,7 +377,12 @@ export class ScenariosJob {
       // и отсчёт «держится» не сбрасывается.
       if (cfg.checkHostEnabled && probe && !known?.fresh) this.probeLater(panel, node, cfg);
       const verdict = known?.report.verdict;
-      signals.tcp_unreachable = verdict === 'russia_unreachable' || verdict === 'port_unreachable';
+      // Частичная недоступность из РФ — блокировка, только если подтверждена повтором и онлайн упал: сбойная точка
+      // Check-Host в РФ сама по себе сценарий не запускает.
+      signals.tcp_unreachable =
+        verdict === 'russia_unreachable' ||
+        verdict === 'port_unreachable' ||
+        (!!known && tcpBlockedInRussia(known.report) && signals.online_drop);
     }
     return signals;
   }

@@ -294,6 +294,22 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
     expect(row?.detail).toContain('недостаточно данных');
     expect(row?.title).not.toContain('недоступность из РФ');
   });
+  it('РФ ответила не со всех точек и повтор через минуту показал то же — событие «недоступность из РФ»', async () => {
+    tcp.checkNode.mockImplementation(async () => ({ ...report('russia_partial'), confirmed: true }));
+    await baseline();
+    await collapse();
+    const row = (await list())[0];
+    expect(row).toMatchObject({ kind: 'node_blocked', title: 'Падение онлайна · недоступность из РФ' });
+    expect(row?.detail).toContain('части провайдеров РФ');
+  });
+  it('частичный ответ РФ без повтора блокировкой не считается', async () => {
+    tcp.checkNode.mockImplementation(async () => report('russia_partial'));
+    await baseline();
+    await collapse();
+    const row = (await list())[0];
+    expect(row?.title).toBe('Падение онлайна');
+    expect(row?.detail).toContain('вывод не подтверждён');
+  });
   it('выключенный мониторинг не вызывает внешние проверки и не создаёт инциденты', async () => {
     await settings.set({ enabled: false });
     await baseline();

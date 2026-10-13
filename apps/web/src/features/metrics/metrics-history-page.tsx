@@ -46,6 +46,7 @@ import {
   type HistoryEvent,
   METRICS,
   type Metric,
+  metricText,
   nodeColor,
   seriesStats,
 } from './metrics-math';
@@ -123,12 +124,14 @@ function SortedTip({
   label,
   unit,
   names,
+  format,
 }: {
   active?: boolean;
   payload?: ReadonlyArray<{ dataKey?: unknown; value?: unknown; color?: string }>;
   label?: unknown;
   unit: string;
   names: Map<string, string>;
+  format: (v: number) => string;
 }) {
   if (!active || !payload?.length) return null;
   const rows = payload.filter((p) => p.value != null).sort((a, b) => Number(b.value) - Number(a.value));
@@ -147,7 +150,7 @@ function SortedTip({
             {names.get(String(p.dataKey)) ?? 'Весь парк'}
           </span>
           <b className="tabular-nums">
-            {fmt(Number(p.value), 1)}
+            {format(Number(p.value))}
             {unit}
           </b>
         </div>
@@ -548,28 +551,28 @@ export function MetricsHistoryPage() {
           <>
             <KpiCard
               label="Сейчас"
-              value={fmt(fleet.now, 1)}
+              value={metricText(metric, fleet.now)}
               unit={unit.trim()}
               status="весь парк"
               tone="info"
             />
             <KpiCard
               label="Пик"
-              value={fmt(fleet.peak?.v, 1)}
+              value={metricText(metric, fleet.peak?.v)}
               unit={unit.trim()}
               status={fleet.peak ? dateLabel(fleet.peak.t) : '—'}
               tone="ok"
             />
             <KpiCard
               label="Среднее"
-              value={fmt(fleet.avg, 1)}
+              value={metricText(metric, fleet.avg)}
               unit={unit.trim()}
               status="за видимое окно"
               tone="ok"
             />
             <KpiCard
               label="Минимум"
-              value={fmt(fleet.min?.v, 1)}
+              value={metricText(metric, fleet.min?.v)}
               unit={unit.trim()}
               status={fleet.min ? dateLabel(fleet.min.t) : '—'}
               tone="muted"
@@ -730,7 +733,7 @@ export function MetricsHistoryPage() {
                   <YAxis
                     width={Y_AXIS}
                     domain={metric === 'ram' ? [0, 100] : [0, 'auto']}
-                    tickFormatter={(v) => fmt(Number(v), 1)}
+                    tickFormatter={(v) => metricText(metric, Number(v))}
                     tick={{ fill: 'var(--ns-text-3)', fontSize: 10.5 }}
                     axisLine={false}
                     tickLine={false}
@@ -748,6 +751,7 @@ export function MetricsHistoryPage() {
                         label={label}
                         unit={unit}
                         names={names}
+                        format={(v) => metricText(metric, v)}
                       />
                     )}
                   />
@@ -926,12 +930,12 @@ export function MetricsHistoryPage() {
                             )}
                           </span>
                         </td>
-                        <td className="px-4 py-2 text-right tabular-nums">{fmt(stats.now, 1)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{metricText(metric, stats.now)}</td>
                         <td className="px-4 py-2 text-right text-text-3 tabular-nums">
-                          {fmt(stats.peak?.v, 1)}
+                          {metricText(metric, stats.peak?.v)}
                         </td>
                         <td className="px-4 py-2 text-right text-text-3 tabular-nums">
-                          {fmt(stats.min?.v, 1)}
+                          {metricText(metric, stats.min?.v)}
                         </td>
                       </tr>
                     );

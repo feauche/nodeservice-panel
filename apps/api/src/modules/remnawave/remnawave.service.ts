@@ -12,6 +12,7 @@ import type { Env } from '../../config/env.schema.js';
 import { AuditService } from '../audit/audit.service.js';
 import { EventsService } from '../events/events.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { NodeRatesStore } from './node-rates.store.js';
 import {
   getJson,
   REMNAWAVE_CLIENT,
@@ -142,6 +143,7 @@ export class RemnawaveService {
     private readonly config: ConfigService<Env, true>,
     private readonly notifications: NotificationsService,
     @Optional() private readonly events?: EventsService,
+    @Optional() private readonly rates?: NodeRatesStore,
   ) {}
   /** Идущая перепроверка: второй вызов ждёт её, а не запускает параллельную запись снимка. */
   private syncing: Promise<void> | null = null;
@@ -270,7 +272,8 @@ export class RemnawaveService {
       lastAttemptAt: snap?.lastAttemptAt ?? snap?.checkedAt ?? null,
       error: snap?.error ?? null,
       stats: snap?.stats ?? null,
-      nodes: snap?.nodes ?? [],
+      // Скорость — за последнюю минуту по счётчикам ноды (как на графике), а не секундный снимок Remnawave.
+      nodes: (snap?.nodes ?? []).map((n) => (this.rates ? this.rates.apply(domain, n) : n)),
       cert: snap?.cert ?? null,
     };
   }

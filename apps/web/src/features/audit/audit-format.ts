@@ -167,6 +167,7 @@ export function metadataRows(
             {
               reachable: 'Доступен',
               russia_unreachable: 'Недоступен из РФ',
+              russia_partial: 'Частично недоступен из РФ',
               port_unreachable: 'TCP-порты не отвечают',
               unknown: 'Неполный результат',
             } as Record<string, string>

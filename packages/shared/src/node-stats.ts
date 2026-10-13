@@ -13,12 +13,30 @@ export const nodeStatsSchema = z.object({
   timeZone: z.string(),
   collectedSince: z.string().nullable(),
   traffic: z.object({
-    /** Всего за период, байт (по данным Remnawave). */
+    /**
+     * Трафик пользователей за период, байт — та же величина, что в Remnawave: сумма по суткам и по нодам. null —
+     * данных нет.
+     */
     total: z.number().nullable(),
-    /** По дням: всего — Remnawave; приём и отдача — его доля по замерам панели, null — замеров в тот день нет. */
+    /**
+     * По суткам пояса панели. panel — панель считает сама: каждую минуту читает счётчик трафика ноды в Remnawave;
+     * remnawave — сутки до начала замеров: суточный итог Remnawave (её сутки — по Гринвичу). from…to — какую часть
+     * суток покрывает столбик: первые и последние сутки периода неполные; длина периода, за которую есть трафик, —
+     * сумма этих частей.
+     */
     days: z.array(
-      z.object({ date: z.string(), total: z.number(), rx: z.number().nullable(), tx: z.number().nullable() }),
+      z.object({
+        date: z.string(),
+        total: z.number(),
+        source: z.enum(['panel', 'remnawave']),
+        from: z.string(),
+        to: z.string(),
+      }),
     ),
+    /** С какого момента панель считает трафик сама; null — ещё не начала. */
+    measuredSince: z.string().nullable(),
+    /** Трафик удалённых из Remnawave нод за период, байт: в итоге он есть, отдельной строки ноды нет. */
+    removed: z.number(),
     error: z.string().nullable(),
   }),
   online: z.object({

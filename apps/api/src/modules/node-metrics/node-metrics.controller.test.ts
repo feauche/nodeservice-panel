@@ -1,5 +1,6 @@
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { NodeRatesStore } from '../remnawave/node-rates.store.js';
 import { NodeMetricsController, NodeMetricsService } from './node-metrics.controller.js';
 
 afterEach(() => {
@@ -7,56 +8,173 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('node metric history', () => {
-  it('пишет снимок с его точным временем, не дёргая Remnawave; нода не на связи даёт ноль трафика', async () => {
+  it('скорость и трафик — по разнице счётчиков ноды за промежуток по её часам; первое показание — точка отсчёта', async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-10-12T04:00:00Z'));
+    vi.setSystemTime(new Date('2026-10-12T03:00:30Z'));
     const execute = vi.fn().mockResolvedValue({ rows: [] });
     const syncQuiet = vi.fn();
+    const node = (rx: number, tx: number, uptime: number, used: number) => ({
+      uuid: 'node',
+      isConnected: true,
+      isDisabled: false,
+      usersOnline: 42,
+      rxTotalBytes: rx,
+      txTotalBytes: tx,
+      systemUptimeSec: uptime,
+      netInterface: 'ens3',
+      trafficUsedBytes: used,
+    });
     const status = vi.fn().mockResolvedValue({
       domain: 'panel.example',
       checkedAt: '2026-10-12T03:00:23Z',
       error: null,
       nodes: [
-        { uuid: 'node', isConnected: true, isDisabled: false, usersOnline: 42, rxBytesPerSec: 0 },
-        { uuid: 'off', isConnected: true, isDisabled: true, usersOnline: null, rxBytesPerSec: 9 },
+        node(1_000, 2_000, 100, 500),
+        { uuid: 'off', isConnected: true, isDisabled: true, usersOnline: null },
       ],
     });
+    const rates = new NodeRatesStore();
     const service = new NodeMetricsService(
       { execute } as never,
       { domain: async () => 'panel.example' } as never,
       { status, syncQuiet } as never,
+      undefined,
+      rates,
     );
     await service.collect();
-    vi.setSystemTime(new Date('2026-10-12T04:01:00Z'));
+    vi.setSystemTime(new Date('2026-10-12T03:01:00Z'));
     await service.collect();
     expect(syncQuiet).not.toHaveBeenCalled();
     expect(status).toHaveBeenCalledTimes(2);
-    // Тот же снимок повторно не пишется: вставка и очистка старых замеров — только при первом сборе.
-    expect(execute).toHaveBeenCalledTimes(2);
+    // Точки отсчёта из базы, вставка и очистка — только при первом сборе: тот же снимок повторно не пишется.
+    expect(execute).toHaveBeenCalledTimes(3);
     const dialect = new PgDialect();
-    const first = dialect.sqlToQuery(execute.mock.calls[0][0]);
+    expect(dialect.sqlToQuery(execute.mock.calls[0][0]).sql).toContain('DISTINCT ON');
+    const first = dialect.sqlToQuery(execute.mock.calls[1][0]);
     expect(first.sql).toContain('ON CONFLICT DO NOTHING');
-    expect(first.params).toEqual([
-      'panel.example',
-      'node',
-      '2026-10-12T03:00:23.000Z',
-      JSON.stringify({ cpu: null, ram: null, load: null, rx: 0, tx: null, online: 42, up: 1 }),
-      'panel.example',
-      'off',
-      '2026-10-12T03:00:23.000Z',
-      JSON.stringify({ cpu: null, ram: null, load: null, rx: 0, tx: 0, online: 0, up: 0 }),
-    ]);
-    expect(dialect.sqlToQuery(execute.mock.calls[1][0]).sql).toContain('DELETE');
-    // Новый снимок пишется сразу, а очистка ждёт 10 минут с прошлой.
+    expect(first.params.slice(0, 3)).toEqual(['panel.example', 'node', '2026-10-12T03:00:23.000Z']);
+    // Первое показание: промежутка ещё нет — скорость пустая, показание — точка отсчёта.
+    expect(JSON.parse(String(first.params[3]))).toEqual({
+      cpu: null,
+      ram: null,
+      load: null,
+      rx: null,
+      tx: null,
+      online: 42,
+      up: 1,
+      rxBytes: null,
+      txBytes: null,
+      dt: null,
+      rxTotal: 1_000,
+      txTotal: 2_000,
+      uptime: 100,
+      iface: 'ens3',
+      used: 500,
+      usedBytes: null,
+    });
+    // Выключенная нода: онлайн ноль, скорость неизвестна, а не ноль.
+    expect(JSON.parse(String(first.params[7]))).toMatchObject({
+      rx: null,
+      tx: null,
+      online: 0,
+      up: 0,
+      rxTotal: null,
+    });
+    expect(dialect.sqlToQuery(execute.mock.calls[2][0]).sql).toContain('DELETE');
+    // Через минуту: по часам панели 62 с, по часам ноды 60 с — скорость по часам ноды.
+    vi.setSystemTime(new Date('2026-10-12T03:01:30Z'));
     status.mockResolvedValueOnce({
       domain: 'panel.example',
-      checkedAt: '2026-10-12T04:01:05Z',
+      checkedAt: '2026-10-12T03:01:25Z',
       error: null,
-      nodes: [{ uuid: 'node', isConnected: true, isDisabled: false, usersOnline: 40, rxBytesPerSec: 0 }],
+      nodes: [node(61_000, 92_000, 160, 800)],
     });
     await service.collect();
-    expect(execute).toHaveBeenCalledTimes(3);
-    expect(dialect.sqlToQuery(execute.mock.calls[2][0]).sql).toContain('INSERT');
+    expect(execute).toHaveBeenCalledTimes(4);
+    const second = dialect.sqlToQuery(execute.mock.calls[3][0]);
+    expect(JSON.parse(String(second.params[3]))).toMatchObject({
+      rx: 1_000,
+      tx: 1_500,
+      rxBytes: 60_000,
+      txBytes: 90_000,
+      dt: 60,
+      usedBytes: 300,
+    });
+    // «Сейчас» у ноды — та же минута, что на краю графика.
+    expect(rates.apply('panel.example', { uuid: 'node' } as never)).toMatchObject({
+      rxBytesPerSec: 1_000,
+      txBytesPerSec: 1_500,
+    });
+    // Второй снимок в ту же минуту не пишется: в точке графика за час — один замер.
+    status.mockResolvedValueOnce({
+      domain: 'panel.example',
+      checkedAt: '2026-10-12T03:01:40Z',
+      error: null,
+      nodes: [node(70_000, 99_000, 170, 900)],
+    });
+    await service.collect();
+    expect(execute).toHaveBeenCalledTimes(4);
+  });
+  it('после перезапуска панели точка отсчёта — последнее записанное показание: первая минута тоже считается', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-12T04:00:00Z'));
+    const execute = vi.fn(async (q: unknown) =>
+      new PgDialect().sqlToQuery(q as never).sql.includes('DISTINCT ON')
+        ? {
+            rows: [
+              {
+                node_uuid: 'node',
+                sampled_at: '2026-10-12T03:58:00Z',
+                values: {
+                  rxTotal: 1_000,
+                  txTotal: 1_000,
+                  uptime: 100,
+                  iface: 'ens3',
+                  used: 10,
+                  rx: 7,
+                  tx: 8,
+                },
+              },
+            ],
+          }
+        : { rows: [] },
+    );
+    const rates = new NodeRatesStore();
+    const service = new NodeMetricsService(
+      { execute } as never,
+      { domain: async () => 'panel.example' } as never,
+      {
+        status: async () => ({
+          domain: 'panel.example',
+          checkedAt: '2026-10-12T04:00:00Z',
+          error: null,
+          nodes: [
+            {
+              uuid: 'node',
+              isConnected: true,
+              isDisabled: false,
+              usersOnline: 1,
+              rxTotalBytes: 121_000,
+              txTotalBytes: 61_000,
+              systemUptimeSec: 220,
+              netInterface: 'ens3',
+              trafficUsedBytes: 110,
+            },
+          ],
+        }),
+      } as never,
+      undefined,
+      rates,
+    );
+    await service.collect();
+    const insert = new PgDialect().sqlToQuery(execute.mock.calls[1]?.[0] as never);
+    // Перерыв 2 минуты по часам ноды: средняя за весь перерыв.
+    expect(JSON.parse(String(insert.params[3]))).toMatchObject({
+      rx: 1_000,
+      tx: 500,
+      dt: 120,
+      usedBytes: 100,
+    });
   });
   it.each([
     { checkedAt: null, error: null },

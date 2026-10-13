@@ -6,7 +6,7 @@ import { NodeEventsStore } from '../node-events/node-events.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
-import { bridgeSingleGaps, mean2 } from './metric-buckets.js';
+import { bridgeSingleGaps, mean2, rateSql } from './metric-buckets.js';
 
 const fields = ['cpu', 'ram', 'load', 'rx', 'tx', 'online'] as const;
 const empty = () => ({ cpu: null, ram: null, load: null, rx: null, tx: null, online: null });
@@ -76,10 +76,13 @@ export class NodeMetricHistoryService {
       selected.map((n) => sql`${n.uuid}::uuid`),
       sql`, `,
     );
+    // Скорость в корзине — байты за промежутки / их длительность (как на всех графиках); мин. и макс. — по замерам.
     const aggregates = sql.join(
       fields.flatMap((f) =>
-        ['avg', 'min', 'max'].map(
-          (op) => sql`${sql.raw(op)}((values->>${f})::float) AS ${sql.raw(`${f}_${op}`)}`,
+        ['avg', 'min', 'max'].map((op) =>
+          op === 'avg' && (f === 'rx' || f === 'tx')
+            ? sql`${rateSql(f)} AS ${sql.raw(`${f}_avg`)}`
+            : sql`${sql.raw(op)}((values->>${f})::float) AS ${sql.raw(`${f}_${op}`)}`,
         ),
       ),
       sql`, `,
@@ -190,6 +193,7 @@ export class NodeMetricHistoryService {
         const verdict = {
           reachable: 'Доступен',
           russia_unreachable: 'Недоступен из РФ',
+          russia_partial: 'Частично недоступен из РФ',
           port_unreachable: 'Порт не отвечает',
           unknown: 'Неполный результат',
         }[report.verdict];

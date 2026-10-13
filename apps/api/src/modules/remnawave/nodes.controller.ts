@@ -48,7 +48,8 @@ export class NodesController {
     const node = status.nodes.find((n) => n.uuid === uuid);
     if (!node) throw new NotFoundException('Нода не найдена в Remnawave.');
     const cfg = await this.monitoring.get();
-    const report = await this.tcp.checkNode(node.address, cfg.checkHostPort, node.port);
+    // Ручная проверка — сразу итог, без повтора через минуту: «частично недоступен» здесь не подтверждается.
+    const report = await this.tcp.checkNode(node.address, cfg.checkHostPort, node.port, { confirm: false });
     await this.tcpHistory.save(uuid, node.name, report);
     return report;
   }

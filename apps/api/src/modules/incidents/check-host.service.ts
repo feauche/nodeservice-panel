@@ -1,6 +1,11 @@
 import { isIP } from 'node:net';
 import { Injectable } from '@nestjs/common';
-export type TcpVerdict = 'reachable' | 'russia_unreachable' | 'port_unreachable' | 'unknown';
+export type TcpVerdict =
+  | 'reachable'
+  | 'russia_unreachable'
+  | 'russia_partial'
+  | 'port_unreachable'
+  | 'unknown';
 export type TcpObservation = {
   node: string;
   country: string;
@@ -16,6 +21,8 @@ export type TcpReport = {
   observations: TcpObservation[];
   error: string | null;
   ports?: TcpReport[];
+  /** «Частично недоступен из РФ» повторился при проверке через минуту. */
+  confirmed?: boolean;
 };
 export function publicIp(value: string): boolean {
   if (!isIP(value)) return false;
@@ -43,18 +50,23 @@ export function classifyTcp(rows: TcpObservation[]): TcpVerdict {
     return 'russia_unreachable';
   if (rows.every((r) => r.state === 'failed')) return 'port_unreachable';
   if (ru.every((r) => r.state === 'ok') && foreign.some((r) => r.state === 'ok')) return 'reachable';
+  // Другие страны отвечают все, РФ — не со всех точек: блокировка у части провайдеров или сбой самой точки.
+  if (foreign.every((r) => r.state === 'ok') && ru.some((r) => r.state === 'ok')) return 'russia_partial';
   return 'unknown';
 }
 export function combineTcpReports(reports: TcpReport[]): TcpVerdict {
   if (reports.some((r) => r.verdict === 'reachable')) return 'reachable';
   if (!reports.length || reports.some((r) => r.verdict === 'unknown')) return 'unknown';
   if (reports.every((r) => r.verdict === 'port_unreachable')) return 'port_unreachable';
+  // Хоть на одном порту РФ отвечает частично — блокировка не полная.
+  if (reports.some((r) => r.verdict === 'russia_partial')) return 'russia_partial';
   return reports.some((r) => r.verdict === 'russia_unreachable') ? 'russia_unreachable' : 'unknown';
 }
 export function describeTcp(report: TcpReport): string {
   const names: Record<TcpVerdict, string> = {
     reachable: 'доступен из РФ и других стран',
     russia_unreachable: 'недоступен из РФ, доступен из других стран',
+    russia_partial: 'доступен из других стран, из РФ — не со всех точек',
     port_unreachable: 'недоступен из РФ и других стран',
     unknown: 'недостаточно данных',
   };
@@ -78,11 +90,33 @@ export class CheckHostService {
     this.inflight.set(target, promise);
     return promise;
   }
-  async checkNode(ip: string, primaryPort: number, nodePort?: number | null): Promise<TcpReport> {
+  /** Через сколько повторять проверку, когда РФ ответила не со всех точек. */
+  static confirmDelayMs = 60_000;
+  /**
+   * Проверка порта ноды (и запасных портов). РФ ответила не со всех точек, а другие страны со всех — через минуту
+   * та же проверка ещё раз: повторилось — «Частично недоступен из РФ» подтверждён (на него реагируют события и
+   * сценарии), нет — действует свежий итог. `confirm: false` — без повтора, для ручной проверки из окна ноды.
+   */
+  async checkNode(
+    ip: string,
+    primaryPort: number,
+    nodePort?: number | null,
+    { confirm = true }: { confirm?: boolean } = {},
+  ): Promise<TcpReport> {
+    const first = await this.probeNode(ip, primaryPort, nodePort);
+    if (!confirm || first.verdict !== 'russia_partial') return first;
+    await new Promise((resolve) => setTimeout(resolve, CheckHostService.confirmDelayMs));
+    const again = await this.probeNode(ip, primaryPort, nodePort);
+    return again.verdict === 'russia_partial' ? { ...again, confirmed: true } : again;
+  }
+  private async probeNode(ip: string, primaryPort: number, nodePort?: number | null): Promise<TcpReport> {
     const primary = await this.check(ip, primaryPort);
     const reports = [primary];
     const ports = new Set<number>([primaryPort]);
-    if (primaryPort === 5492 && ['port_unreachable', 'russia_unreachable'].includes(primary.verdict)) {
+    if (
+      primaryPort === 5492 &&
+      ['port_unreachable', 'russia_unreachable', 'russia_partial'].includes(primary.verdict)
+    ) {
       reports.push(await this.check(ip, 22));
       ports.add(22);
     }

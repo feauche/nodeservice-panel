@@ -7,6 +7,7 @@ import {
   type MonitoringSettings,
   type NodeTcpDiagnostics,
   type RemnawaveNode,
+  tcpBlockedInRussia,
   tcpCheckReportSchema,
   tcpReachSummary,
 } from '@nodeservice/shared';
@@ -99,13 +100,26 @@ function tcpLine(
         : `Порт ${port} снова доступен`
       : report.verdict === 'russia_unreachable'
         ? `Порт ${port}${place} недоступен из РФ`
-        : report.verdict === 'port_unreachable'
-          ? `Порт ${port}${place} не отвечает`
-          : `Порт ${port}${place}: нет полного результата проверки`;
+        : report.verdict === 'russia_partial'
+          ? `Порт ${port}${place} частично недоступен из РФ`
+          : report.verdict === 'port_unreachable'
+            ? `Порт ${port}${place} не отвечает`
+            : `Порт ${port}${place}: нет полного результата проверки`;
+  const repeat =
+    report.verdict === 'russia_partial'
+      ? report.confirmed
+        ? ' Повторная проверка через минуту показала то же.'
+        : ' Повторной проверки не было.'
+      : '';
   return {
     action,
-    tone: report.verdict === 'reachable' ? 'ok' : report.verdict === 'unknown' ? 'warn' : 'crit',
-    ...(summary ? { detail: `${summary.charAt(0).toUpperCase()}${summary.slice(1)}.` } : {}),
+    tone:
+      report.verdict === 'reachable'
+        ? 'ok'
+        : report.verdict === 'unknown' || (report.verdict === 'russia_partial' && !report.confirmed)
+          ? 'warn'
+          : 'crit',
+    ...(summary ? { detail: `${summary.charAt(0).toUpperCase()}${summary.slice(1)}.${repeat}` } : {}),
     ...(report.link ? { link: { label: 'Отчёт Check-Host', href: report.link } } : {}),
   };
 }
@@ -496,18 +510,23 @@ export class FleetMonitorJob {
       if (recovery) return;
       if (actual.usersOnline !== null && actual.usersOnline >= (before * cfg.recoveryPercent) / 100) return;
       const kind: IncidentKind = report?.verdict === 'port_unreachable' ? 'server_down' : 'node_blocked';
+      const blocked = report ? tcpBlockedInRussia(report) : false;
       const conclusion =
         report?.verdict === 'russia_unreachable'
           ? 'TCP-порт недоступен из РФ, доступен из других стран. Вероятное ограничение из РФ.'
-          : report?.verdict === 'port_unreachable'
-            ? 'TCP-порт недоступен из РФ и других стран. Нода или порт недоступны.'
-            : report?.verdict === 'reachable'
-              ? 'TCP-порт доступен из РФ и других стран. Причина падения онлайна не подтверждена.'
-              : 'Доступность из РФ не подтверждена: недостаточно данных TCP-проверки.';
+          : report?.verdict === 'russia_partial'
+            ? blocked
+              ? 'TCP-порт доступен из других стран, а из РФ — не со всех точек, и повторная проверка через минуту показала то же. Вероятная блокировка у части провайдеров РФ.'
+              : 'TCP-порт доступен из других стран, а из РФ — не со всех точек; повторной проверки не было, вывод не подтверждён.'
+            : report?.verdict === 'port_unreachable'
+              ? 'TCP-порт недоступен из РФ и других стран. Нода или порт недоступны.'
+              : report?.verdict === 'reachable'
+                ? 'TCP-порт доступен из РФ и других стран. Причина падения онлайна не подтверждена.'
+                : 'Доступность из РФ не подтверждена: недостаточно данных TCP-проверки.';
       await this.open(
         node,
         kind,
-        report?.verdict === 'russia_unreachable'
+        blocked
           ? 'Падение онлайна · недоступность из РФ'
           : report?.verdict === 'port_unreachable'
             ? 'Падение онлайна · TCP-порт недоступен'

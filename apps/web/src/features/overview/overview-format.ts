@@ -1,4 +1,5 @@
 import type { Incident, RemnawaveNode } from '@nodeservice/shared';
+import { speedDigits } from '@/lib/units';
 
 /** Число по-русски: пробел между разрядами, запятая в дробной части. */
 export const fmt = (v: number | null | undefined, digits = 0) =>
@@ -17,8 +18,8 @@ export function rates(rx: number | null, tx: number | null) {
     const b = bits(v);
     if (b == null) return '—';
     const x = b / div;
-    // Гигабиты — всегда два знака: «2,90 · 2,96» ровнее, чем «2,9 · 2,96».
-    const digits = giga ? 2 : x >= 10 ? 0 : 1;
+    // Общее правило панели: гигабиты — два знака, мегабиты — один знак меньше 10, иначе целые.
+    const digits = speedDigits(giga ? x * 1000 : x, giga);
     return x.toLocaleString('ru-RU', { minimumFractionDigits: digits, maximumFractionDigits: digits });
   };
   return { rx: show(rx), tx: show(tx), unit: giga ? 'Гбит/с' : 'Мбит/с' };

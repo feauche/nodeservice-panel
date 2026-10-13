@@ -28,6 +28,7 @@ import { NodeScenarios } from '@/features/scenarios/node-scenarios';
 import { useMonitoring } from '@/features/settings/settings-api';
 import { Pill, Segmented } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
+import { mbitText } from '@/lib/units';
 import { cn } from '@/lib/utils';
 import {
   bytes,
@@ -568,6 +569,7 @@ export function NodeDialog({
                     loading={metrics.isPending}
                     height={140}
                     unit=" Мбит/с"
+                    format={(v) => mbitText(v)}
                     yMin={0}
                     times={points.map((p) => p.t)}
                     series={[

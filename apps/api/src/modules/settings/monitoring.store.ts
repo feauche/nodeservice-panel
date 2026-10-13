@@ -3,6 +3,7 @@ import {
   MONITORING_DEFAULTS,
   MONITORING_DEFAULTS_BEFORE_0_94,
   MONITORING_DEFAULTS_BEFORE_0_95,
+  MONITORING_DEFAULTS_BEFORE_0_97,
   type MonitoringSettings,
   monitoringSettingsSchema,
 } from '@nodeservice/shared';
@@ -30,10 +31,10 @@ const legacyAutochecksSchema = z.object({
 
 /**
  * Версия записи настроек: 2 — 0.94.0 (быстрые значения по умолчанию), 3 — 0.95.0 (в записи только отличия от
- * значений по умолчанию); у записей до 0.94.0 её нет.
+ * значений по умолчанию), 4 — 0.97.0 (онлайн возвращается к половине); у записей до 0.94.0 её нет.
  */
 const VERSION_KEY = '_v';
-const SETTINGS_VERSION = 3;
+const SETTINGS_VERSION = 4;
 /**
  * Прежние значения по умолчанию: у записи версии ниже `before` такое значение считается нетронутым и переходит
  * на нынешнее. Записи версии `before` и новее — уже сохранённые после смены, их значения выбраны вручную.
@@ -41,6 +42,7 @@ const SETTINGS_VERSION = 3;
 const OLD_DEFAULTS: { before: number; values: Partial<MonitoringSettings> }[] = [
   { before: 2, values: MONITORING_DEFAULTS_BEFORE_0_94 },
   { before: 3, values: MONITORING_DEFAULTS_BEFORE_0_95 },
+  { before: 4, values: MONITORING_DEFAULTS_BEFORE_0_97 },
 ];
 /** Только отличия от значений по умолчанию: остальное следует за ними и после будущих обновлений. */
 function compact(values: Record<string, unknown>): Record<string, unknown> {

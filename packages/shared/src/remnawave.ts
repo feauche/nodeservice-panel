@@ -37,8 +37,19 @@ export const remnawaveNodeSchema = z.object({
   memoryUsedBytes: z.number().nullable().optional(),
   memoryTotalBytes: z.number().nullable().optional(),
   loadAverage: z.array(z.number().nullable()).optional(),
+  /**
+   * Приём и отдача сетевой карты, байт в секунду: средняя за последнюю минуту по счётчикам ноды — то же число, что
+   * на краю графика. Пока минута не набрана (сразу после запуска панели) — null.
+   */
   rxBytesPerSec: z.number().nullable().optional(),
   txBytesPerSec: z.number().nullable().optional(),
+  /** Счётчики сетевой карты ноды с загрузки сервера, байт: из их разницы считаются скорость и трафик. */
+  rxTotalBytes: z.number().nullable().optional(),
+  txTotalBytes: z.number().nullable().optional(),
+  /** Сколько секунд работает сервер ноды (по её часам): время между показаниями счётчиков. */
+  systemUptimeSec: z.number().nullable().optional(),
+  /** Сетевая карта, по которой нода считает трафик (ens3, eth0). */
+  netInterface: z.string().nullable().optional(),
   uptime: z.string().nullable().optional(),
   nodeVersion: z.string().nullable().optional(),
   xrayVersion: z.string().nullable().optional(),

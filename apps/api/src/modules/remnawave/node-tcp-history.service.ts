@@ -29,6 +29,7 @@ export class NodeTcpHistoryService {
             const verdict = {
               reachable: 'доступен',
               russia_unreachable: 'недоступен из РФ',
+              russia_partial: 'частично недоступен из РФ',
               port_unreachable: 'не отвечает',
               unknown: 'неполный результат',
             }[p.verdict];

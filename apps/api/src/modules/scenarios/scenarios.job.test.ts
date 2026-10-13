@@ -292,6 +292,44 @@ describe('Сценарии: реальные правила владения Hos
     expect(f.calls).toEqual([]);
     expect(f.tcp.checkNode).toHaveBeenCalledTimes(1);
   });
+  describe('«Частично недоступен из РФ» в условии «TCP недоступен»', () => {
+    /** Сценарий «TCP недоступен» прогоняется 6 минут (держится 5); проверка порта отдаёт `report`. */
+    async function runPartial(report: Record<string, unknown>, onlineDrop: boolean) {
+      vi.useFakeTimers();
+      const start = Date.parse('2026-10-12T00:00:00Z');
+      vi.setSystemTime(start);
+      const f = fixture();
+      f.setRules([{ ...rule, conditions: ['tcp_unreachable'], conditionMode: 'all' } as never]);
+      if (onlineDrop) f.setIncidents([{ node_uuid: node.uuid, kind: 'node_blocked' }]);
+      f.tcp.checkNode.mockResolvedValue({
+        checkedAt: new Date(start).toISOString(),
+        target: '198.51.100.9:5492',
+        link: null,
+        observations: [],
+        error: null,
+        ...report,
+      });
+      for (let i = 0; i <= 6; i++) {
+        vi.setSystemTime(start + i * 60000);
+        f.current.checkedAt = new Date().toISOString();
+        await f.job.run();
+        await f.job.idle();
+      }
+      return f;
+    }
+    it('подтверждён повтором и онлайн упал — условие срабатывает', async () => {
+      const f = await runPartial({ verdict: 'russia_partial', confirmed: true }, true);
+      expect(f.calls).toHaveLength(1);
+    });
+    it('без падения онлайна — не срабатывает: сбойная точка Check-Host в РФ сама сценарий не запускает', async () => {
+      const f = await runPartial({ verdict: 'russia_partial', confirmed: true }, false);
+      expect(f.calls).toEqual([]);
+    });
+    it('без повтора — не срабатывает даже при падении онлайна', async () => {
+      const f = await runPartial({ verdict: 'russia_partial' }, true);
+      expect(f.calls).toEqual([]);
+    });
+  });
   it('пропуск наблюдений сбрасывает время подтверждения', async () => {
     vi.useFakeTimers();
     const start = Date.parse('2026-10-12T00:00:00Z');

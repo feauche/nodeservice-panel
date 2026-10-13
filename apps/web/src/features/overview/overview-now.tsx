@@ -38,6 +38,7 @@ import { useNodeMetrics } from '@/features/nodes/node-metrics';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { apiErrorMessage } from '@/lib/api';
 import { isSectionOpen } from '@/lib/stages';
+import { mbitText } from '@/lib/units';
 import { cn } from '@/lib/utils';
 import {
   eventTitle,
@@ -546,7 +547,7 @@ export function OverviewNow() {
             times={times}
             height={190}
             unit={giga ? ' Гбит/с' : ' Мбит/с'}
-            format={(v) => fmt(v, giga ? 2 : 0)}
+            format={(v) => mbitText(giga ? v * 1000 : v, giga)}
             series={[
               {
                 key: 'rx',

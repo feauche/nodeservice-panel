@@ -9,6 +9,7 @@ import { DnsHostResolver, HOST_RESOLVER, HostAddressesService } from './host-add
 import { NodeActionsController } from './node-actions.controller.js';
 import { NodeLayoutStore } from './node-layout.store.js';
 import { NodePreferencesStore } from './node-preferences.store.js';
+import { NodeRatesStore } from './node-rates.store.js';
 import { NodeTcpHistoryService } from './node-tcp-history.service.js';
 import { NodesController } from './nodes.controller.js';
 import { RemnaBillingProvidersController } from './remna-billing-providers.controller.js';
@@ -46,6 +47,7 @@ import { RemnawaveTopologyService } from './remnawave-topology.service.js';
     RemnaPermissionsService,
     RemnawaveSettingsStore,
     NodePreferencesStore,
+    NodeRatesStore,
     RemnaProvidersService,
     RemnaProviderAssetsService,
     RemnawaveService,
@@ -56,6 +58,7 @@ import { RemnawaveTopologyService } from './remnawave-topology.service.js';
   ],
   exports: [
     NodePreferencesStore,
+    NodeRatesStore,
     RemnaPermissionsService,
     RemnawaveSettingsStore,
     RemnawaveService,

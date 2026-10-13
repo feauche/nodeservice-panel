@@ -204,6 +204,9 @@ describe('Remnawave e2e (J4)', () => {
         usersOnline: 42,
         trafficUsedBytes: 1000,
         trafficLimitBytes: null,
+        // Скорость — только по замеру счётчиков панелью; сразу после подключения замера ещё нет.
+        rxBytesPerSec: null,
+        txBytesPerSec: null,
       },
     ]);
     expect(s.cert).toEqual(CERT_OK);

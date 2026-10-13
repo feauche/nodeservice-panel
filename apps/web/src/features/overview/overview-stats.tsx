@@ -37,6 +37,7 @@ const MONTH_IN = [
 ];
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const TB = 1024 ** 4;
+const DAY_MS = 86_400_000;
 
 function useNodeStats(days: Period) {
   return useQuery({
@@ -87,14 +88,37 @@ function rangeText(stats: NodeStats) {
   return `${span} · по поясу панели, ${offsetLabel(stats.timeZone)}`;
 }
 
-function TrafficBars({ days }: { days: NodeStats['traffic']['days'] }) {
-  const data = days.map((d) => ({
+/**
+ * Подпись столбика в подсказке: итог Remnawave — по Гринвичу; крайние сутки периода — неполные, с какого и по какое
+ * время; сутки на стыке с итогом Remnawave — с полуночи по Гринвичу.
+ */
+function dayNotes(d: NodeStats['traffic']['days'][number], stats: NodeStats, time: Intl.DateTimeFormat) {
+  const ongoing = d.to === stats.to;
+  if (d.source === 'remnawave')
+    return [ongoing ? 'Итог Remnawave по Гринвичу — сутки ещё идут' : 'Итог Remnawave за сутки по Гринвичу'];
+  const notes: string[] = [];
+  const start = time.format(new Date(d.from));
+  if (d.from === stats.from) notes.push(`С ${start} — начало периода`);
+  else if (start !== '00:00') notes.push(`С ${start}, раньше — итог Remnawave`);
+  if (ongoing) notes.push(`По ${time.format(new Date(d.to))} — сутки ещё идут`);
+  return notes;
+}
+
+/**
+ * Трафик пользователей по суткам пояса панели — та же величина, что в Remnawave, ровно за период: крайние столбики —
+ * неполные сутки. Сутки до начала замеров панели — суточные итоги Remnawave (её сутки — по Гринвичу): подсказка так
+ * и говорит.
+ */
+function TrafficBars({ stats }: { stats: NodeStats }) {
+  const time = new Intl.DateTimeFormat('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: stats.timeZone,
+  });
+  const data = stats.traffic.days.map((d) => ({
     date: d.date,
-    rx: d.rx == null ? null : d.rx / TB,
-    tx: d.tx == null ? null : d.tx / TB,
-    // День без замеров панели: приём и отдачу не знаем — столбик целиком «всего».
-    total: d.rx == null ? d.total / TB : null,
-    sum: d.total / TB,
+    total: d.total / TB,
+    notes: dayNotes(d, stats, time),
   }));
   const label = (iso: string) =>
     new Date(`${iso}T12:00:00Z`).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
@@ -132,41 +156,22 @@ function TrafficBars({ days }: { days: NodeStats['traffic']['days'] }) {
                     })}
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span className="text-text-2">Всего</span>
-                    <b className="tabular-nums">{fmt(row.sum, 2)} ТБ</b>
+                    <span className="text-text-2">Трафик</span>
+                    <b className="tabular-nums">{fmt(row.total, 2)} ТБ</b>
                   </div>
-                  {row.rx != null && row.tx != null ? (
-                    <>
-                      <div className="flex justify-between gap-3">
-                        <span className="text-text-2">Приём ≈</span>
-                        <b className="tabular-nums">{fmt(row.rx, 2)} ТБ</b>
-                      </div>
-                      <div className="flex justify-between gap-3">
-                        <span className="text-text-2">Отдача ≈</span>
-                        <b className="tabular-nums">{fmt(row.tx, 2)} ТБ</b>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="mt-1 text-text-3">Приём и отдача — нет замеров панели</div>
-                  )}
+                  {row.notes.map((note) => (
+                    <div key={note} className="mt-1 text-text-3">
+                      {note}
+                    </div>
+                  ))}
                 </div>
               );
             }}
           />
-          <Bar dataKey="rx" stackId="t" fill="var(--ns-accent)" fillOpacity={0.9} isAnimationActive={false} />
-          <Bar
-            dataKey="tx"
-            stackId="t"
-            fill="var(--ns-teal)"
-            fillOpacity={0.9}
-            radius={[4, 4, 0, 0]}
-            isAnimationActive={false}
-          />
           <Bar
             dataKey="total"
-            stackId="t"
-            fill="var(--ns-text-3)"
-            fillOpacity={0.45}
+            fill="var(--ns-accent)"
+            fillOpacity={0.9}
             radius={[4, 4, 0, 0]}
             isAnimationActive={false}
           />
@@ -406,6 +411,15 @@ function NodesTable({ stats, onOpen }: { stats: NodeStats; onOpen: (uuid: string
           </tbody>
         </table>
       </div>
+      {/* Удалённые из Remnawave ноды: их трафик есть в итоге — строкой, чтобы доли сходились в 100 %. */}
+      {stats.traffic.removed > 0 && (
+        <p className="border-t border-border px-4 py-2.5 text-[12.5px] text-text-3">
+          Удалённые ноды — {bytes(stats.traffic.removed)}
+          {stats.traffic.total
+            ? ` · ${fmt((stats.traffic.removed / stats.traffic.total) * 100, 1)} % трафика за период`
+            : ''}
+        </p>
+      )}
     </Card>
   );
 }
@@ -439,8 +453,12 @@ export function OverviewStats() {
   const s = stats.data;
   const selectedNode = nodes.data?.nodes.find((n) => n.uuid === selected);
   const total = splitBytes(s?.traffic.total ?? null);
+  // За какое время есть трафик: сумма частей суток под столбиками — крайние сутки периода неполные, а до начала
+  // замеров панели первые сутки периода целым итогом Remnawave не заменить.
+  const coveredMs = s?.traffic.days.reduce((sum, d) => sum + Date.parse(d.to) - Date.parse(d.from), 0) ?? 0;
+  // В среднем за сутки: итог на это время, а не на число столбиков.
   const perDay =
-    s?.traffic.total != null && s.traffic.days.length ? s.traffic.total / s.traffic.days.length : null;
+    s?.traffic.total != null && coveredMs >= DAY_MS ? s.traffic.total / (coveredMs / DAY_MS) : null;
   const paidLabel =
     period === '1' ? 'сегодня' : period === '7' ? 'на этой неделе' : `в ${MONTH_IN[new Date().getMonth()]}`;
 
@@ -486,8 +504,14 @@ export function OverviewStats() {
               label="Трафик за период"
               value={total.value}
               unit={total.unit}
-              status={perDay == null ? 'Нет данных Remnawave' : `≈ ${bytes(perDay)} в сутки`}
-              tone={perDay == null ? 'muted' : 'info'}
+              status={
+                s.traffic.total == null
+                  ? 'Трафика пока нет'
+                  : period === '1' || perDay == null
+                    ? `за последние ${duration(coveredMs)}`
+                    : `в среднем ${bytes(perDay)} в сутки`
+              }
+              tone={s.traffic.total == null ? 'muted' : 'info'}
             />
             <KpiCard
               label="Пиковый онлайн"
@@ -529,28 +553,21 @@ export function OverviewStats() {
 
           <ChartCard
             title="Трафик по дням"
-            sub="ТБ в сутки · всего — по данным Remnawave, приём и отдача — их доля по замерам панели"
-            end={
-              <div className="flex flex-none items-center gap-3.5 text-[12px] text-text-2">
-                <span className="flex items-center gap-1.5">
-                  <i className="block size-2.5 rounded-[3px] bg-brand" /> Приём
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <i className="block size-2.5 rounded-[3px] bg-teal" /> Отдача
-                </span>
-              </div>
-            }
+            sub="ТБ в сутки по поясу панели · трафик пользователей, как в Remnawave"
           >
-            {s.traffic.error ? (
+            {s.traffic.error && (
               <p className="mt-3 rounded-[10px] bg-warn-soft px-3 py-2 text-[12.5px] text-warn">
                 {s.traffic.error}
               </p>
-            ) : s.traffic.days.length === 0 ? (
-              <div className="mt-3 grid h-[200px] place-items-center rounded-[12px] border border-dashed border-border text-[12.5px] text-text-3">
-                Remnawave пока не отдал трафик за этот период
-              </div>
+            )}
+            {s.traffic.days.length === 0 ? (
+              !s.traffic.error && (
+                <div className="mt-3 grid h-[200px] place-items-center rounded-[12px] border border-dashed border-border text-[12.5px] text-text-3">
+                  Трафика за этот период пока нет
+                </div>
+              )
             ) : (
-              <TrafficBars days={s.traffic.days} />
+              <TrafficBars stats={s} />
             )}
           </ChartCard>
 
@@ -596,7 +613,12 @@ export function OverviewStats() {
                 month: 'long',
                 timeZone: s.timeZone,
               })}
-              ; хранятся 30 дней. Трафик — по данным Remnawave, по дням UTC.
+              ; хранятся 30 дней. Трафик — трафик пользователей, как в Remnawave: панель считает его каждую
+              минуту по суткам своего пояса
+              {s.traffic.days.some((d) => d.source === 'remnawave')
+                ? ', а сутки до начала её замеров — итоги Remnawave по Гринвичу'
+                : ''}
+              .
             </p>
           )}
         </>

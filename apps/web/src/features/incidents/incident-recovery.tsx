@@ -87,7 +87,11 @@ export function recoverySteps(inc: Incident, node: RemnawaveNode | undefined): S
     });
   else if (report && inc.kind !== 'node_down') {
     const tone: StepTone =
-      report.verdict === 'reachable' ? 'ok' : report.verdict === 'unknown' ? 'warn' : 'crit';
+      report.verdict === 'reachable'
+        ? 'ok'
+        : report.verdict === 'unknown' || (report.verdict === 'russia_partial' && !report.confirmed)
+          ? 'warn'
+          : 'crit';
     steps.push({
       key: 'port',
       label: `Порт ${portNumber ?? ''}`.trim(),

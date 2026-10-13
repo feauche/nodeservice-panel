@@ -16,6 +16,11 @@ const ONLINE_BUCKET_SECONDS: Record<number, number> = { 1: 900, 7: 3600, 30: 14_
 const HEATMAP_DAYS = 28;
 /** Окно пика и тишины, часы. */
 const WINDOW_HOURS = 4;
+/**
+ * Замеры трафика покрывают весь период, если начались не позже его начала с этим запасом: старые замеры удаляются
+ * раз в 10 минут, и самый ранний может оказаться на минуту позже начала «30 дней».
+ */
+const SINCE_SLACK_MS = 2 * 60_000;
 
 type Traffic = { traffic: ReturnType<typeof remnaTrafficSchema.parse> | null; error: string | null };
 
@@ -65,9 +70,56 @@ export function downtimeWithin(
   return total;
 }
 
+/** «2026-10-13» — дата момента в поясе панели. */
+export function localDate(t: number, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(t);
+}
+/** Начало суток `date` в поясе панели, мс (с учётом перехода на летнее время). */
+export function localDayStart(date: string, timeZone: string): number {
+  const offset = (t: number) => {
+    const p = Object.fromEntries(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        hourCycle: 'h23',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+        .formatToParts(t)
+        .map((x) => [x.type, x.value]),
+    );
+    const n = (k: string) => Number(p[k] ?? 0);
+    return Date.UTC(n('year'), n('month') - 1, n('day'), n('hour'), n('minute'), n('second')) - t;
+  };
+  const guess = Date.parse(`${date}T00:00:00Z`);
+  return guess - offset(guess - offset(guess));
+}
+/** Следующая дата: «2026-10-13» → «2026-10-14». */
+function nextDate(date: string): string {
+  return new Date(Date.parse(`${date}T12:00:00Z`) + DAY_MS).toISOString().slice(0, 10);
+}
+/** Дата по Гринвичу — так Remnawave называет свои сутки. */
+const utcDate = (t: number) => new Date(t).toISOString().slice(0, 10);
+/** Даты с `first` по `last` включительно. */
+function datesBetween(first: string, last: string): string[] {
+  const out: string[] = [];
+  for (let t = Date.parse(`${first}T12:00:00Z`); t <= Date.parse(`${last}T12:00:00Z`); t += DAY_MS)
+    out.push(new Date(t).toISOString().slice(0, 10));
+  return out;
+}
+
 /**
- * Отчёт вкладки «Статистика». Трафик — из Remnawave (он считает его сам, по дням UTC); онлайн, время на связи,
- * часы пика — по замерам панели; сбои — по событиям. Всё читается из базы, кроме трафика (кэш на минуту).
+ * Отчёт вкладки «Статистика». Трафик — трафик пользователей, как в Remnawave: панель каждую минуту читает счётчик
+ * трафика ноды и складывает разницу по суткам своего пояса; сутки до начала замеров — суточные итоги Remnawave.
+ * Онлайн, время на связи, часы пика — по замерам панели; сбои — по событиям.
  */
 @Injectable()
 export class NodeStatsService {
@@ -93,7 +145,7 @@ export class NodeStatsService {
       to: new Date(to).toISOString(),
       timeZone,
       collectedSince: null,
-      traffic: { total: null, days: [], error: null },
+      traffic: { total: null, days: [], measuredSince: null, removed: 0, error: null },
       online: { peak: null, peakAt: null, average: null, minimum: null, bucketSeconds: bucket, series: [] },
       heatmap: {
         cells: Array.from({ length: 7 }, () => Array(24).fill(null)),
@@ -108,7 +160,7 @@ export class NodeStatsService {
     const fromIso = new Date(from).toISOString();
     const toIso = new Date(to).toISOString();
     const heatFrom = new Date(to - HEATMAP_DAYS * DAY_MS).toISOString();
-    const [first, snapshots, heat, perNode, perDay, incidents, traffic] = await Promise.all([
+    const [first, snapshots, heat, perNode, measured, measuredFrom, incidents] = await Promise.all([
       this.db.execute(sql`SELECT min(sampled_at) AS first FROM remna_metric_samples WHERE panel=${domain}`),
       // Один снимок Remnawave — один момент времени у всех нод: сумма по нему и есть онлайн парка.
       this.db.execute(sql`SELECT extract(epoch FROM sampled_at) AS t, sum((values->>'online')::float) AS total
@@ -124,13 +176,19 @@ export class NodeStatsService {
       this.db.execute(sql`SELECT node_uuid AS uuid, max((values->>'online')::float) AS peak, avg(${UP_SQL}) AS up
         FROM remna_metric_samples WHERE panel=${domain} AND sampled_at >= ${fromIso}::timestamptz AND sampled_at < ${toIso}::timestamptz
         GROUP BY node_uuid`),
-      this.db.execute(sql`SELECT to_char(sampled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
-          sum((values->>'rx')::float) AS rx, sum((values->>'tx')::float) AS tx
-        FROM remna_metric_samples WHERE panel=${domain} AND sampled_at >= ${new Date(to - (days + 1) * DAY_MS).toISOString()}::timestamptz
-        GROUP BY 1`),
+      // Трафик пользователей по суткам пояса панели и нодам — разница счётчика Remnawave между замерами. Сутки по
+      // Гринвичу — чтобы на стыке с итогами Remnawave взять только то, чего в них нет.
+      this.db.execute(sql`SELECT to_char(sampled_at AT TIME ZONE ${timeZone}, 'YYYY-MM-DD') AS day,
+          to_char(sampled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS utc_day, node_uuid AS uuid,
+          sum((values->>'usedBytes')::float) AS bytes
+        FROM remna_metric_samples WHERE panel=${domain} AND sampled_at >= ${fromIso}::timestamptz AND sampled_at < ${toIso}::timestamptz
+          AND values->>'usedBytes' IS NOT NULL
+        GROUP BY 1, 2, 3`),
+      this.db.execute(
+        sql`SELECT min(sampled_at) AS since FROM remna_metric_samples WHERE panel=${domain} AND values ? 'usedBytes'`,
+      ),
       this.db.execute(sql`SELECT node_uuid, opened_at, resolved_at FROM incidents
         WHERE opened_at < ${toIso}::timestamptz AND (resolved_at IS NULL OR resolved_at > ${fromIso}::timestamptz)`),
-      this.traffic(days),
     ]);
     const num = (v: unknown) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
 
@@ -191,31 +249,108 @@ export class NodeStatsService {
     }));
     const openedInRange = incidentRows.filter((r) => r.openedAt >= from);
 
-    // Трафик: всего — Remnawave; приём и отдача — его доля по замерам панели в тот же день UTC.
-    const split = new Map(
-      perDay.rows.map((r) => [String(r.day), { rx: num(r.rx) ?? 0, tx: num(r.tx) ?? 0 }]),
+    // Трафик пользователей — ровно за период [from, to), как онлайн: первые и последние сутки периода неполные.
+    // Панель считает его сама каждую минуту. Пока её замеры не покрывают весь период, начало берётся из суточных
+    // итогов Remnawave (её сутки — по Гринвичу): целые сутки, начавшиеся внутри периода, до первой полуночи по Гринвичу
+    // после начала замеров; с этой полуночи считает панель. Так нет ни двойного счёта, ни дыры на стыке, а первые
+    // сутки периода, попавшие в него лишь частью, целым итогом Remnawave не заменяются — период не длиннее выбранного.
+    const since = measuredFrom.rows[0]?.since ? new Date(String(measuredFrom.rows[0].since)).getTime() : null;
+    const allPanel = since != null && since <= from + SINCE_SLACK_MS;
+    const cutover = allPanel
+      ? from
+      : since == null
+        ? Number.POSITIVE_INFINITY
+        : Math.ceil(since / DAY_MS) * DAY_MS;
+    const cutoverDay = Number.isFinite(cutover) ? utcDate(cutover) : null;
+    const byDay = new Map<string, Map<string, number>>();
+    for (const r of measured.rows) {
+      if (!allPanel && (cutoverDay == null || String(r.utc_day) < cutoverDay)) continue;
+      const day = byDay.get(String(r.day)) ?? new Map<string, number>();
+      day.set(String(r.uuid), (day.get(String(r.uuid)) ?? 0) + (num(r.bytes) ?? 0));
+      byDay.set(String(r.day), day);
+    }
+    const remoteDays: number[] = [];
+    for (let u = Math.ceil(from / DAY_MS) * DAY_MS; u < to && u + DAY_MS <= cutover; u += DAY_MS)
+      remoteDays.push(u);
+    const firstDay = remoteDays[0];
+    const lastDay = remoteDays.at(-1);
+    const remote =
+      firstDay != null && lastDay != null ? await this.traffic(utcDate(firstDay), utcDate(lastDay)) : null;
+    const tr = remote?.traffic ?? null;
+    type Bar = { date: string; total: number; source: 'panel' | 'remnawave'; start: number; end: number };
+    const bars = new Map<string, Bar>();
+    const perNodeTraffic = new Map<string, number>();
+    const count = (uuid: string, bytes: number) =>
+      perNodeTraffic.set(uuid, (perNodeTraffic.get(uuid) ?? 0) + bytes);
+    for (const u of remoteDays) {
+      const date = utcDate(u);
+      const i = tr?.categories.findIndex((c) => c.slice(0, 10) === date) ?? -1;
+      if (!tr || i < 0) continue;
+      let total = 0;
+      for (const series of tr.series) {
+        const bytes = series.data[i] ?? 0;
+        total += bytes;
+        count(series.uuid, bytes);
+      }
+      const end = Math.min(u + DAY_MS, to);
+      bars.set(date, {
+        date,
+        total: Math.max(total, tr.sparklineData[i] ?? 0),
+        source: 'remnawave',
+        start: u,
+        end,
+      });
+    }
+    const panelFrom = Math.max(from, cutover);
+    if (panelFrom < to)
+      for (const date of datesBetween(localDate(panelFrom, timeZone), localDate(to - 1, timeZone))) {
+        let total = 0;
+        for (const [uuid, bytes] of byDay.get(date) ?? []) {
+          total += bytes;
+          count(uuid, bytes);
+        }
+        const end = Math.min(localDayStart(nextDate(date), timeZone), to);
+        // Западнее Гринвича сутки на стыке — и итог Remnawave, и замеры панели после полуночи по Гринвичу: один столбик.
+        const joint = bars.get(date);
+        bars.set(
+          date,
+          joint
+            ? { ...joint, total: joint.total + total, end }
+            : {
+                date,
+                total,
+                source: 'panel',
+                start: Math.max(localDayStart(date, timeZone), panelFrom),
+                end,
+              },
+        );
+      }
+    const trafficDays: NodeStats['traffic']['days'] = [...bars.values()]
+      .sort((a, b) => a.start - b.start)
+      .map(({ start, end, ...d }) => ({
+        ...d,
+        from: new Date(start).toISOString(),
+        to: new Date(end).toISOString(),
+      }));
+    const trafficTotal = trafficDays.length ? trafficDays.reduce((sum, d) => sum + d.total, 0) : null;
+    const current = new Set(status.nodes.map((n) => n.uuid));
+    const removed = Math.max(
+      0,
+      (trafficTotal ?? 0) -
+        [...perNodeTraffic].filter(([uuid]) => current.has(uuid)).reduce((sum, [, b]) => sum + b, 0),
     );
-    const tr = traffic.traffic;
-    const trafficDays =
-      tr?.categories.map((date, i) => {
-        const total = tr.sparklineData[i] ?? 0;
-        const share = split.get(date.slice(0, 10));
-        const both = share ? share.rx + share.tx : 0;
-        return {
-          date: date.slice(0, 10),
-          total,
-          rx: share && both > 0 ? (total * share.rx) / both : null,
-          tx: share && both > 0 ? (total * share.tx) / both : null,
-        };
-      }) ?? [];
-    const trafficTotal = tr ? tr.sparklineData.reduce((s, v) => s + v, 0) : null;
-    const nodeTraffic = new Map(tr?.series.map((s) => [s.uuid, s.total]) ?? []);
     const nodeStats = new Map(perNode.rows.map((r) => [String(r.uuid), r]));
 
     return {
       ...empty,
       collectedSince: first.rows[0]?.first ? new Date(String(first.rows[0].first)).toISOString() : null,
-      traffic: { total: trafficTotal, days: trafficDays, error: traffic.error },
+      traffic: {
+        total: trafficTotal,
+        days: trafficDays,
+        measuredSince: since == null ? null : new Date(since).toISOString(),
+        removed,
+        error: remote?.error ?? null,
+      },
       online: {
         peak: peak ? Math.round(peak.v) : null,
         peakAt: peak ? new Date(peak.t).toISOString() : null,
@@ -228,7 +363,7 @@ export class NodeStatsService {
       incidents: { count: openedInRange.length, downtimeMs: downtimeWithin(incidentRows, from, to) },
       nodes: status.nodes.map((n) => {
         const row = nodeStats.get(n.uuid);
-        const t = nodeTraffic.get(n.uuid) ?? null;
+        const t = perNodeTraffic.get(n.uuid) ?? null;
         const up = num(row?.up);
         return {
           uuid: n.uuid,
@@ -245,13 +380,11 @@ export class NodeStatsService {
     };
   }
 
-  /** Трафик по дням из Remnawave; ответ кэшируется на минуту. */
-  private async traffic(days: number): Promise<Traffic> {
+  /** Суточные итоги Remnawave за даты start…end; удачный ответ кэшируется на минуту, ошибка — нет. */
+  private async traffic(start: string, end: string): Promise<Traffic> {
     const c = await this.store.credentials();
-    if (!c) return { traffic: null, error: null };
-    const end = new Date().toISOString().slice(0, 10);
-    const start = new Date(Date.now() - (days - 1) * DAY_MS).toISOString().slice(0, 10);
-    const key = `${c.domain}:${createHash('sha256').update(c.apiKey).digest('hex')}:${days}`;
+    if (!c || !start || !end) return { traffic: null, error: null };
+    const key = `${c.domain}:${createHash('sha256').update(c.apiKey).digest('hex')}:${start}:${end}`;
     const cached = this.trafficCache.get(key);
     if (cached && Date.now() - cached.at < 60_000) return cached;
     let next: { at: number } & Traffic;
@@ -272,7 +405,8 @@ export class NodeStatsService {
       };
     }
     if (this.trafficCache.size > 8) this.trafficCache.clear();
-    this.trafficCache.set(key, next);
+    // Ошибку не запоминаем: следующий запрос пробует снова, а не показывает её ещё минуту.
+    if (!next.error) this.trafficCache.set(key, next);
     return next;
   }
 }

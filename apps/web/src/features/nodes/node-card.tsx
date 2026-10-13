@@ -2,6 +2,7 @@ import type { RemnawaveNode } from '@nodeservice/shared';
 import { ArrowDownIcon, ArrowUpIcon, ShieldCheckIcon, UsersIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { CountryFlag } from '@/components/country-flag';
+import { mbitText, toMbit } from '@/lib/units';
 import { cn } from '@/lib/utils';
 import { RemnaProviderIcon } from './remna-providers-page';
 
@@ -27,11 +28,9 @@ export function bytes(raw: number | string | null | undefined) {
 export function percent(value: number | null | undefined) {
   return value == null ? '—' : `${value.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%`;
 }
-/** Remnawave reports bytes per second; the panel displays network speed in Mbit/s like Remnawave UI. */
+/** Скорость сети ноды в Мбит/с, как в Remnawave, — по общему правилу округления панели. */
 export function mbitPerSecond(raw: number | null | undefined) {
-  if (raw == null || !Number.isFinite(raw) || raw < 0) return '—';
-  const value = (raw * 8) / 1_000_000;
-  return value.toLocaleString('ru-RU', { maximumFractionDigits: value >= 10 ? 0 : 1 });
+  return mbitText(toMbit(raw));
 }
 export function ram(node: RemnawaveNode) {
   return node.memoryTotalBytes && node.memoryUsedBytes != null

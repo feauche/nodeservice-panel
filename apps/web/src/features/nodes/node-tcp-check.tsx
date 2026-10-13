@@ -18,11 +18,17 @@ const formatTime = (value: string) =>
 const names = {
   reachable: 'Доступен',
   russia_unreachable: 'Недоступен из России',
+  russia_partial: 'Частично недоступен из России',
   port_unreachable: 'Не отвечает',
   unknown: 'Неполный результат',
 };
-const tone = (verdict: TcpCheckReport['verdict']) =>
-  verdict === 'reachable' ? 'ok' : verdict === 'unknown' ? 'warn' : 'crit';
+/** «Частично недоступен» без повтора через минуту — ещё не вывод о блокировке: жёлтым. */
+const tone = (verdict: TcpCheckReport['verdict'], confirmed?: boolean) =>
+  verdict === 'reachable'
+    ? 'ok'
+    : verdict === 'unknown' || (verdict === 'russia_partial' && !confirmed)
+      ? 'warn'
+      : 'crit';
 
 /**
  * «Доступность порта · Check-Host» в окне ноды: проверка из разных стран, итог по каждому порту последней проверки
@@ -146,7 +152,9 @@ export function NodeTcpCheck({ uuid, runToken = 0 }: { uuid: string; runToken?: 
                 <span className="min-w-0 flex-1 text-[12px] text-text-3">
                   {formatTime(entry.report.checkedAt)}
                 </span>
-                <Pill tone={tone(entry.report.verdict)}>{names[entry.report.verdict]}</Pill>
+                <Pill tone={tone(entry.report.verdict, entry.report.confirmed)}>
+                  {names[entry.report.verdict]}
+                </Pill>
                 <ChevronRightIcon className="size-3.5 text-text-3" aria-hidden="true" />
               </button>
             ))}

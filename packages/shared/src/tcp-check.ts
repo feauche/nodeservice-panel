@@ -1,5 +1,16 @@
 import { z } from 'zod';
-export const tcpVerdictSchema = z.enum(['reachable', 'russia_unreachable', 'port_unreachable', 'unknown']);
+/**
+ * Итог проверки порта: reachable — РФ отвечает вся; russia_unreachable — РФ не отвечает совсем, другие страны все;
+ * russia_partial — другие страны все, РФ не со всех точек (блокировка у части провайдеров или сбой самой точки);
+ * port_unreachable — не отвечает никто; unknown — данных не хватает или они расходятся.
+ */
+export const tcpVerdictSchema = z.enum([
+  'reachable',
+  'russia_unreachable',
+  'russia_partial',
+  'port_unreachable',
+  'unknown',
+]);
 const tcpObservationSchema = z.object({
   node: z.string(),
   country: z.string(),
@@ -15,7 +26,11 @@ const base = z.object({
   observations: z.array(tcpObservationSchema),
   error: z.string().nullable(),
 });
-export const tcpCheckReportSchema = base.extend({ ports: z.array(base).optional() });
+export const tcpCheckReportSchema = base.extend({
+  ports: z.array(base).optional(),
+  /** «Частично недоступен из РФ» повторился при проверке через минуту — это уже не сбой одной точки. */
+  confirmed: z.boolean().optional(),
+});
 export type TcpCheckReport = z.infer<typeof tcpCheckReportSchema>;
 export const nodeTcpDiagnosticsSchema = z.object({
   source: z.literal('checkhost'),
@@ -32,12 +47,14 @@ export const nodeTcpHistorySchema = z.object({
 export const TCP_VERDICT_LABELS = {
   reachable: 'Доступен',
   russia_unreachable: 'Недоступен из РФ',
+  russia_partial: 'Частично недоступен из РФ',
   port_unreachable: 'Не отвечает',
   unknown: 'Нет полного результата',
 } as const;
 export const TCP_VERDICT_HEADLINES = {
   reachable: 'IP доступен: хотя бы один порт отвечает',
   russia_unreachable: 'Вероятное ограничение доступа из РФ',
+  russia_partial: 'Вероятная блокировка у части провайдеров РФ',
   port_unreachable: 'Проверенные TCP-порты не отвечают',
   unknown: 'Доступность пока не подтверждена',
 } as const;
@@ -45,6 +62,8 @@ export const TCP_VERDICT_EXPLANATIONS = {
   reachable:
     'Есть успешные подключения из РФ и других стран. Если онлайн упал, причина требует отдельной проверки.',
   russia_unreachable: 'Проверенные порты недоступны из российских точек, но есть ответы из других стран.',
+  russia_partial:
+    'Из других стран порты отвечают со всех точек, из РФ — не со всех. Так выглядит блокировка у части провайдеров; бывает и сбой самой точки проверки, поэтому при падении онлайна панель перепроверяет через минуту.',
   port_unreachable:
     'Нет успешных подключений ни из РФ, ни из других стран. Возможны недоступность ноды, закрытые порты или фильтрация.',
   unknown:
@@ -65,6 +84,13 @@ export function tcpRegionSummary(rows: TcpObservation[]): string {
   if (rows.length && failed === rows.length) return `Не ответили ${failed} из ${rows.length}`;
   return 'Недостаточно данных';
 }
+/**
+ * Блокировка из РФ, на которую реагируют события и сценарии: РФ не отвечает совсем — или отвечает не со всех точек,
+ * и это повторилось при проверке через минуту.
+ */
+export const tcpBlockedInRussia = (report: { verdict: string; confirmed?: boolean | undefined }) =>
+  report.verdict === 'russia_unreachable' ||
+  (report.verdict === 'russia_partial' && report.confirmed === true);
 /** Порт из адреса проверки «1.2.3.4:443». */
 export const tcpPortOf = (target: string): string => target.slice(target.lastIndexOf(':') + 1);
 /**

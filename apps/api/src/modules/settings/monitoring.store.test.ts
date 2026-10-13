@@ -35,7 +35,7 @@ describe('MonitoringStore upgrade compatibility', () => {
       expect((await store.get()).enabled).toBe(false);
       expect(insert).toHaveBeenCalledOnce();
       // В записи — только отличие от значений по умолчанию и версия.
-      expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).toEqual({ enabled: false, _v: 3 });
+      expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).toEqual({ enabled: false, _v: 4 });
       expect(rows.get('settings.autochecks')).toBe(JSON.stringify(legacy));
     },
   );
@@ -47,7 +47,7 @@ describe('MonitoringStore upgrade compatibility', () => {
     );
     expect(await store.get()).toEqual(explicit);
     // Один раз запись сжимается до отличий; дальше не переписывается.
-    expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).toEqual({ pollSeconds: 180, _v: 3 });
+    expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).toEqual({ pollSeconds: 180, _v: 4 });
     await store.get();
     expect(insert).toHaveBeenCalledOnce();
   });
@@ -100,16 +100,31 @@ describe('MonitoringStore upgrade compatibility', () => {
     expect(got.resourceDurationMinutes).toBe(2);
     // «60 секунд» сохранено уже в 0.94.0 — выбрано вручную, не переносится.
     expect(got.pollSeconds).toBe(60);
-    expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).toEqual({ pollSeconds: 60, _v: 3 });
+    expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).toEqual({ pollSeconds: 60, _v: 4 });
     // Сохранение пишет только отличия: значения по умолчанию в запись не попадают.
     await store.set({ memoryPercent: 85, confirmSamples: MONITORING_DEFAULTS.confirmSamples });
     expect(JSON.parse(rows.get('settings.monitoring') ?? '{}')).toEqual({
       pollSeconds: 60,
       memoryPercent: 85,
-      _v: 3,
+      _v: 4,
     });
     const own = setup(JSON.stringify({ ...MONITORING_DEFAULTS, resourceDurationMinutes: 10, _v: 2 }));
     expect((await own.store.get()).resourceDurationMinutes).toBe(10);
+  });
+  it('0.97.0: возврат онлайна 70 % из прежних версий переходит на 50 %, выбранное вручную остаётся', async () => {
+    const saved094 = setup(JSON.stringify({ ...MONITORING_DEFAULTS, recoveryPercent: 70, _v: 2 }));
+    expect((await saved094.store.get()).recoveryPercent).toBe(50);
+    expect(JSON.parse(saved094.rows.get('settings.monitoring') ?? '{}')).toEqual({ _v: 4 });
+    expect((await setup(JSON.stringify({ recoveryPercent: 70, _v: 3 })).store.get()).recoveryPercent).toBe(
+      50,
+    );
+    expect((await setup(JSON.stringify({ recoveryPercent: 60, _v: 3 })).store.get()).recoveryPercent).toBe(
+      60,
+    );
+    // Сохранено уже после 0.97.0 — выбрано вручную, остаётся 70.
+    expect((await setup(JSON.stringify({ recoveryPercent: 70, _v: 4 })).store.get()).recoveryPercent).toBe(
+      70,
+    );
   });
   it('does not enable monitoring when the current record is damaged', async () => {
     expect((await setup('bad json').store.get()).enabled).toBe(false);
