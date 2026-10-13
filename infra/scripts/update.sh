@@ -31,16 +31,41 @@ stale_api_images() {
     return 0
 }
 
+# Запрос к GitHub с повторами: короткий перебой сети не должен срывать обновление (13.10.2026 GitHub
+# несколько минут не отвечал серверу, и обновление дважды отменилось). До трёх попыток, между ними пауза
+# 3 и 6 секунд (GITHUB_RETRY_PAUSE — одна пауза для всех, для проверок). $1 — адрес, остальное — ключи curl.
+github_get() {
+    local url="$1" attempt out
+    shift
+    for attempt in 1 2 3; do
+        if out=$(curl -fsSL --connect-timeout 10 --max-time 30 "$@" "$url" 2>/dev/null); then
+            printf '%s\n' "$out"
+            return 0
+        fi
+        if (( attempt < 3 )); then sleep "${GITHUB_RETRY_PAUSE:-$((attempt * 3))}"; fi
+    done
+    return 1
+}
+
 # Тег появляется до окончания GitHub Actions. Берём `releases/latest`: GitHub отдаёт его только
 # после успешной публикации workflow. Строгая проверка не даёт ответу API стать аргументом git.
 latest_release_tag() {
     local repo="${NODESERVICE_PANEL_REPO:-feauche/nodeservice-panel}" body tag
-    body=$(curl -fsSL --connect-timeout 5 --max-time 15 \
-        -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
-        "https://api.github.com/repos/$repo/releases/latest") || return 1
+    body=$(github_get "https://api.github.com/repos/$repo/releases/latest" \
+        -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28') || return 1
     tag=$(sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$body" | head -n 1)
     [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
     printf '%s\n' "$tag"
+}
+
+# SHA256 образа из файла релиза image-digest.txt («sha256:… образ»). Код 1 — файл не скачался (GitHub
+# не ответил за три попытки), 2 — файл есть, но SHA256 в нём нет: это разные беды, и сообщения о них разные.
+release_digest() {
+    local text digest
+    text=$(github_get "$1") || return 1
+    digest=$(sed -n '1s/^\(sha256:[0-9a-f]\{64\}\)[[:space:]].*/\1/p' <<<"$text")
+    [[ -n "$digest" ]] || return 2
+    printf '%s\n' "$digest"
 }
 
 # Имя копии из ответа внутреннего API; чужой текст не должен стать путём shell-команды.
@@ -153,7 +178,8 @@ fi
 # Обычное обновление не берёт промежуточный commit из main: только прошедший все
 # проверки тег vX.Y.Z. Для теста конкретного commit/ветки остаётся `nodeservice update main`.
 if [[ "$REF" == "latest" ]]; then
-    REF=$(latest_release_tag) || die "Не удалось узнать последний стабильный GitHub Release."
+    REF=$(latest_release_tag) ||
+        die "Не удалось узнать последний релиз: GitHub не ответил за три попытки. Повторите позже или укажите версию: nodeservice update vX.Y.Z"
 fi
 echo -e "${C}==> Код: $before → $REF${N}"
 # Сначала ветка на origin (локальная могла устареть), потом тег/commit.
@@ -219,18 +245,28 @@ if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     fi
     image_revision=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$release_image" 2>/dev/null || true)
     image_version=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$release_image" 2>/dev/null || true)
-    expected_digest=$(curl -fsSL --connect-timeout 5 --max-time 15 "$digest_url" 2>/dev/null |
-        sed -n '1s/^\(sha256:[0-9a-f]\{64\}\)[[:space:]].*/\1/p' || true)
+    # Не переключаемся — версия и код остаются прежними, старая панель продолжает работать.
+    cancel_switch() {
+        sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
+        git checkout --quiet --detach "$before"
+    }
+    digest_status=0
+    expected_digest=$(release_digest "$digest_url") || digest_status=$?
+    if (( digest_status == 1 )); then
+        cancel_switch
+        die "Файл релиза с SHA256 образа не скачался: GitHub не ответил за три попытки. Старая версия продолжает работать — повторите позже: nodeservice update $REF"
+    elif (( digest_status != 0 )); then
+        cancel_switch
+        die "В файле релиза нет SHA256 образа — релиз собран с ошибкой. Переключение отменено."
+    fi
     image_digest=$(docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$release_image" 2>/dev/null |
         sed -n 's/.*@\(sha256:[0-9a-f]\{64\}\)$/\1/p' | head -n 1 || true)
-    if [[ -z "$expected_digest" || "$image_digest" != "$expected_digest" ]]; then
-        sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
-        git checkout --quiet --detach "$before"
-        die "SHA256 образа не совпал с файлом релиза. Переключение отменено."
+    if [[ "$image_digest" != "$expected_digest" ]]; then
+        cancel_switch
+        die "SHA256 образа не совпал с файлом релиза: ожидался ${expected_digest:7:12}…, скачан ${image_digest:7:12}…. Переключение отменено."
     fi
     if [[ "$image_revision" != "$after_full" || "$image_version" != "$REF" ]]; then
-        sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
-        git checkout --quiet --detach "$before"
+        cancel_switch
         die "Образ не соответствует тегу: ожидались версия $REF и commit $after_full. Переключение отменено."
     fi
     sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$REF/" "$ENV_FILE"

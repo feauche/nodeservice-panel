@@ -36,6 +36,41 @@ if check_update_source "$TMP/bad.json" >/dev/null 2>&1; then
 fi
 [[ ! -e /tmp/nodeservice-injected ]]
 
+# GitHub отвечает не с первого раза: curl падает $1 раз, потом отдаёт файл $2; $3… — функция и её аргументы.
+mkdir -p "$TMP/flaky"
+cat > "$TMP/flaky/curl" <<'SH'
+#!/usr/bin/env bash
+n=$(( $(cat "$MOCK_COUNTER" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$MOCK_COUNTER"
+(( n > MOCK_FAILS )) || exit 22
+cat "$MOCK_BODY"
+SH
+chmod +x "$TMP/flaky/curl"
+flaky() {
+    rm -f "$TMP/counter"
+    PATH="$TMP/flaky:$PATH" GITHUB_RETRY_PAUSE=0 NODESERVICE_UPDATE_LIB=1 MOCK_COUNTER="$TMP/counter" \
+        MOCK_FAILS="$1" MOCK_BODY="$2" bash -c 'source "$1/infra/scripts/update.sh"; shift; "$@"' _ "$ROOT" "${@:3}"
+}
+# Ответ с третьей попытки — релиз узнаём; три отказа подряд — ошибка, а не пустой тег.
+[[ "$(flaky 2 "$TMP/good.json" latest_release_tag)" == "v0.55.0" ]]
+[[ "$(cat "$TMP/counter")" == 3 ]]
+if flaky 3 "$TMP/good.json" latest_release_tag >/dev/null; then
+    echo "три отказа GitHub приняты за ответ" >&2
+    exit 1
+fi
+[[ "$(cat "$TMP/counter")" == 3 ]]
+# Файл релиза: SHA256 со второй попытки; не скачался (код 1) и скачался без SHA256 (код 2) — разные ошибки.
+ZEROS=$(printf '%064d' 0)
+printf 'sha256:%s  ghcr.io/feauche/nodeservice-api:v0.97.0\n' "$ZEROS" > "$TMP/digest.txt"
+[[ "$(flaky 1 "$TMP/digest.txt" release_digest https://example.invalid/image-digest.txt)" == "sha256:$ZEROS" ]]
+status=0
+flaky 3 "$TMP/digest.txt" release_digest https://example.invalid/image-digest.txt >/dev/null || status=$?
+[[ "$status" == 1 ]]
+echo 'нет хеша' > "$TMP/no-digest.txt"
+status=0
+flaky 0 "$TMP/no-digest.txt" release_digest https://example.invalid/image-digest.txt >/dev/null || status=$?
+[[ "$status" == 2 ]]
+
 extract_backup_name() {
     NODESERVICE_UPDATE_LIB=1 bash -c '
       source "$1/infra/scripts/update.sh"
