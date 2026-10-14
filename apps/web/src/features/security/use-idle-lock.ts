@@ -1,39 +1,51 @@
-import { useNavigate } from '@tanstack/react-router';
+import { useRouter } from '@tanstack/react-router';
 import { useEffect } from 'react';
 
-import { useLockScreen } from '@/features/auth/queries';
+import { lockScreen } from '@/features/auth/queries';
 import { useAuthStore } from '@/features/auth/store';
+import { configureIdleLimit, idleMs, installActivityTracking } from '@/lib/activity';
 
-const ACTIVITY_EVENTS = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'wheel'] as const;
 const CHECK_EVERY_MS = 15_000;
 
 /**
- * Автоблокировка при бездействии в браузере (политика lockAfterMinutes) — дублирует серверную:
- * сервер блокирует сессию по паузе между запросами, клиент — по отсутствию мыши/клавиатуры.
- * Сессия живёт; серверный idle-таймаут (idleMinutes) — отдельно.
+ * Автоблокировка при бездействии в браузере (политика lockAfterMinutes) — вместе с серверной: сервер
+ * блокирует сессию по тому же времени, которое браузер сообщает с каждым запросом. Время последнего действия
+ * одно на все вкладки и не сбрасывается перерисовкой; проверка идёт и в фоновой вкладке, а первое движение
+ * после долгого отсутствия блокирует экран, а не начинает отсчёт заново.
  */
 export function useIdleLock(minutes: number): void {
-  const navigate = useNavigate();
-  const lock = useLockScreen();
+  const router = useRouter();
   const locked = useAuthStore((s) => s.locked);
 
   useEffect(() => {
-    if (!minutes || minutes <= 0 || locked) return;
-    let last = Date.now();
-    const touch = () => {
-      last = Date.now();
+    if (!minutes || minutes <= 0 || locked) {
+      configureIdleLimit(0, null);
+      return;
+    }
+    installActivityTracking();
+    const limit = minutes * 60_000;
+    let fired = false;
+    const lockNow = () => {
+      if (fired) return;
+      fired = true;
+      configureIdleLimit(0, null);
+      void lockScreen({ reason: 'idle', minutes });
+      void router.navigate({ to: '/lock' });
     };
-    for (const ev of ACTIVITY_EVENTS) window.addEventListener(ev, touch, { passive: true });
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'hidden') return;
-      if (Date.now() - last >= minutes * 60_000) {
-        void lock();
-        void navigate({ to: '/lock' });
-      }
-    }, CHECK_EVERY_MS);
+    const check = () => {
+      if (idleMs() >= limit) lockNow();
+    };
+    configureIdleLimit(limit, lockNow);
+    check();
+    const timer = setInterval(check, CHECK_EVERY_MS);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') check();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
-      for (const ev of ACTIVITY_EVENTS) window.removeEventListener(ev, touch);
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      configureIdleLimit(0, null);
     };
-  }, [minutes, locked, lock, navigate]);
+  }, [minutes, locked, router]);
 }

@@ -95,7 +95,7 @@ describe('AuditPage', () => {
     expect(report).toContain('brandName');
   });
 
-  it('клик по строке раскрывает детали: IP, ключ действия, diff изменений', async () => {
+  it('клик по строке раскрывает детали: IP, изменения по-русски, без служебного ключа', async () => {
     renderPage(Harness, '/audit');
     await screen.findByText('1–25 из 57');
     const user = userEvent.setup();
@@ -104,9 +104,11 @@ describe('AuditPage', () => {
     ) as HTMLElement;
     await user.click(row);
     const details = await screen.findByTestId('audit-details');
-    expect(within(details).getByText('settings.appearance.updated')).toBeInTheDocument();
+    // служебного ключа действия в деталях нет (он остаётся в отчёте «Скопировать»), поля — по-русски
+    expect(within(details).queryByText('settings.appearance.updated')).not.toBeInTheDocument();
     expect(within(details).getByText('203.0.113.7')).toBeInTheDocument();
-    expect(within(details).getByText('brandName')).toBeInTheDocument();
+    expect(within(details).getByText('Название панели')).toBeInTheDocument();
+    expect(within(details).queryByText('brandName')).not.toBeInTheDocument();
     expect(within(details).getByText('Lumax[#accent]VPN')).toBeInTheDocument();
     await user.click(within(row).getByRole('button', { name: 'Скрыть детали' }));
     expect(screen.queryByTestId('audit-details')).not.toBeInTheDocument();
@@ -175,7 +177,7 @@ describe('AuditPage', () => {
       expect(within(details).getByText(/В панели указан Hetzner/)).toBeInTheDocument();
       expect(within(details).getByText('Итог')).toBeInTheDocument();
       expect(within(details).getByText('Проверено: Провайдер: Aéza.')).toBeInTheDocument();
-      expect(within(details).getByText('assistant.change.applied')).toBeInTheDocument();
+      expect(within(details).queryByText('assistant.change.applied')).not.toBeInTheDocument();
       expect(within(details).queryByText('rows')).not.toBeInTheDocument();
       expect(within(details).queryByText('title')).not.toBeInTheDocument();
       expect(within(details).queryByText('operation')).not.toBeInTheDocument();

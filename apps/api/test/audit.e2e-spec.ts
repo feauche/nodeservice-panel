@@ -181,6 +181,22 @@ describe('audit e2e', () => {
     );
     expect(byLogin.total).toBeGreaterThan(0);
     expect(byLogin.items.every((e) => e.actorDisplay === LOGIN || e.metadata.login === LOGIN)).toBe(true);
+    // по словам из колонки «Событие» («Первый запуск: администратор создан») и по началу слова;
+    // каждое слово запроса должно найтись
+    const byLabel = auditListResponseSchema.parse(
+      (await agent.get(`/api/audit?q=${encodeURIComponent('запуск')}`).expect(200)).body,
+    );
+    expect(byLabel.items.some((e) => e.action === 'auth.setup.completed')).toBe(true);
+    const byBoth = auditListResponseSchema.parse(
+      (await agent.get(`/api/audit?q=${encodeURIComponent(`Запуск ${LOGIN.slice(0, 3)}`)}`).expect(200)).body,
+    );
+    expect(byBoth.items.map((e) => e.action)).toContain('auth.setup.completed');
+    const none = auditListResponseSchema.parse(
+      (await agent.get(`/api/audit?q=${encodeURIComponent('запуск нетакогослова')}`).expect(200)).body,
+    );
+    expect(none.total).toBe(0);
+    // знаки синтаксиса не ломают запрос
+    await agent.get(`/api/audit?q=${encodeURIComponent("a:* & ') | !(")}`).expect(200);
     const bySource = auditListResponseSchema.parse(
       (await agent.get('/api/audit?source=auto').expect(200)).body,
     );

@@ -183,6 +183,8 @@ export function KnowledgePage({
   const [q, setQ] = useState('');
   const [archived, setArchived] = useState(false);
   const [selection, setSelection] = useState<Selection>(null);
+  /** Только что убранная статья: пока список перечитывается, автовыбор её не открывает. */
+  const [removedId, setRemovedId] = useState<string | null>(null);
   const list = useKbList(q, archived);
   const items = list.data?.items ?? [];
   const pinned = items.filter((d) => d.pinned);
@@ -197,11 +199,19 @@ export function KnowledgePage({
     if (openId) setSelection({ mode: 'view', id: openId });
   }, [openId]);
 
-  // Иначе — автовыбор первой статьи, если ничего не выбрано.
+  // Иначе — автовыбор первой статьи, если ничего не выбрано. Только по настоящему списку: пока грузится архив,
+  // на месте списка показываются прежние (активные) статьи, и открыть надо не их.
   useEffect(() => {
-    if (!openId && !selection && items.length > 0 && items[0])
-      setSelection({ mode: 'view', id: items[0].id });
-  }, [items, selection, openId]);
+    if (openId || selection || list.isPlaceholderData) return;
+    const first = items.find((d) => d.id !== removedId);
+    if (first) setSelection({ mode: 'view', id: first.id });
+  }, [items, selection, openId, list.isPlaceholderData, removedId]);
+
+  /** Снять выбор вместе со ссылкой ?open — иначе автовыбор не сработает и справа останется пусто. */
+  const clearSelection = () => {
+    setSelection(null);
+    onOpen?.(undefined);
+  };
 
   /** Выбор статьи в списке — обновляем и URL, чтобы ссылку можно было переслать/обновить. */
   const openArticle = (id: string) => {
@@ -316,7 +326,7 @@ export function KnowledgePage({
               type="button"
               onClick={() => {
                 setArchived((v) => !v);
-                setSelection(null);
+                clearSelection();
               }}
               className="flex-none cursor-pointer border-t border-border px-2.5 pt-3 pb-1 text-left text-[12px] text-text-3 transition-colors hover:text-foreground"
             >
@@ -331,10 +341,17 @@ export function KnowledgePage({
                 key={selection.id}
                 id={selection.id}
                 onEdit={() => setSelection({ mode: 'edit', id: selection.id })}
-                onDeleted={() => setSelection(null)}
+                onDeleted={() => {
+                  setRemovedId(selection.id);
+                  clearSelection();
+                }}
               />
             )}
-            {!selection && !list.isPending && items.length === 0 && (
+            {!selection && !list.isPending && (archived || q) && items.length === 0 && (
+              <EmptyPane text={archived ? 'В архиве пусто.' : 'Ничего не найдено — измените запрос слева.'} />
+            )}
+            {!selection && !list.isPending && items.length > 0 && <EmptyPane text="Выберите статью слева." />}
+            {!selection && !list.isPending && !archived && !q && items.length === 0 && (
               <div className="grid h-full place-items-center rounded-2xl border border-dashed border-border">
                 <div className="flex flex-col items-center gap-2 text-center">
                   <span className="grid size-11 place-items-center rounded-full bg-surface-2 text-text-3">
@@ -359,6 +376,20 @@ export function KnowledgePage({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Правая часть без открытой статьи: короткая подсказка в рамке. */
+function EmptyPane({ text }: { text: string }) {
+  return (
+    <div className="grid h-full min-h-[200px] place-items-center rounded-2xl border border-dashed border-border">
+      <div className="flex flex-col items-center gap-2 text-center">
+        <span className="grid size-11 place-items-center rounded-full bg-surface-2 text-text-3">
+          <BookOpenIcon className="size-5" aria-hidden="true" />
+        </span>
+        <p className="max-w-[320px] text-[12.5px] text-text-3">{text}</p>
+      </div>
     </div>
   );
 }

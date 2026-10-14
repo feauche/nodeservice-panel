@@ -1,5 +1,10 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { type SetupStartResponse, setupStartRequestSchema, totpCodeSchema } from '@nodeservice/shared';
+import {
+  AUTH_PROBLEM,
+  type SetupStartResponse,
+  setupStartRequestSchema,
+  totpCodeSchema,
+} from '@nodeservice/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { CheckIcon, CopyIcon } from 'lucide-react';
@@ -225,6 +230,7 @@ function Step2({ enroll, onBack, onDone }: Step2Props) {
   const [invalid, setInvalid] = useState(false);
   const { copied, copy } = useCopy();
   const errId = useId();
+  const otpRef = useRef<HTMLInputElement>(null);
   const secretPretty = enroll.totpSecret.replace(/(.{4})/g, '$1 ').trim();
 
   const submit = async (value: string) => {
@@ -241,14 +247,17 @@ function Step2({ enroll, onBack, onDone }: Step2Props) {
       onDone(res.recoveryCodes);
     } catch (e) {
       setError(
-        isApiError(e) && e.status === 400 && !e.detail
-          ? 'Код не подошёл. Проверьте, что время на телефоне точное.'
-          : apiErrorMessage(e),
+        isApiError(e) && e.is(AUTH_PROBLEM.totpRequired)
+          ? 'Время подтверждения вышло или было много неверных кодов. Нажмите «Назад» и отправьте шаг заново — QR-код будет новым, прежнюю запись NodeService в приложении удалите.'
+          : isApiError(e) && e.status === 400 && !e.detail
+            ? 'Код не подошёл. Проверьте, что время на телефоне точное.'
+            : apiErrorMessage(e),
       );
       setInvalid(true);
       setTimeout(() => {
         setCode('');
         setInvalid(false);
+        otpRef.current?.focus();
       }, 380);
     }
   };
@@ -298,6 +307,7 @@ function Step2({ enroll, onBack, onDone }: Step2Props) {
         <Field id="s2-otp" label="Код из приложения">
           <OtpField
             id="s2-otp"
+            ref={otpRef}
             value={code}
             onChange={setCode}
             onComplete={(c) => void submit(c)}

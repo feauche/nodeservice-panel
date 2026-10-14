@@ -2,6 +2,7 @@ import { useNavigate } from '@tanstack/react-router';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { useLogout } from '../queries';
+import { forgetReturnPath } from '../return-path';
 
 interface LogoutDialogProps {
   open: boolean;
@@ -14,6 +15,8 @@ export function LogoutDialog({ open, onOpenChange }: LogoutDialogProps) {
   const navigate = useNavigate();
 
   const doLogout = async () => {
+    // Вышли сами — следующий вход начнётся с «Обзора», а не со страницы, где застала блокировка.
+    forgetReturnPath();
     try {
       await logout.mutateAsync();
     } catch {

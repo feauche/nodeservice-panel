@@ -109,6 +109,10 @@ export class ZvenoProvider implements LlmProvider {
       blocks.push({ type: 'tool_use', id: call.id, name: call.function.name, input: parsed });
     }
     // Есть вызовы — значит tool_use, каким бы ни был finish_reason: иначе вызов теряется, а модель «обещала».
-    return { stopReason: blocks.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end', blocks };
+    return {
+      stopReason: blocks.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end',
+      blocks,
+      truncated: choice?.finish_reason === 'length',
+    };
   }
 }

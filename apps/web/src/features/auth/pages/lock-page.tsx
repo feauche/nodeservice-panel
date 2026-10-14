@@ -5,18 +5,33 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 
 import { apiErrorMessage } from '@/lib/api';
+import { plural } from '@/lib/plural';
 import { AuthLinks, AuthShell, linkClass } from '../components/auth-shell';
 import { CtaButton } from '../components/cta-button';
 import { ErrorBox } from '../components/error-box';
 import { Field, Fields } from '../components/field';
 import { LogoutDialog } from '../components/logout-dialog';
 import { PasswordField } from '../components/password-field';
-import { useUnlock } from '../queries';
-import { initialsOf, useAuthStore } from '../store';
+import { useMe, useUnlock } from '../queries';
+import { takeReturnPath } from '../return-path';
+import { initialsOf, type LockInfo, useAuthStore } from '../store';
+
+/** Подпись причины: эта вкладка знает её сама, иначе (сервер или другая вкладка) — из свежего /auth/me. */
+export function lockReasonText(info: LockInfo | null): string | null {
+  if (!info) return null;
+  if (info.reason === 'manual') return 'Заблокировано вручную';
+  if (!info.minutes) return 'Заблокировано из-за бездействия';
+  return `Заблокировано после ${info.minutes} ${plural(info.minutes, 'минуты', 'минут', 'минут')} бездействия`;
+}
 
 export function LockPage() {
   const navigate = useNavigate();
   const me = useAuthStore((s) => s.me);
+  const localInfo = useAuthStore((s) => s.lockInfo);
+  const server = useMe().data;
+  const reason = lockReasonText(
+    localInfo ?? (server?.lockReason ? { reason: server.lockReason, minutes: server.lockIdleMinutes } : null),
+  );
   const unlock = useUnlock();
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -31,7 +46,8 @@ export function LockPage() {
     setServerError(null);
     try {
       await unlock.mutateAsync(values);
-      await navigate({ to: '/' });
+      // Обратно на страницу, где застала блокировка.
+      await navigate({ href: takeReturnPath() });
     } catch (e) {
       setServerError(apiErrorMessage(e));
       form.resetField('password');
@@ -76,7 +92,7 @@ export function LockPage() {
         <button type="button" className={linkClass} onClick={() => setLogoutOpen(true)}>
           Выйти из учётной записи
         </button>
-        <span className="text-text-3">Заблокировано вручную</span>
+        {reason && <span className="text-text-3">{reason}</span>}
       </AuthLinks>
       <LogoutDialog open={logoutOpen} onOpenChange={setLogoutOpen} />
     </AuthShell>

@@ -21,7 +21,8 @@ interface SecurityMock {
   stepUpFresh: boolean;
   policy: SecurityPolicy;
   passwordChangedAt: string;
-  totpConfirmedAt: string;
+  /** null — 2FA отключена из консоли сервера. */
+  totpConfirmedAt: string | null;
   recoveryLeft: number;
   sessions: SessionInfo[];
   devices: TrustedDeviceInfo[];
@@ -43,6 +44,7 @@ export const mockSecurity: SecurityMock = {
 
 export function seedSecurity(): void {
   mockSecurity.stepUpFresh = true;
+  mockSecurity.totpConfirmedAt = '2026-08-01T10:05:00.000Z';
   mockSecurity.policy = { ...SECURITY_POLICY_DEFAULTS };
   mockSecurity.recoveryLeft = 10;
   mockSecurity.reissuePending = false;
@@ -158,12 +160,29 @@ export const securityHandlers = [
       return problem(400, SECURITY_PROBLEM.totpReissueExpired, 'Перевыпуск не начат или истёк.');
     if (body.code !== MOCK_SECURITY.totpCode) return problem(401, AUTH_PROBLEM.invalidTotp, 'Неверный код.');
     mockSecurity.reissuePending = false;
+    const wasOff = mockSecurity.totpConfirmedAt === null;
     mockSecurity.totpConfirmedAt = new Date().toISOString();
     const devices = mockSecurity.devices.length;
     const revoked = mockSecurity.sessions.filter((s) => !s.current).length;
     mockSecurity.devices = [];
     mockSecurity.sessions = mockSecurity.sessions.filter((s) => s.current);
-    return HttpResponse.json({ me: me(), sessionsRevoked: revoked, trustedDevicesRemoved: devices });
+    // как сервер: 2FA включается заново (кодов нет) — сразу новый набор кодов восстановления
+    const recoveryCodes = wasOff
+      ? Array.from(
+          { length: 10 },
+          (_, i) => `NEW${String(i).padStart(2, '0')}-${String(i * 3).padStart(5, '0')}`,
+        )
+      : undefined;
+    if (recoveryCodes) {
+      mockSecurity.codes = recoveryCodes.map((code) => ({ code, usedAt: null }));
+      mockSecurity.recoveryLeft = 10;
+    }
+    return HttpResponse.json({
+      me: me(),
+      sessionsRevoked: revoked,
+      trustedDevicesRemoved: devices,
+      ...(recoveryCodes ? { recoveryCodes } : {}),
+    });
   }),
   http.get('/api/security/recovery-codes', () => {
     if (!mockSecurity.stepUpFresh) return stepUp();

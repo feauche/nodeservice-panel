@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Me } from '@nodeservice/shared';
+import type { LockReason, Me } from '@nodeservice/shared';
 import type { Redis } from 'ioredis';
 
 import { CryptoService } from '../../common/crypto/crypto.service.js';
@@ -15,7 +15,13 @@ export interface SessionRecord {
   id: string;
   userId: string;
   createdAt: string;
+  /** Последний запрос любого рода — для списка сессий и скользящего срока. */
   lastSeenAt: string;
+  /**
+   * Когда человек последний раз что-то делал в панели (со слов браузера, заголовок x-ns-idle). Опросы
+   * и перечитывания по потоку событий идут сами и это время не сдвигают — по нему считается автоблокировка.
+   */
+  lastActiveAt: string;
   absoluteExpiresAt: string;
   ua: string;
   ip: string;
@@ -24,6 +30,10 @@ export interface SessionRecord {
   stepUpAt: string | null;
   /** Экран заблокирован (вручную или по бездействию): до /unlock остальные запросы получают 403 locked. */
   lockedAt: string | null;
+  /** Почему заблокирован — для экрана блокировки в любой вкладке. */
+  lockReason: LockReason | null;
+  /** Через сколько минут бездействия сработала блокировка. */
+  lockIdleMinutes: number | null;
   /** Только что заблокирована этим же touch (по бездействию) — чтобы записать событие в Журнал. */
   autoLocked?: boolean;
 }
@@ -38,10 +48,14 @@ export interface CreateSessionInput {
 const SESSION_PREFIX = 'sess:';
 const userIndexKey = (userId: string): string => `user:${userId}:sessions`;
 
-/** Продление только существующего ключа: сессия, удалённая между get и touch, не воскресает. */
+/**
+ * Продление только существующего ключа: сессия, удалённая между get и touch, не воскресает.
+ * ARGV[3] — новое время действия человека; пусто — не менялось.
+ */
 const TOUCH_LUA = `
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 redis.call('HSET', KEYS[1], 'lastSeenAt', ARGV[1])
+if ARGV[3] ~= '' then redis.call('HSET', KEYS[1], 'lastActiveAt', ARGV[3]) end
 redis.call('PEXPIRE', KEYS[1], ARGV[2])
 return 1
 `;
@@ -77,12 +91,15 @@ export class SessionStore {
       userId: input.userId,
       createdAt: new Date(now).toISOString(),
       lastSeenAt: new Date(now).toISOString(),
+      lastActiveAt: new Date(now).toISOString(),
       absoluteExpiresAt: new Date(now + absolute).toISOString(),
       ua: input.ua.slice(0, 512),
       ip: input.ip,
       amr: input.amr,
       stepUpAt: input.amr.includes('pwd') ? new Date(now).toISOString() : null,
       lockedAt: null,
+      lockReason: null,
+      lockIdleMinutes: null,
     };
     const key = SESSION_PREFIX + record.id;
     await this.valkey
@@ -96,19 +113,34 @@ export class SessionStore {
 
   /**
    * Возвращает сессию и продлевает её (скользящий TTL). null — нет/истекла.
-   * lockAfterMs > 0: если с прошлого запроса прошло больше — экран блокируется на сервере
+   * lockAfterMs > 0 — автоблокировка: если человек не трогал панель дольше, экран блокируется на сервере
    * (нужен пароль, а не полный вход), запись помечается autoLocked для Журнала.
+   * activeAt — когда человек последний раз что-то делал, со слов браузера: undefined — запрос без заголовка
+   * (не из панели или старая вкладка), считается действием сейчас; null — поток событий, действием не считается.
    */
-  async touch(sid: string, lockAfterMs = 0): Promise<SessionRecord | null> {
+  async touch(sid: string, lockAfterMs = 0, activeAt?: number | null): Promise<SessionRecord | null> {
     const record = await this.get(sid);
     if (!record) return null;
     const now = Date.now();
-    if (!record.lockedAt && lockAfterMs > 0 && now - Date.parse(record.lastSeenAt) > lockAfterMs) {
+    const prev = Date.parse(record.lastActiveAt) || Date.parse(record.lastSeenAt) || now;
+    const reported = activeAt === null ? null : Math.min(now, activeAt ?? now);
+    const active = reported !== null && reported > prev ? reported : prev;
+    // Человек отсутствовал дольше срока: либо его нет до сих пор, либо он только что вернулся после такого
+    // перерыва — в обоих случаях сначала пароль.
+    if (!record.lockedAt && lockAfterMs > 0 && (now - active > lockAfterMs || active - prev > lockAfterMs)) {
       record.lockedAt = new Date(now).toISOString();
+      record.lockReason = 'idle';
+      record.lockIdleMinutes = Math.max(1, Math.round(lockAfterMs / 60_000));
       record.autoLocked = true;
-      await this.valkey.hset(SESSION_PREFIX + sid, { lockedAt: record.lockedAt });
+      await this.valkey.hset(SESSION_PREFIX + sid, {
+        lockedAt: record.lockedAt,
+        lockReason: record.lockReason,
+        lockIdleMinutes: String(record.lockIdleMinutes),
+      });
     }
     record.lastSeenAt = new Date(now).toISOString();
+    const activeMoved = active > prev;
+    if (activeMoved) record.lastActiveAt = new Date(active).toISOString();
     const key = SESSION_PREFIX + sid;
     const touched = (await this.valkey.eval(
       TOUCH_LUA,
@@ -116,6 +148,7 @@ export class SessionStore {
       key,
       record.lastSeenAt,
       String(await this.ttlFor(record, now)),
+      activeMoved ? record.lastActiveAt : '',
     )) as number;
     return touched === 1 ? record : null;
   }
@@ -137,9 +170,26 @@ export class SessionStore {
     await this.valkey.hset(SESSION_PREFIX + sid, { stepUpAt: at.toISOString() });
   }
 
-  /** Заблокировать/разблокировать экран сессии (null — снять блокировку). */
-  async setLocked(sid: string, at: Date | null): Promise<void> {
-    await this.valkey.hset(SESSION_PREFIX + sid, { lockedAt: at ? at.toISOString() : '' });
+  /**
+   * Заблокировать экран сессии (с причиной) или снять блокировку (at = null). Снятие — это ввод пароля,
+   * то есть действие человека: отсчёт бездействия начинается заново.
+   */
+  async setLocked(
+    sid: string,
+    at: Date | null,
+    reason: LockReason = 'manual',
+    idleMinutes: number | null = null,
+  ): Promise<void> {
+    await this.valkey.hset(
+      SESSION_PREFIX + sid,
+      at
+        ? {
+            lockedAt: at.toISOString(),
+            lockReason: reason,
+            lockIdleMinutes: reason === 'idle' && idleMinutes ? String(idleMinutes) : '',
+          }
+        : { lockedAt: '', lockReason: '', lockIdleMinutes: '', lastActiveAt: new Date().toISOString() },
+    );
   }
 
   async destroy(sid: string): Promise<void> {
@@ -204,12 +254,15 @@ function serialize(r: SessionRecord): Record<string, string> {
     userId: r.userId,
     createdAt: r.createdAt,
     lastSeenAt: r.lastSeenAt,
+    lastActiveAt: r.lastActiveAt,
     absoluteExpiresAt: r.absoluteExpiresAt,
     ua: r.ua,
     ip: r.ip,
     amr: JSON.stringify(r.amr),
     stepUpAt: r.stepUpAt ?? '',
     lockedAt: r.lockedAt ?? '',
+    lockReason: r.lockReason ?? '',
+    lockIdleMinutes: r.lockIdleMinutes ? String(r.lockIdleMinutes) : '',
   };
 }
 
@@ -226,12 +279,17 @@ function deserialize(id: string, raw: Record<string, string>): SessionRecord {
     userId: raw.userId ?? '',
     createdAt: raw.createdAt ?? '',
     lastSeenAt: raw.lastSeenAt ?? '',
+    // Сессии до 0.101: времени действия ещё нет — берём время последнего запроса.
+    lastActiveAt: raw.lastActiveAt || raw.lastSeenAt || '',
     absoluteExpiresAt: raw.absoluteExpiresAt ?? '',
     ua: raw.ua ?? '',
     ip: raw.ip ?? '',
     amr,
     stepUpAt: raw.stepUpAt ? raw.stepUpAt : null,
     lockedAt: raw.lockedAt ? raw.lockedAt : null,
+    lockReason:
+      raw.lockedAt && (raw.lockReason === 'manual' || raw.lockReason === 'idle') ? raw.lockReason : null,
+    lockIdleMinutes: raw.lockedAt && Number(raw.lockIdleMinutes) > 0 ? Number(raw.lockIdleMinutes) : null,
   };
 }
 

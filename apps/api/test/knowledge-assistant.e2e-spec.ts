@@ -38,6 +38,7 @@ import {
   type LlmRunInput,
 } from '../src/modules/assistant/llm.provider.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
+import { KnowledgeRepository } from '../src/modules/knowledge/knowledge.repository.js';
 import { listenLocal } from './listen-local.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -57,6 +58,8 @@ class FakeLlm implements LlmProvider {
   runs = 0;
   /** Весь текст пользователя из последнего вызова, вместе с подсказками сервера. */
   lastUserText = '';
+  /** Ревизия: что сделать, пока «модель думает» над статьёй (например, поправить её как владелец). */
+  duringReview: ((article: string) => Promise<void>) | null = null;
   async run(input: LlmRunInput): Promise<LlmResp> {
     this.runs += 1;
     const done = input.messages.some((m) => m.content.some((b) => b.type === 'tool_result'));
@@ -107,7 +110,10 @@ class FakeLlm implements LlmProvider {
     }
     // Ревизия базы знаний: возвращаем причёсанный вариант (длиннее оригинала → пройдёт предохранитель).
     if (input.system.includes('редактор базы знаний')) {
-      return { stopReason: 'end', blocks: [{ type: 'text', text: `${userText}\n\nПроверено ревизией.` }] };
+      await this.duringReview?.(userText);
+      // Маркер «ТЕРЯЕТ-ПОРТ»: модель «причёсывает» статью и теряет число — предохранитель должен отвергнуть.
+      const text = userText.includes('ТЕРЯЕТ-ПОРТ') ? userText.replace('8443', '') : userText;
+      return { stopReason: 'end', blocks: [{ type: 'text', text: `${text}\n\nПроверено ревизией.` }] };
     }
     // Поиск по прошлым беседам и Журналу: зовём инструмент и отдаём его ответ в тексте.
     if (userText.includes('НАЙДИ-В-БЕСЕДАХ') || userText.includes('НАЙДИ-В-ЖУРНАЛЕ')) {
@@ -382,6 +388,35 @@ describe('knowledge + assistant e2e', () => {
     await agent.get(`/api/knowledge/${created.id}`).expect(404);
   });
 
+  it('поиск по базе знаний: другие формы слов, начало слова и теги; Ассистенту хватает любого слова фразы', async () => {
+    const doc = kbDocSchema.parse(
+      (
+        await agent
+          .post('/api/knowledge')
+          .set(CSRF_HEADER, csrf)
+          .send({
+            title: 'Блокировки ТСПУ: что делать',
+            content: 'Если ноды перестали отвечать из России, проверьте маскировку.',
+            tags: ['ркн'],
+          })
+          .expect(201)
+      ).body,
+    );
+    const ids = async (q: string) =>
+      kbListResponseSchema
+        .parse((await agent.get(`/api/knowledge?q=${encodeURIComponent(q)}`).expect(200)).body)
+        .items.map((d) => d.id);
+    expect(await ids('блокировка')).toContain(doc.id);
+    expect(await ids('нода')).toContain(doc.id);
+    expect(await ids('ркн')).toContain(doc.id);
+    expect(await ids('блок')).toContain(doc.id);
+    expect(await ids('блокировка спутник')).not.toContain(doc.id); // владельцу нужны все слова
+    await agent.get(`/api/knowledge?q=${encodeURIComponent("a:* & ') | !(")}`).expect(200);
+    const forJarvis = await app.get(KnowledgeRepository).searchForContext('блокировка спутник');
+    expect(forJarvis.map((d) => d.id)).toContain(doc.id);
+    await agent.delete(`/api/knowledge/${doc.id}`).set(CSRF_HEADER, csrf).expect(204);
+  });
+
   it('история версий: изменение создаёт версию, откат восстанавливает содержимое', async () => {
     const created = kbDocSchema.parse(
       (
@@ -545,38 +580,60 @@ describe('knowledge + assistant e2e', () => {
     expect(status).not.toHaveProperty('permissions');
   });
 
-  it('ревизия базы знаний: безопасно правит статьи, снимает версию, пишет отчёт', async () => {
-    const created = kbDocSchema.parse(
-      (
-        await agent
-          .post('/api/knowledge')
-          .set(CSRF_HEADER, csrf)
-          .send({
-            title: 'Статья на ревизию',
-            content: 'Достаточно длинный текст статьи для ревизии, чтобы пройти предохранитель длины.',
-          })
-          .expect(201)
-      ).body,
-    );
-    const res = await app.get(KbReviewService).runReview();
-    expect(res.skipped).toBeNull();
-    expect(res.reviewed).toBeGreaterThanOrEqual(1);
-    expect(res.changed).toBeGreaterThanOrEqual(1);
+  it('ревизия базы знаний: правит статьи не от человека со сверкой, ручные и свежие правки не трогает', async () => {
+    const make = async (title: string, source: string, content: string) =>
+      kbDocSchema.parse(
+        (
+          await agent
+            .post('/api/knowledge')
+            .set(CSRF_HEADER, csrf)
+            .send({ title, source, content })
+            .expect(201)
+        ).body,
+      );
+    const body = 'Достаточно длинный текст статьи для ревизии: порт 8443, команда `systemctl restart xray`.';
+    const fromAi = await make('Статья на ревизию', 'ai', body);
+    const own = await make('Своя статья', 'self', body);
+    const lossy = await make('Статья ТЕРЯЕТ-ПОРТ', 'web', `ТЕРЯЕТ-ПОРТ ${body}`);
+    const edited = await make('Статья МЕНЯЮ', 'ai', `МЕНЯЮ ${body}`);
+    fake.duringReview = async (article) => {
+      if (!article.includes('МЕНЯЮ')) return;
+      await agent
+        .put(`/api/knowledge/${edited.id}`)
+        .set(CSRF_HEADER, csrf)
+        .send({ content: 'Владелец поправил статью, пока шла ревизия.' })
+        .expect(200);
+    };
+    try {
+      const res = await app.get(KbReviewService).runReview();
+      expect(res.skipped).toBeNull();
+      expect(res.reviewed).toBeGreaterThanOrEqual(4);
+      expect(res.changed).toBeGreaterThanOrEqual(1);
+    } finally {
+      fake.duringReview = null;
+    }
+    const read = async (id: string) =>
+      kbDocSchema.parse((await agent.get(`/api/knowledge/${id}`).expect(200)).body).content;
 
-    // статья изменена, и перед этим снят снимок версии с причиной review
-    const after = kbDocSchema.parse((await agent.get(`/api/knowledge/${created.id}`).expect(200)).body);
-    expect(after.content).not.toBe(created.content);
+    // статья от Ассистента причёсана, перед этим снят снимок версии с причиной review
+    expect(await read(fromAi.id)).toContain('Проверено ревизией.');
     const versions = kbVersionsResponseSchema.parse(
-      (await agent.get(`/api/knowledge/${created.id}/versions`).expect(200)).body,
+      (await agent.get(`/api/knowledge/${fromAi.id}/versions`).expect(200)).body,
     );
     expect(versions.items.some((v) => v.reason === 'review')).toBe(true);
+    // ручная статья модели не отдаётся, ответ с потерянным числом отвергнут, свежая правка владельца цела
+    expect(await read(own.id)).toBe(body);
+    expect(await read(lossy.id)).toBe(`ТЕРЯЕТ-ПОРТ ${body}`);
+    expect(await read(edited.id)).toBe('Владелец поправил статью, пока шла ревизия.');
 
     // отчёт в Журнале
     const audit = auditListResponseSchema.parse(
       (await agent.get('/api/audit?category=knowledge').expect(200)).body,
     );
-    expect(audit.items.some((e) => e.action === 'kb.reviewed')).toBe(true);
-    await agent.delete(`/api/knowledge/${created.id}`).set(CSRF_HEADER, csrf).expect(204);
+    const report = audit.items.find((e) => e.action === 'kb.reviewed');
+    expect(report?.metadata).toMatchObject({ rejected: 1, editedMeanwhile: 1 });
+    for (const doc of [fromAi, own, lossy, edited])
+      await agent.delete(`/api/knowledge/${doc.id}`).set(CSRF_HEADER, csrf).expect(204);
   });
 
   it('присланный словарь проходит модель без автоматической записи, полный вопрос сохраняется', async () => {

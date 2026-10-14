@@ -441,6 +441,8 @@ export class BillingService {
     const p = await this.findPayment(id);
     const item = await this.findRow(p.itemId);
     const paidAt = req.paidAt ? new Date(req.paidAt) : p.paidAt;
+    if (req.paidAt && paidAt.getTime() > Date.now() + 10 * 60_000)
+      throw problem(HttpStatus.BAD_REQUEST, { detail: 'Дата оплаты не может быть в будущем.' });
     const amountMinor = req.amount !== undefined ? minor(req.amount) : p.amountMinor;
     const counted = req.amount !== undefined ? true : p.counted;
     const rate = await this.rates.rate(p.currency, paidAt);

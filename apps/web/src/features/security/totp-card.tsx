@@ -1,19 +1,27 @@
 import { SECURITY_PROBLEM } from '@nodeservice/shared';
-import { CopyIcon, RefreshCwIcon } from 'lucide-react';
+import { CopyIcon, RefreshCwIcon, ShieldCheckIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Skeleton } from '@/components/ui/skeleton';
 import { OtpField } from '@/features/auth/components/otp-field';
 import { Pill, RowButton, SettingsCard, SettingsRow } from '@/features/settings/settings-ui';
 import { apiErrorMessage, isApiError } from '@/lib/api';
 import { toast } from '@/lib/notify';
+import { RecoveryCodesDialog } from './recovery-card';
 import { useSecurityOverview, useTotpConfirm, useTotpReissue } from './security-api';
 import { formatDate, plural } from './security-format';
 import { StepUpCancelledError } from './step-up';
 
-/** 2FA: статус и перевыпуск. Отключить нельзя — только через Rescue CLI на сервере. */
+/**
+ * 2FA: состояние и перевыпуск. Отключить можно только из консоли сервера (nodeservice cli disable-2fa) —
+ * тогда здесь честно «Выключена» и кнопка «Включить»: тот же новый секрет и сразу новые коды восстановления.
+ */
 export function TotpCard() {
   const overview = useSecurityOverview();
   const [open, setOpen] = useState(false);
+  const [codes, setCodes] = useState<string[] | null>(null);
+  const confirmedAt = overview.data?.totpConfirmedAt;
+  const off = overview.data !== undefined && !confirmedAt;
   return (
     <SettingsCard
       title="Двухфакторная защита"
@@ -23,29 +31,68 @@ export function TotpCard() {
         <SettingsRow
           label="Состояние"
           hint={
-            overview.data?.totpConfirmedAt
-              ? `Привязана ${formatDate(overview.data.totpConfirmedAt)}`
-              : undefined
+            confirmedAt
+              ? `Привязана ${formatDate(confirmedAt)}`
+              : off
+                ? 'Отключена из консоли сервера: вход сейчас только по паролю. Включите её снова.'
+                : undefined
           }
         >
-          <Pill tone="ok">Включена</Pill>
+          {confirmedAt ? (
+            <Pill tone="ok">Включена</Pill>
+          ) : off ? (
+            <Pill tone="crit">Выключена</Pill>
+          ) : (
+            <Skeleton className="h-[22px] w-20 rounded-full" />
+          )}
         </SettingsRow>
-        <SettingsRow
-          label="Перевыпуск"
-          hint="Новый секрет и QR. Старые запомненные устройства и другие сессии будут сброшены."
-        >
-          <RowButton onClick={() => setOpen(true)}>
-            <RefreshCwIcon aria-hidden="true" />
-            Перевыпустить
-          </RowButton>
-        </SettingsRow>
+        {off ? (
+          <SettingsRow
+            label="Включить"
+            hint="Новый секрет и QR, сразу — 10 кодов восстановления. Другие сессии будут завершены."
+          >
+            <RowButton onClick={() => setOpen(true)}>
+              <ShieldCheckIcon aria-hidden="true" />
+              Включить
+            </RowButton>
+          </SettingsRow>
+        ) : (
+          <SettingsRow
+            label="Перевыпуск"
+            hint="Новый секрет и QR. Старые запомненные устройства и другие сессии будут сброшены."
+          >
+            <RowButton onClick={() => setOpen(true)} disabled={!confirmedAt}>
+              <RefreshCwIcon aria-hidden="true" />
+              Перевыпустить
+            </RowButton>
+          </SettingsRow>
+        )}
       </div>
-      <TotpReissueDialog open={open} onOpenChange={setOpen} />
+      <TotpReissueDialog open={open} onOpenChange={setOpen} enable={off} onRecoveryCodes={setCodes} />
+      {codes && (
+        <RecoveryCodesDialog
+          items={codes.map((code) => ({ code, usedAt: null }))}
+          mode="new"
+          onClose={() => setCodes(null)}
+          onRegenerate={() => setCodes(null)}
+        />
+      )}
     </SettingsCard>
   );
 }
 
-function TotpReissueDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+function TotpReissueDialog({
+  open,
+  onOpenChange,
+  enable,
+  onRecoveryCodes,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  /** 2FA выключена — то же окно, но «Включение 2FA». */
+  enable: boolean;
+  onRecoveryCodes: (codes: string[]) => void;
+}) {
   const reissue = useTotpReissue();
   const confirm = useTotpConfirm();
   const [code, setCode] = useState('');
@@ -78,7 +125,8 @@ function TotpReissueDialog({ open, onOpenChange }: { open: boolean; onOpenChange
     try {
       const res = await confirm.mutateAsync(value);
       onOpenChange(false);
-      const parts = ['2FA перевыпущена.'];
+      if (res.recoveryCodes?.length) onRecoveryCodes(res.recoveryCodes);
+      const parts = [enable ? '2FA включена.' : '2FA перевыпущена.'];
       if (res.trustedDevicesRemoved > 0) parts.push(`Забыто устройств: ${res.trustedDevicesRemoved}.`);
       if (res.sessionsRevoked > 0)
         parts.push(
@@ -89,7 +137,7 @@ function TotpReissueDialog({ open, onOpenChange }: { open: boolean; onOpenChange
       setCode('');
       if (isApiError(err) && err.type === SECURITY_PROBLEM.totpReissueExpired) {
         setExpired(true);
-        setError('Время вышло — начни перевыпуск заново.');
+        setError('Время вышло или было много неверных кодов — начните заново, QR-код будет новым.');
       } else setError(apiErrorMessage(err));
     }
   };
@@ -99,10 +147,13 @@ function TotpReissueDialog({ open, onOpenChange }: { open: boolean; onOpenChange
     <Dialog open={open} onOpenChange={(o) => !confirm.isPending && onOpenChange(o)}>
       <DialogContent className="sm:max-w-[470px] rounded-2xl border-border bg-surface p-6">
         <DialogHeader>
-          <DialogTitle className="font-heading text-[17px]">Перевыпуск 2FA</DialogTitle>
+          <DialogTitle className="font-heading text-[17px]">
+            {enable ? 'Включение 2FA' : 'Перевыпуск 2FA'}
+          </DialogTitle>
           <DialogDescription className="text-[12.5px] text-text-2">
-            Отсканируйте QR в приложении-аутентификаторе и введите код. Старый секрет работает, пока новый не
-            подтверждён.
+            {enable
+              ? 'Отсканируйте QR в приложении-аутентификаторе и введите код. Старую запись NodeService в приложении можно удалить.'
+              : 'Отсканируйте QR в приложении-аутентификаторе и введите код. Старый секрет работает, пока новый не подтверждён.'}
           </DialogDescription>
         </DialogHeader>
         {reissue.isPending && (

@@ -9,7 +9,7 @@ import {
   auditListResponseSchema,
 } from '@nodeservice/shared';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { API_BASE, api } from '@/lib/api';
 
@@ -53,26 +53,73 @@ export function auditExportUrl(filter: AuditFilter, format: AuditExportFormat): 
   return `${API_BASE}/audit/export?${auditQueryString(filter, { format })}`;
 }
 
-export type AuditStreamStatus = 'off' | 'connecting' | 'live' | 'reconnecting';
+export type AuditStreamStatus = 'off' | 'connecting' | 'live' | 'reconnecting' | 'waiting';
+
+export interface AuditStreamState {
+  status: AuditStreamStatus;
+  /** Когда следующая попытка подключиться (status 'waiting'), мс по часам браузера. */
+  retryAt: number | null;
+  /** Подключиться сейчас, не дожидаясь паузы. */
+  retry: () => void;
+}
+
+/** Паузы между попытками, когда браузер сам сдался: 2 с, 5 с, 10 с, дальше раз в 30 с. */
+const RETRY_STEPS_MS = [2_000, 5_000, 10_000, 30_000];
 
 /**
- * Live-лента через EventSource. Браузер сам переподключается и шлёт Last-Event-ID —
- * сервер догоняет пропущенное. Записи, не прошедшие контракт, молча пропускаются.
+ * Live-лента через EventSource. При коротком обрыве браузер переподключается сам и шлёт Last-Event-ID —
+ * сервер догоняет пропущенное. Если сервер ответил не 200 (например, 502, пока панель перезапускается),
+ * браузер закрывает соединение навсегда — тогда переподключаемся сами с растущей паузой, а после
+ * восстановления зовём onResync: новое соединение пропущенное не догоняет, список надо перечитать.
+ * Записи, не прошедшие контракт, молча пропускаются.
  */
-export function useAuditStream(enabled: boolean, onEntry: (entry: AuditEntry) => void): AuditStreamStatus {
+export function useAuditStream(
+  enabled: boolean,
+  onEntry: (entry: AuditEntry) => void,
+  onResync?: () => void,
+): AuditStreamState {
   const [status, setStatus] = useState<AuditStreamStatus>('off');
+  const [retryAt, setRetryAt] = useState<number | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const handler = useRef(onEntry);
   handler.current = onEntry;
+  const resync = useRef(onResync);
+  resync.current = onResync;
+  const failures = useRef(0);
+  const lost = useRef(false);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt — повод открыть соединение заново
   useEffect(() => {
     if (!enabled || typeof EventSource === 'undefined') {
       setStatus('off');
+      setRetryAt(null);
       return;
     }
     setStatus('connecting');
     const es = new EventSource(`${API_BASE}/audit/stream`, { withCredentials: true });
-    es.onopen = () => setStatus('live');
-    es.onerror = () => setStatus(es.readyState === EventSource.CLOSED ? 'off' : 'reconnecting');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    es.onopen = () => {
+      setStatus('live');
+      setRetryAt(null);
+      failures.current = 0;
+      if (lost.current) {
+        lost.current = false;
+        resync.current?.();
+      }
+    };
+    es.onerror = () => {
+      if (es.readyState !== EventSource.CLOSED) {
+        setStatus('reconnecting');
+        return;
+      }
+      es.close();
+      lost.current = true;
+      const delay = RETRY_STEPS_MS[Math.min(failures.current, RETRY_STEPS_MS.length - 1)] ?? 30_000;
+      failures.current += 1;
+      setStatus('waiting');
+      setRetryAt(Date.now() + delay);
+      timer = setTimeout(() => setAttempt((n) => n + 1), delay);
+    };
     es.addEventListener(AUDIT_SSE_EVENT, (ev) => {
       try {
         const parsed = auditEntrySchema.safeParse(JSON.parse((ev as MessageEvent<string>).data));
@@ -82,10 +129,12 @@ export function useAuditStream(enabled: boolean, onEntry: (entry: AuditEntry) =>
       }
     });
     return () => {
+      clearTimeout(timer);
       es.close();
       setStatus('off');
     };
-  }, [enabled]);
+  }, [enabled, attempt]);
 
-  return status;
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  return { status, retryAt, retry };
 }

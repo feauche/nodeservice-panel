@@ -11,6 +11,7 @@ import { z } from 'zod';
  *  POST /login                 → LoginResponse         (пароль → сессия или шаг TOTP)
  *  POST /login/totp            → SessionResponse
  *  POST /login/recovery        → SessionResponse
+ *  POST /lock                  → 204                   (заблокировать экран: вручную или по бездействию)
  *  POST /unlock                → SessionResponse       (экран блокировки: пароль ещё раз)
  *  POST /logout                → 204 (идемпотентно, всегда чистит cookie)
  *  GET  /me                    → Me
@@ -48,6 +49,13 @@ export const recoveryCodeSchema = z
 
 /* ---------- CSRF ---------- */
 export const CSRF_HEADER = 'x-csrf-token';
+
+/**
+ * Сколько целых секунд человек ничего не делает в панели (мышь, клавиши, прокрутка — в любой вкладке).
+ * Браузер шлёт его с каждым запросом: опросы и перечитывания идут сами, и по одному факту запроса сервер
+ * не отличит их от работы человека, а автоблокировке нужно именно бездействие человека.
+ */
+export const ACTIVITY_HEADER = 'x-ns-idle';
 export const csrfResponseSchema = z.object({ token: z.string().min(1) });
 export type CsrfResponse = z.infer<typeof csrfResponseSchema>;
 
@@ -110,8 +118,13 @@ export const meSchema = z.object({
   recoveryCodesLeft: z.number().int().min(0),
   /** Экран заблокирован на сервере: до /auth/unlock остальные запросы получают 403 locked. */
   locked: z.boolean().default(false),
+  /** Почему заблокирован: вручную или по бездействию; null — не заблокирован или причина не записана. */
+  lockReason: z.enum(['manual', 'idle']).nullable().default(null),
+  /** Через сколько минут бездействия сработала блокировка (для «после 15 минут бездействия»). */
+  lockIdleMinutes: z.number().int().positive().nullable().default(null),
 });
 export type Me = z.infer<typeof meSchema>;
+export type LockReason = NonNullable<Me['lockReason']>;
 
 export const loginResponseSchema = z.discriminatedUnion('next', [
   z.object({ next: z.literal('totp') }),
@@ -135,6 +148,12 @@ export const unlockRequestSchema = z.object({
   password: z.string().min(1, 'Введите пароль').max(PASSWORD_MAX),
 });
 export type UnlockRequest = z.infer<typeof unlockRequestSchema>;
+
+/** POST /auth/lock: тело необязательно — без него блокировка считается ручной. */
+export const lockRequestSchema = z.object({
+  reason: z.enum(['manual', 'idle']).default('manual'),
+});
+export type LockRequest = z.input<typeof lockRequestSchema>;
 
 export const sessionResponseSchema = z.object({
   me: meSchema,

@@ -17,6 +17,10 @@ export const BILLING_RATES_SOURCE = Symbol('BILLING_RATES_SOURCE');
 
 const TIMEOUT_MS = 10_000;
 
+/** Дата по Москве (курс ЦБ устанавливается на московскую дату): YYYY-MM-DD. */
+export const moscowDate = (at: Date): string =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(at);
+
 /** Разбор XML_daily.asp: `<CharCode>USD</CharCode><Nominal>1</Nominal>…<Value>81,1234</Value>`. */
 export function parseCbrXml(xml: string): CbrRates | null {
   const date = /ValCurs[^>]*Date="(\d{2})\.(\d{2})\.(\d{4})"/.exec(xml);
@@ -64,20 +68,41 @@ export class HttpCbrRatesSource implements BillingRatesSource {
     } catch {
       // ниже — зеркало
     }
-    const today = new Date().toISOString().slice(0, 10) === date;
+    // «Сегодня» — по Москве: с 00:00 до 03:00 МСК дата по UTC ещё вчерашняя, и общий файл зеркала не спрашивался.
+    const today = moscowDate(new Date()) === date;
     for (const url of [
       `https://www.cbr-xml-daily.ru/archive/${y}/${m}/${d}/daily_json.js`,
       ...(today ? ['https://www.cbr-xml-daily.ru/daily_json.js'] : []),
     ]) {
-      try {
-        const res = await undiciFetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-        if (!res.ok) continue;
-        const r = parseCbrJson(await res.json());
-        if (r) return r;
-      } catch {
-        // следующий адрес
-      }
+      const r = await mirrorRates(url, date);
+      if (r) return r;
     }
+    return null;
+  }
+}
+
+/**
+ * Курс из файла зеркала, действующий на дату. Вечером общий файл уже содержит курс на завтра — тогда берём
+ * предыдущий файл (PreviousURL): это и есть курс, действующий сегодня. Курс на дату позже запрошенной не отдаём.
+ */
+export async function mirrorRates(
+  url: string,
+  date: string,
+  get: (url: string) => Promise<{ ok: boolean; json(): Promise<unknown> }> = (u) =>
+    undiciFetch(u, { signal: AbortSignal.timeout(TIMEOUT_MS) }),
+  hops = 2,
+): Promise<CbrRates | null> {
+  try {
+    const res = await get(url);
+    if (!res.ok) return null;
+    const json = (await res.json()) as { PreviousURL?: string };
+    const r = parseCbrJson(json);
+    if (!r) return null;
+    if (r.date <= date) return r;
+    if (hops <= 0 || !json.PreviousURL) return null;
+    const previous = json.PreviousURL.startsWith('//') ? `https:${json.PreviousURL}` : json.PreviousURL;
+    return mirrorRates(previous, date, get, hops - 1);
+  } catch {
     return null;
   }
 }

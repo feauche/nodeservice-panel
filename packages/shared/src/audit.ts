@@ -112,12 +112,13 @@ export const AUDIT_ACTIONS = {
     category: 'security',
     label: 'Действие отклонено: нужно подтверждение пароля',
   },
-  'security.totp.reissue_started': { category: 'security', label: 'Начат перевыпуск 2FA' },
+  'security.totp.reissue_started': { category: 'security', label: 'Начата настройка нового секрета 2FA' },
   'security.cli.password_reset': { category: 'security', label: 'Пароль сброшен через rescue-CLI' },
   'security.cli.totp_disabled': { category: 'security', label: '2FA отключена через rescue-CLI' },
   'security.cli.sessions_revoked': { category: 'security', label: 'Сессии завершены через rescue-CLI' },
   'security.cli.login_unblocked': { category: 'security', label: 'Паузы входа сняты из консоли сервера' },
   'security.totp.reissued': { category: 'security', label: 'Перевыпуск 2FA' },
+  'security.totp.enabled': { category: 'security', label: '2FA включена заново' },
   'security.recovery_codes.regenerated': { category: 'security', label: 'Новые коды восстановления' },
   'security.recovery_codes.viewed': { category: 'security', label: 'Просмотр кодов восстановления' },
   'security.session.revoked': { category: 'security', label: 'Сессия завершена' },
@@ -283,6 +284,72 @@ export type AuditAction = keyof typeof AUDIT_ACTIONS;
 
 export function auditActionLabel(action: string): string {
   return (AUDIT_ACTIONS as Record<string, { label: string }>)[action]?.label ?? action;
+}
+
+/* ---------- поиск по Журналу: одна логика у сервера и у живой ленты ---------- */
+
+const WORD_SPLIT = /[^\p{L}\p{N}]+/u;
+
+/** Слова запроса: регистр не важен, знаки синтаксиса поиска убраны; не больше 8 слов. */
+export function auditSearchWords(q: string): string[] {
+  return q
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => w.replace(/[^\p{L}\p{N}.@_-]/gu, '').replace(/^[.@_-]+|[.@_-]+$/g, ''))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+/**
+ * Действия, которые находит слово запроса: по русской подписи, как в колонке «Событие» (слово с этого
+ * начинается: «вход» → «Вход в панель», «Неудачная попытка входа»), или по части служебного ключа («agent»).
+ */
+export function auditActionsForWord(word: string): string[] {
+  const w = word.toLowerCase();
+  return Object.entries(AUDIT_ACTIONS as Record<string, { label: string }>)
+    .filter(
+      ([key, { label }]) =>
+        key.toLowerCase().includes(w) ||
+        label
+          .toLowerCase()
+          .split(WORD_SPLIT)
+          .some((t) => t.startsWith(w)),
+    )
+    .map(([key]) => key);
+}
+
+/** Поля записи, по которым ищет сервер (кроме подписи): кто, объект, id запроса, IP, логин, причина. */
+export interface AuditSearchable {
+  action: string;
+  actorDisplay: string;
+  targetDisplay: string | null;
+  requestId: string | null;
+  ip: string | null;
+  metadata: Record<string, unknown>;
+}
+
+/** Подходит ли запись под запрос — каждое слово должно найтись (для живой ленты; сервер ищет так же). */
+export function auditEntryMatches(entry: AuditSearchable, q: string): boolean {
+  const words = auditSearchWords(q);
+  if (!words.length) return true;
+  const label = auditActionLabel(entry.action).toLowerCase().split(WORD_SPLIT);
+  const text = [
+    entry.actorDisplay,
+    entry.targetDisplay,
+    entry.requestId,
+    entry.ip,
+    entry.metadata.login,
+    entry.metadata.reason,
+  ]
+    .filter((v) => typeof v === 'string' && v)
+    .join(' ')
+    .toLowerCase();
+  // Целые слова и их части (de-fra-01 → de, fra, 01) — как разбирает текст поиск Postgres.
+  const tokens = [...text.split(/\s+/), ...text.split(WORD_SPLIT)].filter(Boolean);
+  const action = entry.action.toLowerCase();
+  return words.every(
+    (w) => action.includes(w) || label.some((t) => t.startsWith(w)) || tokens.some((t) => t.startsWith(w)),
+  );
 }
 
 /** Изменённые поля: только diff, никогда не секреты (для секретов — факт изменения в metadata). */

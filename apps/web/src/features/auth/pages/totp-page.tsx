@@ -5,12 +5,14 @@ import { useId, useRef, useState } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { apiErrorMessage, isApiError } from '@/lib/api';
+import { toast } from '@/lib/notify';
 import { AuthHeading, AuthLinks, AuthShell, linkClass } from '../components/auth-shell';
 import { CtaButton } from '../components/cta-button';
 import { ErrorBox, ThrottleBox } from '../components/error-box';
 import { authCheckboxClass, Fields } from '../components/field';
 import { OtpField } from '../components/otp-field';
 import { useLoginTotp } from '../queries';
+import { takeReturnPath } from '../return-path';
 import { useAuthStore } from '../store';
 import { useThrottle } from '../use-countdown';
 
@@ -39,11 +41,20 @@ export function TotpPage() {
     setInvalid(false);
     try {
       await totp.mutateAsync({ code: parsed.data, rememberDevice: remember });
-      await navigate({ to: '/' });
+      await navigate({ href: takeReturnPath() });
     } catch (e) {
       if (isApiError(e) && e.is(AUTH_PROBLEM.throttled)) {
         setCode('');
         wait.start(e.retryAfterSeconds);
+        return;
+      }
+      // Шаг с кодом истёк (5 минут) или сгорел после 5 неверных кодов — сервер ждёт пароль заново.
+      if (isApiError(e) && e.is(AUTH_PROBLEM.totpRequired)) {
+        setPendingTotp(false);
+        toast.warning('Время на ввод кода вышло — войдите заново.', {
+          description: 'После пароля на код даётся 5 минут и 5 попыток. Введите пароль ещё раз.',
+        });
+        await navigate({ to: '/login' });
         return;
       }
       setError(apiErrorMessage(e));
@@ -51,6 +62,8 @@ export function TotpPage() {
       setTimeout(() => {
         setCode('');
         setInvalid(false);
+        // Поле было выключено на время запроса и потеряло фокус — следующий код вводится сразу.
+        otpRef.current?.focus();
       }, 380);
     }
   };

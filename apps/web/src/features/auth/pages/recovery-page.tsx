@@ -12,6 +12,7 @@ import { ErrorBox, ThrottleBox } from '../components/error-box';
 import { AuthInput, Field, Fields } from '../components/field';
 import { InfoBox } from '../components/info-box';
 import { useLoginRecovery } from '../queries';
+import { takeReturnPath } from '../return-path';
 import { useAuthStore } from '../store';
 import { useThrottle } from '../use-countdown';
 
@@ -19,6 +20,7 @@ export function RecoveryPage() {
   const navigate = useNavigate();
   const recovery = useLoginRecovery();
   const recoveryLeft = useAuthStore((s) => s.recoveryCodesLeft);
+  const setPendingTotp = useAuthStore((s) => s.setPendingTotp);
   const [serverError, setServerError] = useState<string | null>(null);
 
   const form = useForm<RecoveryLoginRequest>({
@@ -41,10 +43,18 @@ export function RecoveryPage() {
           description: 'Если приложение потеряно, перевыпустите 2FA в настройках безопасности.',
         });
       }
-      await navigate({ to: '/' });
+      await navigate({ href: takeReturnPath() });
     } catch (e) {
       if (isApiError(e) && e.is(AUTH_PROBLEM.throttled)) {
         wait.start(e.retryAfterSeconds);
+        return;
+      }
+      if (isApiError(e) && e.is(AUTH_PROBLEM.totpRequired)) {
+        setPendingTotp(false);
+        toast.warning('Время на ввод кода вышло — войдите заново.', {
+          description: 'После пароля на код даётся 5 минут и 5 попыток. Введите пароль ещё раз.',
+        });
+        await navigate({ to: '/login' });
         return;
       }
       setServerError(apiErrorMessage(e));

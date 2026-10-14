@@ -1,6 +1,7 @@
 import { randomInt } from 'node:crypto';
 import { type HttpException, Injectable } from '@nestjs/common';
 import {
+  type LockReason,
   type LoginResponse,
   loginSchema,
   type Me,
@@ -77,6 +78,8 @@ export function toMe(user: UserSummary, session: SessionRecord, recoveryCodesLef
     stepUpAt: session.stepUpAt,
     recoveryCodesLeft,
     locked: session.lockedAt !== null,
+    lockReason: session.lockedAt ? session.lockReason : null,
+    lockIdleMinutes: session.lockedAt ? session.lockIdleMinutes : null,
   };
 }
 
@@ -425,17 +428,41 @@ export class AuthService {
     await this.sessions.setLocked(session.id, null);
     session.stepUpAt = now.toISOString();
     session.lockedAt = null;
+    session.lockReason = null;
+    session.lockIdleMinutes = null;
     await this.events.record('auth.unlock', { ...ctx, userId: user.id, login: user.login, amr: session.amr });
     return { me: await this.me(user, session) };
   }
 
-  /** Заблокировать экран на сервере: до /unlock остальные запросы получают 403 locked. Идемпотентно. */
-  async lock(user: UserSummary, session: SessionRecord, ctx: RequestContext): Promise<void> {
+  /**
+   * Заблокировать экран на сервере: до /unlock остальные запросы получают 403 locked. Идемпотентно.
+   * reason idle — браузер сам заметил бездействие (раньше, чем сервер): в Журнале это автоматическая блокировка.
+   */
+  async lock(
+    user: UserSummary,
+    session: SessionRecord,
+    ctx: RequestContext,
+    reason: LockReason = 'manual',
+  ): Promise<void> {
     if (session.lockedAt) return;
     const now = new Date();
-    await this.sessions.setLocked(session.id, now);
+    const idleMinutes = reason === 'idle' ? (await this.policy.get()).lockAfterMinutes || null : null;
+    await this.sessions.setLocked(session.id, now, reason, idleMinutes);
     session.lockedAt = now.toISOString();
-    await this.events.record('auth.lock', { ...ctx, userId: user.id, login: user.login, amr: session.amr });
+    session.lockReason = reason;
+    session.lockIdleMinutes = idleMinutes;
+    await this.events.record('auth.lock', {
+      ...ctx,
+      userId: user.id,
+      login: user.login,
+      amr: session.amr,
+      ...(reason === 'idle'
+        ? {
+            source: 'auto',
+            meta: { reason: 'idle', ...(idleMinutes ? { lockAfterMinutes: idleMinutes } : {}) },
+          }
+        : {}),
+    });
   }
 
   /** Me с актуальным числом кодов восстановления. */

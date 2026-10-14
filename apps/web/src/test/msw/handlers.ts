@@ -45,6 +45,8 @@ export interface MockState {
   csrfRejectOnce: boolean;
   /** Экран заблокирован на сервере. */
   locked: boolean;
+  /** Почему заблокирован (тело POST /auth/lock). */
+  lockReason: 'manual' | 'idle';
 }
 
 export const mockMonitoring = { value: { ...MONITORING_DEFAULTS } };
@@ -66,6 +68,7 @@ export const mockState: MockState = {
   csrfToken: MOCK.csrf,
   csrfRejectOnce: false,
   locked: false,
+  lockReason: 'manual',
 };
 
 mockAudit.authenticated = () => mockState.authenticated;
@@ -95,6 +98,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
     csrfToken: MOCK.csrf,
     csrfRejectOnce: false,
     locked: false,
+    lockReason: 'manual',
   } satisfies MockState);
   Object.assign(mockState, patch);
 }
@@ -107,11 +111,19 @@ export const mockMe: Me = {
   stepUpAt: '2026-08-29T09:00:00.000Z',
   recoveryCodesLeft: 10,
   locked: false,
+  lockReason: null,
+  lockIdleMinutes: null,
 };
 
 /** Me с актуальным числом кодов восстановления из mockState. */
 export function currentMe(): Me {
-  return { ...mockMe, recoveryCodesLeft: mockState.recoveryLeft, locked: mockState.locked };
+  return {
+    ...mockMe,
+    recoveryCodesLeft: mockState.recoveryLeft,
+    locked: mockState.locked,
+    lockReason: mockState.locked ? mockState.lockReason : null,
+    lockIdleMinutes: mockState.locked && mockState.lockReason === 'idle' ? 30 : null,
+  };
 }
 
 export function problem(
@@ -363,11 +375,13 @@ export const handlers = [
     return HttpResponse.json({ me: currentMe() });
   }),
 
-  http.post('/api/auth/lock', ({ request }) => {
+  http.post('/api/auth/lock', async ({ request }) => {
     const bad = csrfGuard(request);
     if (bad) return bad;
     if (!mockState.authenticated) return problem(401, AUTH_PROBLEM.unauthenticated, 'Нужно войти.');
+    const body = (await request.json().catch(() => ({}))) as { reason?: string };
     mockState.locked = true;
+    mockState.lockReason = body.reason === 'idle' ? 'idle' : 'manual';
     return new HttpResponse(null, { status: 204 });
   }),
 

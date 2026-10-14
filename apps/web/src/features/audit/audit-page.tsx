@@ -64,7 +64,11 @@ const SEARCH_DEBOUNCE_MS = 300;
 /** Страница «Журнал»: фильтры → таблица (новые сверху) → номерная пагинация; live и экспорт справа. */
 export function AuditPage({ search, onSearch }: AuditPageProps) {
   const tableRef = useRef<HTMLDivElement>(null);
-  const pageSize = useAdaptivePageSize(tableRef);
+  const measured = useAdaptivePageSize(tableRef);
+  // Пока видна плашка «Новых записей», число строк не пересчитываем: плашка сдвигает таблицу вниз, и без
+  // этого страница перечитывалась бы на строку короче, а записи съезжали.
+  const [heldSize, setHeldSize] = useState<number | null>(null);
+  const pageSize = heldSize ?? measured;
   const query = useMemo(() => toListQuery(search, pageSize), [search, pageSize]);
   const list = useAuditList(query);
   const qc = useQueryClient();
@@ -79,32 +83,49 @@ export function AuditPage({ search, onSearch }: AuditPageProps) {
   const md = useMediaQuery('(min-width: 768px)');
   const cols = xl ? 6 : md ? 4 : 3;
 
-  const streamStatus = useAuditStream(live, (entry: AuditEntry) => {
-    if (!matchesSearch(entry, search)) return;
-    if (page !== 1) {
-      setMissed((n) => n + 1);
-      return;
-    }
-    qc.setQueryData<AuditListResponse>(auditListQuery(query).queryKey, (old) => {
-      if (!old || old.items.some((i) => i.seq === entry.seq)) return old;
-      const total = old.total + 1;
-      return {
-        ...old,
-        items: [entry, ...old.items].slice(0, old.pageSize),
-        total,
-        totalPages: Math.max(1, Math.ceil(total / old.pageSize)),
-      };
-    });
-    setFresh((prev) => new Set(prev).add(entry.seq));
-  });
+  const stream = useAuditStream(
+    live,
+    (entry: AuditEntry) => {
+      if (!matchesSearch(entry, search)) return;
+      if (page !== 1) {
+        setHeldSize((held) => held ?? pageSize);
+        setMissed((n) => n + 1);
+        return;
+      }
+      qc.setQueryData<AuditListResponse>(auditListQuery(query).queryKey, (old) => {
+        if (!old || old.items.some((i) => i.seq === entry.seq)) return old;
+        const total = old.total + 1;
+        return {
+          ...old,
+          items: [entry, ...old.items].slice(0, old.pageSize),
+          total,
+          totalPages: Math.max(1, Math.ceil(total / old.pageSize)),
+        };
+      });
+      setFresh((prev) => new Set(prev).add(entry.seq));
+    },
+    // Связь вернулась после обрыва: пропущенные записи новое соединение не догонит — перечитываем список.
+    () => void qc.invalidateQueries({ queryKey: ['audit', 'list'] }),
+  );
 
-  // Сброс «новых» и счётчика при смене страницы/фильтров.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: намеренно только по query
+  // Сброс «новых», счётчика и раскрытой записи — только когда меняются страница или фильтры. Размер страницы
+  // (окно изменилось, появилась плашка) читаемую запись не сворачивает.
+  const resetKey = [
+    page,
+    search.q,
+    search.category?.join(),
+    search.result?.join(),
+    search.source,
+    search.period,
+    search.target,
+  ].join('|');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: намеренно только по странице и фильтрам
   useEffect(() => {
     setFresh(new Set());
     setMissed(0);
+    setHeldSize(null);
     setExpanded(null);
-  }, [query]);
+  }, [resetKey]);
 
   const data = list.data;
   const filter = toFilter(search);
@@ -126,7 +147,7 @@ export function AuditPage({ search, onSearch }: AuditPageProps) {
         search={search}
         onSearch={onSearch}
         live={live}
-        streamStatus={streamStatus}
+        stream={stream}
         exportFilter={filter}
         targetName={targetName}
         loaded={data !== undefined}
@@ -138,6 +159,8 @@ export function AuditPage({ search, onSearch }: AuditPageProps) {
           className="flex w-fit cursor-pointer items-center gap-2 rounded-[10px] bg-brand-soft px-3 py-1.5 text-[12.5px] font-medium text-brand hover:brightness-110"
           onClick={() => {
             onSearch({ page: undefined });
+            setMissed(0);
+            setHeldSize(null);
             void qc.invalidateQueries({ queryKey: ['audit', 'list'] });
           }}
         >
@@ -270,7 +293,7 @@ interface ToolbarProps {
   search: AuditSearch;
   onSearch: AuditPageProps['onSearch'];
   live: boolean;
-  streamStatus: ReturnType<typeof useAuditStream>;
+  stream: ReturnType<typeof useAuditStream>;
   exportFilter: ReturnType<typeof toFilter>;
   /** Имя объекта из фильтра `?target=` — по записям Журнала; null — записей с ним на странице нет. */
   targetName: string | null;
@@ -310,7 +333,9 @@ function ServerChip({
   );
 }
 
-function Toolbar({ search, onSearch, live, streamStatus, exportFilter, targetName, loaded }: ToolbarProps) {
+function Toolbar({ search, onSearch, live, stream, exportFilter, targetName, loaded }: ToolbarProps) {
+  const streamStatus = stream.status;
+  const retryIn = useSecondsLeft(stream.retryAt);
   const [q, setQ] = useState(search.q ?? '');
   useEffect(() => setQ(search.q ?? ''), [search.q]);
   useEffect(() => {
@@ -336,7 +361,7 @@ function Toolbar({ search, onSearch, live, streamStatus, exportFilter, targetNam
         />
         <Input
           aria-label="Поиск по журналу"
-          placeholder="Поиск: действие, логин, IP, id запроса…"
+          placeholder="Поиск: событие, логин, нода, IP…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           className="h-9 rounded-[10px] bg-surface-2 pr-8 pl-9 text-[13px]"
@@ -489,13 +514,24 @@ function Toolbar({ search, onSearch, live, streamStatus, exportFilter, targetNam
           />
           {live
             ? streamStatus === 'live'
-              ? 'Live'
+              ? 'Лента: вкл'
               : streamStatus === 'connecting'
                 ? 'Подключаюсь…'
-                : 'Переподключаюсь…'
-            : 'Live: выкл'}
+                : streamStatus === 'waiting'
+                  ? `Нет связи · ${retryIn ?? 0} с`
+                  : 'Переподключаюсь…'
+            : 'Лента: выкл'}
           <RadioIcon className="size-3.5 opacity-60" />
         </Button>
+        {live && streamStatus === 'waiting' && (
+          <button
+            type="button"
+            className="h-9 cursor-pointer rounded-[10px] px-2 text-[12.5px] text-brand hover:underline"
+            onClick={stream.retry}
+          >
+            Повторить
+          </button>
+        )}
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -529,4 +565,16 @@ function Toolbar({ search, onSearch, live, streamStatus, exportFilter, targetNam
       </span>
     </div>
   );
+}
+
+/** Сколько целых секунд осталось до момента at (обновляется раз в секунду); null — момента нет. */
+function useSecondsLeft(at: number | null): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (at === null) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [at]);
+  return at === null ? null : Math.max(0, Math.ceil((at - now) / 1_000));
 }

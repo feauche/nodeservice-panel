@@ -85,4 +85,55 @@ describe('SessionStore (Valkey)', () => {
     expect(await store.get('../../etc')).toBeNull();
     expect(await store.get('')).toBeNull();
   });
+  it('автоблокировка считает бездействие человека, а не запросы вкладки', async () => {
+    const s = await store.create({ userId, ua: 'idle', ip: '127.0.0.1', amr: ['pwd'] });
+    const key = `sess:${s.id}`;
+    const ago = (min: number) => Date.now() - min * 60_000;
+    const idleSince = (min: number) => valkey.hset(key, { lastActiveAt: new Date(ago(min)).toISOString() });
+    const LIMIT = 5 * 60_000;
+
+    // фоновый опрос (человека нет 4 минуты) и поток событий — не срок и не действие
+    await idleSince(4);
+    expect((await store.touch(s.id, LIMIT, ago(4)))?.lockedAt).toBeNull();
+    expect((await store.touch(s.id, LIMIT, null))?.lockedAt).toBeNull();
+    const polled = await store.get(s.id);
+    expect(Date.now() - Date.parse(polled?.lastActiveAt ?? '')).toBeGreaterThan(3.9 * 60_000);
+    expect(Date.now() - Date.parse(polled?.lastSeenAt ?? '')).toBeLessThan(5_000);
+
+    // действие человека сдвигает отсчёт
+    const moved = await store.touch(s.id, LIMIT, Date.now());
+    expect(Date.now() - Date.parse(moved?.lastActiveAt ?? '')).toBeLessThan(5_000);
+
+    // человека нет дольше срока — блокировка с причиной, даже если запросы шли всё время
+    await idleSince(6);
+    expect(await store.touch(s.id, LIMIT, null)).toMatchObject({
+      lockReason: 'idle',
+      lockIdleMinutes: 5,
+      autoLocked: true,
+    });
+    expect(await store.get(s.id)).toMatchObject({ lockReason: 'idle', lockIdleMinutes: 5 });
+
+    // снятие блокировки — это ввод пароля: отсчёт заново, причина стёрта
+    await store.setLocked(s.id, null);
+    const open = await store.get(s.id);
+    expect(open).toMatchObject({ lockedAt: null, lockReason: null, lockIdleMinutes: null });
+    expect(Date.now() - Date.parse(open?.lastActiveAt ?? '')).toBeLessThan(5_000);
+
+    // вернулся после перерыва дольше срока — тоже сначала пароль
+    await idleSince(10);
+    expect((await store.touch(s.id, LIMIT, Date.now()))?.lockReason).toBe('idle');
+
+    // ручная блокировка помнит причину
+    await store.setLocked(s.id, null);
+    await store.setLocked(s.id, new Date(), 'manual');
+    expect(await store.get(s.id)).toMatchObject({ lockReason: 'manual', lockIdleMinutes: null });
+    await store.destroy(s.id);
+  });
+
+  it('сессия прежней версии без времени действия считается по последнему запросу', async () => {
+    const s = await store.create({ userId, ua: 'old', ip: '127.0.0.1', amr: ['pwd'] });
+    await valkey.hdel(`sess:${s.id}`, 'lastActiveAt', 'lockReason', 'lockIdleMinutes');
+    expect(await store.get(s.id)).toMatchObject({ lastActiveAt: s.lastSeenAt, lockReason: null });
+    await store.destroy(s.id);
+  });
 });

@@ -205,7 +205,8 @@ export class KnowledgeService implements OnModuleInit {
     const existing = await this.repo.findByTitle(GLOSSARY_TITLE);
     const merged = mergeTerms(existing ? parseGlossary(existing.content) : [], terms);
     const changed = merged.added.length + merged.updated.length > 0;
-    const content = renderGlossary(merged.entries);
+    // Меняется только таблица терминов: свой текст, абзацы и списки владельца остаются на месте.
+    const content = writeGlossary(existing?.content ?? renderGlossary([]), merged.entries);
     const result = { added: merged.added.length, skipped: merged.skipped, updated: merged.updated };
 
     if (existing) {
@@ -305,11 +306,32 @@ const GLOSSARY_HEADER = `# Пояснения
 | Термин | Простыми словами |
 | --- | --- |`;
 
-/** Разобрать строки таблицы глоссария из markdown (пропуская шапку и разделитель). */
+const TABLE_HEAD = ['| Термин | Простыми словами |', '| --- | --- |'];
+const isTableLine = (line: string): boolean => /^\s*\|/.test(line);
+
+/** Где в статье таблица терминов: подряд идущие строки таблицы, начиная с шапки «Термин». */
+function glossaryTable(lines: string[]): { start: number; end: number } | null {
+  const start = lines.findIndex((l) => /^\s*\|\s*Термин\s*\|/i.test(l));
+  if (start < 0) return null;
+  let end = start;
+  while (end < lines.length && isTableLine(lines[end] ?? '')) end += 1;
+  return { start, end };
+}
+
+/**
+ * Разобрать строки таблицы глоссария (без шапки и разделителя). Строка без закрывающей «|» тоже строка таблицы —
+ * так её показывает и предпросмотр. Если таблицы с шапкой нет — берём все строки-таблицы статьи.
+ */
 function parseGlossary(content: string): Array<{ term: string; explain: string }> {
+  const lines = content.replace(/\r/g, '').split('\n');
+  const block = glossaryTable(lines);
+  const source = block ? lines.slice(block.start, block.end) : lines.filter(isTableLine);
   const rows: Array<{ term: string; explain: string }> = [];
-  for (const line of content.split('\n')) {
-    const m = /^\s*\|(.+?)\|(.+?)\|\s*$/.exec(line);
+  const separator = (line: string | undefined) => /^\s*\|?\s*:?-{3,}:?\s*\|/.test(line ?? '');
+  for (const [i, line] of source.entries()) {
+    // Шапка любой таблицы (строка над «| --- |») — не термин.
+    if (separator(source[i + 1])) continue;
+    const m = /^\s*\|([^|]*)\|(.*?)\|?\s*$/.exec(line);
     if (!m) continue;
     const term = (m[1] ?? '').trim();
     const explain = (m[2] ?? '').trim();
@@ -319,8 +341,19 @@ function parseGlossary(content: string): Array<{ term: string; explain: string }
   return rows;
 }
 
-/** Собрать содержимое глоссария из строк (шапка + markdown-таблица). */
+/** Собрать содержимое нового глоссария из строк (шапка + markdown-таблица). */
 function renderGlossary(rows: Array<{ term: string; explain: string }>): string {
   const body = rows.map((r) => `| ${r.term} | ${r.explain} |`).join('\n');
   return `${GLOSSARY_HEADER}\n${body}\n`;
+}
+
+/** Вписать строки в статью: заменяется только таблица терминов, остальной текст статьи сохраняется как был. */
+function writeGlossary(content: string, rows: Array<{ term: string; explain: string }>): string {
+  const table = [...TABLE_HEAD, ...rows.map((r) => `| ${r.term} | ${r.explain} |`)];
+  const lines = content.replace(/\r/g, '').split('\n');
+  const block = glossaryTable(lines);
+  if (block) return [...lines.slice(0, block.start), ...table, ...lines.slice(block.end)].join('\n');
+  // Таблицы нет (владелец переписал статью по-своему) — добавляем её в конец, ничего не удаляя.
+  const base = content.trimEnd();
+  return `${base}\n\n${table.join('\n')}\n`;
 }

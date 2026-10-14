@@ -34,7 +34,7 @@ export const LOCK_AFTER_MAX = 4 * 60;
 const policyFields = {
   /** Завершать сессию после N минут бездействия (скользящий TTL на сервере). */
   idleMinutes: z.number().int().min(SESSION_IDLE_MIN).max(SESSION_IDLE_MAX),
-  /** Блокировать экран после N минут без запросов (на сервере: действует и в новой вкладке); 0 — выключено. */
+  /** Блокировать экран после N минут без действий человека (на сервере: действует и в новой вкладке); 0 — выключено. */
   lockAfterMinutes: z.number().int().min(0).max(LOCK_AFTER_MAX),
   /** Всегда спрашивать код 2FA — запомненные устройства не действуют. */
   alwaysAskTotp: z.boolean(),
@@ -107,6 +107,11 @@ export const totpConfirmResponseSchema = z.object({
   me: meSchema,
   sessionsRevoked: z.number().int().min(0),
   trustedDevicesRemoved: z.number().int().min(0),
+  /**
+   * Новые коды восстановления — когда 2FA включается заново после отключения из консоли (коды тогда удалены)
+   * или когда неиспользованных кодов не осталось. Показываются один раз.
+   */
+  recoveryCodes: z.array(z.string()).optional(),
 });
 export type TotpConfirmResponse = z.infer<typeof totpConfirmResponseSchema>;
 

@@ -2,6 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import {
+  ACTIVITY_HEADER,
   AUTH_PROBLEM,
   auditListResponseSchema,
   CSRF_HEADER,
@@ -9,6 +10,7 @@ import {
   SECURITY_PROBLEM,
   securityOverviewSchema,
   sessionsResponseSchema,
+  totpConfirmResponseSchema,
   trustedDevicesResponseSchema,
 } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
@@ -166,9 +168,13 @@ describe('security e2e', () => {
   });
 
   it('блокировка экрана: вручную и по бездействию; заблокированная сессия ждёт пароль', async () => {
-    // вручную
+    // вручную (вкладки прежней версии шлют пустой запрос — это ручная блокировка)
     await main.post('/api/auth/lock').set(CSRF_HEADER, csrf).expect(204);
-    expect((await main.get('/api/auth/me').expect(200)).body.locked).toBe(true);
+    expect((await main.get('/api/auth/me').expect(200)).body).toMatchObject({
+      locked: true,
+      lockReason: 'manual',
+      lockIdleMinutes: null,
+    });
     expect((await main.get('/api/auth/status').expect(200)).body.locked).toBe(true);
     const denied = await main.get('/api/security/overview').expect(403);
     expect(denied.body.type).toBe(AUTH_PROBLEM.locked);
@@ -176,20 +182,49 @@ describe('security e2e', () => {
     expect((await main.get('/api/auth/me').expect(200)).body.locked).toBe(false);
     await main.get('/api/security/overview').expect(200);
 
-    // по бездействию: пауза между запросами больше lockAfterMinutes → сервер блокирует сам
+    // по бездействию: человек не трогал панель дольше lockAfterMinutes → сервер блокирует сам,
+    // хотя вкладка всё это время опрашивала API (с каждым запросом браузер сообщает, сколько человек бездействует)
     await main.put('/api/security/policy').set(CSRF_HEADER, csrf).send({ lockAfterMinutes: 5 }).expect(200);
-    const [session] = await app.get(SessionStore).listForUser(userId);
-    await app
-      .get<Redis>(VALKEY)
-      .hset(`sess:${session?.id}`, { lastSeenAt: new Date(Date.now() - 10 * 60_000).toISOString() });
-    expect((await main.get('/api/auth/me').expect(200)).body.locked).toBe(true);
+    const store = app.get(SessionStore);
+    const [session] = await store.listForUser(userId);
+    const idleFor = (minutes: number) =>
+      app
+        .get<Redis>(VALKEY)
+        .hset(`sess:${session?.id}`, { lastActiveAt: new Date(Date.now() - minutes * 60_000).toISOString() });
+    await idleFor(4);
+    expect((await main.get('/api/auth/me').set(ACTIVITY_HEADER, '240').expect(200)).body.locked).toBe(false);
+    await main.get('/api/security/sessions').set(ACTIVITY_HEADER, '250').expect(200);
+    const polled = await store.get(session?.id ?? '');
+    expect(Date.now() - Date.parse(polled?.lastActiveAt ?? '')).toBeGreaterThan(3.5 * 60_000); // опрос — не действие
+    await idleFor(6);
+    expect((await main.get('/api/auth/me').set(ACTIVITY_HEADER, '360').expect(200)).body).toMatchObject({
+      locked: true,
+      lockReason: 'idle',
+      lockIdleMinutes: 5,
+    });
     await main.get('/api/security/sessions').expect(403);
     await main.get('/api/audit').expect(403); // Журнал тоже за паролем
+    await main.post('/api/auth/unlock').set(CSRF_HEADER, csrf).send({ password: PASSWORD }).expect(200);
+    // вернулся после долгого перерыва (запрос без заголовка — действие сейчас): тоже сначала пароль
+    await idleFor(10);
+    expect((await main.get('/api/auth/me').expect(200)).body.locked).toBe(true);
+    await main.post('/api/auth/unlock').set(CSRF_HEADER, csrf).send({ password: PASSWORD }).expect(200);
+    expect((await main.get('/api/auth/me').expect(200)).body).toMatchObject({
+      locked: false,
+      lockReason: null,
+    });
+    // браузер заметил бездействие раньше сервера — блокировка с причиной «бездействие»
+    await main.post('/api/auth/lock').set(CSRF_HEADER, csrf).send({ reason: 'idle' }).expect(204);
+    expect((await main.get('/api/auth/me').expect(200)).body).toMatchObject({
+      locked: true,
+      lockReason: 'idle',
+      lockIdleMinutes: 5,
+    });
     await main.post('/api/auth/unlock').set(CSRF_HEADER, csrf).send({ password: PASSWORD }).expect(200);
     const audit = auditListResponseSchema.parse(
       (await main.get('/api/audit?category=auth').expect(200)).body,
     );
-    expect(audit.items.some((e) => e.action === 'auth.lock' && e.source === 'auto')).toBe(true);
+    expect(audit.items.filter((e) => e.action === 'auth.lock' && e.source === 'auto')).toHaveLength(3);
     expect(audit.items.some((e) => e.action === 'auth.lock' && e.source === 'manual')).toBe(true);
     await main.put('/api/security/policy').set(CSRF_HEADER, csrf).send({ lockAfterMinutes: 30 }).expect(200);
   });
@@ -432,5 +467,42 @@ describe('security e2e', () => {
     );
     expect(audit.items.some((e) => e.action === 'security.recovery_codes.viewed')).toBe(true);
     expect(JSON.stringify(audit)).not.toContain(issued[1]);
+  }, 120_000);
+  it('2FA отключена из консоли: обзор честно говорит «выключена», включение сразу выдаёт коды восстановления', async () => {
+    // как после nodeservice cli disable-2fa: секрета и кодов нет, вход по одному паролю
+    const users = app.get(UsersRepository);
+    await users.disableTotp(userId);
+    await users.replaceRecoveryCodes(userId, []);
+    const { agent, csrf: token } = await newAgent();
+    const step = await agent
+      .post('/api/auth/login')
+      .set(CSRF_HEADER, token)
+      .send({ login: LOGIN, password: NEW_PASSWORD })
+      .expect(200);
+    expect(step.body.next).toBe('done');
+    const off = securityOverviewSchema.parse((await agent.get('/api/security/overview').expect(200)).body);
+    expect(off).toMatchObject({ totpConfirmedAt: null, recoveryCodesLeft: 0 });
+
+    const start = await agent.post('/api/security/totp/reissue').set(CSRF_HEADER, token).expect(200);
+    const secret = start.body.totpSecret as string;
+    const ok = totpConfirmResponseSchema.parse(
+      (
+        await agent
+          .post('/api/security/totp/confirm')
+          .set(CSRF_HEADER, token)
+          .send({ code: await freshCode(secret) })
+          .expect(200)
+      ).body,
+    );
+    expect(ok.recoveryCodes).toHaveLength(10);
+    expect(ok.me.recoveryCodesLeft).toBe(10);
+    const on = securityOverviewSchema.parse((await agent.get('/api/security/overview').expect(200)).body);
+    expect(on.totpConfirmedAt).not.toBeNull();
+    const audit = auditListResponseSchema.parse(
+      (await agent.get('/api/audit?category=security').expect(200)).body,
+    );
+    expect(audit.items.some((e) => e.action === 'security.totp.enabled')).toBe(true);
+    expect(JSON.stringify(audit)).not.toContain(ok.recoveryCodes?.[0]);
+    totpSecret = secret;
   }, 120_000);
 });

@@ -33,6 +33,8 @@ export interface LlmToolDef {
 export interface LlmResp {
   stopReason: 'end' | 'tool_use';
   blocks: LlmBlock[];
+  /** Ответ упёрся в предел длины и оборван — текст неполный. */
+  truncated?: boolean;
 }
 export interface LlmRunInput {
   apiKey: string;
@@ -103,6 +105,10 @@ export class AnthropicProvider implements LlmProvider {
       return { type: 'text', text: '' };
     });
     const hasTool = blocks.some((b) => b.type === 'tool_use');
-    return { stopReason: res.stop_reason === 'tool_use' || hasTool ? 'tool_use' : 'end', blocks };
+    return {
+      stopReason: res.stop_reason === 'tool_use' || hasTool ? 'tool_use' : 'end',
+      blocks,
+      truncated: res.stop_reason === 'max_tokens',
+    };
   }
 }

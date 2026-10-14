@@ -119,6 +119,40 @@ describe('KnowledgePage', () => {
     });
   });
 
+  it('после переноса в архив справа открывается другая статья, а не пустое место', async () => {
+    const { router } = renderPage(KnowledgePage, '/knowledge');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /Лимит conntrack/ }));
+    await screen.findByRole('heading', { name: 'Лимит conntrack' });
+    await user.click(screen.getByRole('button', { name: 'Удалить (в архив)' }));
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'В архив' }));
+    expect(await screen.findByRole('heading', { name: 'Правила парка' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Лимит conntrack' })).not.toBeInTheDocument();
+    expect(router.state.location.search).not.toHaveProperty('open');
+  });
+
+  it('архив: справа статья из архива, а не прежняя активная; пустой архив так и подписан', async () => {
+    const doc = mockKnowledge.items.find((d) => d.title === 'Перезапуск Xray');
+    if (doc) doc.archived = true;
+    renderPage(KnowledgePage, '/knowledge');
+    const user = userEvent.setup();
+    await screen.findByRole('heading', { name: 'Правила парка' });
+    await user.click(screen.getByRole('button', { name: 'Показать архив →' }));
+    expect(await screen.findByRole('heading', { name: 'Перезапуск Xray' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Правила парка' })).not.toBeInTheDocument();
+    if (doc) doc.archived = false;
+  });
+
+  it('пустой архив так и подписан, а не показывает рядом активную статью', async () => {
+    for (const d of mockKnowledge.items) d.archived = false;
+    renderPage(KnowledgePage, '/knowledge');
+    const user = userEvent.setup();
+    await screen.findByRole('heading', { name: 'Правила парка' });
+    await user.click(screen.getByRole('button', { name: 'Показать архив →' }));
+    expect((await screen.findAllByText('В архиве пусто.')).length).toBe(2);
+    expect(screen.queryByRole('heading', { name: 'Правила парка' })).not.toBeInTheDocument();
+  });
+
   it('закреплённые «Правила парка» и «Пояснения»: сверху, без кнопки удаления', async () => {
     renderPage(KnowledgePage, '/knowledge');
     const user = userEvent.setup();

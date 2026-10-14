@@ -33,14 +33,24 @@ export const providerNameSchema = z
   .min(1, 'Введите название')
   .max(PROVIDER_NAME_MAX, `До ${PROVIDER_NAME_MAX} символов`);
 
-/** Сайт: адрес с http(s); «hetzner.com» без схемы тоже принимаем и дописываем https. */
+/** Имя сайта: домен (русский тоже — адрес переводится в xn--…, и зона .рф — это xn--p1ai), IPv4 или localhost. */
+const SITE_DOMAIN =
+  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/;
+const SITE_HOST = new RegExp(`${SITE_DOMAIN.source}|${z.regexes.ipv4.source}|^localhost$`, 'i');
+
+/**
+ * Сайт: адрес с http(s); «hetzner.com» без схемы тоже принимаем и дописываем https. Имя сайта проверяется
+ * одинаково в браузере и на сервере — «не сайт вообще» не проходит нигде.
+ */
 export const providerSiteUrlSchema = z
   .string()
   .trim()
   .min(1, 'Введите адрес сайта')
-  .max(200)
+  .max(200, 'Адрес — до 200 символов')
   .transform((v) => (/^https?:\/\//i.test(v) ? v : `https://${v}`))
-  .pipe(z.url({ protocol: /^https?$/, hostname: z.regexes.domain }).or(z.url({ protocol: /^https?$/ })));
+  .pipe(
+    z.url({ protocol: /^https?$/, hostname: SITE_HOST, error: 'Введите адрес сайта, например hetzner.com' }),
+  );
 
 /** Ссылка на картинку иконки, если задана вручную; без схемы — дописываем https. */
 export const providerIconUrlSchema = z

@@ -263,8 +263,16 @@ export const billingExtendResponseSchema = z.object({
   payment: billingPaymentSchema,
 });
 export const billingPaymentsResponseSchema = z.object({ items: z.array(billingPaymentSchema) });
+/** Запас на расхождение часов браузера и сервера: «сейчас» в браузере может быть чуть впереди. */
+const PAID_AT_SKEW_MS = 10 * 60_000;
+
 export const billingPaymentUpdateSchema = z.object({
-  paidAt: z.iso.datetime({ offset: true }).optional(),
+  // Дата оплаты не в будущем: курс на будущую дату неизвестен, а опечатка в месяце записала бы оплату
+  // по курсу «на сегодня» навсегда.
+  paidAt: z.iso
+    .datetime({ offset: true })
+    .refine((v) => Date.parse(v) <= Date.now() + PAID_AT_SKEW_MS, 'Дата оплаты не может быть в будущем')
+    .optional(),
   amount: amountSchema.optional(),
 });
 

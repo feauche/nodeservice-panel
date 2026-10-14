@@ -42,6 +42,31 @@ describe('LockPage', () => {
     expect(sessionStorage.getItem('ns-locked')).toBeNull();
   });
 
+  it('ручная блокировка так и подписана', async () => {
+    useAuthStore.getState().lock({ reason: 'manual', minutes: null });
+    renderPage(LockPage, '/lock', ['/', '/login']);
+    expect(await screen.findByText('Заблокировано вручную')).toBeInTheDocument();
+  });
+
+  it('по бездействию — причина с минутами, после пароля — обратно на ту же страницу', async () => {
+    useAuthStore.getState().lock({ reason: 'idle', minutes: 15 });
+    sessionStorage.setItem('ns-return-to', '/incidents');
+    const { router } = renderPage(LockPage, '/lock', ['/', '/login', '/incidents']);
+    expect(await screen.findByText('Заблокировано после 15 минут бездействия')).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Пароль'), MOCK.password);
+    await user.click(screen.getByRole('button', { name: 'Разблокировать' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/incidents'));
+    expect(sessionStorage.getItem('ns-return-to')).toBeNull();
+  });
+
+  it('заблокировал сервер или другая вкладка — причина из ответа сервера', async () => {
+    resetMockState({ authenticated: true, locked: true, lockReason: 'idle' });
+    useAuthStore.getState().lock();
+    renderPage(LockPage, '/lock', ['/', '/login']);
+    expect(await screen.findByText('Заблокировано после 30 минут бездействия')).toBeInTheDocument();
+  });
+
   it('«Выйти» при упавшем сервере всё равно уводит на /login', async () => {
     server.use(http.post('/api/auth/logout', () => HttpResponse.error()));
     const { router } = renderPage(LockPage, '/lock', ['/', '/login']);

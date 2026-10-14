@@ -1,5 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { AuditEntry, AuditFilter, AuditListQuery, AuditListResponse } from '@nodeservice/shared';
+import {
+  type AuditEntry,
+  type AuditFilter,
+  type AuditListQuery,
+  type AuditListResponse,
+  auditActionsForWord,
+  auditSearchWords,
+} from '@nodeservice/shared';
 import { and, asc, desc, eq, gt, gte, inArray, lte, type SQL, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
@@ -47,8 +54,19 @@ export class AuditRepository {
     if (f.targetId) conds.push(eq(auditLog.targetId, f.targetId));
     if (f.from) conds.push(gte(auditLog.occurredAt, new Date(f.from)));
     if (f.to) conds.push(lte(auditLog.occurredAt, new Date(f.to)));
-    if (f.q) conds.push(sql`${auditLog}."search" @@ websearch_to_tsquery('simple', ${f.q})`);
+    if (f.q) for (const word of auditSearchWords(f.q)) conds.push(this.wordCondition(word));
     return conds.length ? and(...conds) : undefined;
+  }
+
+  /**
+   * Слово поиска находит запись, если с него начинается слово в её полях (кто, объект, IP, id запроса, логин,
+   * причина) или в русской подписи события, как в колонке «Событие», либо оно есть в служебном ключе. Подписи
+   * живут в коде, а не в базе, поэтому подходящие события выбираются здесь — и для старых записей тоже.
+   */
+  private wordCondition(word: string): SQL {
+    const prefix = sql`${auditLog}."search" @@ to_tsquery('simple', ${`'${word.replace(/'/g, "''")}':*`})`;
+    const actions = auditActionsForWord(word);
+    return actions.length ? sql`(${prefix} OR ${inArray(auditLog.action, actions)})` : prefix;
   }
 
   /** Номерная пагинация, новые сверху. COUNT(*) по фильтру — см. оговорку в docs. */

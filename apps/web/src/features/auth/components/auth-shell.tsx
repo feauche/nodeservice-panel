@@ -21,17 +21,22 @@ interface AuthShellProps {
   side?: ReactNode;
 }
 
-/** Полноэкранный слой со свечением, карточка по центру, переключатель темы справа сверху. */
+/**
+ * Полноэкранный слой со свечением, карточка по центру, переключатель темы справа сверху.
+ * Без своего z-index: под экранами входа ничего нет, а окна подтверждения (например, «Выйти из панели?» на
+ * экране блокировки) должны рисоваться над ним. Карточка не сжимается (shrink-0): высокая карточка мастера на
+ * телефоне прокручивается вместе со слоем, а не срезается по высоте экрана.
+ */
 export function AuthShell({ children, wide, foot, hideLogo, animKey, side }: AuthShellProps) {
   return (
-    <div className="fixed inset-0 z-100 flex flex-col items-center overflow-y-auto overscroll-contain bg-background p-6 phone:p-4">
+    <div className="fixed inset-0 flex flex-col items-center overflow-y-auto overscroll-contain bg-background p-6 phone:p-4 phone:pt-[60px]">
       <div aria-hidden="true" className="auth-bg pointer-events-none fixed inset-0" />
       <div className="fixed top-[18px] right-[18px] z-1 phone:top-3 phone:right-3">
         <ThemeMenu />
       </div>
 
       {side ? (
-        <main className="relative mt-auto grid w-full max-w-[900px] min-w-0 animate-modin grid-cols-[340px_minmax(0,1fr)] overflow-hidden rounded-[18px] border border-border-2 bg-surface shadow-float max-md:grid-cols-1">
+        <main className="relative mt-auto grid w-full max-w-[900px] min-w-0 shrink-0 animate-modin grid-cols-[340px_minmax(0,1fr)] overflow-hidden rounded-[18px] border border-border-2 bg-surface shadow-float max-md:grid-cols-1">
           <aside className="flex flex-col border-r border-border bg-bg-2 p-[34px_30px] max-md:border-r-0 max-md:border-b max-md:p-[22px_20px_18px]">
             {side}
           </aside>
@@ -43,7 +48,7 @@ export function AuthShell({ children, wide, foot, hideLogo, animKey, side }: Aut
         <main
           key={animKey}
           className={cn(
-            'relative mt-auto w-full min-w-0 animate-modin rounded-2xl border border-border-2 bg-surface p-[30px_30px_26px] shadow-float phone:p-[24px_20px]',
+            'relative mt-auto w-full min-w-0 shrink-0 animate-modin rounded-2xl border border-border-2 bg-surface p-[30px_30px_26px] shadow-float phone:p-[24px_20px]',
             wide ? 'max-w-[560px]' : 'max-w-[420px]',
           )}
         >

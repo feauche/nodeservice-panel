@@ -55,6 +55,20 @@ const MATRIX: Scenario[] = [
 ];
 
 describe('guards', () => {
+  it('ссылка, открытая без входа (из Telegram, перезагрузка), запоминается для возврата после входа', async () => {
+    sessionStorage.clear();
+    resetMockState({ authenticated: false });
+    useAuthStore.setState({ me: null, hydrated: false, locked: false, pendingTotp: false });
+    window.history.pushState({}, '', '/incidents/42?tab=log');
+    try {
+      expect(await redirectOf(requireAuth)).toBe('/login');
+      expect(sessionStorage.getItem('ns-return-to')).toBe('/incidents/42?tab=log');
+    } finally {
+      window.history.pushState({}, '', '/');
+      sessionStorage.clear();
+    }
+  });
+
   for (const sc of MATRIX) {
     it(sc.name, async () => {
       resetMockState({

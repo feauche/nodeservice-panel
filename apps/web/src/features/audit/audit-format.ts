@@ -4,6 +4,7 @@ import {
   AUDIT_SOURCE_LABELS,
   type AuditEntry,
   auditActionLabel,
+  INCIDENT_KIND_META,
 } from '@nodeservice/shared';
 
 import { capFirst } from '@/lib/utils';
@@ -36,12 +37,23 @@ export function formatDuration(ms: number | null): string {
   return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} с`;
 }
 
-/** Значение для показа в деталях: строки как есть, остальное — компактный JSON. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+
+/**
+ * Значение для показа в деталях — словами, а не кодом: «Да/Нет», списки через запятую, даты по-русски,
+ * вложенные поля — «подпись: значение».
+ */
 export function formatValue(v: unknown): string {
   if (v === null || v === undefined || v === '') return '—';
-  if (typeof v === 'string') return v;
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-  return JSON.stringify(v);
+  if (typeof v === 'boolean') return v ? 'Да' : 'Нет';
+  if (typeof v === 'number') return String(v);
+  if (typeof v === 'string') return ISO_DATE.test(v) && !Number.isNaN(Date.parse(v)) ? formatFull(v) : v;
+  if (Array.isArray(v)) return v.length ? v.map(formatValue).join(', ') : '—';
+  if (typeof v === 'object')
+    return Object.entries(v as Record<string, unknown>)
+      .map(([k, x]) => `${KEY_LABELS[k] ?? CHANGE_LABELS[k] ?? k}: ${formatValue(x)}`)
+      .join(', ');
+  return String(v);
 }
 
 /** Короткое имя браузера/ОС из User-Agent — полный UA в title. */
@@ -80,13 +92,150 @@ const REASON_LABELS: Record<string, string> = {
   'setup-token': 'неверный токен первого запуска',
   recovery: 'неверный код восстановления',
   password: 'неверный пароль',
+  unlock: 'неверный пароль на экране блокировки',
+  totp: 'неверный код 2FA',
+  pwned: 'пароль найден в утечках',
+  throttled: 'пауза после неудачных попыток',
+  idle: 'бездействие',
+  manual: 'вручную',
+  unauthenticated: 'нет входа',
+  locked: 'экран заблокирован',
+  csrf: 'устаревшая вкладка (защитный токен)',
+};
+
+/** Кто или что сделало: «by» в записях инцидентов и починки. */
+const BY_LABELS: Record<string, string> = { manual: 'Вручную', auto: 'Автоматически', jarvis: 'Джарвис' };
+
+/** HTTP-метод отклонённого запроса — что пытались сделать. */
+const METHOD_LABELS: Record<string, string> = {
+  GET: 'Чтение (GET)',
+  POST: 'Действие (POST)',
+  PUT: 'Изменение (PUT)',
+  PATCH: 'Изменение (PATCH)',
+  DELETE: 'Удаление (DELETE)',
+};
+
+const INCIDENT_STATUS_LABELS: Record<string, string> = {
+  open: 'Открыт',
+  acknowledged: 'Принят в работу',
+  resolved: 'Закрыт',
+};
+
+/** Объект записи («Цель: … · сервер») — по-русски. */
+export const TARGET_TYPE_LABELS: Record<string, string> = {
+  settings: 'настройки',
+  billing: 'биллинг',
+  kb: 'база знаний',
+  backup: 'резервная копия',
+  provider: 'провайдер',
+  incident: 'событие',
+  user: 'учётная запись',
+  node: 'нода',
+  server: 'сервер',
+  trusted_device: 'запомненное устройство',
+  session: 'сессия',
+  assistant: 'Джарвис',
+  audit_partition: 'архив Журнала',
+  scenario: 'сценарий',
+};
+
+/** Подпись поля в таблице «Изменения»; неизвестное поле — как есть. */
+export function changeFieldLabel(field: string): { label: string; known: boolean } {
+  const label = CHANGE_LABELS[field] ?? KEY_LABELS[field];
+  return label ? { label, known: true } : { label: field, known: false };
+}
+
+/** Поля настроек в таблице «Изменения» (было → стало). */
+const CHANGE_LABELS: Record<string, string> = {
+  brandName: 'Название панели',
+  logoUrl: 'Логотип',
+  timeZone: 'Часовой пояс',
+  sites: 'Свои сайты',
+  idleMinutes: 'Завершать сессию после, мин',
+  lockAfterMinutes: 'Блокировать экран после, мин',
+  alwaysAskTotp: 'Всегда спрашивать код 2FA',
+  intervalSec: 'Частота опроса, с',
+  enabled: 'Включено',
+  name: 'Название',
+  url: 'Адрес',
+  siteUrl: 'Сайт',
+  iconUrl: 'Иконка',
+  note: 'Заметка',
+  providerId: 'Провайдер',
+  countrySource: 'Как определена страна',
+  country: 'Страна',
+  roles: 'Роли',
+  nodeWatch: 'Следить за нодой',
+  tags: 'Теги',
+  amount: 'Сумма',
+  currency: 'Валюта',
+  period: 'Период',
+  paidUntil: 'Оплачено до',
+  autoCharge: 'Автопродление',
+  retentionMonths: 'Хранение, мес.',
+  schedule: 'Расписание',
+  keep: 'Хранить копий',
+  model: 'Модель',
+  level: 'Уровень',
+  title: 'Заголовок',
+  body: 'Текст',
 };
 
 const KEY_LABELS: Record<string, string> = {
   login: 'Логин',
   amr: 'Способ входа',
   reason: 'Причина',
+  lockAfterMinutes: 'Блокировка после, мин',
   attempts: 'Попыток',
+  by: 'Кто',
+  kind: 'Вид',
+  server: 'Сервер',
+  method: 'Что пытались сделать',
+  path: 'Адрес запроса',
+  messages: 'Сообщений',
+  kbWrites: 'Записей в базу знаний',
+  advice: 'Советы',
+  scope: 'Охват',
+  current: 'Это устройство',
+  ipPrefix: 'Сеть',
+  sessionIp: 'IP сессии',
+  sessionCreatedAt: 'Сессия начата',
+  trustedDevicesRemoved: 'Забыто устройств',
+  recoveryCodesIssued: 'Выдано кодов восстановления',
+  passwordChanged: 'Пароль изменён',
+  total: 'Всего',
+  used: 'Использовано',
+  count: 'Количество',
+  users: 'Пользователей',
+  nodes: 'Нод',
+  size: 'Размер',
+  encrypted: 'Зашифрована',
+  metrics: 'С метриками',
+  paths: 'Дополнительных папок',
+  offsite: 'Внешнее хранилище',
+  chats: 'Чатов',
+  added: 'Добавлено',
+  removed: 'Удалено',
+  events: 'События',
+  quiet: 'Тихие часы',
+  proxy: 'Прокси',
+  chat: 'Чат',
+  ok: 'Успешно',
+  detail: 'Подробности',
+  reviewed: 'Проверено статей',
+  articles: 'Статьи',
+  archived: 'В архиве',
+  deleted: 'Удалено',
+  enabled: 'Включено',
+  billingHistoryPreserved: 'История оплат сохранена',
+  versionCreatedAt: 'Версия от',
+  retentionDays: 'Хранение, дней',
+  incidents: 'Событий',
+  paidUntil: 'Оплачено до',
+  amount: 'Сумма',
+  siteUrl: 'Сайт',
+  iconUrl: 'Иконка',
+  autoChargeDisabled: 'Автопродление выключено',
   stage: 'Этап',
   recoveryCodesLeft: 'Кодов восстановления осталось',
   sessionsRevoked: 'Сессий завершено',
@@ -175,6 +324,13 @@ export function metadataRows(
       else if (key === 'amr' && Array.isArray(raw))
         value = capFirst(raw.map((m) => AMR_LABELS[String(m)] ?? String(m)).join(' + '));
       else if (key === 'reason' && typeof raw === 'string') value = capFirst(REASON_LABELS[raw] ?? raw);
+      else if (key === 'by' && typeof raw === 'string') value = BY_LABELS[raw] ?? raw;
+      else if (key === 'method' && typeof raw === 'string') value = METHOD_LABELS[raw] ?? raw;
+      else if (key === 'scope' && typeof raw === 'string')
+        value = raw === 'all' ? 'Все сессии' : raw === 'user' ? 'Сессии одной учётной записи' : raw;
+      else if (key === 'kind' && typeof raw === 'string' && raw in INCIDENT_KIND_META)
+        value = INCIDENT_KIND_META[raw as keyof typeof INCIDENT_KIND_META].label;
+      else if (key === 'status' && typeof raw === 'string') value = INCIDENT_STATUS_LABELS[raw] ?? raw;
       else if (key === 'mode' && typeof raw === 'string') value = MODE_LABELS[raw] ?? raw;
       else if (key === 'stage' && raw === 'setup') value = 'Первый запуск';
       else if (key === 'error' && typeof raw === 'string') value = raw.split('/').pop() ?? raw;
@@ -196,7 +352,9 @@ export function buildAuditReport(entry: AuditEntry): string {
     `Запрос: ${entry.requestId ?? '—'}${entry.durationMs !== null ? ` · ${formatDuration(entry.durationMs)}` : ''}`,
     `Результат: ${AUDIT_RESULT_LABELS[entry.result]} · ${AUDIT_SOURCE_LABELS[entry.source]}`,
     ...(entry.targetDisplay
-      ? [`Цель: ${entry.targetDisplay}${entry.targetType ? ` · ${entry.targetType}` : ''}`]
+      ? [
+          `Цель: ${entry.targetDisplay}${entry.targetType ? ` · ${TARGET_TYPE_LABELS[entry.targetType] ?? entry.targetType}` : ''}`,
+        ]
       : []),
   ];
   const changes = entry.changes ? Object.entries(entry.changes) : [];

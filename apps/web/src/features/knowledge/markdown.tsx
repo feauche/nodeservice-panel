@@ -290,6 +290,104 @@ export function tocFromMarkdown(content: string): TocItem[] {
  * Лёгкий безопасный рендер markdown: заголовки, списки, блоки кода, абзацы.
  * Без внешних зависимостей и без raw HTML. При headingIds заголовки получают id-якоря (для оглавления).
  */
+const LIST_ITEM = /^(\s*)([-*]|\d+\.)\s+(.*)$/;
+
+/** Отступ строки в пробелах (табуляция — 4). */
+function indentOf(line: string): number {
+  return (/^\s*/.exec(line)?.[0] ?? '').replace(/\t/g, '    ').length;
+}
+
+interface ListItemData {
+  text: string;
+  /** Вложенное в пункт: подсписки и блоки кода с отступом. */
+  children: Array<{ kind: 'list'; list: ListData } | { kind: 'code'; code: string; lang: string }>;
+}
+
+interface ListData {
+  ordered: boolean;
+  /** Номер первого пункта: «2.» после блока кода продолжает нумерацию, а не начинает с 1. */
+  start: number;
+  items: ListItemData[];
+  next: number;
+}
+
+/**
+ * Список с позиции start на уровне отступа base. Пункт того же уровня и вида — следующий пункт; строка глубже —
+ * вложенный список, блок кода или продолжение текста пункта; всё остальное (пустая строка, абзац, другой вид
+ * списка на том же уровне) заканчивает список.
+ */
+function readList(lines: string[], start: number, base: number): ListData {
+  const first = LIST_ITEM.exec(lines[start] ?? '');
+  const ordered = /\d/.test(first?.[2] ?? '');
+  const list: ListData = {
+    ordered,
+    start: ordered ? Number.parseInt(first?.[2] ?? '1', 10) || 1 : 1,
+    items: [],
+    next: start,
+  };
+  let i = start;
+  while (i < lines.length) {
+    const line = lines[i] ?? '';
+    const indent = indentOf(line);
+    const m = LIST_ITEM.exec(line);
+    const last = list.items[list.items.length - 1];
+    if (m && indent === base && /\d/.test(m[2] ?? '') === ordered) {
+      list.items.push({ text: m[3] ?? '', children: [] });
+      i += 1;
+      continue;
+    }
+    if (!last || line.trim() === '' || indent <= base) break;
+    if (m) {
+      const sub = readList(lines, i, indent);
+      last.children.push({ kind: 'list', list: sub });
+      i = sub.next;
+      continue;
+    }
+    if (line.trimStart().startsWith('```')) {
+      const lang = line.trimStart().slice(3).trim();
+      const code: string[] = [];
+      i += 1;
+      while (i < lines.length && !(lines[i] ?? '').trimStart().startsWith('```')) {
+        code.push((lines[i] ?? '').slice(Math.min(indent, indentOf(lines[i] ?? ''))));
+        i += 1;
+      }
+      i += 1;
+      last.children.push({ kind: 'code', code: code.join('\n'), lang });
+      continue;
+    }
+    last.text += ` ${line.trim()}`;
+    i += 1;
+  }
+  list.next = i;
+  return list;
+}
+
+function ListBlock({ list, keyBase, copyCode }: { list: ListData; keyBase: string; copyCode: boolean }) {
+  const Tag = list.ordered ? 'ol' : 'ul';
+  return (
+    <Tag
+      start={list.ordered && list.start !== 1 ? list.start : undefined}
+      className={`my-2 flex flex-col gap-1 pl-5 text-text-2 ${list.ordered ? 'list-decimal' : 'list-disc'}`}
+    >
+      {list.items.map((it, idx) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: строки markdown статичны и не переупорядочиваются
+        <li key={`${keyBase}-${idx}`}>
+          {renderInline(it.text, `${keyBase}-${idx}`)}
+          {it.children.map((child, ci) =>
+            child.kind === 'list' ? (
+              // biome-ignore lint/suspicious/noArrayIndexKey: порядок вложенного неизменен
+              <ListBlock key={ci} list={child.list} keyBase={`${keyBase}-${idx}-${ci}`} copyCode={copyCode} />
+            ) : (
+              // biome-ignore lint/suspicious/noArrayIndexKey: порядок вложенного неизменен
+              <CodeBlock key={ci} code={child.code} lang={child.lang} copyable={copyCode} />
+            ),
+          )}
+        </li>
+      ))}
+    </Tag>
+  );
+}
+
 export function Markdown({
   content,
   className,
@@ -425,26 +523,11 @@ export function Markdown({
       continue;
     }
 
-    // Списки (- / * / 1.)
-    if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
-      const ordered = /^\s*\d+\.\s+/.test(line);
-      const items: string[] = [];
-      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i] ?? '')) {
-        items.push((lines[i] ?? '').replace(/^\s*([-*]|\d+\.)\s+/, ''));
-        i += 1;
-      }
-      const ListTag = ordered ? 'ol' : 'ul';
-      blocks.push(
-        <ListTag
-          key={key++}
-          className={`my-2 flex flex-col gap-1 pl-5 text-text-2 ${ordered ? 'list-decimal' : 'list-disc'}`}
-        >
-          {items.map((it, idx) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: строки markdown статичны и не переупорядочиваются
-            <li key={`${key}-${idx}`}>{renderInline(it, `li${key}-${idx}`)}</li>
-          ))}
-        </ListTag>,
-      );
+    // Списки (- / * / 1.): номер первого пункта, вложенные пункты и блоки кода внутри пунктов
+    if (LIST_ITEM.test(line)) {
+      const list = readList(lines, i, indentOf(line));
+      i = list.next;
+      blocks.push(<ListBlock key={key++} list={list} keyBase={`l${key}`} copyCode={copyCode} />);
       continue;
     }
 

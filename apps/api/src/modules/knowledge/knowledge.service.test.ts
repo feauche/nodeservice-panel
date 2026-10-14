@@ -122,6 +122,31 @@ describe('KnowledgeService: пополнение глоссария и исто�
     expect(ctx.versions[0]?.content).toContain('DNS');
   });
 
+  it('пополнение меняет только таблицу: текст, списки и строки владельца без закрывающей черты остаются', async () => {
+    await ctx.svc.appendGlossary([term('SSH')]);
+    const doc = glossary();
+    doc.content = `${doc.content.trimEnd()}\n| Мост | сервер-посредник между клиентом и выходом\n\nПро ТСПУ — см. статью «Блокировки».\n\n- VLESS — протокол подключения\n`;
+    await ctx.svc.appendGlossary([term('SNI')]);
+    const after = glossary().content;
+    expect(after).toContain('| Мост | сервер-посредник между клиентом и выходом |');
+    expect(after).toContain('| SNI | SNI — пояснение |');
+    expect(after).toContain('Про ТСПУ — см. статью «Блокировки».');
+    expect(after).toContain('- VLESS — протокол подключения');
+    expect(after.indexOf('| SNI |')).toBeLessThan(after.indexOf('Про ТСПУ'));
+    // «Мост» уже в словаре — повтор не добавляется
+    const r = await ctx.svc.appendGlossary([term('мост')]);
+    expect(r.added).toBe(0);
+  });
+
+  it('таблицы нет (статью переписали по-своему) — она добавляется в конец, текст не трогается', async () => {
+    const doc = glossary();
+    doc.content = '# Пояснения\n\nМои заметки о терминах.';
+    await ctx.svc.appendGlossary([term('DNS')]);
+    expect(glossary().content).toBe(
+      '# Пояснения\n\nМои заметки о терминах.\n\n| Термин | Простыми словами |\n| --- | --- |\n| DNS | DNS — пояснение |\n',
+    );
+  });
+
   it('повторы без изменений не пишут ни версию, ни запись в Журнал', async () => {
     await ctx.svc.appendGlossary([term('SSH')]);
     await ctx.svc.appendGlossary([term('CPU')]);

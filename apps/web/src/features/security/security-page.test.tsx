@@ -148,6 +148,25 @@ describe('SecurityPage', () => {
     expect(mockSecurity.devices).toHaveLength(0);
   });
 
+  it('2FA отключена из консоли: честно «Выключена», «Включить» → код → сразу новые коды восстановления', async () => {
+    mockSecurity.totpConfirmedAt = null;
+    mockSecurity.recoveryLeft = 0;
+    renderPage(SecurityPage, '/settings/security');
+    const user = userEvent.setup();
+    expect(await screen.findByText('Выключена')).toBeInTheDocument();
+    expect(screen.queryByText('Включена')).not.toBeInTheDocument();
+    expect(screen.getByText(/вход сейчас только по паролю/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Включить/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Включение 2FA' });
+    await user.type(
+      await within(dialog).findByLabelText('Код из приложения, 6 цифр'),
+      MOCK_SECURITY.totpCode,
+    );
+    const codes = await screen.findByRole('dialog', { name: 'Новые коды восстановления' });
+    expect(within(codes).getByTestId('recovery-codes').querySelectorAll('li')).toHaveLength(10);
+    expect(await screen.findByText('Включена')).toBeInTheDocument();
+  });
+
   it('просмотр кодов: за step-up, использованные зачёркнуты, закрыть можно сразу', async () => {
     mockSecurity.stepUpFresh = false;
     renderPage(SecurityPage, '/settings/security');

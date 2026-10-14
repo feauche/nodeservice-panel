@@ -4,9 +4,12 @@ import {
   AUDIT_ACTIONS,
   AUDIT_CATEGORIES,
   auditActionLabel,
+  auditActionsForWord,
   auditCategoryOfPrefix,
+  auditEntryMatches,
   auditEntrySchema,
   auditListQuerySchema,
+  auditSearchWords,
 } from './audit.js';
 
 describe('audit contract', () => {
@@ -54,5 +57,31 @@ describe('audit contract', () => {
     };
     expect(auditEntrySchema.safeParse(base).success).toBe(true);
     expect(auditEntrySchema.safeParse({ ...base, occurredAt: '2026-08-29 18:00' }).success).toBe(false);
+  });
+
+  it('поиск: слова из колонки «Событие» и части служебного ключа находят действия', () => {
+    expect(auditSearchWords('  Вход «агент»  ')).toEqual(['вход', 'агент']);
+    const login = auditActionsForWord('вход');
+    expect(login).toEqual(expect.arrayContaining(['auth.login.success', 'auth.login.failed']));
+    expect(auditActionsForWord('agent').every((a) => a.includes('agent'))).toBe(true);
+    expect(auditActionsForWord('нетакогослова')).toEqual([]);
+  });
+
+  it('поиск живой ленты: каждое слово — в подписи, ключе или полях записи (начало слова)', () => {
+    const entry = {
+      action: 'auth.login.success',
+      actorDisplay: 'admin',
+      targetDisplay: 'de-fra-01',
+      requestId: null,
+      ip: '203.0.113.10',
+      metadata: { login: 'admin' },
+    };
+    expect(auditEntryMatches(entry, 'вход')).toBe(true);
+    expect(auditEntryMatches(entry, 'вход fra')).toBe(true);
+    expect(auditEntryMatches(entry, 'login')).toBe(true);
+    expect(auditEntryMatches(entry, '203.0.113')).toBe(true);
+    expect(auditEntryMatches(entry, 'вход выход')).toBe(false);
+    expect(auditEntryMatches(entry, 'ход')).toBe(false); // середина слова не ищется — как у сервера
+    expect(auditEntryMatches(entry, '')).toBe(true);
   });
 });

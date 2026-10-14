@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { KbVersionSummary } from '@nodeservice/shared';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, type SQL, sql } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
 import {
@@ -10,17 +10,43 @@ import {
   kbDocumentVersions,
 } from '../../infra/db/schema/index.js';
 
+/** Слова запроса без знаков синтаксиса поиска; не больше 8. */
+function queryWords(q: string): string[] {
+  return q
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => w.replace(/[^\p{L}\p{N}.@_-]/gu, '').replace(/^[.@_-]+|[.@_-]+$/g, ''))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+/**
+ * Запрос по словам: каждое слово ищется как есть и по основе (русская морфология: «блокировка» находит
+ * «Блокировки»), длинные — ещё и как начало слова. all — нужны все слова (поиск владельца); иначе любое
+ * (подбор статей Ассистенту по фразе вроде «блокировка ТСПУ» — лучшие наверху по рангу). null — слов нет.
+ */
+export function kbTsQuery(q: string, all: boolean): SQL | null {
+  const words = queryWords(q).filter((w) => all || w.length >= 2);
+  if (!words.length) return null;
+  const parts = words.map((w) => {
+    const lexeme = `'${w.replace(/'/g, "''")}'${w.length >= 3 ? ':*' : ''}`;
+    return sql`(to_tsquery('simple', ${lexeme}) || to_tsquery('russian', ${lexeme}))`;
+  });
+  return sql`(${sql.join(parts, all ? sql` && ` : sql` || `)})`;
+}
+
 @Injectable()
 export class KnowledgeRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
 
   async list(q: string | undefined, archived: boolean): Promise<KbDocumentRow[]> {
-    if (q && q.length > 0) {
+    const query = q ? kbTsQuery(q, true) : null;
+    if (query) {
       return this.db
         .select()
         .from(kbDocuments)
-        .where(and(eq(kbDocuments.archived, archived), sql`search @@ websearch_to_tsquery('simple', ${q})`))
-        .orderBy(desc(kbDocuments.pinned), sql`ts_rank(search, websearch_to_tsquery('simple', ${q})) DESC`)
+        .where(and(eq(kbDocuments.archived, archived), sql`search @@ ${query}`))
+        .orderBy(desc(kbDocuments.pinned), sql`ts_rank(search, ${query}) DESC`)
         .limit(50);
     }
     return this.db
@@ -31,13 +57,15 @@ export class KnowledgeRepository {
       .limit(200);
   }
 
-  /** Топ-K статей для контекста Ассистента (RAG-lite по FTS). */
+  /** Топ-K статей для контекста Ассистента (RAG-lite по FTS): подходит любое слово, лучшие — по рангу. */
   async searchForContext(q: string, limit = 4): Promise<KbDocumentRow[]> {
+    const query = kbTsQuery(q, false);
+    if (!query) return [];
     return this.db
       .select()
       .from(kbDocuments)
-      .where(and(eq(kbDocuments.archived, false), sql`search @@ websearch_to_tsquery('simple', ${q})`))
-      .orderBy(sql`ts_rank(search, websearch_to_tsquery('simple', ${q})) DESC`)
+      .where(and(eq(kbDocuments.archived, false), sql`search @@ ${query}`))
+      .orderBy(sql`ts_rank(search, ${query}) DESC`)
       .limit(limit);
   }
 

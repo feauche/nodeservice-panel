@@ -2,6 +2,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { redirect } from '@tanstack/react-router';
 
 import { hydrateAuth } from './queries';
+import { rememberReturnPath } from './return-path';
 import { useAuthStore } from './store';
 
 export interface GuardContext {
@@ -13,12 +14,21 @@ export interface GuardContext {
  * так что лишних запросов при переходах между маршрутами нет.
  */
 
-/** Только авторизованный: иначе /setup → /login → /lock. */
+/**
+ * Только авторизованный: иначе /setup → /login → /lock. Открытый адрес (ссылка из Telegram, перезагрузка
+ * вкладки) запоминается — после входа или пароля панель откроет его, а не «Обзор».
+ */
 export async function requireAuth(ctx: GuardContext): Promise<void> {
   const { status } = await hydrateAuth(ctx.queryClient);
   if (status.setupRequired) throw redirect({ to: '/setup' });
-  if (!status.authenticated) throw redirect({ to: '/login' });
-  if (useAuthStore.getState().locked) throw redirect({ to: '/lock' });
+  if (!status.authenticated) {
+    rememberReturnPath();
+    throw redirect({ to: '/login' });
+  }
+  if (useAuthStore.getState().locked) {
+    rememberReturnPath();
+    throw redirect({ to: '/lock' });
+  }
 }
 
 /** Только гость (страницы входа): при сессии — в панель (или на /lock). */

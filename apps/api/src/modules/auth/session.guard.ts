@@ -1,5 +1,6 @@
 import { type CanActivate, type ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { ACTIVITY_HEADER } from '@nodeservice/shared';
 import { ClsService } from 'nestjs-cls';
 
 import { CookiesService } from '../../common/http/cookies.service.js';
@@ -14,6 +15,30 @@ import { SessionStore } from './session.store.js';
 import { UsersRepository } from './users.repository.js';
 
 export { CLS_SESSION, CLS_USER };
+
+/** Потоки событий открываются сами и живут часами — действием человека их не считаем. */
+const STREAM_PATH = /^\/api\/(events|audit)\/stream$/;
+/** Больше недели бездействия не бывает: сессия столько не живёт. */
+const MAX_IDLE_SECONDS = 7 * 24 * 3600;
+
+/**
+ * Когда человек последний раз что-то делал в панели — со слов браузера (ACTIVITY_HEADER, секунды бездействия).
+ * undefined — заголовка нет (запрос не из панели или вкладка старой версии): считается действием сейчас;
+ * null — поток событий, картинка (значки своих сайтов браузер грузит сам) или непонятное значение:
+ * действием не считается.
+ */
+export function activityFrom(
+  req: { path: string; headers: Record<string, string | string[] | undefined> },
+  now = Date.now(),
+): number | null | undefined {
+  if (STREAM_PATH.test(req.path) || req.headers['sec-fetch-dest'] === 'image') return null;
+  const raw = req.headers[ACTIVITY_HEADER];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (value === undefined || value === '') return undefined;
+  const idle = Number(value);
+  if (!Number.isFinite(idle) || idle < 0) return null;
+  return now - Math.min(idle, MAX_IDLE_SECONDS) * 1000;
+}
 
 /**
  * Глобальный guard: cookie сессии → Valkey (с продлением) → пользователь из БД.
@@ -74,7 +99,7 @@ export class SessionGuard implements CanActivate {
     const sid = this.cookies.read(req, 'session');
     if (!sid) return false;
     const lockAfterMinutes = (await this.policy.get()).lockAfterMinutes;
-    const session = await this.sessions.touch(sid, lockAfterMinutes * 60_000);
+    const session = await this.sessions.touch(sid, lockAfterMinutes * 60_000, activityFrom(req));
     if (!session) return false;
     const user = await this.users.findById(session.userId);
     if (!user) {

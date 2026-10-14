@@ -1,11 +1,14 @@
-import { AUTH_PROBLEM, CSRF_HEADER, csrfResponseSchema } from '@nodeservice/shared';
+import { ACTIVITY_HEADER, AUTH_PROBLEM, CSRF_HEADER, csrfResponseSchema } from '@nodeservice/shared';
 import type { z } from 'zod';
+
+import { idleMs } from './activity';
 
 /**
  * Тонкая обёртка над fetch для /api:
  *  - cookie-сессия (credentials: include), JSON туда и обратно;
  *  - CSRF: один раз берём токен из GET /api/auth/csrf, шлём x-csrf-token на всех не-GET,
  *    при 403 «csrf» обновляем токен и повторяем запрос ровно один раз;
+ *  - с каждым запросом — сколько секунд человек бездействует (для автоблокировки на сервере);
  *  - application/problem+json → ApiError;
  *  - ответ проверяется zod-схемой из @nodeservice/shared.
  */
@@ -165,7 +168,7 @@ async function fetchCsrf(): Promise<string> {
   try {
     res = await fetch(`${API_BASE}/auth/csrf`, {
       credentials: 'include',
-      headers: { accept: 'application/json' },
+      headers: { accept: 'application/json', [ACTIVITY_HEADER]: String(Math.floor(idleMs() / 1000)) },
     });
   } catch {
     throw networkError();
@@ -248,7 +251,10 @@ export interface RequestOptions<TSchema extends z.ZodType> {
 }
 
 async function doFetch(path: string, method: Method, body: unknown, signal?: AbortSignal): Promise<Response> {
-  const headers: Record<string, string> = { accept: 'application/json, application/problem+json' };
+  const headers: Record<string, string> = {
+    accept: 'application/json, application/problem+json',
+    [ACTIVITY_HEADER]: String(Math.floor(idleMs() / 1000)),
+  };
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (method !== 'GET') headers[CSRF_HEADER] = await getCsrfToken();
   try {
@@ -344,7 +350,8 @@ export function apiErrorMessage(e: unknown): string {
         ? `Слишком много неудачных попыток — пауза ${formatSeconds(e.retryAfterSeconds)}. Она растёт с каждой серией, постоянной блокировки нет.`
         : 'Слишком много неудачных попыток — подождите немного и попробуйте снова.';
     case AUTH_PROBLEM.totpRequired:
-      return 'Сначала подтвердите вход кодом из приложения.';
+      // Сервер забыл шаг с кодом: прошло 5 минут после пароля (10 — в мастере) или было 5 неверных кодов.
+      return 'Время на ввод кода вышло — войдите заново.';
     case AUTH_PROBLEM.invalidTotp:
       return 'Неверный код. Проверьте время на телефоне: коды живут 30 секунд.';
     case AUTH_PROBLEM.invalidRecovery:

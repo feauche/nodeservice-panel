@@ -16,6 +16,7 @@ import { toast } from '@/lib/notify';
 import { capFirst, cn } from '@/lib/utils';
 import {
   buildAuditReport,
+  changeFieldLabel,
   changeHeadline,
   changeRows,
   formatDuration,
@@ -24,6 +25,7 @@ import {
   formatWhen,
   metadataRows,
   shortUserAgent,
+  TARGET_TYPE_LABELS,
 } from './audit-format';
 
 const RESULT_TONE: Record<AuditResult, string> = {
@@ -218,13 +220,15 @@ export function AuditDetails({ entry }: { entry: AuditEntry }) {
               <span className="text-text-3"> · {formatDuration(entry.durationMs)}</span>
             )}
           </Field>
-          <Field label="Ключ" mono>
-            {entry.action}
-          </Field>
           {entry.targetDisplay && (
             <Field label="Цель">
               {entry.targetDisplay}
-              {entry.targetType && <span className="text-text-3"> · {entry.targetType}</span>}
+              {entry.targetType && (
+                <span className="text-text-3">
+                  {' '}
+                  · {TARGET_TYPE_LABELS[entry.targetType] ?? entry.targetType}
+                </span>
+              )}
             </Field>
           )}
         </dl>
@@ -260,18 +264,25 @@ export function AuditDetails({ entry }: { entry: AuditEntry }) {
               <div className="overflow-x-auto rounded-[8px] border border-border">
                 <table className="w-full text-[12px]">
                   <tbody>
-                    {changes.map(([field, diff]) => (
-                      <tr key={field} className="border-t border-border first:border-t-0">
-                        <td className="w-[120px] px-2.5 py-1.5 font-mono text-text-2">{field}</td>
-                        <td className="px-2.5 py-1.5">
-                          <span className="text-text-3 line-through decoration-text-3/60">
-                            {formatValue(diff.before)}
-                          </span>
-                          <span className="mx-1.5 text-text-3">→</span>
-                          <span className="font-medium">{formatValue(diff.after)}</span>
-                        </td>
-                      </tr>
-                    ))}
+                    {changes.map(([field, diff]) => {
+                      const name = changeFieldLabel(field);
+                      return (
+                        <tr key={field} className="border-t border-border first:border-t-0">
+                          <td
+                            className={cn('w-[120px] px-2.5 py-1.5 text-text-2', !name.known && 'font-mono')}
+                          >
+                            {name.label}
+                          </td>
+                          <td className="px-2.5 py-1.5">
+                            <span className="text-text-3 line-through decoration-text-3/60">
+                              {formatValue(diff.before)}
+                            </span>
+                            <span className="mx-1.5 text-text-3">→</span>
+                            <span className="font-medium">{formatValue(diff.after)}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

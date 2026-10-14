@@ -5,6 +5,7 @@ import {
   type AuditEntry,
   type AuditFilter,
   type AuditListQueryInput,
+  auditEntryMatches,
 } from '@nodeservice/shared';
 import { z } from 'zod';
 
@@ -78,24 +79,11 @@ export function hasFilters(search: AuditSearch): boolean {
   );
 }
 
-/** Подходит ли live-запись под текущие фильтры (поиск проверяем грубо — подстрокой). */
+/** Подходит ли live-запись под текущие фильтры; поиск — по той же логике, что у сервера. */
 export function matchesSearch(entry: AuditEntry, search: AuditSearch): boolean {
   if (search.category && !search.category.includes(entry.category)) return false;
   if (search.result && !search.result.includes(entry.result)) return false;
   if (search.source && entry.source !== search.source) return false;
   if (search.target && entry.targetId !== search.target) return false;
-  if (search.q) {
-    const q = search.q.toLowerCase();
-    const hay = [
-      entry.action,
-      entry.actorDisplay,
-      entry.targetDisplay ?? '',
-      entry.ip ?? '',
-      String(entry.metadata.login ?? ''),
-    ]
-      .join(' ')
-      .toLowerCase();
-    if (!hay.includes(q)) return false;
-  }
-  return true;
+  return !search.q || auditEntryMatches(entry, search.q);
 }

@@ -101,3 +101,37 @@ it('ссылка на старый сервер — простое имя без
   expect(screen.queryByRole('button')).not.toBeInTheDocument();
   expect(screen.queryByRole('link')).not.toBeInTheDocument();
 });
+
+describe('нумерованные шаги в статьях', () => {
+  it('шаги через блоки кода нумеруются по порядку: «2.» после кода — второй шаг, а не снова первый', () => {
+    const { container } = render(
+      <Markdown
+        content={
+          '1. Проверьте статус:\n```bash\nsystemctl status xray\n```\n2. Перезапустите:\n```bash\nsystemctl restart xray\n```\n3. Проверьте логи.'
+        }
+      />,
+    );
+    const lists = [...container.querySelectorAll('ol')];
+    expect(lists.map((ol) => ol.getAttribute('start'))).toEqual([null, '2', '3']);
+  });
+
+  it('вложенные пункты с отступом — внутри шага, следующий шаг сохраняет номер', () => {
+    const { container } = render(
+      <Markdown content={'1. Шаг один\n   - подпункт А\n   - подпункт Б\n2. Шаг два'} />,
+    );
+    const ol = container.querySelector('ol') as HTMLOListElement;
+    expect(ol.querySelectorAll(':scope > li')).toHaveLength(2);
+    expect(ol.querySelectorAll(':scope > li')[1]?.textContent).toBe('Шаг два');
+    expect(ol.querySelector('li ul')?.querySelectorAll('li')).toHaveLength(2);
+  });
+
+  it('блок кода с отступом остаётся внутри шага и не обрывает список', () => {
+    const { container } = render(
+      <Markdown content={'1. Проверьте:\n   ```bash\n   systemctl status xray\n   ```\n2. Готово.'} />,
+    );
+    expect(container.querySelectorAll('ol')).toHaveLength(1);
+    const items = container.querySelectorAll('ol > li');
+    expect(items).toHaveLength(2);
+    expect(items[0]?.textContent).toContain('systemctl status xray');
+  });
+});

@@ -191,18 +191,34 @@ export class SecurityService {
         : authProblems.invalidTotp();
     }
 
+    const wasOff = !(await this.users.findById(user.id))?.totpConfirmedAt;
     await this.users.replaceTotp(user.id, enc, this.crypto.currentKeyVersion, new Date());
     await this.totp.adopt(tmpKey, user.id);
     await this.valkey.del(key, `${key}:fails`);
     const trustedDevicesRemoved = (await this.users.listTrustedDevices(user.id)).length;
     await this.users.deleteTrustedDevices(user.id);
     const sessionsRevoked = await this.sessions.destroyOthersForUser(user.id, session.id);
+    // 2FA включается заново после отключения из консоли (коды тогда удалены) или неиспользованных кодов
+    // не осталось — сразу новый набор: иначе потеря телефона снова означает консоль сервера.
+    const recoveryCodes =
+      wasOff || (await this.users.countUnusedRecoveryCodes(user.id)) === 0
+        ? await this.auth.issueRecoveryCodes(user.id)
+        : undefined;
     await this.audit.record({
-      action: 'security.totp.reissued',
+      action: wasOff ? 'security.totp.enabled' : 'security.totp.reissued',
       severity: 'warn',
-      metadata: { sessionsRevoked, trustedDevicesRemoved },
+      metadata: {
+        sessionsRevoked,
+        trustedDevicesRemoved,
+        ...(recoveryCodes ? { recoveryCodesIssued: recoveryCodes.length } : {}),
+      },
     });
-    return { me: await this.auth.me(user, session), sessionsRevoked, trustedDevicesRemoved };
+    return {
+      me: await this.auth.me(user, session),
+      sessionsRevoked,
+      trustedDevicesRemoved,
+      ...(recoveryCodes ? { recoveryCodes } : {}),
+    };
   }
 
   /* ---------- коды восстановления ---------- */

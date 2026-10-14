@@ -135,6 +135,10 @@ function EditRow({ payment, onDone }: { payment: BillingPayment; onDone: () => v
       toast.error('Проверьте дату и сумму.');
       return;
     }
+    if (Date.parse(iso) > Date.now() + 60_000) {
+      toast.error('Дата оплаты не может быть в будущем: курс на неё ещё неизвестен.');
+      return;
+    }
     try {
       await update.mutateAsync({ id: payment.id, body: { paidAt: iso, amount: n } });
       toast.success('Запись оплаты поправлена, курс взят на новую дату.');
@@ -148,6 +152,7 @@ function EditRow({ payment, onDone }: { payment: BillingPayment; onDone: () => v
       <Input
         type="datetime-local"
         aria-label="Дата оплаты"
+        max={toLocalInput(new Date().toISOString())}
         value={at}
         onChange={(e) => setAt(e.target.value)}
         className="h-9 rounded-[9px] bg-surface text-[13px]"

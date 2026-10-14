@@ -8,6 +8,7 @@ import { AuditService } from '../audit/audit.service.js';
 import { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
 import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import { AssistantSettingsStore } from './assistant-settings.store.js';
+import { checkReview } from './kb-review.guard.js';
 import { LLM_PROVIDER, type LlmProvider } from './llm.provider.js';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -34,9 +35,11 @@ function errMsg(err: unknown): string {
 }
 
 /**
- * Еженедельная ревизия базы знаний (этап D). Раз в неделю проходит по активным статьям,
- * безопасно причёсывает их (модель + косметика) и пишет отчёт в Журнал. Каждое изменение
- * снимается в историю версий (revertable). Деструктив (удаление, крупная переписка) не делает.
+ * Еженедельная ревизия базы знаний (этап D). Раз в неделю проходит по активным статьям и пишет отчёт в Журнал.
+ * Статьи, написанные вручную, модель не переписывает — им только убираются лишние пробелы и пустые строки.
+ * Остальные (от Ассистента, из сети, из Telegram) модель приводит в порядок, но результат принимается лишь при
+ * строгой сверке с исходником (kb-review.guard): ничего не пропало и не выдумано, ответ не оборван.
+ * Статья, которую поправили, пока шла ревизия, не трогается. Каждое изменение — версия в истории (можно откатить).
  * Работает, когда у Ассистента задан ключ модели.
  */
 @Injectable()
@@ -80,16 +83,26 @@ export class KbReviewService {
       (d) => !d.pinned && !SKIP_TITLES.has(d.title),
     );
     let changed = 0;
+    let editedMeanwhile = 0;
+    let rejected = 0;
     const changedTitles: string[] = [];
     for (const doc of docs) {
       try {
-        const improved = await this.improve(cfg.apiKey, cfg.model, doc.content);
-        const next = improved ?? tidy(doc.content);
-        if (next && next !== doc.content) {
-          await this.knowledge.update(doc.id, { content: next }, { reason: 'review' });
-          changed += 1;
-          changedTitles.push(doc.title);
+        // Статьи, написанные вручную, модель не переписывает: только безопасная косметика.
+        const improved =
+          doc.source === 'self' ? null : await this.improve(cfg.apiKey, cfg.model, doc.content, doc.title);
+        if (improved === false) rejected += 1;
+        const next = improved || tidy(doc.content);
+        if (!next || next === doc.content) continue;
+        // Статью поправили, пока модель думала (ревизия идёт часами), — не затираем свежую правку.
+        const fresh = await this.repo.findById(doc.id);
+        if (!fresh || fresh.archived || fresh.content !== doc.content) {
+          editedMeanwhile += 1;
+          continue;
         }
+        await this.knowledge.update(doc.id, { content: next }, { reason: 'review' });
+        changed += 1;
+        changedTitles.push(doc.title);
       } catch (err) {
         this.log.warn(`Ревизия статьи «${doc.title}» не удалась: ${errMsg(err)}`);
       }
@@ -97,13 +110,27 @@ export class KbReviewService {
     await this.audit.record({
       action: 'kb.reviewed',
       source: 'auto',
-      metadata: { reviewed: docs.length, changed, articles: changedTitles.slice(0, 20) },
+      metadata: {
+        reviewed: docs.length,
+        changed,
+        articles: changedTitles.slice(0, 20),
+        ...(rejected ? { rejected } : {}),
+        ...(editedMeanwhile ? { editedMeanwhile } : {}),
+      },
     });
     return { reviewed: docs.length, changed, skipped: null };
   }
 
-  /** Один осторожный проход модели по статье. null — если менять нечего или результат подозрителен. */
-  private async improve(apiKey: string, model: string, content: string): Promise<string | null> {
+  /**
+   * Один осторожный проход модели по статье. Строка — принятый текст; null — менять нечего;
+   * false — ответ отвергнут предохранителем (оборван, что-то потеряно или выдумано).
+   */
+  private async improve(
+    apiKey: string,
+    model: string,
+    content: string,
+    title: string,
+  ): Promise<string | null | false> {
     const res = await this.llm.run({
       apiKey,
       model,
@@ -117,9 +144,16 @@ export class KbReviewService {
       .join('\n')
       .trim();
     if (!text || text.includes('БЕЗ ИЗМЕНЕНИЙ')) return null;
-    // Предохранитель: подозрительно короткий результат (модель могла всё стереть) — не принимаем.
-    if (text.length < content.length * 0.5) return null;
-    return text;
+    if (res.truncated) {
+      this.log.warn(`Ревизия статьи «${title}» отвергнута: ответ модели оборван на пределе длины`);
+      return false;
+    }
+    const verdict = checkReview(content, text);
+    if (!verdict.ok) {
+      this.log.warn(`Ревизия статьи «${title}» отвергнута: ${verdict.why}`);
+      return false;
+    }
+    return verdict.text;
   }
 
   private async lastRunAt(): Promise<number | null> {

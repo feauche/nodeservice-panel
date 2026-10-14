@@ -6,6 +6,7 @@ import {
   billingForecastSchema,
   billingItemSchema,
   billingItemsResponseSchema,
+  billingPaymentSchema,
   billingPaymentsResponseSchema,
   billingStatsSchema,
   billingSummarySchema,
@@ -38,10 +39,13 @@ const TOKEN = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw';
 class FakeRates {
   calls: string[] = [];
   down = false;
+  /** Свой курс на дату (рублей за $ и за €); без записи — 80 и 100. */
+  byDate = new Map<string, number>();
   async fetch(date: string) {
     this.calls.push(date);
     if (this.down) return null;
-    return { usd: 80, eur: 100, date };
+    const own = this.byDate.get(date);
+    return { usd: own ?? 80, eur: own ?? 100, date };
   }
 }
 
@@ -254,6 +258,59 @@ describe('billing e2e', () => {
     );
     expect(hist.items[0]?.amountRubMinor).toBe(45_100);
     await agent.delete(`/api/billing/payments/${res.payment.id}`).set(CSRF_HEADER, csrf).expect(200);
+  });
+
+  it('курс — на день каждой оплаты: вчера 1 € по 50, сегодня 1 € по 100 — в статистике 150 ₽', async () => {
+    await db.execute(sql`truncate billing_rates`);
+    const moscow = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(d);
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 86_400_000);
+    rates.byDate.set(moscow(yesterday), 50);
+    rates.byDate.set(moscow(now), 100);
+    const spent = async () =>
+      billingStatsSchema.parse(
+        (await agent.get('/api/billing/stats?period=year&tz=Europe/Moscow').expect(200)).body,
+      ).total.spentRubMinor;
+    const pay = async () =>
+      billingExtendResponseSchema.parse(
+        (
+          await agent
+            .post(`/api/billing/items/${itemId}/extend`)
+            .set(CSRF_HEADER, csrf)
+            .send({ days: 1, count: true, amount: 1 })
+            .expect(200)
+        ).body,
+      ).payment;
+    const before = await spent();
+    const first = await pay();
+    const moved = billingPaymentSchema.parse(
+      (
+        await agent
+          .patch(`/api/billing/payments/${first.id}`)
+          .set(CSRF_HEADER, csrf)
+          .send({ paidAt: yesterday.toISOString() })
+          .expect(200)
+      ).body,
+    );
+    expect(moved).toMatchObject({ rate: 50, amountRubMinor: 5_000 });
+    const second = await pay();
+    expect(second).toMatchObject({ rate: 100, amountRubMinor: 10_000 });
+    // Курс поменялся — прошлые оплаты не пересчитываются: 50 + 100, а не 100 + 100.
+    if (moscow(yesterday).slice(0, 4) === moscow(now).slice(0, 4))
+      expect((await spent()) - before).toBe(15_000);
+
+    // Дата оплаты в будущем (опечатка в месяце) — отказ; курс «на будущее» не запоминается под будущей датой.
+    const future = new Date(now.getTime() + 30 * 86_400_000);
+    await agent
+      .patch(`/api/billing/payments/${second.id}`)
+      .set(CSRF_HEADER, csrf)
+      .send({ paidAt: future.toISOString() })
+      .expect(400);
+    expect(await app.get(BillingRatesService).rate('EUR', future)).toBe(100);
+    const cached = await db.execute(sql`select date::text as date from billing_rates`);
+    expect(cached.rows.map((r) => r.date)).not.toContain(moscow(future));
+    rates.byDate.clear();
+    await db.execute(sql`delete from billing_payments where id in (${first.id}, ${second.id})`);
   });
 
   it('просрочено, нода лежит: Telegram со звуком и подсказкой; повтор — не раньше суток', async () => {

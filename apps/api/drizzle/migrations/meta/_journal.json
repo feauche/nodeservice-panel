@@ -435,6 +435,13 @@
       "when": 1791811810101,
       "tag": "0064_assistant_advice",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1791812810101,
+      "tag": "0065_kb_search_russian",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,7 @@ import { AuthInput, Field, Fields } from '../components/field';
 import { InfoBox } from '../components/info-box';
 import { PasswordField } from '../components/password-field';
 import { useLogin } from '../queries';
+import { takeReturnPath } from '../return-path';
 import { useThrottle } from '../use-countdown';
 
 export function LoginPage() {
@@ -33,7 +34,7 @@ export function LoginPage() {
     try {
       const res = await login.mutateAsync(values);
       if (res.next === 'totp') await navigate({ to: '/login/2fa' });
-      else await navigate({ to: '/' });
+      else await navigate({ href: takeReturnPath() });
     } catch (e) {
       if (isApiError(e) && e.is(AUTH_PROBLEM.throttled)) {
         wait.start(e.retryAfterSeconds);

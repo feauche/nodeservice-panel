@@ -38,12 +38,35 @@ describe('TotpPage', () => {
     expect(useAuthStore.getState().pendingTotp).toBe(false);
   });
 
-  it('неверный код → ошибка, поле очищается', async () => {
+  it('неверный код → ошибка, поле очищается и снова в фокусе — следующий код вводится сразу', async () => {
     renderPage(TotpPage, '/login/2fa', ['/']);
     const user = userEvent.setup();
     await user.type(await otp(), '000000');
     expect(await screen.findByRole('alert')).toHaveTextContent('Неверный код');
     await waitFor(() => expect(screen.getByLabelText('Код из приложения, 6 цифр')).toHaveValue(''));
+    await waitFor(() => expect(screen.getByLabelText('Код из приложения, 6 цифр')).toHaveFocus());
+  });
+
+  it('шаг с кодом истёк (5 минут или 5 неверных кодов) — обратно ко входу, а не тупик', async () => {
+    server.use(
+      http.post('/api/auth/login/totp', () =>
+        problem(401, AUTH_PROBLEM.totpRequired, 'Сначала введите логин и пароль.'),
+      ),
+    );
+    const { router } = renderPage(TotpPage, '/login/2fa', ['/', '/login']);
+    const user = userEvent.setup();
+    await user.type(await otp(), MOCK.totp);
+    await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+    expect(useAuthStore.getState().pendingTotp).toBe(false);
+    expect(sessionStorage.getItem('ns-pending-totp')).toBeNull();
+  });
+
+  it('после входа — на страницу, которую открывали до входа', async () => {
+    sessionStorage.setItem('ns-return-to', '/incidents');
+    const { router } = renderPage(TotpPage, '/login/2fa', ['/', '/incidents']);
+    const user = userEvent.setup();
+    await user.type(await otp(), MOCK.totp);
+    await waitFor(() => expect(router.state.location.pathname).toBe('/incidents'));
   });
 
   it('throttled → отсчёт, поле и кнопка недоступны', async () => {

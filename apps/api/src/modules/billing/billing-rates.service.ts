@@ -4,11 +4,9 @@ import { desc, lte } from 'drizzle-orm';
 
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { billingRates } from '../../infra/db/schema/index.js';
-import { BILLING_RATES_SOURCE, type BillingRatesSource } from './billing-rates.source.js';
+import { BILLING_RATES_SOURCE, type BillingRatesSource, moscowDate } from './billing-rates.source.js';
 
-/** Дата по Москве (курс ЦБ устанавливается на московскую дату): YYYY-MM-DD. */
-export const moscowDate = (at: Date): string =>
-  new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(at);
+export { moscowDate };
 
 /** Курс не старше недели считаем пригодным, если свежий не получить (выходные, сбой сети). */
 const STALE_DAYS = 7;
@@ -41,9 +39,15 @@ export class BillingRatesService {
     @Inject(BILLING_RATES_SOURCE) private readonly source: BillingRatesSource,
   ) {}
 
-  /** Курсы на дату; `fetch: false` — только из кэша (для списков, чтобы не ждать ЦБ). */
+  /**
+   * Курсы на дату; `fetch: false` — только из кэша (для списков, чтобы не ждать ЦБ). Дата в будущем — курс на
+   * сегодня: ЦБ на будущие даты отдаёт последний установленный курс, и в кэше он лёг бы под будущей датой,
+   * а в тот день панель считала бы по нему, не спрашивая ЦБ.
+   */
   async ratesOn(at: Date, opts: { fetch?: boolean } = {}): Promise<DayRates | null> {
-    const date = moscowDate(at);
+    const today = moscowDate(new Date());
+    const asked = moscowDate(at);
+    const date = asked > today ? today : asked;
     const [cached] = await this.db
       .select()
       .from(billingRates)
@@ -61,7 +65,10 @@ export class BillingRatesService {
       const fresh = await p;
       if (fresh) return fresh;
     }
-    if (cached && (at.getTime() - new Date(`${cached.date}T00:00:00Z`).getTime()) / 86_400_000 <= STALE_DAYS)
+    if (
+      cached &&
+      (Date.parse(`${date}T00:00:00Z`) - Date.parse(`${cached.date}T00:00:00Z`)) / 86_400_000 <= STALE_DAYS
+    )
       return cached;
     return null;
   }
@@ -71,6 +78,14 @@ export class BillingRatesService {
     if (!r) {
       this.failedAt.set(date, Date.now());
       this.log.warn(`Курс ЦБ на ${date} получить не удалось — следующая попытка через 30 минут`);
+      return null;
+    }
+    // Курс на дату позже запрошенной (вечером зеркало отдаёт завтрашний) — не тот: не записываем его как сегодняшний.
+    if (r.date > date) {
+      this.failedAt.set(date, Date.now());
+      this.log.warn(
+        `Курс ЦБ на ${date}: источник отдал курс на ${r.date} — не принят, повтор через 30 минут`,
+      );
       return null;
     }
     this.failedAt.delete(date);

@@ -2,9 +2,11 @@ import type { AuthStatus, Me } from '@nodeservice/shared';
 import { type QueryClient, queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
+import { resetActivity } from '@/lib/activity';
 import { isApiError, resetCsrfToken, setLockedHandler, setUnauthenticatedHandler } from '@/lib/api';
 import { authApi } from './api';
-import { useAuthStore } from './store';
+import { rememberReturnPath } from './return-path';
+import { type LockInfo, useAuthStore } from './store';
 
 export const authKeys = {
   all: ['auth'] as const,
@@ -97,15 +99,19 @@ export interface SessionExpiryRouter {
 export function installSessionExpiry(qc: QueryClient, router: SessionExpiryRouter): () => void {
   setUnauthenticatedHandler(() => {
     if (useAuthStore.getState().me === null) return;
+    rememberReturnPath();
     dropSession(qc);
     void qc.invalidateQueries({ queryKey: authKeys.status() });
     void router.navigate({ to: '/login' });
   });
-  // Сервер заблокировал экран (бездействие или другая вкладка) — показываем блокировку.
+  // Сервер заблокировал экран (бездействие или другая вкладка) — показываем блокировку; причину экран
+  // блокировки возьмёт из свежего /auth/me.
   setLockedHandler(() => {
     const st = useAuthStore.getState();
     if (st.me === null || st.locked) return;
+    rememberReturnPath();
     st.lock();
+    void qc.invalidateQueries({ queryKey: authKeys.me() });
     void router.navigate({ to: '/lock' });
   });
   return () => {
@@ -134,14 +140,17 @@ export function useSessionWatch(router: SessionExpiryRouter): void {
   const lockedOnServer = authenticated && data?.authenticated && data.locked;
   useEffect(() => {
     if (!expired) return;
+    rememberReturnPath();
     dropSession(qc);
     void router.navigate({ to: '/login' });
   }, [expired, qc, router]);
   useEffect(() => {
     if (!lockedOnServer || useAuthStore.getState().locked) return;
+    rememberReturnPath();
     useAuthStore.getState().lock();
+    void qc.invalidateQueries({ queryKey: authKeys.me() });
     void router.navigate({ to: '/lock' });
-  }, [lockedOnServer, router]);
+  }, [lockedOnServer, qc, router]);
 }
 
 export function useAuthStatus() {
@@ -192,6 +201,7 @@ export function useUnlock() {
   return useMutation({
     mutationFn: authApi.unlock,
     onSuccess: (res) => {
+      resetActivity();
       applySession(qc, res.me);
       useAuthStore.getState().unlock(res.me);
     },
@@ -210,14 +220,20 @@ export function useLogout() {
   });
 }
 
-/** Заблокировать экран: на сервере (остальные вкладки и запросы тоже упрутся в пароль) и локально. */
-export function useLockScreen() {
-  return async () => {
-    useAuthStore.getState().lock();
-    try {
-      await authApi.lock();
-    } catch {
-      /* сеть/сессия — локальная блокировка всё равно стоит */
-    }
-  };
+/**
+ * Заблокировать экран: локально и на сервере (остальные вкладки и запросы тоже упрутся в пароль).
+ * Текущая страница запоминается — после пароля панель вернётся на неё.
+ */
+export async function lockScreen(info: LockInfo = { reason: 'manual', minutes: null }): Promise<void> {
+  rememberReturnPath();
+  useAuthStore.getState().lock(info);
+  try {
+    await authApi.lock({ reason: info.reason });
+  } catch {
+    /* сеть/сессия — локальная блокировка всё равно стоит */
+  }
+}
+
+export function useLockScreen(): typeof lockScreen {
+  return lockScreen;
 }

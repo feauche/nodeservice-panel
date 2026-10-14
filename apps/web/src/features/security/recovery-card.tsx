@@ -100,12 +100,13 @@ export function RecoveryCard() {
   );
 }
 
-interface CodeItem {
+export interface CodeItem {
   code: string | null;
   usedAt: string | null;
 }
 
-function RecoveryCodesDialog({
+/** Показ кодов: только что выпущенных (mode new — закрыть можно, отметив «сохранены») или прежних. */
+export function RecoveryCodesDialog({
   items,
   mode,
   onClose,

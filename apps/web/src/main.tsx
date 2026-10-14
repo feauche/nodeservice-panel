@@ -3,6 +3,7 @@ import { RouterProvider } from '@tanstack/react-router';
 import { createRoot } from 'react-dom/client';
 import { installSessionExpiry } from '@/features/auth/queries';
 import { initTheme } from '@/features/theme/theme';
+import { installActivityTracking } from '@/lib/activity';
 import { queryClient } from '@/lib/query-client';
 import { router } from '@/router';
 
@@ -10,6 +11,8 @@ import './index.css';
 
 initTheme();
 installSessionExpiry(queryClient, router);
+// Действия человека считаются с первой секунды — и на экранах входа: от них зависит автоблокировка.
+installActivityTracking();
 
 async function bootstrap() {
   // Dev-режим без бэкенда: VITE_MOCK=1 pnpm dev — MSW отвечает за /api.

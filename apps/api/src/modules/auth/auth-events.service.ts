@@ -50,6 +50,8 @@ export interface AuthEventContext {
   amr?: Me['amr'];
   /** Небольшие безопасные детали (без секретов): например, причина или остаток кодов. */
   meta?: Record<string, string | number | boolean>;
+  /** Кто инициатор в Журнале, если не как обычно у события: блокировка по бездействию — «автоматически». */
+  source?: AuditSource;
 }
 
 /** На каком шаге входа случилась неудача: от этого зависят и счёт, и честный текст для владельца. */
@@ -135,7 +137,7 @@ export class AuthEventsService implements OnModuleDestroy {
       action: event,
       result,
       severity,
-      source: source ?? 'manual',
+      source: ctx.source ?? source ?? 'manual',
       actor: ctx.userId
         ? ({ type: 'admin', id: ctx.userId, display: ctx.login ?? 'admin' } as const)
         : ({ type: 'anonymous', id: null, display: ctx.login ?? '—' } as const),

@@ -1,13 +1,14 @@
 import { Body, Controller, Get, HttpCode, Post, Req, Res } from '@nestjs/common';
 import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-import type {
-  AuthStatus,
-  CsrfResponse,
-  LoginResponse,
-  Me,
-  SessionResponse,
-  SetupConfirmResponse,
-  SetupStartResponse,
+import {
+  type AuthStatus,
+  type CsrfResponse,
+  type LoginResponse,
+  lockRequestSchema,
+  type Me,
+  type SessionResponse,
+  type SetupConfirmResponse,
+  type SetupStartResponse,
 } from '@nodeservice/shared';
 import type { Request, Response } from 'express';
 
@@ -158,11 +159,14 @@ export class AuthController {
     summary: 'Заблокировать экран: сессия живёт, но до /unlock остальные запросы получают 403',
   })
   async lock(
+    @Body() body: unknown,
     @CurrentUser() user: CurrentUserPayload,
     @CurrentSession() session: SessionRecord,
     @Req() req: Request,
   ): Promise<void> {
-    await this.auth.lock(user, session, requestContext(req));
+    // Тело необязательно (вкладки прежней версии шлют пустой запрос) — без него блокировка ручная.
+    const parsed = lockRequestSchema.safeParse(body ?? {});
+    await this.auth.lock(user, session, requestContext(req), parsed.success ? parsed.data.reason : 'manual');
   }
 
   @Post('unlock')

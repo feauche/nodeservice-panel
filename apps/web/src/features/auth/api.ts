@@ -1,6 +1,7 @@
 import {
   type AuthStatus,
   authStatusSchema,
+  type LockRequest,
   type LoginRequest,
   type LoginResponse,
   loginResponseSchema,
@@ -39,6 +40,6 @@ export const authApi = {
 
   unlock: (body: UnlockRequest): Promise<SessionResponse> =>
     api.post('/auth/unlock', body, sessionResponseSchema),
-  lock: (): Promise<void> => api.postVoid('/auth/lock'),
+  lock: (body: LockRequest = {}): Promise<void> => api.postVoid('/auth/lock', body),
   logout: (): Promise<void> => api.postVoid('/auth/logout'),
 };
