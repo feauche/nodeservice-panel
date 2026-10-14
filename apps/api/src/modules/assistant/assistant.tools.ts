@@ -15,6 +15,7 @@ import type { AuditRepository } from '../audit/audit.repository.js';
 import type { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
 import { auditBrief } from './assistant.audit-brief.js';
 import { searchPastMessages, searchWords } from './assistant.conversation-search.js';
+import { PANEL_TOOL_DEFS, type PanelDeps, runPanelTool, safeForAssistant } from './assistant.panel-tools.js';
 import { READ_TOOL_DEFS, type ReadDeps, runReadTool } from './assistant.read-tools.js';
 import type { AssistantRepository } from './assistant.repository.js';
 import { isGlossaryArticle } from './glossary-import.js';
@@ -26,11 +27,17 @@ const PAST_SCAN = 3000;
 /** Инструменты модели: чтение панели и запись в базу знаний. Ничего другого Ассистент не меняет. */
 export const ASSISTANT_TOOLS: LlmToolDef[] = [
   ...READ_TOOL_DEFS,
+  ...PANEL_TOOL_DEFS,
   {
     name: 'get_settings',
     description:
-      'Сохранённые настройки текущего мониторинга Remnawave: интервалы, пороги ресурсов и онлайна, TCP-проверки Check-Host; подробность и разрешения Ассистента. Только чтение, никакой автопочинки и запуска проверок.',
-    input_schema: { type: 'object', properties: {} },
+      'Настройки панели, только чтение. section: monitoring (по умолчанию) — мониторинг нод Remnawave: интервалы, пороги ресурсов и онлайна, TCP-проверки Check-Host, подробность ответов Ассистента; telegram — уведомления в Telegram: чаты (токены скрыты), какие события и как отправляются, тихие часы, сводка; appearance — внешний вид и часовой пояс панели; security — правила входа и сессий; all — всё сразу. Резервные копии — get_backups, интеграции — get_integrations, сценарии — get_scenarios.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section: { type: 'string', enum: ['monitoring', 'telegram', 'appearance', 'security', 'all'] },
+      },
+    },
   },
   {
     name: 'get_panel_status',
@@ -153,7 +160,7 @@ export const ASSISTANT_TOOLS: LlmToolDef[] = [
   },
 ];
 
-export interface ToolDeps extends ReadDeps {
+export interface ToolDeps extends ReadDeps, PanelDeps {
   nodeMetrics?: (minutes: number, nodeUuid?: string) => Promise<unknown>;
   kb: KnowledgeRepository;
   audit: AuditRepository;
@@ -165,6 +172,12 @@ export interface ToolDeps extends ReadDeps {
   incidentSettings: { get: () => Promise<unknown> };
   /** Снимок настроек самого агента — уровень и разрешения (только чтение). */
   assistant: { level: string };
+  /** Разделы настроек для get_settings (только чтение; токены скрыты самими сервисами и ещё раз здесь). */
+  settings?: {
+    telegram?: () => Promise<unknown>;
+    appearance?: () => Promise<unknown>;
+    security?: () => Promise<unknown>;
+  };
   /** Последняя резервная копия панели («Настройки → Резервные копии»). */
   lastBackup?: () => Promise<{ at: string; kind: string; size: string; verified: boolean | null } | null>;
   /** Создание статьи в БЗ (метка AI): единственное, кроме «Пояснений», что Ассистент записывает сам. */
@@ -206,18 +219,33 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
 
   const read = await runReadTool(name, arg, deps);
   if (read) return read;
+  const panel = await runPanelTool(name, arg, deps);
+  if (panel) return panel;
 
   if (name === 'get_settings') {
-    const monitoring = (await deps.monitoring?.get()) ?? { error: 'Настройки мониторинга недоступны.' };
-    return {
-      content: JSON.stringify({
-        monitoring,
-        assistant: {
-          level: deps.assistant.level,
-        },
-      }),
-      citations: [],
+    const sections = ['monitoring', 'telegram', 'appearance', 'security'] as const;
+    const wanted =
+      arg.section === 'all' ? [...sections] : [sections.find((x) => x === arg.section) ?? 'monitoring'];
+    const section = async (fn: (() => Promise<unknown>) | undefined, what: string) => {
+      if (!fn) return { error: `${what} недоступны.` };
+      try {
+        return safeForAssistant(await fn());
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : `${what} не прочитаны.` };
+      }
     };
+    const out: Record<string, unknown> = {};
+    for (const s of wanted) {
+      if (s === 'monitoring') {
+        out.monitoring = (await deps.monitoring?.get()) ?? { error: 'Настройки мониторинга недоступны.' };
+        out.assistant = { level: deps.assistant.level };
+      }
+      if (s === 'telegram') out.telegram = await section(deps.settings?.telegram, 'Настройки Telegram');
+      if (s === 'appearance')
+        out.appearance = await section(deps.settings?.appearance, 'Настройки внешнего вида');
+      if (s === 'security') out.security = await section(deps.settings?.security, 'Правила входа');
+    }
+    return { content: JSON.stringify(out), citations: [] };
   }
 
   if (name === 'get_node_metrics') {

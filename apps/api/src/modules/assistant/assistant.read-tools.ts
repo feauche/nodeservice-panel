@@ -14,13 +14,32 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
   {
     name: 'get_remnawave_profiles',
     description:
-      'Прочитать подключённую Remnawave без изменений: профили конфигурации Xray для нод (kind=node) и клиентские Xray JSON-шаблоны подписки (kind=xray_json). Без profile возвращает короткий каталог. С profile (точное имя, уникальная часть имени или UUID) возвращает безопасную копию одной конфигурации. UUID пользователей, email, ключи, пароли, токены, сертификаты и списки клиентов скрываются до передачи тебе. Используй для вопросов о протоколе, inbound, Reality, transport, routing и о том, почему маршрут ноды не распознался.',
+      'Прочитать подключённую Remnawave без изменений. Без profile — каталог: профили конфигурации Xray для нод (и какие сниппеты каждый использует), сниппеты (общие куски конфига: сколько объектов, в каких профилях) и шаблоны подписки всех видов (Xray JSON, Mihomo, sing-box, Clash, Stash). С profile (точное имя, уникальная часть имени или UUID) и kind — одно целиком: kind=node — конфиг ноды, в котором ссылки {"snippet": "имя"} уже раскрыты так, как Remnawave собирает конфиг для ноды (вставленное помечено _fromSnippet; ссылки на несуществующие сниппеты перечислены в missingSnippets — Remnawave их молча выбрасывает); kind=snippet — содержимое сниппета и где он используется; kind=template — шаблон подписки (xray_json — только Xray JSON). Секреты (ключи Reality, пароли, UUID, email, токены, сертификаты, списки клиентов) скрываются до передачи тебе. Используй для вопросов о протоколе, inbound, Reality, transport, routing, outbounds, балансировщиках, сниппетах и шаблонах подписки.',
     input_schema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['node', 'xray_json'] },
-        profile: { type: 'string', description: 'имя или UUID профиля; без него вернётся каталог' },
+        kind: { type: 'string', enum: ['node', 'snippet', 'template', 'xray_json'] },
+        profile: {
+          type: 'string',
+          description: 'имя или UUID профиля, имя сниппета или шаблона; без него — каталог',
+        },
       },
+    },
+  },
+  {
+    name: 'get_remnawave_squads',
+    description:
+      'Сквады Remnawave, только чтение: внутренние (какие инбаунды — подключения: тег, протокол, сеть, защита, порт — выданы группе пользователей и сколько в ней людей) и внешние (какие шаблоны подписки и настройки подписки у группы). Используй, когда спрашивают, почему у пользователей нет какого-то подключения или кому что выдано.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'find_remnawave_user',
+    description:
+      'Пользователь Remnawave по точному имени (username), только чтение: статус (ACTIVE, DISABLED, LIMITED, EXPIRED), срок, трафик и лимит, сквады, сколько устройств и их лимит, когда был онлайн и на какой ноде, когда открывал подписку и каким приложением, тег и заметка. Ссылка подписки, ключи, пароли, UUID, почта и Telegram ID не передаются. Используй, когда владелец спрашивает про конкретного пользователя («почему у Васи не работает»).',
+    input_schema: {
+      type: 'object',
+      properties: { username: { type: 'string', description: 'имя пользователя точно как в Remnawave' } },
+      required: ['username'],
     },
   },
   {
@@ -77,8 +96,9 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
 
 export interface ReadDeps {
   incidents: IncidentsService;
-  /** Безопасное чтение конфигураций Remnawave; секреты удаляет сам сервис до передачи модели. */
-  remnawaveProfiles?: Pick<RemnawaveService, 'profilesForAssistant'>;
+  /** Безопасное чтение конфигураций, сквадов и пользователей Remnawave; секреты удаляет сам сервис до передачи модели. */
+  remnawaveProfiles?: Partial<Pick<RemnawaveService, 'squadsForAssistant' | 'userForAssistant'>> &
+    Pick<RemnawaveService, 'profilesForAssistant'>;
   remnawaveTopology?: Pick<RemnawaveTopologyService, 'forAssistant'>;
   /** Биллинг: оплаты, сроки, итоги. Нет — инструмент скажет, что раздел недоступен. */
   billing?: Pick<BillingService, 'forAssistant'>;
@@ -172,6 +192,14 @@ export async function runReadTool(
   if (name === 'get_remnawave_profiles') {
     if (!deps.remnawaveProfiles) return none('Чтение профилей Remnawave сейчас недоступно.');
     return none(JSON.stringify(await deps.remnawaveProfiles.profilesForAssistant(arg)));
+  }
+  if (name === 'get_remnawave_squads') {
+    if (!deps.remnawaveProfiles?.squadsForAssistant) return none('Сквады Remnawave сейчас недоступны.');
+    return none(JSON.stringify(await deps.remnawaveProfiles.squadsForAssistant()));
+  }
+  if (name === 'find_remnawave_user') {
+    if (!deps.remnawaveProfiles?.userForAssistant) return none('Пользователи Remnawave сейчас недоступны.');
+    return none(JSON.stringify(await deps.remnawaveProfiles.userForAssistant(arg.username)));
   }
   if (name === 'get_remnawave_topology') {
     if (!deps.remnawaveTopology) return none('Карта Remnawave сейчас недоступна.');

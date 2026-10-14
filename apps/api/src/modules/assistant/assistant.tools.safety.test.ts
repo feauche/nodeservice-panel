@@ -43,7 +43,10 @@ describe('набор инструментов Ассистента', () => {
     expect(ASSISTANT_TOOLS.map((t) => t.name).sort()).toEqual(
       [
         'add_glossary_terms',
+        'find_remnawave_user',
+        'get_backups',
         'get_billing',
+        'get_integrations',
         'get_incident',
         'get_node_detail',
         'get_node_metrics',
@@ -51,9 +54,12 @@ describe('набор инструментов Ассистента', () => {
         'get_playbook',
         'get_reference',
         'get_remnawave_profiles',
+        'get_remnawave_squads',
         'get_remnawave_status',
         'get_remnawave_topology',
+        'get_scenarios',
         'get_settings',
+        'get_sites_and_providers',
         'list_incidents',
         'recommend_check',
         'save_kb_article',

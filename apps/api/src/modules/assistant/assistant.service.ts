@@ -30,6 +30,8 @@ import { RemnawaveTopologyService } from '../remnawave/remnawave-topology.servic
 import { IncidentsSettingsStore } from '../settings/incidents-settings.store.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
 import { SettingsService } from '../settings/settings.service.js';
+import { recentHistory } from './assistant.history.js';
+import { AssistantPanelReader } from './assistant.panel-reader.js';
 import { buildSystem } from './assistant.prompt.js';
 import { AssistantRepository } from './assistant.repository.js';
 import { ASSISTANT_TOOLS, runTool, type ToolDeps } from './assistant.tools.js';
@@ -87,6 +89,7 @@ export class AssistantService {
     private readonly notifications: NotificationsService,
     private readonly config: ConfigService<Env, true>,
     private readonly nodePrefs: NodePreferencesStore,
+    private readonly panelReader: AssistantPanelReader,
   ) {}
 
   status(): Promise<AssistantStatus> {
@@ -228,18 +231,24 @@ export class AssistantService {
     // История беседы → сообщения модели (только текст; предыдущий tool-контекст не тащим).
     // К текущему вопросу со страницы события или из окна ноды впереди добавляем их данные.
     const prior = await this.repo.messages(conv.id);
-    const messages: LlmMsg[] = prior
-      .filter((m) => m.content.trim().length > 0)
-      .map((m) => ({
-        role: m.role as 'user' | 'assistant',
-        content:
-          m.id === asked.id && ctx
-            ? [
-                { type: 'text', text: ctx.brief },
-                { type: 'text', text: m.content },
-              ]
-            : [{ type: 'text', text: m.content }],
-      }));
+    const kept = recentHistory(prior.filter((m) => m.content.trim().length > 0));
+    const messages: LlmMsg[] = kept.items.map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content:
+        m.id === asked.id && ctx
+          ? [
+              { type: 'text', text: ctx.brief },
+              { type: 'text', text: m.content },
+            ]
+          : [{ type: 'text', text: m.content }],
+    }));
+    if (kept.omitted > 0) {
+      // Модель должна знать, что начало беседы не видит: иначе ответит так, будто его не было.
+      const note = `(Начало беседы — ${kept.omitted} сообщ. — сюда не вошло, чтобы запрос не разрастался. Если вопрос опирается на него, попроси владельца напомнить.)`;
+      if (messages[0]?.role === 'user')
+        messages[0].content = [{ type: 'text', text: note }, ...messages[0].content];
+      else messages.unshift({ role: 'user', content: [{ type: 'text', text: note }] });
+    }
 
     const deps: ToolDeps = {
       incidents: this.incidents,
@@ -274,6 +283,8 @@ export class AssistantService {
       },
       addGlossary: (terms) => this.knowledge.appendGlossary(terms, { auditSource: 'auto' }),
       whitelisted: (domain) => this.nodePrefs.whitelisted(domain),
+      // Сценарии, интеграции, копии, сайты, провайдеры и разделы настроек — только чтение.
+      ...this.panelReader.deps(),
     };
     const citations: AssistantCitation[] = [];
     const advice: AssistantAdvice[] = [];

@@ -7,6 +7,8 @@ import {
   type RemnawaveStats,
 } from '@nodeservice/shared';
 
+import { expandSnippets, parseSnippets, type RemnawaveSnippet } from './remnawave-snippets.js';
+
 const FETCH_TIMEOUT_MS = 8_000;
 const TLS_TIMEOUT_MS = 8_000;
 
@@ -31,13 +33,24 @@ export type RemnawaveProfileKind = 'node' | 'xray_json';
 export interface RemnawaveProfileCatalog {
   node: Record<string, unknown>[];
   xrayJson: Record<string, unknown>[];
+  /** Все шаблоны подписки (XRAY_JSON, XRAY_BASE64, MIHOMO, STASH, CLASH, SINGBOX) без содержимого. */
+  templates?: Record<string, unknown>[];
 }
 
 export interface RemnawaveTopologySource {
   hosts: Record<string, unknown>[];
   nodes: Record<string, unknown>[];
+  /** Профили нод со сниппетами, уже раскрытыми как при сборке конфига для ноды. */
   profiles: Record<string, unknown>[];
   metrics: Record<string, unknown>[];
+  /** Сниппеты не прочитаны (нет права или Remnawave старше 2.2): ссылки на них в профилях не раскрыты. */
+  snippetsUnavailable?: boolean;
+}
+
+/** Внутренние сквады (какие инбаунды выданы группе пользователей) и внешние (шаблоны и настройки подписки). */
+export interface RemnawaveSquads {
+  internal: Record<string, unknown>[];
+  external: Record<string, unknown>[];
 }
 
 /**
@@ -74,6 +87,17 @@ export interface RemnawaveClient {
   ): Promise<Record<string, unknown>>;
   /** Хосты, ноды, профили и метрики для безопасной карты связей. */
   readTopology(domain: string, apiKey: string): Promise<RemnawaveTopologySource>;
+  /** Сниппеты профилей конфигурации (Remnawave 2.2+). Только чтение. */
+  listSnippets(domain: string, apiKey: string): Promise<RemnawaveSnippet[]>;
+  /** Внутренние и внешние сквады. Только чтение; внешних нет до Remnawave 2.2 — пустой список. */
+  listSquads(domain: string, apiKey: string): Promise<RemnawaveSquads>;
+  /**
+   * Пользователь по точному имени; null — не найден. Ответ Remnawave содержит ссылку подписки, пароли и UUID —
+   * сервис обязан оставить только безопасные поля до передачи Ассистенту.
+   */
+  userByUsername(domain: string, apiKey: string, username: string): Promise<Record<string, unknown> | null>;
+  /** Сколько устройств (HWID) у пользователя; null — Remnawave не дала прочитать. */
+  userDevices(domain: string, apiKey: string, userUuid: string): Promise<number | null>;
 }
 export const REMNAWAVE_CLIENT = Symbol('REMNAWAVE_CLIENT');
 
@@ -338,6 +362,7 @@ export class HttpRemnawaveClient implements RemnawaveClient {
     return {
       node,
       xrayJson: templates.filter((row) => str(row.templateType).toUpperCase() === 'XRAY_JSON'),
+      templates,
     };
   }
 
@@ -354,24 +379,91 @@ export class HttpRemnawaveClient implements RemnawaveClient {
 
   async readTopology(domain: string, apiKey: string): Promise<RemnawaveTopologySource> {
     const base = `https://${domain}`;
-    const [hostsBody, nodesBody, profilesBody, metricsBody] = await Promise.all([
+    const [hostsBody, nodesBody, profilesBody, metricsBody, snippets] = await Promise.all([
       getJson(`${base}/api/hosts`, apiKey),
       getJson(`${base}/api/nodes`, apiKey),
       getJson(`${base}/api/config-profiles`, apiKey),
       getJson(`${base}/api/system/nodes/metrics`, apiKey),
+      // Нет права на сниппеты или Remnawave старше 2.2 — карта строится по профилям как есть.
+      this.listSnippets(domain, apiKey).catch(() => null),
     ]);
     const profilesResponse = (profilesBody.response ?? {}) as Record<string, unknown>;
     const metricsResponse = (metricsBody.response ?? {}) as Record<string, unknown>;
+    const profiles = Array.isArray(profilesResponse.configProfiles)
+      ? (profilesResponse.configProfiles as Record<string, unknown>[])
+      : [];
     return {
       hosts: Array.isArray(hostsBody.response) ? (hostsBody.response as Record<string, unknown>[]) : [],
       nodes: Array.isArray(nodesBody.response) ? (nodesBody.response as Record<string, unknown>[]) : [],
-      profiles: Array.isArray(profilesResponse.configProfiles)
-        ? (profilesResponse.configProfiles as Record<string, unknown>[])
-        : [],
+      // Выходы и правила из сниппетов — часть настоящего конфига ноды: без раскрытия карта их не видит.
+      profiles: snippets
+        ? profiles.map((p) => ({ ...p, config: expandSnippets(p.config, snippets).config }))
+        : profiles,
       metrics: Array.isArray(metricsResponse.nodes)
         ? (metricsResponse.nodes as Record<string, unknown>[])
         : [],
+      ...(snippets ? {} : { snippetsUnavailable: true }),
     };
+  }
+
+  async listSnippets(domain: string, apiKey: string): Promise<RemnawaveSnippet[]> {
+    return parseSnippets(await getJson(`https://${domain}/api/snippets`, apiKey));
+  }
+
+  async listSquads(domain: string, apiKey: string): Promise<RemnawaveSquads> {
+    const base = `https://${domain}`;
+    const [internalBody, externalBody] = await Promise.all([
+      getJson(`${base}/api/internal-squads`, apiKey),
+      // Внешних сквадов нет до Remnawave 2.2: их отсутствие не ошибка.
+      getJson(`${base}/api/external-squads`, apiKey).catch((err: unknown): Record<string, unknown> => {
+        if (err instanceof RemnawaveApiError && err.status === 404) return {};
+        throw err;
+      }),
+    ]);
+    const internal = (internalBody.response ?? {}) as Record<string, unknown>;
+    const external = (externalBody.response ?? {}) as Record<string, unknown>;
+    return {
+      internal: Array.isArray(internal.internalSquads)
+        ? (internal.internalSquads as Record<string, unknown>[])
+        : [],
+      external: Array.isArray(external.externalSquads)
+        ? (external.externalSquads as Record<string, unknown>[])
+        : [],
+    };
+  }
+
+  async userByUsername(
+    domain: string,
+    apiKey: string,
+    username: string,
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const body = await getJson(
+        `https://${domain}/api/users/by-username/${encodeURIComponent(username)}`,
+        apiKey,
+      );
+      const user = body.response;
+      return user && typeof user === 'object' && !Array.isArray(user)
+        ? (user as Record<string, unknown>)
+        : null;
+    } catch (err) {
+      if (err instanceof RemnawaveApiError && err.status === 404) return null;
+      throw err;
+    }
+  }
+
+  async userDevices(domain: string, apiKey: string, userUuid: string): Promise<number | null> {
+    try {
+      const body = await getJson(
+        `https://${domain}/api/hwid/devices/${encodeURIComponent(userUuid)}`,
+        apiKey,
+      );
+      const response = (body.response ?? {}) as Record<string, unknown>;
+      if (typeof response.total === 'number') return response.total;
+      return Array.isArray(response.devices) ? response.devices.length : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Имя маскировки из профиля конфигурации по тегу инбаунда; любой сбой — null (проверка деградирует до порта). */

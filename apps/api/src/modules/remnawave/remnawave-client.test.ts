@@ -211,6 +211,10 @@ describe('HttpRemnawaveClient profiles', () => {
     await expect(new HttpRemnawaveClient().listProfiles('rw.example.com', 'token')).resolves.toEqual({
       node: [{ uuid: 'node-1', name: 'Reality' }],
       xrayJson: [{ uuid: 'json-1', name: 'Xray', templateType: 'XRAY_JSON' }],
+      templates: [
+        { uuid: 'json-1', name: 'Xray', templateType: 'XRAY_JSON' },
+        { uuid: 'yaml-1', name: 'Clash', templateType: 'MİHOMO' },
+      ],
     });
   });
 

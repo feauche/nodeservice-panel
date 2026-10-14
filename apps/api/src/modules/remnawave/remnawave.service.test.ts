@@ -87,6 +87,11 @@ function make() {
       xrayJson: [{ uuid: 'template-1', name: 'Xray clients', templateType: 'XRAY_JSON' }],
     },
     fullProfile: {} as Record<string, unknown>,
+    snippets: [] as Array<{ name: string; snippet: unknown }>,
+    snippetsError: null as Error | null,
+    squads: { internal: [] as Record<string, unknown>[], external: [] as Record<string, unknown>[] },
+    user: null as Record<string, unknown> | null,
+    devices: null as number | null,
   };
   const store = {
     async load() {
@@ -127,6 +132,19 @@ function make() {
     },
     async getProfile() {
       return world.fullProfile;
+    },
+    async listSnippets() {
+      if (world.snippetsError) throw world.snippetsError;
+      return world.snippets;
+    },
+    async listSquads() {
+      return world.squads;
+    },
+    async userByUsername() {
+      return world.user;
+    },
+    async userDevices() {
+      return world.devices;
     },
   };
   const events: Array<Record<string, unknown>> = [];
@@ -227,7 +245,7 @@ describe('RemnawaveService: профили для Ассистента', () => {
     expect(catalog).toMatchObject({
       connected: true,
       nodeProfiles: [{ name: 'Reality' }],
-      xrayJsonProfiles: [{ name: 'Xray clients' }],
+      subscriptionTemplates: [{ name: 'Xray clients' }],
     });
 
     ctx.world.fullProfile = {
@@ -239,12 +257,163 @@ describe('RemnawaveService: профили для Ассистента', () => {
     };
     const selected = await ctx.svc.profilesForAssistant({ kind: 'xray_json', profile: 'Xray clients' });
     expect(selected).toMatchObject({
-      kind: 'xray_json',
+      kind: 'template',
       name: 'Xray clients',
       config: { outbounds: [{ protocol: 'vless', settings: { users: { hidden: true, count: 1 } } }] },
     });
     expect(JSON.stringify(selected)).not.toContain('secret-user-id');
     expect(JSON.stringify(selected)).not.toContain('secret-token');
+  });
+});
+
+describe('RemnawaveService: сниппеты, сквады и пользователь для Ассистента', () => {
+  it('конфиг ноды — со сниппетами, раскрытыми как на ноде; пропавший сниппет назван', async () => {
+    const ctx = make();
+    await ctx.svc.connect({ domain: 'x.example.com', apiKey: 'k' });
+    ctx.world.profiles.node = [
+      {
+        uuid: 'profile-1',
+        name: 'Reality',
+        config: {
+          outbounds: [{ snippet: 'warp' }, { tag: 'DIRECT', protocol: 'freedom' }, { snippet: 'gone' }],
+        },
+      },
+    ];
+    ctx.world.snippets = [
+      {
+        name: 'warp',
+        snippet: [{ tag: 'WARP', protocol: 'wireguard', settings: { secretKey: 'wg-private' } }],
+      },
+    ];
+    ctx.world.fullProfile = { name: 'Reality', config: ctx.world.profiles.node[0]?.config };
+    const catalog = await ctx.svc.profilesForAssistant({});
+    expect(catalog).toMatchObject({
+      nodeProfiles: [{ name: 'Reality', snippets: ['warp', 'gone'] }],
+      snippets: [{ name: 'warp', items: 1, usedBy: ['Reality'] }],
+    });
+    const node = await ctx.svc.profilesForAssistant({ kind: 'node', profile: 'Reality' });
+    expect(node).toMatchObject({
+      kind: 'node',
+      config: { outbounds: [{ tag: 'WARP', _fromSnippet: 'warp' }, { tag: 'DIRECT' }] },
+      snippetsUsed: ['warp'],
+      missingSnippets: [{ name: 'gone', where: 'outbounds' }],
+    });
+    expect(JSON.stringify(node)).not.toContain('wg-private');
+    const snippet = await ctx.svc.profilesForAssistant({ kind: 'snippet', profile: 'warp' });
+    expect(snippet).toMatchObject({ kind: 'snippet', name: 'warp', usedBy: ['Reality'] });
+    expect(JSON.stringify(snippet)).not.toContain('wg-private');
+  });
+
+  it('нет права на сниппеты — конфиг со ссылками и причина по-русски', async () => {
+    const ctx = make();
+    await ctx.svc.connect({ domain: 'x.example.com', apiKey: 'k' });
+    ctx.world.snippetsError = new RemnawaveApiError('нет', 'unauthorized', 403);
+    const catalog = await ctx.svc.profilesForAssistant({});
+    expect(String(catalog.snippetsError)).toContain('snippets:read');
+  });
+
+  it('YAML-шаблон подписки — без паролей', async () => {
+    const ctx = make();
+    await ctx.svc.connect({ domain: 'x.example.com', apiKey: 'k' });
+    ctx.world.profiles = {
+      node: [],
+      xrayJson: [],
+      templates: [{ uuid: 'tpl-2', name: 'Mihomo', templateType: 'MIHOMO' }],
+    } as never;
+    ctx.world.fullProfile = {
+      name: 'Mihomo',
+      templateType: 'MIHOMO',
+      encodedTemplateYaml: Buffer.from(
+        'proxies:\n  - name: a\n    password: hunter2\n    uuid: 1234\n',
+      ).toString('base64'),
+    };
+    const tpl = await ctx.svc.profilesForAssistant({ kind: 'template', profile: 'Mihomo' });
+    expect(tpl).toMatchObject({ kind: 'template', type: 'MIHOMO' });
+    expect(String(tpl.config)).toContain('name: a');
+    expect(String(tpl.config)).not.toContain('hunter2');
+    expect(String(tpl.config)).not.toContain('1234');
+  });
+
+  it('сквады — без сырых инбаундов с ключами', async () => {
+    const ctx = make();
+    await ctx.svc.connect({ domain: 'x.example.com', apiKey: 'k' });
+    ctx.world.squads = {
+      internal: [
+        {
+          name: 'Основной',
+          info: { membersCount: 120 },
+          inbounds: [
+            { tag: 'VLESS_REALITY', type: 'vless', port: 443, rawInbound: { privateKey: 'reality-pk' } },
+          ],
+        },
+      ],
+      external: [{ name: 'Партнёры', info: { membersCount: 7 }, templates: [{ templateType: 'MIHOMO' }] }],
+    };
+    const squads = await ctx.svc.squadsForAssistant();
+    expect(squads).toMatchObject({
+      internal: [{ name: 'Основной', members: 120, inbounds: [{ tag: 'VLESS_REALITY', port: 443 }] }],
+      external: [{ name: 'Партнёры', members: 7, templates: ['MIHOMO'] }],
+    });
+    expect(JSON.stringify(squads)).not.toContain('reality-pk');
+  });
+
+  it('пользователь — только безопасные поля: без ссылки подписки, ключей, UUID, почты и Telegram ID', async () => {
+    const ctx = make();
+    await ctx.svc.connect({ domain: 'x.example.com', apiKey: 'k' });
+    ctx.world.user = {
+      id: 4242,
+      shortUuid: 'abcDEF123',
+      username: 'vasya',
+      status: 'ACTIVE',
+      expireAt: '2026-12-01T00:00:00.000Z',
+      trafficLimitBytes: 0,
+      subscriptionUrl: 'https://sub.example.com/abcDEF123',
+      vlessUuid: '0192c000-0000-7000-8000-0000000000bb',
+      trojanPassword: 'trojan-secret',
+      ssPassword: 'ss-secret',
+      email: 'vasya@example.com',
+      telegramId: 123456789,
+      activeInternalSquads: [{ uuid: 'sq', name: 'Основной' }],
+      userTraffic: { usedTrafficBytes: 1024, onlineAt: '2026-10-14T09:00:00.000Z' },
+    };
+    ctx.world.devices = 2;
+    let devicesFor = '';
+    const client = (
+      ctx.svc as unknown as {
+        client: { userDevices: (d: string, k: string, id: string) => Promise<number | null> };
+      }
+    ).client;
+    const original = client.userDevices.bind(client);
+    client.userDevices = async (d, k, id) => {
+      devicesFor = id;
+      return original(d, k, id);
+    };
+    const found = await ctx.svc.userForAssistant('vasya');
+    // Remnawave 3.x отдаёт идентификатор пользователя в поле id: по нему и читаются устройства.
+    expect(devicesFor).toBe('4242');
+    expect(found).toMatchObject({
+      found: true,
+      user: {
+        username: 'vasya',
+        status: 'ACTIVE',
+        usedTrafficBytes: 1024,
+        internalSquads: ['Основной'],
+        hwidDevices: 2,
+      },
+    });
+    const text = JSON.stringify(found);
+    for (const secret of [
+      'abcDEF123',
+      'trojan-secret',
+      'ss-secret',
+      'vasya@example.com',
+      '123456789',
+      '4242',
+      '0000000000bb',
+    ])
+      expect(text).not.toContain(secret);
+    ctx.world.user = null;
+    expect(await ctx.svc.userForAssistant('nobody')).toMatchObject({ found: false });
   });
 });
 

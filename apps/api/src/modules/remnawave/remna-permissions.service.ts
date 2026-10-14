@@ -66,6 +66,43 @@ export const requiredPermissions: Array<{
     why: 'Удаление по вашему подтверждению',
   },
   { scope: HOSTS_READ_SCOPE, label: 'Чтение Host', why: 'Затронутые Host в сценариях', path: '/api/hosts' },
+  // Чтение для Ассистента и карты маршрутов (0.100.0): конфиги нод со сниппетами, сквады, шаблоны, пользователь по имени.
+  {
+    scope: 'config-profiles:list',
+    label: 'Профили конфигурации',
+    why: 'Конфиги нод для карты маршрутов и Ассистента',
+    path: '/api/config-profiles',
+  },
+  {
+    scope: 'snippets:list',
+    label: 'Сниппеты',
+    why: 'Общие куски конфигов — без них в профиле видна только ссылка',
+    path: '/api/snippets',
+  },
+  {
+    scope: 'internal-squads:list',
+    label: 'Внутренние сквады',
+    why: 'Ассистент видит, кому какие инбаунды выданы',
+    path: '/api/internal-squads',
+  },
+  {
+    scope: 'external-squads:list',
+    label: 'Внешние сквады',
+    why: 'Шаблоны и настройки подписки групп',
+    path: '/api/external-squads',
+  },
+  {
+    scope: 'subscription-template:list',
+    label: 'Шаблоны подписки',
+    why: 'Ассистент читает шаблоны Xray JSON, Mihomo, sing-box и другие',
+    path: '/api/subscription-templates',
+  },
+  {
+    scope: 'users:read',
+    label: 'Чтение пользователей',
+    why: 'Ассистент находит пользователя по имени — без ссылок и ключей',
+    path: '/api/users?size=1&start=0',
+  },
   {
     scope: HOSTS_UPDATE_SCOPE,
     label: 'Изменение Host',

@@ -19,9 +19,9 @@ import {
   RemnawaveApiError,
   type RemnawaveClient,
   type RemnawaveNodeInbound,
-  type RemnawaveProfileKind,
 } from './remnawave-client.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
+import { expandSnippets, type RemnawaveSnippet, snippetRefs } from './remnawave-snippets.js';
 
 /** Remnawave не отвечает столько подряд — сообщение в Telegram и колокольчик. */
 const REMNAWAVE_OUTAGE_NOTIFY_MS = 2 * 60_000;
@@ -53,6 +53,8 @@ const SECRET_FIELDS = new Set([
   'publickey',
   'secret',
   'secretkey',
+  'seed',
+  'mldsa65seed',
   'shortid',
   'shortids',
   'token',
@@ -81,6 +83,32 @@ export function sanitizeRemnawaveProfile(value: unknown, field = '', depth = 0):
       .slice(0, 100)
       .map(([name, item]) => [name, sanitizeRemnawaveProfile(item, name, depth + 1)]),
   );
+}
+
+/** YAML-шаблон подписки (Mihomo, Clash, Stash) — строки «ключ: значение» с паролями и ключами скрываются. */
+export function sanitizeTemplateYaml(yaml: string): string {
+  return yaml
+    .split('\n')
+    .slice(0, 600)
+    .map((line) =>
+      line.replace(
+        /^(\s*-?\s*(?:password|passwd|uuid|private-key|privatekey|public-key|short-id|token|secret|auth|auth-str|psk|pre-shared-key|obfs-password|server-key)\s*:\s*).+$/i,
+        `$1${HIDDEN}`,
+      ),
+    )
+    .map((line) => sanitizeRemnawaveProfile(line) as string)
+    .join('\n');
+}
+
+/** Права ключа, без которых часть данных Remnawave не прочитать: причина по-русски. */
+function readError(err: unknown, what: string, scope: string): string {
+  if (err instanceof RemnawaveApiError && err.status === 403)
+    return `Нет права читать ${what}: добавьте ключу Remnawave право ${scope} («Ноды» → «Настроить подключение» → «Права ключа»).`;
+  if (err instanceof RemnawaveApiError && err.status === 404)
+    return `Эта версия Remnawave не отдаёт ${what} (сниппеты и внешние сквады появились в Remnawave 2.2).`;
+  if (err instanceof RemnawaveApiError && err.kind === 'unauthorized')
+    return 'Remnawave не приняла ключ: он неверный, отозван или просрочен.';
+  return err instanceof Error ? err.message : `Не удалось прочитать ${what}.`;
 }
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -161,7 +189,10 @@ export class RemnawaveService {
     }
   }
 
-  /** Каталог или безопасное содержимое профиля для Ассистента. Никаких изменений в Remnawave. */
+  /**
+   * Каталог или безопасное содержимое для Ассистента: профили нод (сниппеты раскрыты, как при сборке конфига ноды),
+   * сниппеты, шаблоны подписки всех видов. Никаких изменений в Remnawave; секреты скрыты до передачи модели.
+   */
   async profilesForAssistant(input: { kind?: unknown; profile?: unknown }): Promise<Record<string, unknown>> {
     const creds = await this.store.credentials();
     if (!creds)
@@ -171,25 +202,58 @@ export class RemnawaveService {
       };
 
     try {
-      const catalog = await this.client.listProfiles(creds.domain, creds.apiKey);
-      const requestedKind: RemnawaveProfileKind | null =
-        input.kind === 'node' || input.kind === 'xray_json' ? input.kind : null;
+      const [catalog, snippetsRead] = await Promise.all([
+        this.client.listProfiles(creds.domain, creds.apiKey),
+        this.client.listSnippets(creds.domain, creds.apiKey).then(
+          (list) => ({ list, error: null as string | null }),
+          (err: unknown) => ({
+            list: [] as RemnawaveSnippet[],
+            error: readError(err, 'сниппеты', 'snippets:read'),
+          }),
+        ),
+      ]);
+      const snippets = snippetsRead.list;
+      const templates = catalog.templates ?? catalog.xrayJson;
+      const kinds = ['node', 'snippet', 'template', 'xray_json'] as const;
+      const requestedKind = kinds.find((k) => k === input.kind) ?? null;
       const selector = typeof input.profile === 'string' ? input.profile.trim() : '';
+      const usedBy = (name: string) =>
+        catalog.node
+          .filter((row) => snippetRefs(row.config).includes(name))
+          .map((row) => text(row.name) || 'Без имени');
       if (!selector)
         return {
           connected: true,
-          nodeProfiles: catalog.node.map(nodeProfileBrief),
-          xrayJsonProfiles: catalog.xrayJson.map(templateBrief),
-          note: 'Это каталог без секретов. Для чтения одной конфигурации вызовите инструмент снова с kind и profile. node — конфигурация Xray на нодах; xray_json — клиентский JSON-шаблон подписки.',
+          nodeProfiles: catalog.node.map((row) => ({
+            ...nodeProfileBrief(row),
+            snippets: snippetRefs(row.config),
+          })),
+          snippets: snippets.map((sn) => ({
+            name: sn.name,
+            items: Array.isArray(sn.snippet) ? sn.snippet.length : 1,
+            usedBy: usedBy(sn.name),
+          })),
+          ...(snippetsRead.error ? { snippetsError: snippetsRead.error } : {}),
+          subscriptionTemplates: templates.map(templateBrief),
+          note: 'Это каталог без секретов. Чтобы прочитать одно целиком, вызовите инструмент снова с kind и profile. node — конфигурация Xray на нодах (сниппеты в ней раскрыты, вставленное помечено _fromSnippet); snippet — общий кусок конфига; template — шаблон подписки клиента (xray_json — только Xray JSON).',
         };
 
       const choices = [
         ...(requestedKind && requestedKind !== 'node'
           ? []
           : catalog.node.map((row) => ({ kind: 'node' as const, row }))),
-        ...(requestedKind && requestedKind !== 'xray_json'
+        ...(requestedKind && requestedKind !== 'snippet'
           ? []
-          : catalog.xrayJson.map((row) => ({ kind: 'xray_json' as const, row }))),
+          : snippets.map((sn) => ({
+              kind: 'snippet' as const,
+              row: { name: sn.name } as Record<string, unknown>,
+            }))),
+        ...(requestedKind && requestedKind !== 'template' && requestedKind !== 'xray_json'
+          ? []
+          : (requestedKind === 'xray_json' ? catalog.xrayJson : templates).map((row) => ({
+              kind: 'template' as const,
+              row,
+            }))),
       ];
       const query = selector.toLowerCase();
       const exact = choices.filter(
@@ -203,39 +267,82 @@ export class RemnawaveService {
           connected: true,
           error:
             matches.length === 0
-              ? `Профиль «${selector}» не найден.`
-              : `Название «${selector}» неоднозначно. Уточните полное имя и вид профиля.`,
-          available: choices.map(({ kind, row }) => ({ kind, name: text(row.name) || 'Без имени' })),
+              ? `«${selector}» не найдено среди профилей, сниппетов и шаблонов.`
+              : `Название «${selector}» неоднозначно. Уточните полное имя и вид (kind).`,
+          available: choices
+            .slice(0, 80)
+            .map(({ kind, row }) => ({ kind, name: text(row.name) || 'Без имени' })),
         };
 
-      const selected = matches[0] as { kind: RemnawaveProfileKind; row: Record<string, unknown> };
+      const selected = matches[0] as { kind: 'node' | 'snippet' | 'template'; row: Record<string, unknown> };
+      if (selected.kind === 'snippet') {
+        const sn = snippets.find((x) => x.name === text(selected.row.name)) as RemnawaveSnippet;
+        return {
+          connected: true,
+          kind: 'snippet',
+          name: sn.name,
+          usedBy: usedBy(sn.name),
+          content: sanitizeRemnawaveProfile(sn.snippet),
+          how: 'Профиль ссылается на сниппет объектом {"snippet": "имя"} в outbounds, routing.rules или routing.balancers: Remnawave ставит его содержимое на место ссылки при сборке конфига ноды. Корневой список "snippets" дописывает ключи сниппета в корень конфига.',
+          safety: 'Только чтение. Ключи, пароли, UUID и токены скрыты.',
+        };
+      }
       const uuid = text(selected.row.uuid);
       if (!uuid)
         return {
           connected: true,
-          error: 'Remnawave вернула профиль без идентификатора; прочитать его нельзя.',
+          error: 'Remnawave вернула запись без идентификатора; прочитать её нельзя.',
         };
-      const full = await this.client.getProfile(creds.domain, creds.apiKey, selected.kind, uuid);
-      let content: unknown;
+      const full = await this.client.getProfile(
+        creds.domain,
+        creds.apiKey,
+        selected.kind === 'node' ? 'node' : 'xray_json',
+        uuid,
+      );
       if (selected.kind === 'node') {
-        content = sanitizeRemnawaveProfile(full.config ?? full);
-      } else if (typeof full.templateJson === 'string') {
+        const expanded = expandSnippets(full.config ?? full, snippets);
+        return {
+          connected: true,
+          kind: 'node',
+          name: text(full.name) || text(selected.row.name) || 'Без имени',
+          tags: profileTags(full),
+          config: sanitizeRemnawaveProfile(expanded.config),
+          snippetsUsed: expanded.used,
+          ...(expanded.missing.length
+            ? {
+                missingSnippets: expanded.missing,
+                missingNote:
+                  'Этих сниппетов нет в Remnawave: при сборке конфига ноды она молча выбрасывает такие ссылки — соответствующих выходов или правил на ноде нет.',
+              }
+            : {}),
+          ...(snippetsRead.error ? { snippetsError: snippetsRead.error } : {}),
+          safety:
+            'Только чтение. Сниппеты раскрыты, вставленное помечено _fromSnippet. UUID пользователей, email, ключи, пароли, токены, сертификаты и списки клиентов скрыты.',
+        };
+      }
+      const type = text(full.templateType) || text(selected.row.templateType) || 'XRAY_JSON';
+      let content: unknown;
+      if (typeof full.templateJson === 'string') {
         try {
           content = sanitizeRemnawaveProfile(JSON.parse(full.templateJson));
         } catch {
-          content = '[Remnawave вернула Xray JSON не в формате JSON; содержимое скрыто]';
+          content = '[Remnawave вернула шаблон не в формате JSON; содержимое скрыто]';
         }
+      } else if (full.templateJson && typeof full.templateJson === 'object') {
+        content = sanitizeRemnawaveProfile(full.templateJson);
+      } else if (typeof full.encodedTemplateYaml === 'string') {
+        content = sanitizeTemplateYaml(Buffer.from(full.encodedTemplateYaml, 'base64').toString('utf8'));
       } else {
-        content = sanitizeRemnawaveProfile(full.templateJson ?? full);
+        content = null;
       }
       return {
         connected: true,
-        kind: selected.kind,
+        kind: 'template',
+        type,
         name: text(full.name) || text(selected.row.name) || 'Без имени',
         tags: profileTags(full),
         config: content,
-        safety:
-          'Только чтение. UUID пользователей, email, ключи, пароли, токены, сертификаты и списки клиентов скрыты до передачи Ассистенту.',
+        safety: 'Только чтение. Пароли, ключи, UUID и токены скрыты.',
       };
     } catch (err) {
       if (err instanceof RemnawaveApiError && err.kind === 'unauthorized')
@@ -248,6 +355,127 @@ export class RemnawaveService {
         connected: true,
         error: err instanceof Error ? err.message : 'Не удалось прочитать профили Remnawave.',
       };
+    }
+  }
+
+  /** Сквады Remnawave для Ассистента: кому какие инбаунды выданы и сколько в группе людей. Без rawInbound и секретов. */
+  async squadsForAssistant(): Promise<Record<string, unknown>> {
+    const creds = await this.store.credentials();
+    if (!creds) return { connected: false, error: 'Remnawave не подключена.' };
+    try {
+      const squads = await this.client.listSquads(creds.domain, creds.apiKey);
+      const info = (row: Record<string, unknown>) => (row.info ?? {}) as Record<string, unknown>;
+      return {
+        connected: true,
+        internal: squads.internal.slice(0, 100).map((row) => ({
+          name: text(row.name) || 'Без имени',
+          tags: profileTags(row),
+          members: typeof info(row).membersCount === 'number' ? info(row).membersCount : null,
+          inbounds: records(row.inbounds).map((ib) => ({
+            tag: text(ib.tag) || null,
+            type: text(ib.type) || null,
+            network: text(ib.network) || null,
+            security: text(ib.security) || null,
+            port: typeof ib.port === 'number' ? ib.port : null,
+          })),
+        })),
+        external: squads.external.slice(0, 100).map((row) => ({
+          name: text(row.name) || 'Без имени',
+          tags: profileTags(row),
+          members: typeof info(row).membersCount === 'number' ? info(row).membersCount : null,
+          templates: records(row.templates)
+            .map((t) => text(t.templateType))
+            .filter(Boolean),
+          settings: sanitizeRemnawaveProfile({
+            subscriptionSettings: row.subscriptionSettings ?? null,
+            hostOverrides: row.hostOverrides ?? null,
+            hwidSettings: row.hwidSettings ?? null,
+            customRemarks: row.customRemarks ?? null,
+          }),
+        })),
+        note: 'Внутренний сквад — какие инбаунды (подключения) выданы группе пользователей; у пользователя может быть несколько. Внешний сквад — шаблоны и настройки подписки группы.',
+      };
+    } catch (err) {
+      return {
+        connected: true,
+        error: readError(err, 'сквады', 'internal-squads:read и external-squads:read'),
+      };
+    }
+  }
+
+  /**
+   * Пользователь Remnawave по имени для Ассистента (вариант A владельца): статус, срок, трафик, сквады, устройства,
+   * когда был онлайн. Ссылка подписки, ключи, пароли, UUID, почта и Telegram ID не передаются — белый список полей.
+   */
+  async userForAssistant(username: unknown): Promise<Record<string, unknown>> {
+    const name = typeof username === 'string' ? username.trim() : '';
+    if (!name) return { error: 'Укажите имя пользователя (username) так, как оно записано в Remnawave.' };
+    const creds = await this.store.credentials();
+    if (!creds) return { connected: false, error: 'Remnawave не подключена.' };
+    try {
+      const user = await this.client.userByUsername(creds.domain, creds.apiKey, name);
+      if (!user)
+        return {
+          connected: true,
+          found: false,
+          error: `Пользователя «${name}» нет. Имя ищется точно — уточните его у владельца (как в Remnawave, с регистром).`,
+        };
+      const traffic = (user.userTraffic ?? {}) as Record<string, unknown>;
+      const lastNode = (user.lastConnectedNode ?? {}) as Record<string, unknown>;
+      const num = (v: unknown) =>
+        typeof v === 'number'
+          ? v
+          : typeof v === 'string' && v !== '' && Number.isFinite(Number(v))
+            ? Number(v)
+            : null;
+      // Remnawave 3.x называет идентификатор пользователя id (число), раньше — uuid (строка).
+      const userUuid =
+        text(user.uuid) ||
+        (typeof user.id === 'number' || typeof user.id === 'string' ? String(user.id) : '');
+      const lastNodeUuid = text(traffic.lastConnectedNodeUuid);
+      const lastNodeName =
+        text(lastNode.nodeName) ||
+        (lastNodeUuid
+          ? ((await this.status()).nodes.find((n) => n.uuid === lastNodeUuid)?.name ?? null)
+          : null);
+      const [devices, squads] = await Promise.all([
+        userUuid ? this.client.userDevices(creds.domain, creds.apiKey, userUuid) : Promise.resolve(null),
+        user.externalSquadUuid
+          ? this.client.listSquads(creds.domain, creds.apiKey).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      const external = squads?.external.find((sq) => text(sq.uuid) === text(user.externalSquadUuid));
+      return {
+        connected: true,
+        found: true,
+        user: {
+          username: text(user.username),
+          status: text(user.status) || null,
+          expireAt: text(user.expireAt) || null,
+          createdAt: text(user.createdAt) || null,
+          trafficLimitBytes: num(user.trafficLimitBytes),
+          trafficLimitStrategy: text(user.trafficLimitStrategy) || null,
+          usedTrafficBytes: num(traffic.usedTrafficBytes ?? user.usedTrafficBytes),
+          lifetimeUsedTrafficBytes: num(traffic.lifetimeUsedTrafficBytes ?? user.lifetimeUsedTrafficBytes),
+          onlineAt: text(traffic.onlineAt ?? user.onlineAt) || null,
+          firstConnectedAt: text(traffic.firstConnectedAt ?? user.firstConnectedAt) || null,
+          lastConnectedNode: lastNodeName || null,
+          subLastOpenedAt: text(user.subLastOpenedAt) || null,
+          subLastUserAgent: (sanitizeRemnawaveProfile(text(user.subLastUserAgent)) as string) || null,
+          internalSquads: records(user.activeInternalSquads)
+            .map((sq) => text(sq.name))
+            .filter(Boolean),
+          externalSquad: external ? text(external.name) || null : null,
+          hwidDeviceLimit: num(user.hwidDeviceLimit),
+          hwidDevices: devices,
+          tag: text(user.tag) || null,
+          description: (sanitizeRemnawaveProfile(text(user.description)) as string) || null,
+        },
+        hint: 'trafficLimitBytes 0 — без лимита. status: ACTIVE — работает, DISABLED — выключен, LIMITED — исчерпан трафик, EXPIRED — истёк срок. hwidDevices null — устройства не прочитаны (нет права hwid:read).',
+        safety: 'Ссылка подписки, ключи, пароли, UUID, почта и Telegram ID пользователя не передаются.',
+      };
+    } catch (err) {
+      return { connected: true, error: readError(err, 'пользователей', 'users:read') };
     }
   }
 

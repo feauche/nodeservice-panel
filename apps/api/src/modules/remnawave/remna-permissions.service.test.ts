@@ -25,7 +25,8 @@ describe('Remna permission evidence', () => {
       state: 'unknown',
       when: 'Проверится при срабатывании сценария',
     });
-    expect(fetcher.mock.calls).toHaveLength(7);
+    // Права чтения проверяются сами: 7 прежних и 6 для Ассистента и карты (профили, сниппеты, сквады, шаблоны, пользователи).
+    expect(fetcher.mock.calls).toHaveLength(13);
     expect(
       fetcher.mock.calls.every(
         (c) => !(c as unknown[])[1] || (c as [string, RequestInit])[1].method === undefined,

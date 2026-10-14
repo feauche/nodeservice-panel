@@ -95,6 +95,22 @@ class FakeRemnawaveClient implements RemnawaveClient {
   async findNodeInbound() {
     return null;
   }
+
+  async listSnippets() {
+    return [];
+  }
+
+  async listSquads() {
+    return { internal: [], external: [] };
+  }
+
+  async userByUsername() {
+    return null;
+  }
+
+  async userDevices() {
+    return null;
+  }
 }
 
 describe('Remnawave e2e (J4)', () => {

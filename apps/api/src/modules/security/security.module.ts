@@ -11,5 +11,6 @@ import { StepUpGuard } from './step-up.guard.js';
   imports: [AuthCoreModule],
   controllers: [SecurityController],
   providers: [SecurityService, PwnedPasswordsService, StepUpGuard],
+  exports: [SecurityService],
 })
 export class SecurityModule {}

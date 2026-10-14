@@ -70,11 +70,13 @@ const call = async (name: string, arg: Record<string, unknown>, d = deps()) => {
 
 it('в списке только чтение: никаких инструментов SSH, проверок серверов и предложений', () => {
   expect(READ_TOOL_DEFS.map((t) => t.name).sort()).toEqual([
+    'find_remnawave_user',
     'get_billing',
     'get_incident',
     'get_playbook',
     'get_reference',
     'get_remnawave_profiles',
+    'get_remnawave_squads',
     'get_remnawave_topology',
     'list_incidents',
   ]);
