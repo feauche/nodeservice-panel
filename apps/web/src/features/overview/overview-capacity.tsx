@@ -7,17 +7,16 @@ import {
   nodePreferencesSchema,
 } from '@nodeservice/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2Icon, PlusIcon } from 'lucide-react';
-import { Popover } from 'radix-ui';
+import { PlusIcon } from 'lucide-react';
 import { useState } from 'react';
 import { Card } from '@/components/card';
 import { CountryFlag } from '@/components/country-flag';
 import { KpiCard } from '@/components/kpi-card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ChannelLimitDialog } from '@/features/nodes/channel-limit-dialog';
 import { NodeDialog } from '@/features/nodes/node-dialog';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { api, apiErrorMessage } from '@/lib/api';
-import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { fmt, plural } from './overview-format';
 
@@ -60,106 +59,38 @@ function LoadBar({ value, limit }: { value: number | null; limit: number }) {
 }
 
 /**
- * Лимит канала прямо из строки: окошко у кнопки — поле с единицей внутри, «Отмена» и «Сохранить». Таблица при этом
- * не меняет ширину столбцов. Лимит сохраняется в настройки ноды, расчёт сразу пересчитывается.
+ * Лимит канала прямо из строки: кнопка открывает окно по шагам — команда для сервера, поле для её вывода и число,
+ * которое панель из него поняла (витрина channel-limit-2026-10, вариант C). Лимит сохраняется в настройки ноды,
+ * расчёт сразу пересчитывается.
  */
 function ChannelLimit({ uuid, name }: { uuid: string; name: string }) {
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [value, setValue] = useState('1000');
-  const [saving, setSaving] = useState(false);
-  const save = async () => {
-    const mbps = Number(value.replace(/\s/g, '').replace(',', '.'));
-    if (!Number.isFinite(mbps) || mbps <= 0 || mbps > 1_000_000) {
-      toast.error('Укажите скорость канала числом, например 1000.');
-      return;
-    }
-    setSaving(true);
-    try {
-      const current = await client.fetchQuery({
-        queryKey: ['nodes', 'preferences', uuid],
-        queryFn: ({ signal }) => api.get(`/nodes/${uuid}/preferences`, nodePreferencesSchema, signal),
-      });
-      const saved = await api.put(
-        `/nodes/${uuid}/preferences`,
-        { ...current, channelMbps: mbps },
-        nodePreferencesSchema,
-      );
-      client.setQueryData(['nodes', 'preferences', uuid], saved);
-      await client.invalidateQueries({ queryKey: ['nodes', 'capacity'] });
-      setOpen(false);
-    } catch (err) {
-      toast.error(apiErrorMessage(err));
-    } finally {
-      setSaving(false);
-    }
+  const save = async (mbps: number) => {
+    const current = await client.fetchQuery({
+      queryKey: ['nodes', 'preferences', uuid],
+      queryFn: ({ signal }) => api.get(`/nodes/${uuid}/preferences`, nodePreferencesSchema, signal),
+    });
+    const saved = await api.put(
+      `/nodes/${uuid}/preferences`,
+      { ...current, channelMbps: mbps },
+      nodePreferencesSchema,
+    );
+    client.setQueryData(['nodes', 'preferences', uuid], saved);
+    await client.invalidateQueries({ queryKey: ['nodes', 'capacity'] });
   };
   return (
-    <Popover.Root open={open} onOpenChange={(next) => !saving && setOpen(next)}>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border bg-surface px-2.5 text-[12px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand data-[state=open]:border-brand/50 data-[state=open]:text-foreground"
-        >
-          <PlusIcon className="size-3.5" aria-hidden="true" />
-          Указать лимит
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          side="bottom"
-          align="start"
-          sideOffset={6}
-          collisionPadding={12}
-          className="z-50 w-[288px] rounded-[14px] border border-border-2 bg-surface p-4 shadow-float outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
-        >
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void save();
-            }}
-          >
-            <h3 className="text-[13.5px] font-semibold">Лимит канала · {name}</h3>
-            <p className="mt-1 text-[12px] leading-snug text-text-3">
-              Скорость, которую даёт провайдер. Обычно 1000 Мбит/с.
-            </p>
-            <div className="relative mt-3">
-              <input
-                // biome-ignore lint/a11y/noAutofocus: окошко открыто нажатием «Указать лимит» — сразу вводим число
-                autoFocus
-                inputMode="decimal"
-                aria-label="Лимит канала, Мбит/с"
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                className="h-10 w-full rounded-[10px] border border-border bg-surface-2 pr-[64px] pl-3 text-[13.5px] tabular-nums outline-none focus:border-brand/60"
-              />
-              <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-[12.5px] whitespace-nowrap text-text-3">
-                Мбит/с
-              </span>
-            </div>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <Popover.Close asChild>
-                <button
-                  type="button"
-                  disabled={saving}
-                  className="h-10 cursor-pointer rounded-[10px] border border-border bg-surface text-[13px] font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground disabled:opacity-60"
-                >
-                  Отмена
-                </button>
-              </Popover.Close>
-              <button
-                type="submit"
-                disabled={saving}
-                className="inline-flex h-10 cursor-pointer items-center justify-center gap-1.5 rounded-[10px] bg-cta text-[13px] font-semibold text-cta-foreground transition-[filter] hover:brightness-105 disabled:opacity-60"
-              >
-                {saving && <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />}
-                Сохранить
-              </button>
-            </div>
-          </form>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border bg-surface px-2.5 text-[12px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand"
+      >
+        <PlusIcon className="size-3.5" aria-hidden="true" />
+        Указать лимит
+      </button>
+      {open && <ChannelLimitDialog nodeName={name} onSubmit={save} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 

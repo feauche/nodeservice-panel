@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -370,7 +370,7 @@ describe('Обзор, «Ёмкость»', () => {
     expect(screen.getByText(/Без расчёта: Запасная \(мало нагрузки\)/)).toBeInTheDocument();
   });
 
-  it('лимит канала указывается прямо в строке и сохраняется вместе с остальными настройками ноды', async () => {
+  it('лимит канала: окно по шагам, вывод замера → число, сохраняется вместе с остальными настройками ноды', async () => {
     let saved: unknown;
     server.use(
       http.get('/api/nodes/capacity', () =>
@@ -394,11 +394,20 @@ describe('Обзор, «Ёмкость»', () => {
     renderPage(OverviewCapacity, '/');
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: 'Указать лимит' }));
-    const input = screen.getByRole('textbox', { name: 'Лимит канала, Мбит/с' });
-    await user.clear(input);
-    await user.type(input, '2500');
-    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
-    await screen.findByRole('button', { name: 'Указать лимит' });
+    const dialog = await screen.findByRole('dialog', { name: /Лимит канала/ });
+    // Команда для сервера на виду, пока ничего не вставлено — сохранять нечего.
+    expect(dialog).toHaveTextContent(
+      "cat /sys/class/net/$(ip route show default | awk '{print $5; exit}')/speed",
+    );
+    const save = within(dialog).getByRole('button', { name: 'Сохранить' });
+    expect(save).toBeDisabled();
+    // Вставили вывод замера целиком: из него берётся меньшее из Download и Upload.
+    await user.click(within(dialog).getByRole('textbox', { name: 'Вывод команды или скорость канала' }));
+    await user.paste('Ping: 14.2 ms\nDownload: 2910.31 Mbit/s\nUpload: 2500.07 Mbit/s');
+    expect(await within(dialog).findByText(/Лимит канала: 2\s500/)).toBeVisible();
+    expect(dialog).toHaveTextContent('Это меньшее из Download (2 910) и Upload (2 500)');
+    await user.click(save);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(saved).toEqual({
       whitelist: true,
       channelMbps: 2500,
@@ -407,7 +416,7 @@ describe('Обзор, «Ёмкость»', () => {
       memoryWarningPercent: null,
     });
   });
-  it('«Отмена» закрывает окошко лимита без сохранения', async () => {
+  it('«Отмена» закрывает окно лимита без сохранения', async () => {
     let puts = 0;
     server.use(
       http.get('/api/nodes/capacity', () =>
@@ -421,9 +430,15 @@ describe('Обзор, «Ёмкость»', () => {
     renderPage(OverviewCapacity, '/');
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: 'Указать лимит' }));
-    expect(screen.getByRole('textbox', { name: 'Лимит канала, Мбит/с' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('textbox', { name: 'Вывод команды или скорость канала' }),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Отмена' }));
-    expect(screen.queryByRole('textbox', { name: 'Лимит канала, Мбит/с' })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('textbox', { name: 'Вывод команды или скорость канала' }),
+      ).not.toBeInTheDocument(),
+    );
     expect(puts).toBe(0);
   });
 });

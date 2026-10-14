@@ -224,3 +224,39 @@ describe('окно ноды: отметка «Сервер белого спис
     await waitFor(() => expect(saved).toMatchObject({ whitelist: true }));
   });
 });
+
+describe('окно ноды: лимит канала командой', () => {
+  beforeEach(() => resetMockState({ authenticated: true }));
+
+  it('«Определить командой» подставляет число в поле; на сервер оно уходит только по «Сохранить» в окне ноды', async () => {
+    withNodes();
+    let saved: unknown;
+    server.use(
+      http.put('/api/nodes/:uuid/preferences', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        saved = body;
+        return HttpResponse.json(body);
+      }),
+    );
+    const { NodeDialog } = await import('@/features/nodes/node-dialog');
+    const Page = () => (
+      <NodeDialog node={NODE} stale={false} onClose={() => undefined} initialTab="settings" />
+    );
+    renderPage(Page, '/nodes');
+    const user = userEvent.setup();
+    const field = await screen.findByRole('spinbutton', { name: 'Лимит канала провайдера, Мбит/с' });
+    expect(field).toHaveValue(null);
+    await user.click(screen.getByRole('button', { name: 'Определить командой' }));
+    const dialog = await screen.findByRole('dialog', { name: /^Лимит канала · / });
+    expect(dialog).toHaveTextContent('Число попадёт в поле — сохраните его кнопкой в окне ноды.');
+    await user.click(within(dialog).getByRole('textbox', { name: 'Вывод команды или скорость канала' }));
+    await user.paste('Download: 940.5 Mbit/s\nUpload: 1010 Mbit/s');
+    await user.click(within(dialog).getByRole('button', { name: 'Подставить' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Лимит канала · / })).toBeNull());
+    // Число в поле окна ноды; сервер о нём пока не знает.
+    expect(screen.getByRole('spinbutton', { name: 'Лимит канала провайдера, Мбит/с' })).toHaveValue(941);
+    expect(saved).toBeUndefined();
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(saved).toMatchObject({ channelMbps: 941 }));
+  });
+});

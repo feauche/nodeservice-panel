@@ -10,6 +10,7 @@ import {
   InfoIcon,
   RadarIcon,
   Settings2Icon,
+  TerminalIcon,
   XIcon,
 } from 'lucide-react';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
@@ -30,6 +31,7 @@ import { Pill, Segmented } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
 import { mbitText } from '@/lib/units';
 import { cn } from '@/lib/utils';
+import { ChannelLimitDialog } from './channel-limit-dialog';
 import {
   bytes,
   LoadBar,
@@ -89,26 +91,31 @@ function MetricCard({
   );
 }
 
-/** Карточка во вкладке «Настройки»: подпись заглавными и содержимое. */
+/** Карточка во вкладке «Настройки»: подпись заглавными, справа в шапке — необязательное действие, ниже содержимое. */
 function SettingsCard({
   title,
   optional,
+  action,
   children,
 }: {
   title: string;
   optional?: boolean;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="min-w-0 rounded-2xl border border-border bg-surface px-[18px] py-4">
-      <h3 className="mb-2.5 flex items-center gap-2 text-[11.5px] font-semibold tracking-[0.08em] text-text-2 uppercase">
-        {title}
-        {optional && (
-          <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] font-semibold tracking-normal text-text-3 normal-case">
-            Необязательно
-          </span>
-        )}
-      </h3>
+      <div className="mb-2.5 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <h3 className="flex items-center gap-2 text-[11.5px] font-semibold tracking-[0.08em] text-text-2 uppercase">
+          {title}
+          {optional && (
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] font-semibold tracking-normal text-text-3 normal-case">
+              Необязательно
+            </span>
+          )}
+        </h3>
+        {action && <span className="ml-auto">{action}</span>}
+      </div>
       {children}
     </section>
   );
@@ -180,7 +187,8 @@ export function NodeDialog({
     [dirty, setDirty] = useState(false),
     [saved, setSaved] = useState(false),
     [provider, setProvider] = useState(node.providerUuid ?? null),
-    [providerDirty, setProviderDirty] = useState(false);
+    [providerDirty, setProviderDirty] = useState(false),
+    [channelHelp, setChannelHelp] = useState(false);
   useEffect(() => {
     if (query.data && !dirty) setForm(query.data);
   }, [query.data, dirty]);
@@ -687,7 +695,20 @@ export function NodeDialog({
                         </p>
                       )}
                     </SettingsCard>
-                    <SettingsCard title="Канал" optional>
+                    <SettingsCard
+                      title="Канал"
+                      optional
+                      action={
+                        <button
+                          type="button"
+                          onClick={() => setChannelHelp(true)}
+                          className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border bg-surface px-2.5 text-[12px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand"
+                        >
+                          <TerminalIcon className="size-3.5" aria-hidden="true" />
+                          Определить командой
+                        </button>
+                      }
+                    >
                       <label htmlFor="node-channel" className={label}>
                         Лимит канала провайдера, Мбит/с
                       </label>
@@ -706,6 +727,15 @@ export function NodeDialog({
                       <p className="mt-2 text-[12px] text-text-3">
                         Нужен для вкладки «Ёмкость»: сколько ещё выдержит нода. Пусто — лимит неизвестен.
                       </p>
+                      {channelHelp && (
+                        <ChannelLimitDialog
+                          nodeName={node.name}
+                          submitLabel="Подставить"
+                          hint="Число попадёт в поле — сохраните его кнопкой в окне ноды."
+                          onSubmit={(mbps) => edit({ channelMbps: mbps })}
+                          onClose={() => setChannelHelp(false)}
+                        />
+                      )}
                     </SettingsCard>
                   </div>
                   <SettingsCard title="Предупреждения о нагрузке" optional>
