@@ -147,6 +147,8 @@ export const remnawaveTopologyHostSchema = z.object({
   network: z.string().nullable(),
   security: z.string().nullable(),
   nodeUuids: z.array(z.string()),
+  /** Адрес Host удалось превратить в IP (или это уже IP). Нет — DNS не ответил, и «чей Host» пока неизвестно. */
+  addressResolved: z.boolean().default(true),
   status: z.enum(REMNAWAVE_TOPOLOGY_STATUSES),
 });
 export type RemnawaveTopologyHost = z.infer<typeof remnawaveTopologyHostSchema>;

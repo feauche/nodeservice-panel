@@ -129,6 +129,10 @@ export type HostChange = {
   own: number;
   /** Своих Host, которые ещё держит прошлое срабатывание (не вернули). */
   held: number;
+  /** Сколько Host видит Remnawave всего. */
+  scanned: number;
+  /** Host, чей адрес не разрешился в DNS: чьи они, неизвестно, — их не трогали. */
+  unresolved: number;
 };
 /** До трёх имён — списком, больше — «и ещё N». */
 const someNames = (list: string[]) =>
@@ -140,7 +144,8 @@ export function hostStep(action: 'hide_host' | 'rename_host', n: number, d: Host
   const done = hide ? d.hidden.map((h) => `«${h}»`) : d.renamed.map((r) => `«${r.from}» → «${r.to}»`);
   if (done.length) {
     const word = hide ? (done.length === 1 ? 'скрыт' : `скрыто ${done.length}`) : 'изменено';
-    const detail = [someNames(done), shared].filter(Boolean).join('; ');
+    const unknown = d.unresolved ? `не проверено Host (DNS не ответил): ${d.unresolved}` : '';
+    const detail = [someNames(done), shared, unknown].filter(Boolean).join('; ');
     const what = hide
       ? done.length === 1
         ? 'Скрыт Host'
@@ -152,7 +157,9 @@ export function hostStep(action: 'hide_host' | 'rename_host', n: number, d: Host
   const why = !d.own
     ? d.shared
       ? `у ноды только общие Host (${d.shared}) — их не трогаем`
-      : 'у ноды нет своих Host'
+      : d.scanned
+        ? `у ноды нет своих Host (в Remnawave Host: ${d.scanned}, к этой ноде не привязан ни один)`
+        : 'у ноды нет своих Host (в Remnawave нет ни одного Host)'
     : d.held
       ? 'Host ещё не вернули после прошлого срабатывания'
       : hide
@@ -433,6 +440,10 @@ export class ScenariosJob {
         scope = this.store.scope(panel),
         stamp = Date.parse(status.checkedAt);
       if (!rules.some((r) => r.enabled)) return;
+      // Связь Host с нодой определяет DNS: держим его ответы «тёплыми», чтобы сбой в момент падения ноды не застал
+      // сценарий с пустой памятью (например, сразу после перезапуска панели) — у него останется прежний удачный ответ.
+      if (rules.some((r) => r.enabled && r.actions.some((a) => a === 'hide_host' || a === 'rename_host')))
+        this.warmLinks();
       const incidents = await this.db.execute(
         sql`SELECT node_uuid,kind,diagnostics FROM incidents WHERE status IN ('open','acknowledged') AND node_uuid IS NOT NULL`,
       );
@@ -640,10 +651,65 @@ export class ScenariosJob {
       this.busy = false;
     }
   }
+  /**
+   * Связи Host с нодами по карте Remnawave (читается принудительно) и Host, чей адрес не разрешился: DNS не ответил,
+   * поэтому «чей это Host» неизвестно — это не то же самое, что «у ноды нет своих Host».
+   */
   private async hostLinks() {
-    if (!this.topology) return new Map<string, string[]>();
+    if (!this.topology) return { links: new Map<string, string[]>(), unresolved: new Set<string>() };
     const topology = await this.topology.get(true);
-    return new Map(topology.hosts.map((h) => [h.id, h.nodeUuids]));
+    return {
+      links: new Map(topology.hosts.map((h) => [h.id, h.nodeUuids])),
+      unresolved: new Set(topology.hosts.filter((h) => h.addressResolved === false).map((h) => h.id)),
+    };
+  }
+  private warmedAt = 0;
+  /** Раз в несколько минут читает карту Remnawave в фоне — только чтобы ответы DNS были в памяти; сбой не важен. */
+  private warmLinks() {
+    if (Date.now() - this.warmedAt < 5 * 60_000) return;
+    this.warmedAt = Date.now();
+    void this.topology?.get().catch(() => undefined);
+  }
+  /** Паузы перед повторным чтением связей при сбое DNS: короткий сбой проходит, дольше шагу ждать не стоит. */
+  private readonly relinkDelaysMs = process.env.NODE_ENV === 'test' ? [0, 0] : [1500, 3500];
+  private async pause(ms: number) {
+    if (ms > 0) await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+  /** Host без связи, у которых причина — DNS (адрес не разрешился), а не то, что они ничьи. */
+  private undetermined(
+    hosts: Record<string, unknown>[],
+    view: { links: Map<string, string[]>; unresolved: Set<string> },
+  ) {
+    return hosts.filter(
+      (h) =>
+        typeof h.uuid === 'string' &&
+        view.unresolved.has(h.uuid) &&
+        !(view.links.get(h.uuid)?.length ?? 0) &&
+        hostNodes(h).length === 0,
+    );
+  }
+  /**
+   * Host и их связи. Если у ноды не нашлось ни одного Host, а у каких-то DNS не ответил, читает ещё раз (короткий сбой
+   * проходит), прежде чем делать вывод о том, чьи Host. Когда у ноды Host уже определились, не ждёт: Host с молчащим DNS
+   * (например, давно мёртвый домен) тогда просто попадают в итог как «не проверены».
+   */
+  private async readHosts(panel: string, apiKey: string, node: RemnawaveNode, rule: Scenario) {
+    const read = async () => {
+      const [hosts, view] = await Promise.all([this.hosts(panel, apiKey), this.hostLinks()]);
+      return {
+        hosts,
+        view,
+        unknown: this.undetermined(hosts, view),
+        owned: hosts.some((h) => this.linkedNodes(h, view.links, rule).includes(node.uuid)),
+      };
+    };
+    let result = await read();
+    for (const delay of this.relinkDelaysMs) {
+      if (result.owned || result.unknown.length === 0) break;
+      await this.pause(delay);
+      result = await read();
+    }
+    return result;
   }
   private linkedNodes(host: Record<string, unknown>, links: Map<string, string[]>, rule?: Scenario) {
     const automatic = links.get(String(host.uuid)) ?? hostNodes(host);
@@ -657,11 +723,12 @@ export class ScenariosJob {
     const [status, c] = await Promise.all([this.remna.status(), this.credentials.credentials()]);
     if (!c || !status.domain || c.domain !== status.domain) throw new Error('Подключите Remnawave.');
     const scope = this.store.scope(c.domain);
-    const [hosts, links, rules] = await Promise.all([
+    const [hosts, view, rules] = await Promise.all([
       this.hosts(c.domain, c.apiKey),
       this.hostLinks(),
       this.store.list(c.domain),
     ]);
+    const links = view.links;
     return {
       hosts: await Promise.all(
         hosts
@@ -682,7 +749,9 @@ export class ScenariosJob {
                   ? 'IP/DNS, UUID ноды или уникальный inbound'
                   : hostNodes(h).length
                     ? 'UUID ноды в Host'
-                    : 'Требуется ручная привязка',
+                    : view.unresolved.has(String(h.uuid))
+                      ? 'DNS не ответил — связь с нодой пока неизвестна'
+                      : 'Требуется ручная привязка',
               nodeNames: nodes.map((id) => status.nodes.find((n) => n.uuid === id)?.name ?? id),
               disabled: h.isDisabled === true,
               eligible: nodes.length === 1 && !h.isDisabled,
@@ -690,7 +759,9 @@ export class ScenariosJob {
                 nodes.length !== 1
                   ? nodes.length
                     ? 'Общий Host: изменение пропускается'
-                    : 'Связь не определена; назначьте ноду вручную'
+                    : view.unresolved.has(String(h.uuid))
+                      ? 'DNS не ответил: связь определится при следующем чтении'
+                      : 'Связь не определена; назначьте ноду вручную'
                   : h.isDisabled
                     ? 'Уже выключен'
                     : 'Может быть скрыт по сценарию',
@@ -718,7 +789,9 @@ export class ScenariosJob {
   async hideHosts(panel: string, scope: string, rule: Scenario, node: RemnawaveNode): Promise<HostChange> {
     const c = await this.credentials.credentials();
     if (!c || c.domain !== panel) throw new Error('Подключение изменилось');
-    const [hosts, links] = await Promise.all([this.hosts(panel, c.apiKey), this.hostLinks()]);
+    // Сбой DNS в момент падения ноды не должен оставить сценарий без Host: связи перечитываются, а если Host так и
+    // остались неопределёнными, шаг говорит об этом, а не «у ноды нет своих Host».
+    const { hosts, view, unknown } = await this.readHosts(panel, c.apiKey, node, rule);
     let changed = 0,
       shared = 0,
       own = 0,
@@ -727,7 +800,7 @@ export class ScenariosJob {
       hidden: string[] = [],
       renamed: HostChange['renamed'] = [];
     for (const host of hosts) {
-      const nodes = this.linkedNodes(host, links, rule);
+      const nodes = this.linkedNodes(host, view.links, rule);
       if (!nodes.includes(node.uuid)) continue;
       if (nodes.length !== 1) {
         shared++;
@@ -799,11 +872,22 @@ export class ScenariosJob {
         )
       )
         throw new Error('Условия больше не подтверждены или нода исключена — изменение Host отменено');
-      const freshLinks = await this.hostLinks();
+      let freshLinks = await this.hostLinks();
+      // Привязку подтверждаем тем же DNS: короткий сбой на этом чтении не должен отменять изменение.
+      for (const delay of this.relinkDelaysMs) {
+        if (!freshLinks.unresolved.has(host.uuid) || (freshLinks.links.get(host.uuid)?.length ?? 0) > 0)
+          break;
+        await this.pause(delay);
+        freshLinks = await this.hostLinks();
+      }
       const fresh = (await this.hosts(panel, c.apiKey)).find((h) => h.uuid === host.uuid);
       if (!fresh || hostFingerprint(fresh) !== hostFingerprint(host))
         throw new Error('Host изменён другим администратором; действие пропущено');
-      const currentNodes = this.linkedNodes(fresh, freshLinks, rule);
+      const currentNodes = this.linkedNodes(fresh, freshLinks.links, rule);
+      if (currentNodes.length === 0 && freshLinks.unresolved.has(host.uuid))
+        throw new Error(
+          `Не удалось подтвердить привязку Host «${previousName(host)}»: DNS не ответил — действие отменено`,
+        );
       if (currentNodes.length !== 1 || currentNodes[0] !== node.uuid)
         throw new Error('Привязка Host изменилась — действие отменено');
       await this.store.write(key, ledger);
@@ -832,6 +916,19 @@ export class ScenariosJob {
       if (patch.isDisabled) hidden.push(previousName(host));
       if (patch.remark) renamed.push({ from: original.remark ?? '', to: patch.remark.trim() });
     }
+    if (own === 0 && shared === 0 && held === 0) {
+      // В журнал сервера — цифры, по которым видно, почему Host не нашлись (на экране панели их не всегда достаточно).
+      this.log.warn(
+        `Сценарий «${rule.name}»: у ноды «${node.name}» (${node.address}) Host не найдены — всего Host ${hosts.length}, DNS не ответил для ${unknown.length}`,
+      );
+      if (unknown.length > 0) {
+        // Ничего не определили, а Host с молчащим DNS есть: «нет своих Host» было бы неправдой. Host не тронуты.
+        const named = unknown.slice(0, 3).map((h) => `«${previousName(h)}»`);
+        throw new Error(
+          `Не удалось определить, какие Host у ноды: DNS не ответил для ${unknown.length} из ${hosts.length} Host (${someNames(named)}). Host не тронуты — проверьте DNS на сервере панели`,
+        );
+      }
+    }
     const what = rule.actions.includes('rename_host')
       ? rule.actions.includes('hide_host')
         ? 'Изменено и скрыто'
@@ -839,7 +936,7 @@ export class ScenariosJob {
       : 'Скрыто';
     // До трёх Host — по именам, больше — числом: строка уходит и в событие, и в Telegram.
     const text = `${what} Host: ${changed > 0 && changed <= 3 ? names.join(', ') : changed}${shared ? `; общих Host пропущено: ${shared}` : ''}`;
-    return { text, hidden, renamed, shared, own, held };
+    return { text, hidden, renamed, shared, own, held, scanned: hosts.length, unresolved: unknown.length };
   }
   /**
    * После восстановления ноды: вернуть Host, которые менял этот сценарий, или сказать в событии ноды, почему

@@ -66,6 +66,13 @@ function addressIps(value: unknown, resolved: ReadonlyMap<string, readonly strin
   );
 }
 
+/** Все адреса из значения — IP или домены, на которые DNS ответил; домен без ответа делает «чей это Host» неизвестным. */
+function addressResolved(value: unknown, resolved: ReadonlyMap<string, readonly string[]>): boolean {
+  return topologyAddressTokens(value).every(
+    (address) => isIP(address) || (resolved.get(address)?.length ?? 0) > 0,
+  );
+}
+
 function configOf(profile: Row): Row {
   if (profile.config && typeof profile.config === 'object') return profile.config as Row;
   if (typeof profile.config === 'string') {
@@ -435,6 +442,7 @@ export function buildRemnawaveTopology(
       inboundTag: text(matchingInbound?.tag) || text(inbound.tag) || null,
       ...proto,
       nodeUuids,
+      addressResolved: addressResolved(raw.address, resolvedAddresses),
       status,
     };
   });

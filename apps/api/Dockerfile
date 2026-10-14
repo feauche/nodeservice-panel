@@ -42,7 +42,8 @@ LABEL org.opencontainers.image.title="NodeService API" \
       org.opencontainers.image.revision=$APP_COMMIT \
       org.opencontainers.image.created=$APP_BUILT_AT \
       org.opencontainers.image.version=$APP_VERSION
-ENV NODE_ENV=production PORT=3000
+# Больше общих потоков Node (по умолчанию 4): DNS-запросы, файлы и сжатие не должны ждать друг друга в очереди.
+ENV NODE_ENV=production PORT=3000 UV_THREADPOOL_SIZE=16
 # Резервные копии из панели: pg_dump/pg_restore той же версии, что Postgres в стеке (18, из репозитория PGDG).
 # ns-tar / ns-du — копии tar и du с единственным правом «читать любой файл» (cap_dac_read_search): ими
 # панель упаковывает «Дополнительные файлы и папки» сервера (/ смонтирован только на чтение). Право

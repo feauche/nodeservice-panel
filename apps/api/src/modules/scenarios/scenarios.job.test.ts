@@ -35,6 +35,8 @@ function fixture(
     incident?: { id: string; title: string } | null;
     /** Уйдёт ли сообщение в Telegram сейчас (TelegramService.outlook). */
     telegram?: 'send' | 'quiet' | 'off' | 'event_off';
+    /** Свои ответы карты Remnawave: по одному на чтение, последний повторяется (например, сбой DNS и затем порядок). */
+    topology?: Array<{ nodeUuids: string[]; addressResolved: boolean }>;
   } = {},
 ) {
   const data = new Map<string, unknown>();
@@ -49,6 +51,8 @@ function fixture(
     };
   let h = host ?? { uuid: 'host', nodes: [node.uuid], isDisabled: false, updatedAt: 'v1', remark: 'Host' };
   const calls: Record<string, unknown>[] = [];
+  /** С каким флагом принудительного чтения спрашивали карту Remnawave. */
+  const reads: boolean[] = [];
   vi.stubGlobal(
     'fetch',
     vi.fn(async (_url: string, init?: RequestInit) => {
@@ -103,7 +107,17 @@ function fixture(
     tcp as never,
     events as never,
     notify as never,
-    links ? ({ get: async () => ({ hosts: [{ id: 'host', nodeUuids: links }] }) } as never) : undefined,
+    opts.topology
+      ? ({
+          get: async (force?: boolean) => {
+            reads.push(Boolean(force));
+            const answer = opts.topology?.[Math.min(reads.length - 1, opts.topology.length - 1)];
+            return { hosts: [{ id: 'host', ...answer }] };
+          },
+        } as never)
+      : links
+        ? ({ get: async () => ({ hosts: [{ id: 'host', nodeUuids: links }] }) } as never)
+        : undefined,
     permissions as never,
     incidents as never,
   );
@@ -117,6 +131,7 @@ function fixture(
     notify,
     tcp,
     calls,
+    reads,
     getHost: () => h,
     setHost: (v: Record<string, unknown>) => {
       h = v;
@@ -674,6 +689,71 @@ describe('Сценарии: реальные правила владения Hos
     expect(run.steps).toEqual([
       expect.objectContaining({ action: 'hide_host', n: 1, word: 'скрыт', detail: '«Host»' }),
       expect.objectContaining({ action: 'rename_host', n: 2, word: 'изменено', detail: '«Host» → «Host ⚠️»' }),
+    ]);
+  });
+  const RESOLVED = { nodeUuids: [node.uuid], addressResolved: true };
+  const UNRESOLVED = { nodeUuids: [], addressResolved: false };
+  const domainHost = {
+    uuid: 'host',
+    nodes: [],
+    isDisabled: false,
+    updatedAt: 'v1',
+    remark: 'США',
+    address: 'tusa.example.org',
+  };
+  it('DNS не ответил на первом чтении: сценарий читает связи заново и меняет Host, а не пишет «нет своих Host»', async () => {
+    const f = fixture(domainHost, undefined, { topology: [UNRESOLVED, RESOLVED] });
+    const run = await fire(f, ['hide_host']);
+    expect(f.calls).toEqual([{ uuid: 'host', isDisabled: true }]);
+    expect(run.steps).toEqual([expect.objectContaining({ word: 'скрыт', detail: '«США»' })]);
+    // Шаг читает связи принудительно (прогрев DNS в фоне — обычным чтением): сбой DNS в момент падения ноды не
+    // должен держаться всю минуту ожидания сценария.
+    expect(f.reads.filter(Boolean).length).toBeGreaterThanOrEqual(2);
+  });
+  it('DNS не отвечает совсем: шаг «не вышел» и называет причину, Host не трогаем', async () => {
+    const f = fixture(domainHost, undefined, { topology: [UNRESOLVED] });
+    const run = await fire(f, ['hide_host']);
+    expect(f.calls).toEqual([]);
+    expect(run.failed).toBe(true);
+    expect(run.steps).toEqual([
+      expect.objectContaining({
+        tone: 'crit',
+        failed: true,
+        word: 'не вышло',
+        detail: expect.stringContaining('DNS не ответил для 1 из 1 Host'),
+      }),
+    ]);
+    expect(JSON.stringify(run.steps)).not.toContain('нет своих Host');
+  });
+  it('пока есть сценарии с Host, DNS прогревается в фоне — раз в 5 минут, не чаще', async () => {
+    vi.useFakeTimers();
+    const start = Date.parse('2026-10-12T00:00:00Z');
+    const f = fixture(domainHost, undefined, { topology: [RESOLVED] });
+    await polls(f, start, 0, 3);
+    expect(f.reads.filter((forced) => !forced)).toHaveLength(1);
+    await polls(f, start, 4, 6);
+    expect(f.reads.filter((forced) => !forced)).toHaveLength(2);
+  });
+  it('сценарий без Host (только уведомление) карту Remnawave и DNS не трогает', async () => {
+    vi.useFakeTimers();
+    const f = fixture(domainHost, undefined, { topology: [RESOLVED] });
+    f.setRules([{ ...rule, actions: ['notify'] } as never]);
+    await polls(f, Date.parse('2026-10-12T00:00:00Z'), 0, 3);
+    expect(f.reads).toEqual([]);
+  });
+  it('у ноды правда нет своих Host (DNS ответил, Host привязаны к другим) — честное «нет», с цифрами', async () => {
+    const f = fixture(domainHost, undefined, {
+      topology: [{ nodeUuids: ['another'], addressResolved: true }],
+    });
+    const run = await fire(f, ['hide_host']);
+    expect(f.calls).toEqual([]);
+    expect(run.failed).toBe(false);
+    expect(run.steps).toEqual([
+      expect.objectContaining({
+        word: 'не скрыт',
+        tone: 'warn',
+        detail: 'у ноды нет своих Host (в Remnawave Host: 1, к этой ноде не привязан ни один)',
+      }),
     ]);
   });
   it('у ноды нет своих Host — «не скрыт» и почему, жёлтым', async () => {

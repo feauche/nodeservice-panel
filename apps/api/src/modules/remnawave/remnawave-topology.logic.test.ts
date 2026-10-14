@@ -107,6 +107,17 @@ describe('buildRemnawaveTopology', () => {
     expect(result.hosts[0]).toMatchObject({ nodeUuids: ['node-nl'], status: 'error' });
   });
 
+  it('помечает Host, адрес которого не разрешился: «чей он» неизвестно, а не «ничей»', () => {
+    const src = source();
+    src.hosts[0] = { ...src.hosts[0], address: 'tusa.example.org' };
+    const down = buildRemnawaveTopology(src, new Map([['tusa.example.org', []]]));
+    expect(down.hosts[0]).toMatchObject({ addressResolved: false });
+    const up = buildRemnawaveTopology(src, new Map([['tusa.example.org', ['10.0.0.1']]]));
+    expect(up.hosts[0]).toMatchObject({ addressResolved: true, nodeUuids: ['node-ru'] });
+    // IP-адрес спрашивать у DNS не нужно: он разрешён всегда.
+    src.hosts[0] = { ...src.hosts[0], address: '10.0.0.1' };
+    expect(buildRemnawaveTopology(src, new Map()).hosts[0]).toMatchObject({ addressResolved: true });
+  });
   it('сообщает о проблеме, только если инбаунд хоста не запущен ни на одной ноде', () => {
     const input = source();
     (input.nodes[0] as Record<string, unknown>).configProfile = {

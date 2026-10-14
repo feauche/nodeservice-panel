@@ -37,7 +37,10 @@ export class RemnawaveTopologyService {
         detail: 'Remnawave не подключена.',
       });
     const source = await this.client.readTopology(creds.domain, creds.apiKey);
-    const resolvedAddresses = await this.addresses.resolveAddresses(topologyAddresses(source));
+    // Принудительное чтение (сценарии) заново спрашивает адреса, на которые недавно не ответил DNS.
+    const resolvedAddresses = await this.addresses.resolveAddresses(topologyAddresses(source), {
+      retryFailed: force,
+    });
     const value = buildRemnawaveTopology(source, resolvedAddresses);
     value.configSnapshot = await this.captureConfigSnapshot(value);
     addRuntime(value);
