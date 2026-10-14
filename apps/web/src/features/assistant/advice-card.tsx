@@ -1,18 +1,12 @@
-import {
-  ASSISTANT_CHECK_LABELS,
-  type AssistantAdvice,
-  type AssistantCheck,
-  integrationsStatusSchema,
-} from '@nodeservice/shared';
-import { useQuery } from '@tanstack/react-query';
+import { ASSISTANT_CHECK_LABELS, type AssistantAdvice, type AssistantCheck } from '@nodeservice/shared';
 import { useNavigate } from '@tanstack/react-router';
 import { ArrowUpRightIcon, CoinsIcon, PlugIcon, RadarIcon, WalletIcon } from 'lucide-react';
 import { useContext } from 'react';
 import { CountryFlag } from '@/components/country-flag';
+import { useIntegrationsStatus } from '@/features/integrations/integrations-status';
 import { NodeLinkContext } from '@/features/knowledge/markdown';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { Pill } from '@/features/settings/settings-ui';
-import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 /** Что покажет проверка и куда ведёт кнопка — одними словами в чате и в боковой панели. */
@@ -39,15 +33,6 @@ const CHECKS: Record<
   },
 };
 const PROVIDER: Partial<Record<AssistantCheck, 'dpi' | 'bschecker'>> = { dpi: 'dpi', bs: 'bschecker' };
-
-/** Подключённые интеграции и их баланс: тот же запрос, что у страниц интеграций, из кэша. */
-function useIntegrationsStatus() {
-  return useQuery({
-    queryKey: ['integrations'],
-    queryFn: ({ signal }) => api.get('/integrations', integrationsStatusSchema, signal),
-    staleTime: 30_000,
-  });
-}
 
 function CheckTile({ check }: { check: AssistantCheck }) {
   const box = 'grid size-[38px] flex-none place-items-center rounded-[11px]';

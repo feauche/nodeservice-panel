@@ -238,12 +238,17 @@ function ConnectionCard({
 export function IntegrationsPage({
   kind,
   initialNode,
+  initialPort,
+  initialSni,
   initialRecord,
   onInitialNodeUsed,
 }: {
   kind: 'dpi' | 'dns' | 'bschecker';
   /** Нода из совета Ассистента: открыть проверку сразу с ней. */
-  initialNode?: string;
+  initialNode?: string | undefined;
+  /** BS Checker: порт и имя SNI подключения ноды из ссылки события. */
+  initialPort?: number | undefined;
+  initialSni?: string | undefined;
   /** DNS-запись из события ноды: открыть её окно сразу. */
   initialRecord?: string | undefined;
   onInitialNodeUsed?: () => void;
@@ -268,6 +273,8 @@ export function IntegrationsPage({
             <BsCheckerWorkspace
               settings={() => setSettingsOpen(true)}
               initialNode={initialNode}
+              initialPort={initialPort}
+              initialSni={initialSni}
               onInitialNodeUsed={onInitialNodeUsed}
             />
           ) : kind === 'dpi' ? (

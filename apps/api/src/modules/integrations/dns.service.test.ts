@@ -309,3 +309,261 @@ describe('DNS: шаги в событии ноды после смены адр�
     );
   });
 });
+
+describe('DNS: свой адрес вместо адреса ноды', () => {
+  /** Служба с «базой» в памяти: записи, связи, отметки «свой адрес» и настройки автозамены. */
+  function own(over: Record<string, unknown> = {}) {
+    const f = fixture();
+    const rows = new Map<string, unknown>([
+      ['dns.settings.panel', { automaticNodes: [], automaticRecords: [f.record.id] }],
+    ]);
+    f.internals.read = async (key) => rows.get(key) ?? null;
+    f.internals.write = async (key, value) => {
+      rows.set(key, value);
+    };
+    const record = { ...f.record, ...over };
+    vi.mocked(f.service.overview).mockResolvedValue({ records: [record], errors: [] } as never);
+    vi.mocked(f.service.settings).mockImplementation(
+      async () =>
+        (rows.get('dns.settings.panel') ?? { automaticNodes: [], automaticRecords: [] }) as {
+          automaticNodes: string[];
+          automaticRecords: string[];
+        },
+    );
+    const send = (address: string, id = record.id, expected = record.content) =>
+      f.service.apply({ recordId: id, address, expected });
+    return { ...f, rows, record, send };
+  }
+
+  it('запись с нодой: уходит свой адрес, связь с нодой не меняется, запись помечена, автозамена выключена', async () => {
+    const f = own();
+    await expect(f.send('203.0.113.10')).resolves.toMatchObject({
+      changed: true,
+      own: true,
+      to: '203.0.113.10',
+    });
+    expect(f.providerRequest).toHaveBeenCalledWith(
+      'cloudflare',
+      expect.stringContaining('/dns_records/record'),
+      'PATCH',
+      { content: '203.0.113.10' },
+      undefined,
+      expect.anything(),
+    );
+    expect(f.rows.get('dns.custom.panel')).toEqual({ [f.record.id]: '203.0.113.10' });
+    expect(f.rows.has('dns.links.panel')).toBe(false);
+    expect(f.rows.get('dns.settings.panel')).toEqual({ automaticNodes: [], automaticRecords: [] });
+  });
+
+  it('в журнал замен попадает пометка «свой адрес»', async () => {
+    const f = own();
+    await f.send('203.0.113.10');
+    expect(f.internals.log).toHaveBeenCalledWith(
+      expect.objectContaining({ custom: true, next: '203.0.113.10', status: 'success', automatic: false }),
+    );
+  });
+
+  it('адрес не того вида — отказ по-русски, к провайдеру не ходим', async () => {
+    const f = own();
+    await expect(f.send('2001:db8::1')).rejects.toThrow('Введите IPv4-адрес');
+    await expect(f.send('не адрес')).rejects.toThrow('Введите IPv4-адрес');
+    expect(f.providerRequest).not.toHaveBeenCalled();
+    const v6 = own({ type: 'AAAA', content: '2001:db8::1' });
+    await expect(v6.send('203.0.113.10')).rejects.toThrow('Введите IPv6-адрес');
+  });
+
+  it('IPv6 приводится к привычному виду: заглавные и нули не создают «другой» адрес', async () => {
+    const f = own({ type: 'AAAA', content: '2001:db8::1' });
+    await expect(f.send('2001:DB8:0:0:0:0:0:1')).resolves.toMatchObject({ changed: false, own: true });
+    expect(f.providerRequest).not.toHaveBeenCalled();
+    expect(f.rows.get('dns.custom.panel')).toEqual({ [f.record.id]: '2001:db8::1' });
+    await expect(f.send('2001:db8::2', f.record.id, '2001:db8::1')).resolves.toMatchObject({ changed: true });
+    expect(f.providerRequest).toHaveBeenCalledWith(
+      'cloudflare',
+      expect.any(String),
+      'PATCH',
+      { content: '2001:db8::2' },
+      undefined,
+      expect.anything(),
+    );
+  });
+
+  it('запись без ноды тоже меняется своим адресом и ничего не пишет о ноде', async () => {
+    const f = own({ nodes: [] });
+    await expect(f.send('198.51.100.7')).resolves.toMatchObject({ changed: true, own: true });
+    expect(f.rows.get('dns.custom.panel')).toEqual({ [f.record.id]: '198.51.100.7' });
+    expect(f.rows.has('dns.links.panel')).toBe(false);
+  });
+
+  it('адрес уже такой — запись не трогаем, но отмечаем как «свой»', async () => {
+    const f = own();
+    await expect(f.send('192.0.2.1')).resolves.toMatchObject({ changed: false, own: true });
+    expect(f.providerRequest).not.toHaveBeenCalled();
+    expect(f.rows.get('dns.custom.panel')).toEqual({ [f.record.id]: '192.0.2.1' });
+  });
+
+  it('следом замена адресом ноды снимает отметку «свой адрес»', async () => {
+    const f = own();
+    await f.send('203.0.113.10');
+    vi.mocked(f.service.overview).mockResolvedValue({
+      records: [{ ...f.record, content: '203.0.113.10', custom: true }],
+      errors: [],
+    } as never);
+    await f.service.apply({ recordId: f.record.id, nodeUuid: 'node-b', expected: '203.0.113.10' });
+    expect(f.rows.get('dns.custom.panel')).toEqual({});
+    expect(f.rows.get('dns.links.panel')).toEqual({ [f.record.id]: 'node-b' });
+  });
+
+  it('у записи со своим адресом автозамену включить нельзя', async () => {
+    const f = own({ custom: true });
+    await expect(f.service.setSettings(f.record.id, true)).rejects.toThrow('У записи свой адрес');
+  });
+
+  it('REG.RU: номер записи включает адрес — отметка и настройки переезжают на новую запись', async () => {
+    const reg = vi.fn().mockResolvedValue({});
+    const f = fixture();
+    const record = {
+      id: 'regru|zone|www:A:192.0.2.1',
+      provider: 'regru',
+      zone: 'example.com',
+      zoneId: 'zone',
+      recordId: 'www:A:192.0.2.1',
+      subname: 'www',
+      name: 'www.example.com',
+      type: 'A',
+      content: '192.0.2.1',
+      ttl: 600,
+      nodes: [],
+    };
+    const moved = {
+      ...record,
+      id: 'regru|zone|www:A:203.0.113.10',
+      recordId: 'www:A:203.0.113.10',
+      content: '203.0.113.10',
+    };
+    const service = f.service as unknown as { integrations: { reg: typeof reg } };
+    service.integrations.reg = reg;
+    const rows = new Map<string, unknown>([
+      ['dns.settings.panel', { automaticNodes: [], automaticRecords: [] }],
+    ]);
+    f.internals.read = async (key) => rows.get(key) ?? null;
+    f.internals.write = async (key, value) => void rows.set(key, value);
+    vi.mocked(f.service.overview)
+      .mockResolvedValueOnce({ records: [record], errors: [] } as never)
+      .mockResolvedValue({ records: [record, moved], errors: [] } as never);
+    await f.service.apply({ recordId: record.id, address: '203.0.113.10', expected: '192.0.2.1' });
+    expect(reg).toHaveBeenCalledWith(
+      'zone/add_alias',
+      expect.objectContaining({ ipaddr: '203.0.113.10' }),
+      expect.anything(),
+    );
+    expect(reg).toHaveBeenCalledWith(
+      'zone/remove_record',
+      expect.objectContaining({ content: '192.0.2.1' }),
+      expect.anything(),
+    );
+    expect(rows.get('dns.custom.panel')).toEqual({ [moved.id]: '203.0.113.10' });
+  });
+});
+
+describe('DNS: смена адреса ноды не переписывает записи со своим адресом', () => {
+  it('автозамена не трогает запись, в событии ноды — «оставлена со своим адресом»', async () => {
+    const noteNode = vi.fn(async () => 1);
+    const providerRequest = vi.fn().mockResolvedValue({ success: true });
+    const service = new DnsService(
+      {} as never,
+      { session: async () => ({ identity: 'account-a' }), providerRequest } as never,
+      {} as never,
+      {
+        status: async () => ({
+          connected: true,
+          error: null,
+          domain: 'panel',
+          nodes: [{ uuid: 'node-b', address: '192.0.2.2' }],
+        }),
+      } as never,
+      undefined,
+      { noteNode } as never,
+    );
+    const record = {
+      id: 'cloudflare|zone|record',
+      provider: 'cloudflare',
+      zoneId: 'zone',
+      recordId: 'record',
+      name: 'nl1.example.ru',
+      type: 'A',
+      content: '203.0.113.10',
+      custom: true,
+      nodes: [{ uuid: 'node-b', name: 'Нидерланды', address: '192.0.2.2' }],
+    };
+    const internals = service as unknown as Record<string, unknown>;
+    internals.scope = vi.fn().mockResolvedValue('scope-a');
+    internals.keyFor = vi.fn(async (kind: string) => `dns.${kind}.panel`);
+    internals.read = vi.fn(async (key: string) =>
+      key === 'dns.addresses.panel' ? { 'node-b': '192.0.2.1' } : {},
+    );
+    internals.write = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(service, 'overview').mockResolvedValue({
+      records: [record],
+      domains: [{ name: 'example.ru', provider: 'cloudflare', hosts: [] }],
+      errors: [],
+    } as never);
+    vi.spyOn(service, 'settings').mockResolvedValue({ automaticNodes: [], automaticRecords: [record.id] });
+    await service.runTick();
+    expect(providerRequest).not.toHaveBeenCalled();
+    expect(noteNode).toHaveBeenCalledWith(
+      'node-b',
+      expect.objectContaining({
+        tone: 'info',
+        action: 'DNS-запись nl1.example.ru оставлена со своим адресом',
+        detail: 'Адрес ноды сменился на 192.0.2.2, а запись ведёт на 203.0.113.10 — вы поставили его сами.',
+      }),
+    );
+  });
+});
+
+describe('DNS: отметка «свой адрес» при чтении записей', () => {
+  function reading(marks: Record<string, string>, content = '203.0.113.10') {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ response: { hosts: [] } }), { status: 200 })),
+    );
+    const providerRequest = vi.fn(async (_provider: string, path: string) =>
+      path.startsWith('/zones/')
+        ? {
+            success: true,
+            result: [{ id: 'r1', type: 'A', name: 'wall.example.com', content, ttl: 300 }],
+            result_info: { total_pages: 1 },
+          }
+        : { success: true, result: [{ id: 'z1', name: 'example.com' }], result_info: { total_pages: 1 } },
+    );
+    const service = new DnsService(
+      {} as never,
+      { status: async (p: string) => ({ connected: p === 'cloudflare' }), providerRequest } as never,
+      {
+        credentials: async () => ({ domain: 'panel.test', apiKey: 'k' }),
+        domain: async () => 'panel.test',
+      } as never,
+      { status: async () => ({ nodes: [] }) } as never,
+    );
+    const internals = service as unknown as Record<string, unknown> & {
+      load: () => Promise<{ records: Array<{ custom: boolean }> }>;
+    };
+    internals.keyFor = vi.fn(async (kind: string) => `dns.${kind}.panel`);
+    internals.read = vi.fn(async (key: string) => (key === 'dns.custom.panel' ? marks : null));
+    internals.write = vi.fn().mockResolvedValue(undefined);
+    return internals;
+  }
+  it('запись ведёт на адрес, который поставил владелец, — помечена', async () => {
+    const svc = reading({ 'cloudflare|z1|r1': '203.0.113.10' });
+    expect((await svc.load()).records[0]?.custom).toBe(true);
+  });
+  it('адрес поменяли в самом Cloudflare — отметка снимается сама', async () => {
+    const svc = reading({ 'cloudflare|z1|r1': '203.0.113.10' }, '198.51.100.9');
+    expect((await svc.load()).records[0]?.custom).toBe(false);
+  });
+  it('без отметки запись обычная', async () => {
+    const svc = reading({});
+    expect((await svc.load()).records[0]?.custom).toBe(false);
+  });
+});

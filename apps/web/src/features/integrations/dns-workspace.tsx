@@ -13,9 +13,12 @@ import {
   ClockIcon,
   EllipsisIcon,
   Loader2Icon,
+  PencilIcon,
   PlugIcon,
   RefreshCwIcon,
   SearchIcon,
+  ServerIcon,
+  TriangleAlertIcon,
   XIcon,
 } from 'lucide-react';
 import {
@@ -42,7 +45,7 @@ import { PasswordField } from '@/features/auth/components/password-field';
 import { nodeOption } from '@/features/nodes/node-option';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { formatAgo } from '@/features/security/security-format';
-import { Pill, Toggle } from '@/features/settings/settings-ui';
+import { Pill, Segmented, Toggle } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage, request } from '@/lib/api';
 import { plural } from '@/lib/plural';
 import { cn } from '@/lib/utils';
@@ -58,15 +61,33 @@ const FILTERS: Array<[Filter, string]> = [
   ['diff', 'Отличаются'],
   ['free', 'Без ноды'],
 ];
-/** match — адрес совпадает с нодой; diff — у ноды другой адрес; linked — связана, но это не IP (CNAME и т. п.). */
-type RecordState = 'match' | 'diff' | 'linked' | 'free';
+/**
+ * match — адрес совпадает с нодой; diff — у ноды другой адрес; custom — связана с нодой, но адрес поставил владелец
+ * сам (это не расхождение); linked — связана, но это не IP (CNAME и т. п.).
+ */
+type RecordState = 'match' | 'diff' | 'custom' | 'linked' | 'free';
 const isIp = (r: DnsRecord) => r.type === 'A' || r.type === 'AAAA';
 export function recordState(r: DnsRecord): RecordState {
   if (!r.nodes.length) return 'free';
+  if (r.custom) return 'custom';
   if (r.nodes.some((n) => n.address === r.content)) return 'match';
   return isIp(r) ? 'diff' : 'linked';
 }
-const STATE_ORDER: Record<RecordState, number> = { diff: 0, match: 1, linked: 2, free: 3 };
+const STATE_ORDER: Record<RecordState, number> = { diff: 0, match: 1, custom: 1, linked: 2, free: 3 };
+
+const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
+/** Адрес подходит типу записи: IPv4 для A, IPv6 для AAAA (IPv6 проверяет разбор адреса браузером). */
+function isAddressOf(type: string, value: string): boolean {
+  const v = value.trim();
+  if (type === 'A') return IPV4.test(v);
+  if (!v.includes(':')) return false;
+  try {
+    new URL(`http://[${v}]`);
+    return true;
+  } catch {
+    return false;
+  }
+}
 /** У Cloudflare TTL 1 — «авто» (5 минут). */
 const ttlText = (r: DnsRecord) => (r.provider === 'cloudflare' && r.ttl === 1 ? 'TTL авто' : `TTL ${r.ttl}`);
 function ttlHint(r: DnsRecord) {
@@ -85,6 +106,7 @@ const whenFmt = new Intl.DateTimeFormat('ru-RU', {
 type HistoryItem = z.infer<typeof dnsHistorySchema>['items'][number];
 /** Итог замены пилюлей: автозамена, вручную, частично, ошибка. */
 function HistoryPill({ item }: { item: HistoryItem }) {
+  if (item.status === 'success' && item.custom) return <Pill tone="info">Свой адрес</Pill>;
   if (item.status === 'success')
     return <Pill tone={item.automatic ? 'ok' : 'muted'}>{item.automatic ? 'Автозамена' : 'Вручную'}</Pill>;
   if (item.status === 'partial') return <Pill tone="warn">Частично</Pill>;
@@ -159,13 +181,21 @@ function RecordRow({
   onAuto: (on: boolean) => void;
 }) {
   const state = recordState(r);
-  const canAuto = isIp(r) && r.nodes.length === 1 && state !== 'diff';
+  const canAuto = isIp(r) && r.nodes.length === 1 && state !== 'diff' && state !== 'custom';
   const linked = r.nodes[0];
   const note =
     state === 'diff' ? (
       <span className="text-warn">у ноды {r.nodes.map((n) => n.address).join(', ')}</span>
     ) : state === 'match' ? (
       <span className="text-ok">совпадает с нодой</span>
+    ) : r.custom ? (
+      // Свой адрес: не расхождение, а выбор владельца — метка, а у связанной с нодой ещё и адрес ноды.
+      <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <Pill tone="info">свой адрес</Pill>
+        {r.nodes.length > 0 && (
+          <span className="text-text-3">у ноды {r.nodes.map((n) => n.address).join(', ')}</span>
+        )}
+      </span>
     ) : null;
   const key = (e: KeyboardEvent) => {
     if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
@@ -252,7 +282,10 @@ function RecordRow({
   );
 }
 
-/** Окно записи: нода, адрес в DNS и у ноды, автозамена, история записи и замена. */
+/**
+ * Окно записи: чей адрес ставить — ноды или свой. Запись без ноды открывается сразу на «Свой адрес»: у неё иначе
+ * нечего менять. Со своим адресом автозамена записи выключается (иначе панель вернула бы адрес ноды).
+ */
 function RecordDialog({
   record,
   nodes,
@@ -271,28 +304,37 @@ function RecordDialog({
   onClose: () => void;
 }) {
   const client = useQueryClient();
+  const ip = isIp(record);
+  const [mode, setMode] = useState<'node' | 'own'>(
+    ip && (!record.nodes.length || record.custom) ? 'own' : 'node',
+  );
   const [node, setNode] = useState<string | null>(
     record.nodes.length === 1 ? (record.nodes[0]?.uuid ?? null) : null,
   );
+  const [own, setOwn] = useState(record.custom || !record.nodes.length ? record.content : '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const target = nodes.find((n) => n.uuid === node);
   const state = recordState(record);
-  const ip = isIp(record);
   const same = Boolean(target && target.address === record.content);
   // Адрес уже как у ноды и запись связана с ней — менять нечего, остаётся только «Закрыть».
-  const done = same && record.nodes.some((n) => n.uuid === node);
+  const done = same && record.nodes.some((n) => n.uuid === node) && !record.custom;
   const mine = history.filter((h) => h.domain === record.name && h.provider === record.provider);
+  const ownValue = own.trim();
+  const ownValid = isAddressOf(record.type, ownValue);
+  const ownSame = ownValid && ownValue === record.content;
+  const ownBad = mode === 'own' && ownValue !== '' && !ownValid;
+  const family = record.type === 'A' ? 'IPv4' : 'IPv6';
   async function apply() {
-    if (!target) return;
+    const body =
+      mode === 'own'
+        ? ownValid && { recordId: record.id, address: ownValue, expected: record.content }
+        : target && { recordId: record.id, nodeUuid: target.uuid, expected: record.content };
+    if (!body) return;
     setBusy(true);
     setError('');
     try {
-      await api.post(
-        '/integrations/dns/apply',
-        { recordId: record.id, nodeUuid: target.uuid, expected: record.content },
-        z.object({ changed: z.boolean() }),
-      );
+      await api.post('/integrations/dns/apply', body, z.object({ changed: z.boolean() }));
       await client.invalidateQueries({ queryKey: ['dns-workspace'] });
       await client.invalidateQueries({ queryKey: ['dns-history'] });
       onClose();
@@ -302,6 +344,24 @@ function RecordDialog({
       setBusy(false);
     }
   }
+  const linkedNames = record.nodes.map((n) => `«${n.name}»`).join(', ');
+  const primary =
+    mode === 'own'
+      ? ownSame
+        ? record.custom
+          ? null
+          : 'Оставить свой адрес'
+        : ownValid
+          ? `Заменить на ${ownValue}`
+          : 'Заменить'
+      : done
+        ? null
+        : !target
+          ? 'Заменить'
+          : same
+            ? 'Связать с нодой'
+            : `Заменить на ${target.address}`;
+  const canSubmit = mode === 'own' ? ownValid : Boolean(target);
   return (
     <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
       <DialogContent
@@ -315,6 +375,41 @@ function RecordDialog({
         />
         <div className="flex min-h-0 flex-col gap-4 overflow-y-auto px-6 py-5 max-sm:px-4">
           {ip ? (
+            <Segmented<'node' | 'own'>
+              label="Чей адрес ставить в запись"
+              value={mode}
+              onChange={(m) => {
+                setMode(m);
+                setError('');
+              }}
+              items={[
+                {
+                  key: 'node',
+                  label: (
+                    <>
+                      <ServerIcon className="size-3.5" aria-hidden="true" />
+                      Адрес ноды
+                    </>
+                  ),
+                },
+                {
+                  key: 'own',
+                  label: (
+                    <>
+                      <PencilIcon className="size-3.5" aria-hidden="true" />
+                      Свой адрес
+                    </>
+                  ),
+                },
+              ]}
+            />
+          ) : (
+            <p className="rounded-[12px] border border-border bg-surface-2 px-3.5 py-2.5 text-[12.5px] text-text-2">
+              {record.type}-запись указывает не на IP-адрес — её можно только посмотреть. Менять адрес можно у
+              A и AAAA.
+            </p>
+          )}
+          {ip && mode === 'node' && (
             <div>
               <p id="dns-node-label" className="mb-1.5 text-[12.5px] font-medium text-text-2">
                 Нода
@@ -331,44 +426,115 @@ function RecordDialog({
                 className="h-10 w-full"
               />
             </div>
-          ) : (
-            <p className="rounded-[12px] border border-border bg-surface-2 px-3.5 py-2.5 text-[12.5px] text-text-2">
-              {record.type}-запись указывает не на IP-адрес — её можно только посмотреть. Менять адрес можно у
-              A и AAAA.
-            </p>
           )}
-          <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+          {ip && mode === 'own' && (
+            <div>
+              <label htmlFor="dns-own" className="mb-1.5 block text-[12.5px] font-medium text-text-2">
+                Новый адрес
+              </label>
+              <Input
+                id="dns-own"
+                value={own}
+                disabled={busy}
+                autoComplete="off"
+                spellCheck={false}
+                autoCapitalize="none"
+                inputMode={record.type === 'A' ? 'decimal' : 'text'}
+                placeholder={record.type === 'A' ? '203.0.113.10' : '2001:db8::1'}
+                aria-invalid={ownBad || undefined}
+                aria-describedby="dns-own-help"
+                onChange={(e) => {
+                  setOwn(e.target.value);
+                  setError('');
+                }}
+                className={cn(
+                  'h-10 rounded-[10px] bg-surface-2 font-mono text-[14px]',
+                  ownBad && 'border-crit',
+                )}
+              />
+              <p
+                id="dns-own-help"
+                className={cn('mt-1.5 text-[12px] leading-snug', ownBad ? 'text-crit' : 'text-text-3')}
+              >
+                {ownBad
+                  ? `Введите ${family}-адрес целиком, например ${record.type === 'A' ? '203.0.113.10' : '2001:db8::1'}`
+                  : `${family} для ${record.type}-записи. Запись поведёт на этот адрес${record.nodes.length ? ' вместо адреса ноды' : ''}.`}
+              </p>
+            </div>
+          )}
+          <div className={cn('grid gap-3', ip ? 'grid-cols-2 max-sm:grid-cols-1' : 'grid-cols-1')}>
             <div
               className={cn(
                 'rounded-[12px] border px-3.5 py-3',
-                state === 'diff' && !same ? 'border-warn/40 bg-warn/[0.06]' : 'border-border bg-surface-2/50',
+                state === 'diff' && !same && mode === 'node'
+                  ? 'border-warn/40 bg-warn/[0.06]'
+                  : 'border-border bg-surface-2/50',
               )}
             >
               <span className="text-[11px] font-semibold tracking-[0.08em] text-text-3 uppercase">
                 В DNS сейчас
               </span>
               <b className="mt-1 block font-mono text-[15px] font-semibold break-all">{record.content}</b>
-              <small className={cn('text-[12px]', state === 'diff' ? 'text-warn' : 'text-text-3')}>
-                {state === 'diff'
-                  ? 'отличается от адреса ноды'
-                  : state === 'match'
-                    ? 'совпадает с нодой'
-                    : '—'}
-              </small>
+              {/* У CNAME, TXT и других записей не-адресов узла нет — подпись про ноду не нужна. */}
+              {ip && (
+                <small className={cn('text-[12px]', state === 'diff' ? 'text-warn' : 'text-text-3')}>
+                  {state === 'diff'
+                    ? 'отличается от адреса ноды'
+                    : state === 'match'
+                      ? 'совпадает с нодой'
+                      : record.custom
+                        ? 'свой адрес'
+                        : 'не привязана к ноде'}
+                </small>
+              )}
             </div>
-            <div className="rounded-[12px] border border-border bg-surface-2/50 px-3.5 py-3">
-              <span className="text-[11px] font-semibold tracking-[0.08em] text-text-3 uppercase">
-                Адрес ноды
-              </span>
-              <b className="mt-1 block font-mono text-[15px] font-semibold break-all">
-                {target?.address ?? '—'}
-              </b>
-              <small className="text-[12px] text-text-3">
-                {target ? 'по данным Remnawave' : 'выберите ноду'}
-              </small>
-            </div>
+            {!ip ? null : mode === 'own' ? (
+              <div
+                className={cn(
+                  'rounded-[12px] border px-3.5 py-3',
+                  ownValid && !ownSame ? 'border-brand/45 bg-brand/[0.07]' : 'border-border bg-surface-2/50',
+                )}
+              >
+                <span className="text-[11px] font-semibold tracking-[0.08em] text-text-3 uppercase">
+                  Станет
+                </span>
+                <b className="mt-1 block font-mono text-[15px] font-semibold break-all">
+                  {ownValid ? ownValue : '—'}
+                </b>
+                <small className={cn('text-[12px]', ownValid && !ownSame ? 'text-brand' : 'text-text-3')}>
+                  {!ownValid ? 'введите адрес' : ownSame ? 'тот же адрес' : 'свой адрес'}
+                </small>
+              </div>
+            ) : (
+              <div className="rounded-[12px] border border-border bg-surface-2/50 px-3.5 py-3">
+                <span className="text-[11px] font-semibold tracking-[0.08em] text-text-3 uppercase">
+                  Адрес ноды
+                </span>
+                <b className="mt-1 block font-mono text-[15px] font-semibold break-all">
+                  {target?.address ?? '—'}
+                </b>
+                <small className="text-[12px] text-text-3">
+                  {target ? 'по данным Remnawave' : 'выберите ноду'}
+                </small>
+              </div>
+            )}
           </div>
-          {ip && record.nodes.length === 1 && (
+          {ip && mode === 'own' && record.nodes.length > 0 && (
+            <div
+              role="note"
+              className="flex items-start gap-2.5 rounded-[12px] border border-warn/35 bg-warn/[0.07] px-3.5 py-3 text-[12.5px] leading-relaxed text-text-2"
+            >
+              <TriangleAlertIcon className="mt-0.5 size-4 flex-none text-warn" aria-hidden="true" />
+              <span>
+                Запись связана с {record.nodes.length > 1 ? 'нодами' : 'нодой'}{' '}
+                <b className="font-semibold text-foreground">{linkedNames}</b>.{' '}
+                {record.custom
+                  ? 'Сейчас она ведёт на ваш адрес, автозамена для неё выключена. Чтобы вернуть адрес ноды, выберите «Адрес ноды».'
+                  : 'Со своим адресом автозамена для неё выключится: сменится адрес ноды — панель не перепишет ваш адрес, а напишет об этом в событие ноды. В списке строка будет отмечена «свой адрес».'}
+              </span>
+            </div>
+          )}
+          {ip && mode === 'node' && record.nodes.length === 1 && !record.custom && (
             <div className="flex items-center gap-3 rounded-[12px] border border-border px-3.5 py-3">
               <div className="min-w-0 flex-1">
                 <label htmlFor="dns-auto-dialog" className="text-[13.5px] font-semibold">
@@ -381,6 +547,12 @@ function RecordDialog({
               </div>
               <Toggle id="dns-auto-dialog" checked={auto} disabled={autoBusy} onChange={onAuto} />
             </div>
+          )}
+          {ip && mode === 'node' && record.custom && (
+            <p className="rounded-[12px] border border-border px-3.5 py-3 text-[12px] leading-snug text-text-3">
+              Автозамена выключена: у записи свой адрес. Выберите ноду и замените адрес — тогда автозамену
+              можно будет включить снова.
+            </p>
           )}
           <div>
             <p className="mb-1.5 text-[11px] font-semibold tracking-[0.08em] text-text-3 uppercase">
@@ -422,20 +594,28 @@ function RecordDialog({
         </div>
         <div className={dialogFoot}>
           <p className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">
-            {!ip ? 'Изменений не будет.' : done ? 'Адрес записи уже совпадает с нодой.' : ttlHint(record)}
+            {!ip
+              ? 'Изменений не будет.'
+              : primary === null
+                ? mode === 'own'
+                  ? 'У записи уже этот адрес, и он помечен как свой.'
+                  : 'Адрес записи уже совпадает с нодой.'
+                : mode === 'own' && ownSame
+                  ? 'Адрес не изменится: запись только перестанет сравниваться с адресом ноды.'
+                  : ttlHint(record)}
           </p>
           <div className="flex gap-2 max-sm:flex-col">
             <DialogSecondaryButton disabled={busy} onClick={onClose} className={footButton}>
-              {ip && !done ? 'Отмена' : 'Закрыть'}
+              {ip && primary !== null ? 'Отмена' : 'Закрыть'}
             </DialogSecondaryButton>
-            {ip && !done && (
+            {ip && primary !== null && (
               <DialogPrimaryButton
-                disabled={busy || !target}
+                disabled={busy || !canSubmit}
                 onClick={() => void apply()}
                 className="h-10 min-w-[128px] flex-none rounded-[10px] px-4 whitespace-nowrap max-sm:w-full sm:w-auto sm:flex-none sm:max-w-none"
               >
                 {busy && <Loader2Icon className="animate-spin" aria-hidden="true" />}
-                {!target ? 'Заменить' : same ? 'Связать с нодой' : `Заменить на ${target.address}`}
+                {primary}
               </DialogPrimaryButton>
             )}
           </div>
@@ -445,7 +625,6 @@ function RecordDialog({
   );
 }
 
-/** «История замен»: все изменения адресов в записях — вручную и автозаменой. */
 function HistoryDialog({
   open,
   onOpenChange,
@@ -922,6 +1101,8 @@ export function DnsWorkspace({
   const zoneCount = (p: string) => (data?.domains ?? []).filter((d) => d.provider === p).length;
   const types = [...new Set(records.map((r) => r.type))];
   const matched = records.filter((r) => recordState(r) === 'match').length;
+  // Записи со своим адресом, связанные с нодой, — выбор владельца: в «совпадают» и «отличаются» не входят.
+  const ownLinked = records.filter((r) => recordState(r) === 'custom').length;
   const opened = records.find((r) => r.id === openId) ?? null;
   return (
     <div className="flex flex-col gap-3">
@@ -984,9 +1165,11 @@ export function DnsWorkspace({
               status={
                 !counts.linked
                   ? 'связей пока нет'
-                  : matched === counts.linked
-                    ? 'адреса совпадают'
-                    : `совпадают ${matched} из ${counts.linked}`
+                  : `${
+                      matched === counts.linked - ownLinked
+                        ? 'адреса совпадают'
+                        : `совпадают ${matched} из ${counts.linked - ownLinked}`
+                    }${ownLinked ? ` · свой адрес ${ownLinked}` : ''}`
               }
               tone={counts.linked ? 'ok' : 'muted'}
             />

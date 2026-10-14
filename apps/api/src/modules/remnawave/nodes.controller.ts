@@ -53,6 +53,10 @@ export class NodesController {
     await this.tcpHistory.save(uuid, node.name, report);
     return report;
   }
+  /** Подключения ноды (порты и имена SNI) — для проверок снаружи: BS Checker подставляет их сам. */
+  @Get(':uuid/connections') connections(@Param('uuid', new ParseUUIDPipe()) uuid: string) {
+    return this.remnawave.nodeConnections(uuid);
+  }
   @Get(':uuid/tcp-checks') tcpChecks(@Param('uuid', new ParseUUIDPipe()) uuid: string) {
     return this.tcpHistory.list(uuid);
   }

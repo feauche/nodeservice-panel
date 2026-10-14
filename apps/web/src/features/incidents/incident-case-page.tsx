@@ -26,6 +26,7 @@ import {
   useIncidents,
   useResolveIncident,
 } from './incidents-api';
+import { OutsideCheckCard, showsOutsideCheck } from './outside-check';
 
 const STATUS_PILL: Record<IncidentStatus, { tone: 'ok' | 'warn' | 'crit' | 'muted'; label: string }> = {
   open: { tone: 'crit', label: 'Активно' },
@@ -205,6 +206,8 @@ export function IncidentCasePage({ id }: { id: string }) {
             ) : (
               <LegacyIncidentDetail detail={inc.detail} outcome={outcomeSentence(inc)} />
             )}
+            {/* Проверка снаружи: BS Checker с портом и SNI ноды и DPI Checker — откроется уже заполненной. */}
+            {node && showsOutsideCheck(inc) && <OutsideCheckCard node={node} />}
             <section>
               <h3 className="mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
                 Что происходило

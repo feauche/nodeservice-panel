@@ -219,3 +219,175 @@ describe('DNS интеграции (вариант A): домены карточ
     );
   });
 });
+
+describe('DNS: свой адрес вместо адреса ноды (вариант B)', () => {
+  const overview = (list: unknown[]) =>
+    http.get('*/api/integrations/dns/overview', () =>
+      HttpResponse.json({
+        domains: [
+          { name: 'axelvryn.ru', provider: 'cloudflare', hosts: [] },
+          { name: 'lumaxvds.org', provider: 'regru', hosts: [] },
+        ],
+        records: list,
+        unmanaged: [],
+        errors: [],
+        checkedAt: new Date().toISOString(),
+        settings: { automaticNodes: [], automaticRecords: [] },
+      }),
+    );
+
+  it('запись без ноды открывается на «Свой адрес»: ошибка по-русски, замена уходит со своим адресом', async () => {
+    const user = userEvent.setup();
+    renderPage(Page, '/integrations/dns');
+    const row = await screen.findByRole('button', { name: 'Запись panel.lumaxvds.org' });
+    await user.click(row);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('radio', { name: 'Свой адрес' })).toHaveAttribute('aria-checked', 'true');
+    const input = within(dialog).getByRole('textbox', { name: 'Новый адрес' });
+    expect(input).toHaveValue('94.131.110.5');
+    expect(within(dialog).queryByText(/Автозамена/)).toBeNull();
+    await user.clear(input);
+    await user.type(input, '203.0.113.');
+    expect(within(dialog).getByText(/Введите IPv4-адрес целиком/)).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Заменить' })).toBeDisabled();
+    await user.type(input, '10');
+    expect(within(dialog).queryByText(/Введите IPv4-адрес целиком/)).toBeNull();
+    expect(dialog).toHaveTextContent('Станет203.0.113.10');
+    await user.click(within(dialog).getByRole('button', { name: 'Заменить на 203.0.113.10' }));
+    await waitFor(() =>
+      expect(applyBody).toEqual({
+        recordId: records[3]?.id,
+        address: '203.0.113.10',
+        expected: '94.131.110.5',
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('запись с нодой открывается на «Адрес ноды»; «Свой адрес» предупреждает, что автозамена выключится', async () => {
+    const user = userEvent.setup();
+    renderPage(Page, '/integrations/dns');
+    await user.click(await screen.findByRole('button', { name: 'Запись de.axelvryn.ru' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('radio', { name: 'Адрес ноды' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(dialog).getByRole('switch')).toBeVisible();
+    await user.click(within(dialog).getByRole('radio', { name: 'Свой адрес' }));
+    expect(within(dialog).getByRole('note')).toHaveTextContent(
+      'Запись связана с нодой «Германия - 1». Со своим адресом автозамена для неё выключится',
+    );
+    expect(within(dialog).queryByRole('switch')).toBeNull();
+    await user.type(within(dialog).getByRole('textbox', { name: 'Новый адрес' }), '198.51.100.7');
+    await user.click(within(dialog).getByRole('button', { name: 'Заменить на 198.51.100.7' }));
+    await waitFor(() =>
+      expect(applyBody).toEqual({
+        recordId: records[0]?.id,
+        address: '198.51.100.7',
+        expected: '177.3.216.253',
+      }),
+    );
+  });
+
+  it('тот же адрес у записи без пометки — «Оставить свой адрес»: запись перестаёт сравниваться с нодой', async () => {
+    const user = userEvent.setup();
+    renderPage(Page, '/integrations/dns');
+    await user.click(await screen.findByRole('button', { name: 'Запись hy-o.axelvryn.ru' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('radio', { name: 'Свой адрес' }));
+    await user.type(within(dialog).getByRole('textbox', { name: 'Новый адрес' }), '147.45.126.11');
+    await user.click(within(dialog).getByRole('button', { name: 'Оставить свой адрес' }));
+    await waitFor(() =>
+      expect(applyBody).toEqual({
+        recordId: records[1]?.id,
+        address: '147.45.126.11',
+        expected: '147.45.126.11',
+      }),
+    );
+  });
+
+  it('запись со своим адресом: метка в списке, не «отличается», без автозамены; в окне — «Свой адрес» уже выбран', async () => {
+    const custom = {
+      ...rec('hy-o.axelvryn.ru', 'axelvryn.ru', 'A', '203.0.113.10', [
+        [PL, 'Польша - 2 (hy2)', '147.45.126.85'],
+      ]),
+      custom: true,
+    };
+    server.use(overview([records[0], custom, records[3]]));
+    const user = userEvent.setup();
+    renderPage(Page, '/integrations/dns');
+    const row = await screen.findByRole('button', { name: 'Запись hy-o.axelvryn.ru' });
+    expect(row).toHaveTextContent('свой адрес');
+    expect(row).toHaveTextContent('у ноды 147.45.126.85');
+    expect(within(row).queryByRole('button', { name: 'Заменить' })).toBeNull();
+    expect(within(row).queryByRole('switch')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Отличаются0' })).toBeVisible();
+    await user.click(row);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('radio', { name: 'Свой адрес' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(dialog).getByRole('textbox', { name: 'Новый адрес' })).toHaveValue('203.0.113.10');
+    expect(within(dialog).getByRole('note')).toHaveTextContent('автозамена для неё выключена');
+    expect(within(dialog).queryByRole('button', { name: /Оставить свой адрес|Заменить/ })).toBeNull();
+    await user.click(within(dialog).getByRole('radio', { name: 'Адрес ноды' }));
+    expect(dialog).toHaveTextContent('Автозамена выключена: у записи свой адрес');
+  });
+
+  it('AAAA: нужен IPv6, IPv4 отклоняется', async () => {
+    const aaaa = rec('v6.axelvryn.ru', 'axelvryn.ru', 'AAAA', '2001:db8::1', []);
+    server.use(overview([aaaa]));
+    const user = userEvent.setup();
+    renderPage(Page, '/integrations/dns');
+    await user.click(await screen.findByRole('button', { name: 'Запись v6.axelvryn.ru' }));
+    const dialog = await screen.findByRole('dialog');
+    const input = within(dialog).getByRole('textbox', { name: 'Новый адрес' });
+    await user.clear(input);
+    await user.type(input, '203.0.113.10');
+    expect(within(dialog).getByText(/Введите IPv6-адрес целиком/)).toBeVisible();
+    await user.clear(input);
+    await user.type(input, '2001:db8::2');
+    expect(within(dialog).getByRole('button', { name: 'Заменить на 2001:db8::2' })).toBeEnabled();
+  });
+
+  it('CNAME и другие записи не-адреса — только просмотр: без выбора ноды и своего адреса, плитки про ноду нет', async () => {
+    const user = userEvent.setup();
+    renderPage(Page, '/integrations/dns');
+    await user.click(await screen.findByRole('button', { name: 'Запись www.axelvryn.ru' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('CNAME-запись указывает не на IP-адрес — её можно только посмотреть');
+    expect(dialog).toHaveTextContent('В DNS сейчасaxelvryn.ru');
+    // Ни переключателя, ни поля адреса, ни плитки «Адрес ноды» с подписью «выберите ноду», ни подписи про привязку.
+    expect(within(dialog).queryByRole('radio')).toBeNull();
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
+    expect(within(dialog).queryByText(/Адрес ноды/)).toBeNull();
+    expect(within(dialog).queryByText('выберите ноду')).toBeNull();
+    expect(within(dialog).queryByText('не привязана к ноде')).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: /Заменить/ })).toBeNull();
+    expect(applyBody).toBeNull();
+  });
+
+  it('в истории записи замена на свой адрес подписана «Свой адрес»', async () => {
+    server.use(
+      http.get('*/api/integrations/dns/history', () =>
+        HttpResponse.json({
+          items: [
+            {
+              at: '2026-10-14T09:02:00.000Z',
+              domain: 'panel.lumaxvds.org',
+              provider: 'regru',
+              old: '94.131.110.4',
+              next: '94.131.110.5',
+              status: 'success',
+              automatic: false,
+              custom: true,
+            },
+          ],
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderPage(Page, '/integrations/dns');
+    await user.click(await screen.findByRole('button', { name: 'Запись panel.lumaxvds.org' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByRole('list', { name: 'История записи' })).toHaveTextContent(
+      '94.131.110.4 → 94.131.110.5Свой адрес',
+    );
+  });
+});

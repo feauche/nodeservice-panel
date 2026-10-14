@@ -121,6 +121,8 @@ export const dnsRecordSchema = z.object({
   content: z.string(),
   ttl: z.number(),
   nodes: z.array(z.object({ uuid: z.string(), name: z.string(), address: z.string() })),
+  /** Адрес поставил владелец сам, а не взят у ноды: автозамена такую запись не трогает. */
+  custom: z.boolean().default(false),
 });
 export const dnsWorkspaceSchema = z.object({
   domains: z.array(z.object({ name: z.string(), provider: z.string(), hosts: z.array(z.string()) })),
@@ -143,6 +145,8 @@ export const dnsHistorySchema = z.object({
       next: z.string(),
       status: z.string(),
       automatic: z.boolean(),
+      /** Замена на свой адрес, а не на адрес ноды. */
+      custom: z.boolean().optional(),
     }),
   ),
 });

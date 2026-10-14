@@ -63,6 +63,8 @@ export const bsRunSchema = z.object({
       tcp: z.boolean().nullable(),
       icmp: z.boolean().nullable(),
       tcpIsTls: z.boolean(),
+      /** Проверка SNI точкой: true — прошла по всем именам, false — не прошла, null — не заказывали или нет данных. */
+      sni: z.boolean().nullable().default(null),
       /** Задержка TCP или ICMP в миллисекундах; null — сервис не прислал. */
       latency: z.number().nullable().default(null),
       /** Точка не смогла разрешить домен цели — замеров нет. */
@@ -83,6 +85,8 @@ export const bsHistorySchema = z.object({
       estimatedCredits: z.number(),
       /** Нода, если проверяли её адрес; точки (op_key) — чтобы «Проверить снова» с тем же набором. */
       nodeName: z.string().nullable().default(null),
+      /** Имя, с которым заказывали проверку SNI; null — SNI не заказывали. */
+      sniHost: z.string().nullable().default(null),
       operators: z.array(z.string()).default([]),
     }),
   ),

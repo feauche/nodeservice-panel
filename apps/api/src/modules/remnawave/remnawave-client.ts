@@ -69,6 +69,21 @@ export interface RemnawaveNodeInbound {
   failed?: boolean;
 }
 
+/** Подключение ноды (инбаунд профиля) с портом и именами SNI — для проверок снаружи. */
+export interface RemnawaveNodeConnection {
+  tag: string;
+  protocol: string | null;
+  security: string | null;
+  network: string | null;
+  port: number | null;
+  names: string[];
+}
+export interface RemnawaveNodeConnections {
+  items: RemnawaveNodeConnection[];
+  /** Тег подключения, которое выбирает findNodeInbound, — выбрано по умолчанию. */
+  primary: string | null;
+}
+
 /** Обёртка над публичным API Remnawave. В тестах подменяется. */
 export interface RemnawaveClient {
   fetch(domain: string, apiKey: string, timeoutMs?: number): Promise<RemnawaveFetched>;
@@ -76,6 +91,12 @@ export interface RemnawaveClient {
   checkCertificate(domain: string): Promise<RemnawaveCert>;
   /** SNI и порт для проверки блокировки этой ноды; вызывается только когда проверка реально нужна. */
   findNodeInbound(domain: string, apiKey: string, nodeUuid: string): Promise<RemnawaveNodeInbound | null>;
+  /** Все подключения ноды с портами и именами SNI; null — ноды нет в Remnawave. */
+  listNodeConnections(
+    domain: string,
+    apiKey: string,
+    nodeUuid: string,
+  ): Promise<RemnawaveNodeConnections | null>;
   /** Профили конфигурации нод и клиентские Xray JSON-шаблоны. Только чтение. */
   listProfiles(domain: string, apiKey: string): Promise<RemnawaveProfileCatalog>;
   /** Полное содержимое одного профиля; сервис обязан скрыть секреты до передачи Ассистенту. */
@@ -117,6 +138,31 @@ function realitySni(rawInbound: unknown): string | null {
   if (Array.isArray(names) && typeof names[0] === 'string' && names[0]) return names[0].split(':')[0] ?? null;
   if (typeof r.dest === 'string' && r.dest) return r.dest.split(':')[0] ?? null;
   return null;
+}
+
+/**
+ * Имена SNI подключения: serverNames Reality (без порта) или serverName TLS. Для Reality без serverNames —
+ * домен из dest. Повторы и пустые убираются; не больше 40.
+ */
+export function inboundNames(rawInbound: unknown): string[] {
+  if (!rawInbound || typeof rawInbound !== 'object') return [];
+  const stream = (rawInbound as Record<string, unknown>).streamSettings;
+  if (!stream || typeof stream !== 'object') return [];
+  const s = stream as Record<string, unknown>;
+  const out: string[] = [];
+  const reality = s.realitySettings;
+  if (reality && typeof reality === 'object') {
+    const r = reality as Record<string, unknown>;
+    if (Array.isArray(r.serverNames))
+      for (const n of r.serverNames) if (typeof n === 'string' && n) out.push(n.split(':')[0] ?? n);
+    if (!out.length && typeof r.dest === 'string' && r.dest) out.push(r.dest.split(':')[0] ?? r.dest);
+  }
+  const tls = s.tlsSettings;
+  if (tls && typeof tls === 'object') {
+    const name = (tls as Record<string, unknown>).serverName;
+    if (typeof name === 'string' && name) out.push(name);
+  }
+  return [...new Set(out.map((n) => n.trim()).filter(Boolean))].slice(0, 40);
 }
 
 export async function getJson(
@@ -343,6 +389,71 @@ export class HttpRemnawaveClient implements RemnawaveClient {
       protocol: str(inbound.type) || null,
       network: str(inbound.network) || null,
     };
+  }
+
+  async listNodeConnections(
+    domain: string,
+    apiKey: string,
+    nodeUuid: string,
+  ): Promise<RemnawaveNodeConnections | null> {
+    const nodesBody = await getJson(`https://${domain}/api/nodes`, apiKey);
+    const nodesRaw = (nodesBody.response as unknown[] | undefined) ?? [];
+    const raw = nodesRaw.find((r) => str((r as Record<string, unknown>).uuid) === nodeUuid) as
+      | Record<string, unknown>
+      | undefined;
+    if (!raw) return null;
+    const configProfile = raw.configProfile as Record<string, unknown> | undefined;
+    const inbounds = ((configProfile?.activeInbounds as unknown[] | undefined) ?? []).filter(
+      (i): i is Record<string, unknown> => Boolean(i) && typeof i === 'object',
+    );
+    // Сырой конфиг инбаунда бывает не в списке нод, а только в профиле конфигурации: читаем профиль один раз.
+    let profileInbounds: Map<string, unknown> | null = null;
+    const fromProfile = async (tag: string): Promise<unknown> => {
+      if (!profileInbounds) {
+        profileInbounds = new Map();
+        const profileUuid =
+          str(configProfile?.activeConfigProfileUuid) ||
+          str(inbounds.find((i) => i.profileUuid)?.profileUuid);
+        if (profileUuid) {
+          try {
+            const body = await getJson(
+              `https://${domain}/api/config-profiles/${encodeURIComponent(profileUuid)}`,
+              apiKey,
+            );
+            const profile = (body.response ?? {}) as Record<string, unknown>;
+            const config = profile.config as Record<string, unknown> | undefined;
+            for (const list of [config?.inbounds, profile.inbounds])
+              if (Array.isArray(list))
+                for (const item of list) {
+                  const o = item as Record<string, unknown>;
+                  if (str(o.tag) && !profileInbounds.has(str(o.tag)))
+                    profileInbounds.set(str(o.tag), o.rawInbound ?? o);
+                }
+          } catch {
+            /* профиль не прочитался — имена SNI останутся пустыми, порты всё равно покажем */
+          }
+        }
+      }
+      return profileInbounds.get(tag);
+    };
+    const items: RemnawaveNodeConnection[] = [];
+    for (const i of inbounds) {
+      const tag = str(i.tag);
+      if (!tag) continue;
+      let names = inboundNames(i.rawInbound);
+      if (!names.length) names = inboundNames(await fromProfile(tag));
+      items.push({
+        tag,
+        protocol: str(i.type) || null,
+        security: str(i.security) || null,
+        network: str(i.network) || null,
+        port: typeof i.port === 'number' ? i.port : null,
+        names,
+      });
+    }
+    // По умолчанию — то, что выбирает проверка блокировок: Reality, иначе первое подключение с портом.
+    const primary = (items.find((c) => c.security === 'reality') ?? items.find((c) => c.port !== null))?.tag;
+    return { items, primary: primary ?? null };
   }
 
   async listProfiles(domain: string, apiKey: string): Promise<RemnawaveProfileCatalog> {

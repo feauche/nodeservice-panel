@@ -393,3 +393,30 @@ export const remnaPermissionsSchema = z.object({
     }),
   ),
 });
+
+/**
+ * Подключение ноды из профиля Remnawave: тег, протокол, порт и имена SNI. По нему проверка BS Checker из события и
+ * из формы подставляет порт и SNI ноды, а не 443 и пустое поле.
+ */
+export const nodeConnectionSchema = z.object({
+  tag: z.string(),
+  /** vless, shadowsocks, hysteria … */
+  protocol: z.string().nullable(),
+  /** reality, tls, none … */
+  security: z.string().nullable(),
+  /** raw, xhttp, ws … */
+  network: z.string().nullable(),
+  port: z.number().int().nullable(),
+  /** Имена SNI (serverNames Reality или serverName TLS); пусто — у подключения нет имени SNI. */
+  names: z.array(z.string()),
+});
+export type NodeConnection = z.infer<typeof nodeConnectionSchema>;
+
+export const nodeConnectionsSchema = z.object({
+  items: z.array(nodeConnectionSchema),
+  /** Тег подключения, через которое панель сама проверяет ноду, — оно выбрано по умолчанию. */
+  primary: z.string().nullable(),
+  /** Remnawave не ответила: списка нет, но это не значит, что подключений у ноды нет. */
+  failed: z.boolean().default(false),
+});
+export type NodeConnections = z.infer<typeof nodeConnectionsSchema>;

@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import {
+  type BsPointHistoryItem,
   type BsRental,
   type BsRentalTarget,
   type BsWs,
   type BsWsExitInput,
+  type BsWsVerify,
   bsRentalSchema,
   bsWsConnectSchema,
   bsWsSchema,
@@ -14,12 +16,16 @@ import type { z } from 'zod';
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { appMeta } from '../../infra/db/schema/index.js';
+import { AuditRepository } from '../audit/audit.repository.js';
+import { AuditService } from '../audit/audit.service.js';
+import { exitsDiff, historyItem, POINT_HISTORY_ACTIONS } from './bs-point-history.js';
 import { BsCheckerService } from './bschecker.service.js';
 import { IntegrationsService } from './integrations.service.js';
 
 type Change = {
   identity: string;
   rentalId: string;
+  rentalName?: string;
   before: BsRentalTarget[];
   after: BsRentalTarget[];
   expiresAt: string;
@@ -34,6 +40,7 @@ type Change = {
 type WsChange = {
   identity: string;
   wsId: string;
+  wsName?: string;
   before: BsWsExitInput[];
   after: BsWsExitInput[];
   balancing?: 'weighted' | 'sticky' | undefined;
@@ -54,6 +61,8 @@ export class BsRentalsService {
     @Inject(DB) private db: Db,
     private bs: BsCheckerService,
     private integrations: IntegrationsService,
+    @Optional() private audit?: AuditService,
+    @Optional() private auditRepo?: AuditRepository,
   ) {}
   /**
    * Ответ BS Checker — не ввод владельца: незнакомый вид даёт 502 «формат изменился», а не «проверьте поля»
@@ -122,6 +131,7 @@ export class BsRentalsService {
     await this.save(changeId, {
       identity: await this.integrations.identity('bschecker'),
       rentalId: id,
+      rentalName: rental.label || rental.endpoint,
       before: rental.targets,
       after: targets,
       expiresAt,
@@ -140,6 +150,10 @@ export class BsRentalsService {
     const change = await this.load(id);
     if (change.identity !== (await this.integrations.identity('bschecker')))
       throw new BadRequestException('Подключение изменилось. Подготовьте изменение заново.');
+    this.audit?.extend({
+      target: { type: 'bs_rental', id: change.rentalId, display: change.rentalName ?? null },
+      metadata: exitsDiff(change.before, change.after),
+    });
     if (change.result?.status === 'submitted') return change.result;
     if (!change.started) {
       if (Date.parse(change.expiresAt) < Date.now()) throw new BadRequestException('Подтверждение устарело.');
@@ -218,6 +232,7 @@ export class BsRentalsService {
   }
   /** Настройки подключения — секреты (путь точки работает как пароль). Нужно право ключа на изменение точек. */
   async wsConnect(id: string) {
+    this.audit?.extend({ target: { type: 'bs_ws', id } });
     return this.read(
       bsWsConnectSchema,
       await this.bs.rentalRequest(`/ws/${validId(id)}/connect`),
@@ -257,6 +272,7 @@ export class BsRentalsService {
     await this.saveWs(changeId, {
       identity: await this.integrations.identity('bschecker'),
       wsId: id,
+      wsName: ws.name,
       before,
       after: input.exits,
       balancing: input.balancing,
@@ -274,6 +290,10 @@ export class BsRentalsService {
     const change: WsChange = JSON.parse(row.value);
     if (change.identity !== (await this.integrations.identity('bschecker')))
       throw new BadRequestException('Подключение изменилось. Подготовьте изменение заново.');
+    this.audit?.extend({
+      target: { type: 'bs_ws', id: change.wsId, display: change.wsName ?? null },
+      metadata: { ...exitsDiff(change.before, change.after), changeId },
+    });
     if (change.result?.status === 'submitted') return change.result;
     if (!change.started && Date.parse(change.expiresAt) < Date.now())
       throw new BadRequestException('Подтверждение устарело.');
@@ -313,6 +333,77 @@ export class BsRentalsService {
     await this.saveWs(changeId, change);
     return change.result;
   }
+  /**
+   * Итог проверки серверов точки после сохранения: состояние читается у BS Checker (проверяет сама точка — с панели
+   * порт ноды недоступен, он открыт только адресам точки). Когда итог известен, он один раз пишется в «Журнал»:
+   * повторные вызовы с тем же изменением записи не добавляют.
+   */
+  async wsVerify(id: string, changeId?: string): Promise<BsWsVerify> {
+    const ws = await this.wsGet(id);
+    const on = ws.exits.filter((e) => e.enabled);
+    const state = (e: (typeof on)[number]) => e.state ?? 'unknown';
+    const failing = on.filter((e) => state(e) === 'down').map((e) => `${e.host}:${e.port}`);
+    const pending = on.filter((e) => state(e) === 'unknown').length;
+    const working = on.filter((e) => ['up', 'degraded'].includes(state(e))).length;
+    const done = pending === 0 && ws.applied !== false;
+    const result: BsWsVerify = {
+      done,
+      applied: ws.applied ?? null,
+      total: on.length,
+      working,
+      pending,
+      failing,
+      exits: on.map((e) => ({
+        host: e.host,
+        port: e.port,
+        backup: e.backup,
+        state: state(e),
+        hint: e.hint ?? null,
+      })),
+    };
+    if (done && changeId) {
+      // Итог записывается, когда он новый: первый после изменения или другой, чем в прошлой записи (сервер не
+      // отвечал, его починили, «Проверить снова» показало «работает»). Одно и то же дважды не пишется.
+      const sign = failing.length ? `fail:${[...failing].sort().join(',')}` : 'ok';
+      if (await this.markVerified(id, changeId, sign))
+        await this.audit?.record({
+          action: 'integration.bs.ws_exits_verified',
+          target: { type: 'bs_ws', id, display: ws.name },
+          result: failing.length ? 'failed' : 'ok',
+          severity: failing.length ? 'warn' : 'info',
+          metadata: { total: on.length, working, failing, changeId },
+        });
+    }
+    return result;
+  }
+  /** true — такой итог по этому изменению ещё не записан (чужое или прошлое изменение и повтор итога — false). */
+  private async markVerified(wsId: string, changeId: string, sign: string): Promise<boolean> {
+    if (!/^[0-9a-f-]{36}$/i.test(changeId)) return false;
+    const row = await this.db.query.appMeta.findFirst({
+      where: eq(appMeta.key, `bschecker.ws-change.${changeId}`),
+    });
+    if (!row) return false;
+    const change: WsChange = JSON.parse(row.value);
+    if (change.wsId !== wsId || change.result?.status !== 'submitted') return false;
+    const key = `bschecker.ws-verified.${changeId}`;
+    const seen = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, key) });
+    if (seen?.value === sign) return false;
+    await this.db
+      .insert(appMeta)
+      .values({ key, value: sign })
+      .onConflictDoUpdate({ target: appMeta.key, set: { value: sign, updatedAt: new Date() } });
+    return true;
+  }
+
+  /** История точки из «Журнала»: новые сверху. kind — WebSocket или TCP/UDP. */
+  async history(kind: 'ws' | 'rental', id: string): Promise<{ items: BsPointHistoryItem[] }> {
+    validId(id);
+    const entries =
+      (await this.auditRepo?.byTarget(kind === 'ws' ? 'bs_ws' : 'bs_rental', id, POINT_HISTORY_ACTIONS)) ??
+      [];
+    return { items: entries.flatMap((e) => historyItem(e) ?? []) };
+  }
+
   private async saveWs(id: string, change: WsChange) {
     const value = JSON.stringify(change);
     await this.db

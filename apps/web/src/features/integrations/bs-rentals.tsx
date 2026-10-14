@@ -4,6 +4,7 @@ import {
   type BsRentalTarget,
   type BsWs,
   type BsWsExitInput,
+  bsPointHistorySchema,
   bsRentalChangePreviewSchema,
   bsRentalChangeResultSchema,
   bsRentalCheckSchema,
@@ -12,11 +13,14 @@ import {
   bsWsChangeResultSchema,
   bsWsConnectSchema,
   bsWsListSchema,
+  bsWsVerifySchema,
   type RemnawaveNode,
 } from '@nodeservice/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  CircleCheckIcon,
   CopyIcon,
+  FileClockIcon,
   InfoIcon,
   KeyRoundIcon,
   Loader2Icon,
@@ -26,9 +30,10 @@ import {
   RefreshCwIcon,
   Settings2Icon,
   Trash2Icon,
+  TriangleAlertIcon,
   XIcon,
 } from 'lucide-react';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { CountryFlag } from '@/components/country-flag';
 import { DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
@@ -94,10 +99,13 @@ const nodeAt = (nodes: RemnawaveNode[], ...hosts: Array<string | null | undefine
 function Dot({ tone }: { tone: Tone }) {
   return <span className={cn('size-2 flex-none rounded-full', DOT[tone])} aria-hidden="true" />;
 }
-/** Выход точки: нода (если адрес совпал с нодой Remnawave) и адрес. */
+/**
+ * Выход точки: нода (если адрес совпал с нодой Remnawave) — именем сверху, адрес — снизу. Строки списка так выглядят
+ * одинаково при любой длине имени и ширине карточки.
+ */
 function ExitName({ node, host, port }: { node?: RemnawaveNode; host: string; port: number }) {
   return (
-    <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+    <span className="flex min-w-0 flex-col gap-0.5">
       {node && (
         <span className="inline-flex items-center gap-1.5 font-medium">
           {node.countryCode && <CountryFlag code={node.countryCode} size="sm" />}
@@ -110,7 +118,25 @@ function ExitName({ node, host, port }: { node?: RemnawaveNode; host: string; po
     </span>
   );
 }
+/**
+ * Строка выхода в карточке точки: точка состояния, нода с адресом и справа подпись с итогом. На узкой карточке правая
+ * часть уходит под адрес целиком, а не сжимает его так, что адрес рвётся посередине.
+ */
+function ExitRow({ tone, name, children }: { tone: Tone; name: ReactNode; children: ReactNode }) {
+  return (
+    <li className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-t border-border py-2 text-[12.5px] first:border-t-0">
+      <Dot tone={tone} />
+      <span className="min-w-[10.5rem] flex-1">{name}</span>
+      <span className="ml-auto flex items-center gap-2.5">{children}</span>
+    </li>
+  );
+}
 const small = 'h-9 rounded-[10px] px-3.5 text-[12.5px]';
+/**
+ * Кнопки карточки точки: в строке делят место поровну, одинаковой ширины, а не «одна и две» с рваным краем; на узкой
+ * карточке каждая на всю ширину.
+ */
+const cardActions = 'flex flex-wrap gap-2 [&>button]:flex-1 [&>button]:basis-44';
 const dialogBox =
   'flex max-h-[calc(100dvh-48px)] flex-col gap-0 overflow-hidden rounded-2xl border-border-2 bg-surface p-0';
 const dialogFoot =
@@ -144,11 +170,13 @@ function WsCard({
   nodes,
   onEdit,
   onConnect,
+  onHistory,
 }: {
   ws: BsWs;
   nodes: RemnawaveNode[];
   onEdit: () => void;
   onConnect: () => void;
+  onHistory: () => void;
 }) {
   const [stateLabel, stateTone] =
     ws.state === 'active' && ws.ready === false
@@ -204,15 +232,14 @@ function WsCard({
                 'muted',
               ];
               return (
-                <li
+                <ExitRow
                   key={`${e.host}:${e.port}`}
-                  className="grid grid-cols-[8px_minmax(0,1fr)_auto_auto] items-center gap-2.5 border-t border-border py-2 text-[12.5px] first:border-t-0"
+                  tone={tone}
+                  name={<ExitName node={nodeAt(nodes, e.host, e.ip)} host={e.host} port={e.port} />}
                 >
-                  <Dot tone={tone} />
-                  <ExitName node={nodeAt(nodes, e.host, e.ip)} host={e.host} port={e.port} />
                   <span className="text-text-3">{e.backup ? 'запасной' : `вес ${e.weight ?? 1}`}</span>
                   <Pill tone={tone === 'info' ? 'muted' : tone}>{label}</Pill>
-                </li>
+                </ExitRow>
               );
             })}
           </ul>
@@ -234,7 +261,7 @@ function WsCard({
       {ws.issue && (
         <p className="rounded-[10px] bg-warn-soft px-3 py-2 text-[12.5px] text-warn">{ws.issue}</p>
       )}
-      <div className="flex flex-wrap gap-2">
+      <div className={cardActions}>
         <Button variant="outline" className={small} onClick={onEdit}>
           <Settings2Icon className="size-3.5" aria-hidden="true" />
           Изменить выходы
@@ -242,6 +269,10 @@ function WsCard({
         <Button variant="outline" className={small} onClick={onConnect}>
           <KeyRoundIcon className="size-3.5" aria-hidden="true" />
           Настройки подключения
+        </Button>
+        <Button variant="outline" className={small} onClick={onHistory}>
+          <FileClockIcon className="size-3.5" aria-hidden="true" />
+          История
         </Button>
       </div>
     </article>
@@ -254,12 +285,14 @@ function RentalCard({
   nodes,
   onCheck,
   onEdit,
+  onHistory,
   checking,
 }: {
   rental: BsRental;
   nodes: RemnawaveNode[];
   onCheck: () => void;
   onEdit: () => void;
+  onHistory: () => void;
   checking: boolean;
 }) {
   const [stateLabel, stateTone] = RENTAL_STATE[r.status] ?? [r.status, 'muted'];
@@ -278,6 +311,11 @@ function RentalCard({
           <Pill tone={stateTone}>{stateLabel}</Pill>
         </span>
       </div>
+      {r.expires_at && (
+        <p className="text-[12.5px] text-text-2">
+          <span className="text-text-3">До</span> <b className="font-semibold">{day(r.expires_at)}</b>
+        </p>
+      )}
       {r.traffic.unlimited ? (
         <p className="text-[12.5px] text-text-2">
           <span className="text-text-3">Трафик</span> <b className="font-semibold">{gb(r.traffic.used_gb)}</b>{' '}
@@ -308,17 +346,16 @@ function RentalCard({
           const active = r.health.active === (t.backup ? 'backup' : 'primary');
           const rtt = t.backup ? r.health.backup_rtt_ms : r.health.primary_rtt_ms;
           return (
-            <li
+            <ExitRow
               key={`${t.host}:${t.port}:${t.backup}`}
-              className="grid grid-cols-[8px_minmax(0,1fr)_auto_auto] items-center gap-2.5 border-t border-border py-2 text-[12.5px] first:border-t-0"
+              tone={r.health.up === false && active ? 'crit' : active ? 'ok' : 'muted'}
+              name={<ExitName node={nodeAt(nodes, t.host)} host={t.host} port={t.port} />}
             >
-              <Dot tone={r.health.up === false && active ? 'crit' : active ? 'ok' : 'muted'} />
-              <ExitName node={nodeAt(nodes, t.host)} host={t.host} port={t.port} />
               <span className="text-text-3 tabular-nums">{rtt != null ? `${rtt} мс` : ''}</span>
               <Pill tone={t.backup ? 'muted' : 'ok'}>
                 {t.backup ? 'резервный' : `основной · вес ${t.weight}`}
               </Pill>
-            </li>
+            </ExitRow>
           );
         })}
       </ul>
@@ -328,7 +365,7 @@ function RentalCard({
           {r.config.desired_version}).
         </p>
       )}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className={cardActions}>
         <Button variant="outline" className={small} disabled={!r.can_check || checking} onClick={onCheck}>
           <RadarIcon className="size-3.5" aria-hidden="true" />
           Проверить с точки
@@ -337,7 +374,10 @@ function RentalCard({
           <Settings2Icon className="size-3.5" aria-hidden="true" />
           Выходные адреса
         </Button>
-        {r.expires_at && <span className="ml-auto text-[12px] text-text-3">до {day(r.expires_at)}</span>}
+        <Button variant="outline" className={small} onClick={onHistory}>
+          <FileClockIcon className="size-3.5" aria-hidden="true" />
+          История
+        </Button>
       </div>
     </article>
   );
@@ -657,6 +697,172 @@ function toExit({ rowId, port, weight, limit, ...e }: Row<ExitDraft>): BsWsExitI
   };
 }
 
+/** Сервер точки после сохранения: состояние по данным самой точки. */
+const VERIFY_STATE: Record<string, [string, Tone]> = {
+  up: ['работает', 'ok'],
+  degraded: ['с перебоями', 'warn'],
+  down: ['не отвечает', 'crit'],
+};
+/** Сколько ждём итог от точки в окне: дольше — итог виден в карточке, окно не держим. */
+const VERIFY_WINDOW_MS = 90_000;
+const VERIFY_EVERY_MS = 4_000;
+interface VerifyState {
+  done: boolean;
+  failing: number;
+  expired: boolean;
+}
+
+/**
+ * Итог проверки серверов точки после сохранения. Проверяет сама точка — с панели порт ноды недоступен (он открыт
+ * только адресам точки), поэтому ложное «не отвечает» исключено. Опрос идёт, пока не будет итога или не выйдет
+ * окно ожидания; «Проверить снова» открывает новое окно ожидания (оно бесплатное).
+ */
+function WsVerifyPanel({
+  ws,
+  nodes,
+  after,
+  changeId,
+  round,
+  fail,
+  onState,
+}: {
+  ws: BsWs;
+  nodes: RemnawaveNode[];
+  /** Список, который только что отправили, — показывается, пока точка не ответила. */
+  after: BsWsExitInput[];
+  changeId: string;
+  round: number;
+  fail: (message: string | null) => void;
+  /** Что с проверкой: итог готов (и сколько серверов не отвечает) или вышло окно ожидания. */
+  onState: (state: VerifyState) => void;
+}) {
+  const [expired, setExpired] = useState(false);
+  // Новое окно ожидания — с каждой попыткой «Проверить снова» и с каждым новым изменением.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: окно ожидания начинается заново с раундом
+  useEffect(() => {
+    setExpired(false);
+    const t = setTimeout(() => setExpired(true), VERIFY_WINDOW_MS);
+    return () => clearTimeout(t);
+  }, [round, changeId]);
+  const verify = useQuery({
+    queryKey: ['bschecker-ws-verify', ws.id, changeId, round],
+    queryFn: () => api.post(`/integrations/bschecker/ws/${ws.id}/verify`, { changeId }, bsWsVerifySchema),
+    refetchInterval: (q) => (q.state.data?.done || expired ? false : VERIFY_EVERY_MS),
+    retry: false,
+    gcTime: 0,
+  });
+  const v = verify.data;
+  const client = useQueryClient();
+  const done = v?.done === true;
+  const failingCount = v?.failing.length ?? 0;
+  useEffect(() => {
+    onState({ done, failing: failingCount, expired });
+    if (done) void client.invalidateQueries({ queryKey: ['bschecker-ws'] });
+  }, [done, failingCount, expired, onState, client]);
+  useEffect(
+    () => fail(verify.isError ? apiErrorMessage(verify.error) : null),
+    [verify.isError, verify.error, fail],
+  );
+  const waiting = !done && !expired;
+  /** «host:port» из итога точки → имя ноды, если адрес совпал с нодой Remnawave; иначе сам адрес. */
+  const failName = (hostPort: string) => {
+    const at = hostPort.lastIndexOf(':');
+    return nodeAt(nodes, at > 0 ? hostPort.slice(0, at) : hostPort)?.name ?? hostPort;
+  };
+  const rows =
+    v?.exits ??
+    after
+      .filter((e) => e.enabled)
+      .map((e) => ({ host: e.host, port: e.port, backup: e.backup, state: 'unknown', hint: null }));
+  return (
+    <div className="flex flex-col gap-3 px-6 py-5 max-sm:px-4">
+      <ul aria-label="Серверы точки после сохранения" className="flex flex-col gap-2.5">
+        {rows.map((e, i) => {
+          const [label, tone] =
+            VERIFY_STATE[e.state] ??
+            (waiting
+              ? (['проверяет', 'info'] as [string, Tone])
+              : (['нет данных', 'muted'] as [string, Tone]));
+          return (
+            <li
+              key={`${e.host}:${e.port}`}
+              className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-[12px] border border-border px-3.5 py-3"
+            >
+              <b className="w-[74px] flex-none text-[13px] font-semibold max-sm:w-full max-sm:text-[11px] max-sm:tracking-[0.08em] max-sm:text-text-3 max-sm:uppercase">
+                Сервер {i + 1}
+              </b>
+              <span className="min-w-[10.5rem] flex-1">
+                <ExitName node={nodeAt(nodes, e.host)} host={e.host} port={e.port} />
+              </span>
+              <Pill tone={tone}>
+                {tone === 'info' && <Loader2Icon className="mr-1 size-3 animate-spin" aria-hidden="true" />}
+                {label}
+              </Pill>
+              {e.state === 'down' && e.hint && <p className="w-full text-[12px] text-text-3">{e.hint}</p>}
+            </li>
+          );
+        })}
+      </ul>
+      {waiting && (
+        <p
+          role="status"
+          className="flex items-start gap-2 rounded-[12px] border border-border bg-surface-2/60 px-3.5 py-3 text-[12.5px] text-text-2"
+        >
+          <Loader2Icon className="mt-0.5 size-4 flex-none animate-spin text-brand" aria-hidden="true" />
+          <span>
+            Сохранено. Точка проверяет серверы — обычно до минуты: она сама подключается к каждому, с панели
+            этого не проверить (порт ноды открыт только адресам точки).
+          </span>
+        </p>
+      )}
+      {done && v && v.failing.length === 0 && (
+        <p
+          role="status"
+          className="flex items-start gap-2 rounded-[12px] border border-ok/35 bg-ok/[0.07] px-3.5 py-3 text-[12.5px] text-text-2"
+        >
+          <CircleCheckIcon className="mt-0.5 size-4 flex-none text-ok" aria-hidden="true" />
+          <span>
+            <b className="font-semibold text-foreground">
+              Точка проверила серверы — {v.total === 1 ? 'сервер работает' : `все ${v.total} работают`}.
+            </b>{' '}
+            Изменение записано в «Журнал».
+          </span>
+        </p>
+      )}
+      {done && v && v.failing.length > 0 && (
+        <p
+          role="alert"
+          className="flex items-start gap-2 rounded-[12px] border border-warn/35 bg-warn/[0.07] px-3.5 py-3 text-[12.5px] leading-relaxed text-text-2"
+        >
+          <TriangleAlertIcon className="mt-0.5 size-4 flex-none text-warn" aria-hidden="true" />
+          <span>
+            <b className="font-semibold text-foreground">
+              {v.failing.length >= v.total && v.total > 1
+                ? 'Ни один сервер не отвечает точке.'
+                : v.failing.length === 1
+                  ? `Сервер ${failName(v.failing[0] ?? '')} не отвечает точке.`
+                  : `Серверы не отвечают точке: ${v.failing.map(failName).join(', ')}.`}
+            </b>{' '}
+            {v.failing.length >= v.total
+              ? 'Клиенты не смогут подключиться через точку, пока хотя бы один сервер не заработает.'
+              : `Клиенты на ${v.failing.length === 1 ? 'него' : 'них'} не попадут: точка отправит их на остальные серверы.`}{' '}
+            Обычно порт на ноде закрыт для адресов точки — команды в «Настройках подключения».
+          </span>
+        </p>
+      )}
+      {!done && expired && (
+        <p
+          role="status"
+          className="rounded-[12px] border border-border bg-surface-2/60 px-3.5 py-3 text-[12.5px] text-text-2"
+        >
+          Точка пока не дала итог по всем серверам — это бывает до пары минут. Итог появится в карточке точки;
+          можно проверить снова.
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Смена серверов точки WebSocket: целиком, с подтверждением «было → станет»; повтор — тем же ключом. */
 function WsExitsEditor({ ws, nodes, onClose }: { ws: BsWs; nodes: RemnawaveNode[]; onClose: () => void }) {
   const client = useQueryClient();
@@ -687,6 +893,17 @@ function WsExitsEditor({ ws, nodes, onClose }: { ws: BsWs; nodes: RemnawaveNode[
   );
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** После сохранения окно не закрывается: показывает итог проверки серверов точкой (витрина bs-dns-2026-10, A). */
+  const [applied, setApplied] = useState<{
+    id: string;
+    before: BsWsExitInput[];
+    after: BsWsExitInput[];
+  } | null>(null);
+  const [round, setRound] = useState(0);
+  const [vstate, setVstate] = useState<VerifyState>({ done: false, failing: 0, expired: false });
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  /** Прежний список уже возвращали: второй «возврат» вернул бы тот самый список, что не отвечал, — его не предлагаем. */
+  const [reverted, setReverted] = useState(false);
   const prepare = useMutation({
     mutationFn: () =>
       api.post(
@@ -696,13 +913,46 @@ function WsExitsEditor({ ws, nodes, onClose }: { ws: BsWs; nodes: RemnawaveNode[
       ),
     onSuccess: () => setConfirm(true),
   });
+  /** Вернуть список, который был до этого изменения: ещё одно изменение, с той же проверкой после него. */
+  const revert = useMutation({
+    mutationFn: async () => {
+      if (!applied) throw new Error('Нечего возвращать.');
+      const back = await api.post(
+        `/integrations/bschecker/ws/${ws.id}/changes`,
+        {
+          exits: applied.before,
+          balancing: ws.balancing === 'sticky' ? 'sticky' : 'weighted',
+          health_check:
+            ws.health_check === 'fast' || ws.health_check === 'tolerant' ? ws.health_check : 'standard',
+        },
+        bsWsChangePreviewSchema,
+      );
+      const result = await api.post(
+        `/integrations/bschecker/ws/changes/${back.id}/execute`,
+        {},
+        bsWsChangeResultSchema,
+      );
+      return { back, result };
+    },
+    onSuccess: ({ back, result }) => {
+      void client.invalidateQueries({ queryKey: ['bschecker-ws'] });
+      if (result.status === 'submitted') {
+        setApplied({ id: back.id, before: back.before, after: back.after });
+        setReverted(true);
+        setVstate({ done: false, failing: 0, expired: false });
+        setRound((r) => r + 1);
+      } else setError('Итог возврата пока неизвестен — состояние серверов видно в карточке точки.');
+    },
+    onError: (e) => setError(apiErrorMessage(e)),
+  });
   const apply = useMutation({
     mutationFn: (id: string) =>
       api.post(`/integrations/bschecker/ws/changes/${id}/execute`, {}, bsWsChangeResultSchema),
     onSuccess: () => void client.invalidateQueries({ queryKey: ['bschecker-ws'] }),
   });
   const uncertain = apply.data?.status === 'uncertain';
-  const busy = prepare.isPending || apply.isPending;
+  const busy = prepare.isPending || apply.isPending || revert.isPending;
+  const verifying = applied !== null;
   const locked = busy || uncertain || apply.data?.status === 'submitted';
   function update(i: number, patch: Partial<ExitDraft>) {
     setExits(exits.map((e, at) => (at === i ? { ...e, ...patch } : e)));
@@ -728,7 +978,13 @@ function WsExitsEditor({ ws, nodes, onClose }: { ws: BsWs; nodes: RemnawaveNode[
     setConfirm(false);
     setError(null);
     try {
-      await apply.mutateAsync(prepare.data.id);
+      const result = await apply.mutateAsync(prepare.data.id);
+      // Изменение принято — окно переходит к проверке серверов точкой.
+      if (result.status === 'submitted') {
+        setApplied({ id: prepare.data.id, before: prepare.data.before, after: prepare.data.after });
+        setVstate({ done: false, failing: 0, expired: false });
+        setRound((r) => r + 1);
+      }
     } catch (e) {
       setError(apiErrorMessage(e));
       prepare.reset();
@@ -746,234 +1002,302 @@ function WsExitsEditor({ ws, nodes, onClose }: { ws: BsWs; nodes: RemnawaveNode[
       <DialogContent showCloseButton={false} className={cn(dialogBox, 'sm:max-w-[860px]')}>
         <DialogHead
           title={`Серверы точки · ${ws.name}`}
-          description="Список заменяется целиком: до 16 серверов, порт не 22 и не порт вашего VPN, нужен включённый основной."
+          description={
+            verifying
+              ? 'Изменение отправлено точке — ниже итог проверки серверов.'
+              : 'Список заменяется целиком: до 16 серверов, порт не 22 и не порт вашего VPN, нужен включённый основной.'
+          }
         />
-        {/* Прокручивается обёртка, а не fieldset: у fieldset прокрутка в Chromium не работает — на телефоне нижние
-            поля уходили под кнопки. */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <fieldset
-            disabled={locked}
-            className="m-0 flex min-w-0 flex-col gap-3.5 border-0 px-6 py-5 max-sm:px-4"
-          >
-            <div className="flex flex-wrap gap-4">
-              <div>
-                <Kick>Распределение</Kick>
-                <Segmented<'weighted' | 'sticky'>
-                  label="Распределение"
-                  value={balancing}
-                  onChange={(v) => {
-                    setBalancing(v);
-                    prepare.reset();
-                  }}
-                  items={[
-                    { key: 'weighted', label: 'По весу' },
-                    { key: 'sticky', label: 'Закреплять клиента' },
-                  ]}
-                />
-              </div>
-              <div>
-                <Kick>Проверка серверов</Kick>
-                <Segmented<'fast' | 'standard' | 'tolerant'>
-                  label="Проверка серверов"
-                  value={health}
-                  onChange={(v) => {
-                    setHealth(v);
-                    prepare.reset();
-                  }}
-                  items={[
-                    { key: 'fast', label: 'Быстрая' },
-                    { key: 'standard', label: 'Обычная' },
-                    { key: 'tolerant', label: 'Терпеливая' },
-                  ]}
-                />
-              </div>
-            </div>
-            <p className="text-[12px] text-text-3">
-              «Закреплять клиента» — клиент держится одного сервера, запасные тогда не используются. «Быстрая»
-              проверка быстрее снимает упавший сервер, «Терпеливая» — реже ошибается на коротких перебоях.
-            </p>
-            <p className="text-[12px] text-text-3">
-              <b className="font-medium text-text-2">Вес</b> — какую долю новых клиентов получает сервер при
-              «По весу»: с весом 2 — вдвое больше, чем с весом 1; от 1 до 100.{' '}
-              <b className="font-medium text-text-2">Лимит подключений</b> — сколько клиентов сервер держит
-              одновременно; пусто — без лимита. <b className="font-medium text-text-2">Запасной</b> получает
-              клиентов, только когда основные недоступны; вес ему не нужен.
-            </p>
-            {exits.map((e, i) => (
-              <section
-                key={e.rowId}
-                aria-label={`Сервер ${i + 1}`}
-                className="flex flex-col gap-2.5 rounded-[12px] border border-border p-3.5"
-              >
-                <div className="flex items-center gap-2">
-                  <b className="flex-1 text-[13px] font-semibold">Сервер {i + 1}</b>
-                  <Button
-                    variant="outline"
-                    className={small}
-                    onClick={() => {
-                      setExits(exits.filter((_, at) => at !== i));
-                      prepare.reset();
-                    }}
-                  >
-                    <Trash2Icon className="size-3.5" aria-hidden="true" />
-                    Убрать
-                  </Button>
-                </div>
-                <NodePick
-                  nodes={nodes}
-                  host={e.host}
-                  disabled={locked}
-                  label={`Нода сервера ${i + 1}`}
-                  onPick={(n) =>
-                    update(i, n ? { host: n.address, port: n.port ? String(n.port) : e.port } : { host: '' })
-                  }
-                />
-                {(() => {
-                  const errors = exitErrors(e);
-                  const hostError = shown(e.rowId, 'host', errors);
-                  return (
-                    <div className="grid grid-cols-[minmax(0,1fr)_112px_112px_160px] items-start gap-2.5 max-sm:grid-cols-2">
-                      <div className="flex min-w-0 flex-col max-sm:col-span-2">
-                        <label htmlFor={`ws-host-${e.rowId}`} className={fieldLabel}>
-                          Адрес
-                        </label>
-                        <Input
-                          id={`ws-host-${e.rowId}`}
-                          aria-label={`Адрес сервера ${i + 1}`}
-                          value={e.host}
-                          aria-invalid={hostError ? true : undefined}
-                          onChange={(ev) => update(i, { host: ev.target.value.trim() })}
-                          onBlur={() => touch(e.rowId, 'host')}
-                          className={cn('h-10 rounded-[10px] bg-surface-2', hostError && 'border-crit')}
-                          placeholder="IP или домен"
-                        />
-                        {hostError && (
-                          <p className="mt-1 text-[11.5px] leading-snug text-crit">{hostError}</p>
-                        )}
-                      </div>
-                      <NumField
-                        id={`ws-port-${e.rowId}`}
-                        label="Порт"
-                        ariaLabel={`Порт сервера ${i + 1}`}
-                        maxLength={5}
-                        value={e.port}
-                        error={shown(e.rowId, 'port', errors)}
-                        onChange={(port) => update(i, { port })}
-                        onBlur={() => touch(e.rowId, 'port')}
-                      />
-                      <NumField
-                        id={`ws-weight-${e.rowId}`}
-                        label="Вес"
-                        ariaLabel={`Вес сервера ${i + 1}`}
-                        maxLength={3}
-                        disabled={e.backup || locked}
-                        value={e.backup ? '' : e.weight}
-                        placeholder={e.backup ? 'не нужен' : undefined}
-                        error={shown(e.rowId, 'weight', errors)}
-                        onChange={(weight) => update(i, { weight })}
-                        onBlur={() => touch(e.rowId, 'weight')}
-                      />
-                      <NumField
-                        id={`ws-limit-${e.rowId}`}
-                        label="Лимит подключений"
-                        ariaLabel={`Лимит подключений сервера ${i + 1}`}
-                        maxLength={6}
-                        placeholder="без лимита"
-                        value={e.limit}
-                        error={shown(e.rowId, 'limit', errors)}
-                        onChange={(limit) => update(i, { limit })}
-                        onBlur={() => touch(e.rowId, 'limit')}
-                      />
-                    </div>
-                  );
-                })()}
-                <div className="flex flex-wrap gap-5 text-[12.5px]">
-                  <label htmlFor={`ws-backup-${e.rowId}`} className="flex items-center gap-2">
-                    <Toggle
-                      id={`ws-backup-${e.rowId}`}
-                      checked={e.backup}
-                      disabled={locked}
-                      onChange={(v) => update(i, { backup: v })}
-                    />
-                    Запасной
-                  </label>
-                  <label htmlFor={`ws-enabled-${e.rowId}`} className="flex items-center gap-2">
-                    <Toggle
-                      id={`ws-enabled-${e.rowId}`}
-                      checked={e.enabled}
-                      disabled={locked}
-                      onChange={(v) => update(i, { enabled: v })}
-                    />
-                    Включён
-                  </label>
-                </div>
-              </section>
-            ))}
-            <Button
-              variant="outline"
-              className={cn(small, 'self-start')}
-              disabled={exits.length >= 16 || locked}
-              onClick={() => {
-                setExits([
-                  ...exits,
-                  ...withId([
-                    { host: '', port: '443', weight: '1', limit: '', backup: false, enabled: true },
-                  ]),
-                ]);
-                prepare.reset();
-              }}
-            >
-              <PlusIcon className="size-3.5" aria-hidden="true" />
-              Добавить сервер
-            </Button>
-            {error && (
+        {verifying && applied ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <WsVerifyPanel
+              ws={ws}
+              nodes={nodes}
+              after={applied.after}
+              changeId={applied.id}
+              round={round}
+              fail={setVerifyError}
+              onState={setVstate}
+            />
+            {(verifyError || error) && (
               <p
                 role="alert"
-                className="rounded-[10px] border border-crit/30 bg-crit-soft px-3 py-2 text-[12.5px] text-crit"
+                className="mx-6 mb-5 rounded-[10px] border border-crit/30 bg-crit-soft px-3 py-2 text-[12.5px] text-crit max-sm:mx-4"
               >
-                {error}
+                {error ?? verifyError}
               </p>
             )}
-            {apply.data && (
-              <div
-                role="status"
-                className="rounded-[12px] border border-border bg-surface-2/60 px-3.5 py-3 text-[12.5px]"
-              >
-                <b className="font-semibold">
-                  {uncertain ? 'Итог изменения пока неизвестен' : 'Серверы сохранены'}
-                </b>
-                <p className="mt-0.5 text-text-3">
-                  {uncertain
-                    ? 'Повтор использует тот же ключ изменения — второго изменения не будет.'
-                    : apply.data.applied
-                      ? 'Изменение уже применено на точке.'
-                      : 'Точка применит изменение за несколько секунд — состояние видно в карточке.'}
-                </p>
-                {apply.data.warnings.map((w) => (
-                  <p key={w} className="mt-1 text-warn">
-                    {w}
-                  </p>
-                ))}
+          </div>
+        ) : (
+          /* Прокручивается обёртка, а не fieldset: у fieldset прокрутка в Chromium не работает — на телефоне нижние
+            поля уходили под кнопки. */
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <fieldset
+              disabled={locked}
+              className="m-0 flex min-w-0 flex-col gap-3.5 border-0 px-6 py-5 max-sm:px-4"
+            >
+              <div className="flex flex-wrap gap-4">
+                <div>
+                  <Kick>Распределение</Kick>
+                  <Segmented<'weighted' | 'sticky'>
+                    label="Распределение"
+                    value={balancing}
+                    onChange={(v) => {
+                      setBalancing(v);
+                      prepare.reset();
+                    }}
+                    items={[
+                      { key: 'weighted', label: 'По весу' },
+                      { key: 'sticky', label: 'Закреплять клиента' },
+                    ]}
+                  />
+                </div>
+                <div>
+                  <Kick>Проверка серверов</Kick>
+                  <Segmented<'fast' | 'standard' | 'tolerant'>
+                    label="Проверка серверов"
+                    value={health}
+                    onChange={(v) => {
+                      setHealth(v);
+                      prepare.reset();
+                    }}
+                    items={[
+                      { key: 'fast', label: 'Быстрая' },
+                      { key: 'standard', label: 'Обычная' },
+                      { key: 'tolerant', label: 'Терпеливая' },
+                    ]}
+                  />
+                </div>
               </div>
-            )}
-          </fieldset>
-        </div>
+              <p className="text-[12px] text-text-3">
+                «Закреплять клиента» — клиент держится одного сервера, запасные тогда не используются.
+                «Быстрая» проверка быстрее снимает упавший сервер, «Терпеливая» — реже ошибается на коротких
+                перебоях.
+              </p>
+              <p className="text-[12px] text-text-3">
+                <b className="font-medium text-text-2">Вес</b> — какую долю новых клиентов получает сервер при
+                «По весу»: с весом 2 — вдвое больше, чем с весом 1; от 1 до 100.{' '}
+                <b className="font-medium text-text-2">Лимит подключений</b> — сколько клиентов сервер держит
+                одновременно; пусто — без лимита. <b className="font-medium text-text-2">Запасной</b> получает
+                клиентов, только когда основные недоступны; вес ему не нужен.
+              </p>
+              {exits.map((e, i) => (
+                <section
+                  key={e.rowId}
+                  aria-label={`Сервер ${i + 1}`}
+                  className="flex flex-col gap-2.5 rounded-[12px] border border-border p-3.5"
+                >
+                  <div className="flex items-center gap-2">
+                    <b className="flex-1 text-[13px] font-semibold">Сервер {i + 1}</b>
+                    <Button
+                      variant="outline"
+                      className={small}
+                      onClick={() => {
+                        setExits(exits.filter((_, at) => at !== i));
+                        prepare.reset();
+                      }}
+                    >
+                      <Trash2Icon className="size-3.5" aria-hidden="true" />
+                      Убрать
+                    </Button>
+                  </div>
+                  <NodePick
+                    nodes={nodes}
+                    host={e.host}
+                    disabled={locked}
+                    label={`Нода сервера ${i + 1}`}
+                    onPick={(n) =>
+                      update(
+                        i,
+                        n ? { host: n.address, port: n.port ? String(n.port) : e.port } : { host: '' },
+                      )
+                    }
+                  />
+                  {(() => {
+                    const errors = exitErrors(e);
+                    const hostError = shown(e.rowId, 'host', errors);
+                    return (
+                      <div className="grid grid-cols-[minmax(0,1fr)_112px_112px_160px] items-start gap-2.5 max-sm:grid-cols-2">
+                        <div className="flex min-w-0 flex-col max-sm:col-span-2">
+                          <label htmlFor={`ws-host-${e.rowId}`} className={fieldLabel}>
+                            Адрес
+                          </label>
+                          <Input
+                            id={`ws-host-${e.rowId}`}
+                            aria-label={`Адрес сервера ${i + 1}`}
+                            value={e.host}
+                            aria-invalid={hostError ? true : undefined}
+                            onChange={(ev) => update(i, { host: ev.target.value.trim() })}
+                            onBlur={() => touch(e.rowId, 'host')}
+                            className={cn('h-10 rounded-[10px] bg-surface-2', hostError && 'border-crit')}
+                            placeholder="IP или домен"
+                          />
+                          {hostError && (
+                            <p className="mt-1 text-[11.5px] leading-snug text-crit">{hostError}</p>
+                          )}
+                        </div>
+                        <NumField
+                          id={`ws-port-${e.rowId}`}
+                          label="Порт"
+                          ariaLabel={`Порт сервера ${i + 1}`}
+                          maxLength={5}
+                          value={e.port}
+                          error={shown(e.rowId, 'port', errors)}
+                          onChange={(port) => update(i, { port })}
+                          onBlur={() => touch(e.rowId, 'port')}
+                        />
+                        <NumField
+                          id={`ws-weight-${e.rowId}`}
+                          label="Вес"
+                          ariaLabel={`Вес сервера ${i + 1}`}
+                          maxLength={3}
+                          disabled={e.backup || locked}
+                          value={e.backup ? '' : e.weight}
+                          placeholder={e.backup ? 'не нужен' : undefined}
+                          error={shown(e.rowId, 'weight', errors)}
+                          onChange={(weight) => update(i, { weight })}
+                          onBlur={() => touch(e.rowId, 'weight')}
+                        />
+                        <NumField
+                          id={`ws-limit-${e.rowId}`}
+                          label="Лимит подключений"
+                          ariaLabel={`Лимит подключений сервера ${i + 1}`}
+                          maxLength={6}
+                          placeholder="без лимита"
+                          value={e.limit}
+                          error={shown(e.rowId, 'limit', errors)}
+                          onChange={(limit) => update(i, { limit })}
+                          onBlur={() => touch(e.rowId, 'limit')}
+                        />
+                      </div>
+                    );
+                  })()}
+                  <div className="flex flex-wrap gap-5 text-[12.5px]">
+                    <label htmlFor={`ws-backup-${e.rowId}`} className="flex items-center gap-2">
+                      <Toggle
+                        id={`ws-backup-${e.rowId}`}
+                        checked={e.backup}
+                        disabled={locked}
+                        onChange={(v) => update(i, { backup: v })}
+                      />
+                      Запасной
+                    </label>
+                    <label htmlFor={`ws-enabled-${e.rowId}`} className="flex items-center gap-2">
+                      <Toggle
+                        id={`ws-enabled-${e.rowId}`}
+                        checked={e.enabled}
+                        disabled={locked}
+                        onChange={(v) => update(i, { enabled: v })}
+                      />
+                      Включён
+                    </label>
+                  </div>
+                </section>
+              ))}
+              <Button
+                variant="outline"
+                className={cn(small, 'self-start')}
+                disabled={exits.length >= 16 || locked}
+                onClick={() => {
+                  setExits([
+                    ...exits,
+                    ...withId([
+                      { host: '', port: '443', weight: '1', limit: '', backup: false, enabled: true },
+                    ]),
+                  ]);
+                  prepare.reset();
+                }}
+              >
+                <PlusIcon className="size-3.5" aria-hidden="true" />
+                Добавить сервер
+              </Button>
+              {error && (
+                <p
+                  role="alert"
+                  className="rounded-[10px] border border-crit/30 bg-crit-soft px-3 py-2 text-[12.5px] text-crit"
+                >
+                  {error}
+                </p>
+              )}
+              {apply.data && (
+                <div
+                  role="status"
+                  className="rounded-[12px] border border-border bg-surface-2/60 px-3.5 py-3 text-[12.5px]"
+                >
+                  <b className="font-semibold">
+                    {uncertain ? 'Итог изменения пока неизвестен' : 'Серверы сохранены'}
+                  </b>
+                  <p className="mt-0.5 text-text-3">
+                    {uncertain
+                      ? 'Повтор использует тот же ключ изменения — второго изменения не будет.'
+                      : apply.data.applied
+                        ? 'Изменение уже применено на точке.'
+                        : 'Точка применит изменение за несколько секунд — состояние видно в карточке.'}
+                  </p>
+                  {apply.data.warnings.map((w) => (
+                    <p key={w} className="mt-1 text-warn">
+                      {w}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </fieldset>
+          </div>
+        )}
         <div className={dialogFoot}>
           <p className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">
-            Изменение записывается в «Журнал».
+            {!verifying
+              ? 'Изменение записывается в «Журнал». Не больше 48 изменений в сутки на точку.'
+              : vstate.done && vstate.failing > 0
+                ? `Откройте порт и проверьте снова — это бесплатно.${reverted ? '' : ' Возврат прежнего списка — ещё одно изменение из 48 в сутки.'}`
+                : vstate.done
+                  ? 'Состояние серверов видно и в карточке точки.'
+                  : 'Окно можно закрыть — итог появится и в карточке точки.'}
           </p>
           <div className="flex gap-2 max-sm:flex-col">
-            <DialogSecondaryButton disabled={busy} onClick={onClose} className={footButton}>
-              Закрыть
-            </DialogSecondaryButton>
-            {apply.data?.status !== 'submitted' && (
+            {verifying && (vstate.expired || (vstate.done && vstate.failing > 0)) && (
+              <DialogSecondaryButton
+                disabled={busy}
+                onClick={() => {
+                  setVstate({ done: false, failing: 0, expired: false });
+                  setRound((r) => r + 1);
+                }}
+                className={cn(footButton, 'w-auto px-4')}
+              >
+                Проверить снова
+              </DialogSecondaryButton>
+            )}
+            {verifying && vstate.done && vstate.failing > 0 && !reverted && (
+              <DialogSecondaryButton
+                disabled={busy}
+                onClick={() => revert.mutate()}
+                className={cn(footButton, 'w-auto px-4')}
+              >
+                {revert.isPending && <Loader2Icon className="animate-spin" aria-hidden="true" />}
+                Вернуть прежний список
+              </DialogSecondaryButton>
+            )}
+            {verifying && vstate.done ? (
+              <DialogPrimaryButton
+                disabled={busy}
+                onClick={onClose}
+                className="h-10 min-w-[128px] flex-none rounded-[10px] px-4 whitespace-nowrap max-sm:w-full sm:w-auto sm:flex-none sm:max-w-none"
+              >
+                Готово
+              </DialogPrimaryButton>
+            ) : (
+              <DialogSecondaryButton disabled={busy} onClick={onClose} className={footButton}>
+                Закрыть
+              </DialogSecondaryButton>
+            )}
+            {!verifying && apply.data?.status !== 'submitted' && (
               <DialogPrimaryButton
                 disabled={busy || !exits.length}
                 onClick={() => (uncertain && prepare.data ? void execute() : void submit())}
                 className="h-10 min-w-[128px] flex-none rounded-[10px] px-4 whitespace-nowrap max-sm:w-full sm:w-auto sm:flex-none sm:max-w-none"
               >
                 {busy && <Loader2Icon className="animate-spin" aria-hidden="true" />}
-                {uncertain ? 'Получить итог изменения' : 'Сохранить серверы'}
+                {uncertain ? 'Получить итог изменения' : 'Сохранить и проверить'}
               </DialogPrimaryButton>
             )}
           </div>
@@ -982,7 +1306,7 @@ function WsExitsEditor({ ws, nodes, onClose }: { ws: BsWs; nodes: RemnawaveNode[
           open={confirm}
           onOpenChange={setConfirm}
           title="Заменить серверы точки?"
-          description={`Сейчас: ${prepare.data ? list(prepare.data.before) : '—'}. Станет: ${prepare.data ? list(prepare.data.after) : '—'}. Новые подключения пойдут на новый список.`}
+          description={`Сейчас: ${prepare.data ? list(prepare.data.before) : '—'}. Станет: ${prepare.data ? list(prepare.data.after) : '—'}. Новые подключения пойдут на новый список. После сохранения точка сама проверит серверы.`}
           yesLabel="Заменить серверы"
           onConfirm={() => void execute()}
           loading={apply.isPending}
@@ -1339,6 +1663,123 @@ function RentalCheckDialog({ rental, onClose }: { rental: BsRental; onClose: () 
   );
 }
 
+const historyFmt = new Intl.DateTimeFormat('ru-RU', {
+  day: 'numeric',
+  month: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+const HISTORY_DOT: Record<string, string> = {
+  ok: 'bg-ok',
+  warn: 'bg-warn',
+  crit: 'bg-crit',
+  acc: 'bg-brand',
+  muted: 'bg-text-3',
+};
+
+/**
+ * История точки. Журнала от самого сервиса у BS Checker нет, поэтому историю собирает панель из «Журнала»: изменения
+ * серверов и адресов, итоги проверки точкой, просмотр настроек подключения. Падения серверов и продления сюда не
+ * попадают — сервис о них не присылает.
+ */
+function PointHistoryDialog({
+  kind,
+  id,
+  name,
+  onClose,
+}: {
+  kind: 'ws' | 'rentals';
+  id: string;
+  name: string;
+  onClose: () => void;
+}) {
+  const history = useQuery({
+    queryKey: ['bschecker-point-history', kind, id],
+    queryFn: ({ signal }) =>
+      api.get(`/integrations/bschecker/${kind}/${id}/history`, bsPointHistorySchema, signal),
+  });
+  const items = history.data?.items ?? [];
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent showCloseButton={false} className={cn(dialogBox, 'sm:max-w-[640px]')}>
+        <DialogHead
+          title={`История точки · ${name}`}
+          description="Изменения и проверки, сделанные через панель, — новые сверху."
+        />
+        <div className="min-h-[220px] flex-1 overflow-y-auto px-6 py-3 max-sm:px-4">
+          {history.isPending && (
+            <div role="status" aria-label="Загрузка истории точки" className="flex flex-col gap-3 py-2">
+              {[1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-10 w-full rounded-[10px]" />
+              ))}
+            </div>
+          )}
+          {history.isError && (
+            <p
+              role="alert"
+              className="my-2 rounded-[10px] border border-crit/30 bg-crit-soft px-3 py-2 text-[12.5px] text-crit"
+            >
+              {apiErrorMessage(history.error)}
+            </p>
+          )}
+          {history.isSuccess && items.length === 0 && (
+            <div className="flex items-start gap-3 py-5">
+              <FileClockIcon className="mt-0.5 size-5 flex-none text-brand" aria-hidden="true" />
+              <div>
+                <p className="text-[13px] font-medium">Пока ничего не записано</p>
+                <p className="mt-1 text-[12px] text-text-3">
+                  История ведётся с версии 0.102.0: сюда попадают изменения серверов и адресов, итоги проверки
+                  точкой и просмотр настроек подключения. Более ранние изменения остались в общем «Журнале»
+                  без привязки к точке.
+                </p>
+              </div>
+            </div>
+          )}
+          {items.length > 0 && (
+            <ol aria-label="События точки" className="flex flex-col">
+              {items.map((item, i) => (
+                <li
+                  // biome-ignore lint/suspicious/noArrayIndexKey: события не имеют своего идентификатора
+                  key={`${item.at}-${i}`}
+                  className="grid grid-cols-[118px_10px_minmax(0,1fr)] items-start gap-2.5 border-t border-border py-2.5 text-[13px] first:border-t-0 max-sm:grid-cols-[10px_minmax(0,1fr)]"
+                >
+                  <time
+                    dateTime={item.at}
+                    className="text-[12px] text-text-3 tabular-nums max-sm:order-3 max-sm:col-start-2"
+                  >
+                    {historyFmt.format(new Date(item.at))}
+                  </time>
+                  <span
+                    className={cn(
+                      'mt-[5px] size-2 rounded-full max-sm:order-1',
+                      HISTORY_DOT[item.tone] ?? 'bg-text-3',
+                    )}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 max-sm:order-2">
+                    <b className="font-semibold">{item.title}</b>
+                    <small className="mt-0.5 block text-[12px] text-text-3">
+                      {item.detail ? `${item.detail} · ${item.by}` : item.by}
+                    </small>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+        <div className={dialogFoot}>
+          <p className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">
+            Хранится 90 дней. Падения серверов и продления BS Checker не присылает — их здесь нет.
+          </p>
+          <DialogSecondaryButton onClick={onClose} className={footButton}>
+            Закрыть
+          </DialogSecondaryButton>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /** «Арендованные точки входа»: WebSocket (/v1/ws) и TCP/UDP (/v1/rentals) — только точки вашего аккаунта. */
 export function BsRentals() {
   const nodes = useNodes().data?.nodes ?? [];
@@ -1356,6 +1797,9 @@ export function BsRentals() {
   const [connect, setConnect] = useState<BsWs | null>(null);
   const [editRental, setEditRental] = useState<BsRental | null>(null);
   const [checkRental, setCheckRental] = useState<BsRental | null>(null);
+  const [historyFor, setHistoryFor] = useState<{ kind: 'ws' | 'rentals'; id: string; name: string } | null>(
+    null,
+  );
   const count = (ws.data?.ws.length ?? 0) + (rentals.data?.rentals.length ?? 0);
   const unreadable = (ws.data?.unreadable ?? 0) + (rentals.data?.unreadable ?? 0);
   const loading = ws.isPending || rentals.isPending;
@@ -1412,6 +1856,7 @@ export function BsRentals() {
             nodes={nodes}
             onEdit={() => setEditWs(w)}
             onConnect={() => setConnect(w)}
+            onHistory={() => setHistoryFor({ kind: 'ws', id: w.id, name: w.name })}
           />
         ))}
         {rentals.data?.rentals.map((r) => (
@@ -1422,6 +1867,7 @@ export function BsRentals() {
             checking={checkRental?.id === r.id}
             onCheck={() => setCheckRental(r)}
             onEdit={() => setEditRental(r)}
+            onHistory={() => setHistoryFor({ kind: 'rentals', id: r.id, name: r.endpoint })}
           />
         ))}
         {unreadable > 0 && (
@@ -1447,6 +1893,14 @@ export function BsRentals() {
       {connect && <WsConnectDialog ws={connect} onClose={() => setConnect(null)} />}
       {editRental && <RentalEditor rental={editRental} nodes={nodes} onClose={() => setEditRental(null)} />}
       {checkRental && <RentalCheckDialog rental={checkRental} onClose={() => setCheckRental(null)} />}
+      {historyFor && (
+        <PointHistoryDialog
+          kind={historyFor.kind}
+          id={historyFor.id}
+          name={historyFor.name}
+          onClose={() => setHistoryFor(null)}
+        />
+      )}
     </section>
   );
 }

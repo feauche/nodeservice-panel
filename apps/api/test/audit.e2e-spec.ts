@@ -20,6 +20,7 @@ import { AuditRepository } from '../src/modules/audit/audit.repository.js';
 import { AuditService } from '../src/modules/audit/audit.service.js';
 import { AuditPartitionsService } from '../src/modules/audit/audit-partitions.service.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
+import { BsRentalsService } from '../src/modules/integrations/bs-rentals.service.js';
 import { listenLocal } from './listen-local.js';
 
 if (!process.env.DATABASE_URL?.endsWith('/nodeservice_test'))
@@ -269,6 +270,46 @@ describe('audit e2e', () => {
     expect(entry).toBeNull();
     expect(svc.pending).toBe(before + 1);
     expect(await svc.flush()).toBe(0);
+  });
+
+  it('выборка по цели: только своя точка и нужные действия, не старше срока, новые сверху', async () => {
+    const svc = app.get(AuditService);
+    const repo = app.get(AuditRepository);
+    const actor = { type: 'admin' as const, id: 'u', display: LOGIN };
+    const rec = (action: string, id: string, occurredAt: Date) =>
+      svc.record({ action, actor, target: { type: 'bs_ws', id, display: `WS-${id}` }, occurredAt });
+    const now = Date.now();
+    await rec('integration.bs.ws_exits_changed', '501', new Date(now - 3 * 86_400_000));
+    await rec('integration.bs.ws_exits_verified', '501', new Date(now - 2 * 86_400_000));
+    await rec('integration.bs.ws_connect_viewed', '501', new Date(now - 1 * 86_400_000));
+    // Чужая точка, чужое действие и слишком старая запись в выборку не попадают.
+    await rec('integration.bs.ws_exits_changed', '502', new Date(now - 86_400_000));
+    await rec('integration.bs.something_else', '501', new Date(now - 86_400_000));
+    await rec('integration.bs.ws_exits_changed', '501', new Date(now - 120 * 86_400_000));
+    const actions = [
+      'integration.bs.ws_exits_changed',
+      'integration.bs.ws_exits_verified',
+      'integration.bs.ws_connect_viewed',
+    ];
+    const rows = await repo.byTarget('bs_ws', '501', actions);
+    expect(rows.map((r) => r.action)).toEqual([
+      'integration.bs.ws_connect_viewed',
+      'integration.bs.ws_exits_verified',
+      'integration.bs.ws_exits_changed',
+    ]);
+    expect(rows.every((r) => r.targetType === 'bs_ws' && r.targetId === '501')).toBe(true);
+    // Срок и лимит — параметры выборки.
+    expect(await repo.byTarget('bs_ws', '501', actions, { days: 365 })).toHaveLength(4);
+    expect(await repo.byTarget('bs_ws', '501', actions, { limit: 2 })).toHaveLength(2);
+    expect(await repo.byTarget('bs_rental', '501', actions)).toHaveLength(0);
+    // В настоящем приложении история точки собирается из тех же записей: зависимости внедрены, список не тихо пустой.
+    const history = await app.get(BsRentalsService).history('ws', '501');
+    expect(history.items.map((i) => i.title)).toEqual([
+      'Открыты настройки подключения',
+      'Точка проверила серверы',
+      'Серверы изменены',
+    ]);
+    expect(history.items.every((i) => i.by === 'вы')).toBe(true);
   });
 
   it('SSE: событие на новую запись и догон по seq', async () => {

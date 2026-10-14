@@ -89,6 +89,30 @@ export class AuditRepository {
     return { items: rows.map((r) => this.toEntry(r)), page, pageSize: query.pageSize, total, totalPages };
   }
 
+  /** Записи об одном объекте (тип и id цели) по списку действий, новые сверху; не старше days дней. */
+  async byTarget(
+    type: string,
+    id: string,
+    actions: string[],
+    opts: { limit?: number; days?: number } = {},
+  ): Promise<AuditEntry[]> {
+    const since = new Date(Date.now() - (opts.days ?? 90) * 86_400_000);
+    const rows = await this.db
+      .select()
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.targetType, type),
+          eq(auditLog.targetId, id),
+          inArray(auditLog.action, actions),
+          gte(auditLog.occurredAt, since),
+        ),
+      )
+      .orderBy(desc(auditLog.occurredAt), desc(auditLog.id))
+      .limit(opts.limit ?? 50);
+    return rows.map((r) => this.toEntry(r));
+  }
+
   /** Записи после seq (догон SSE по Last-Event-ID), по возрастанию. */
   async since(seq: number, limit = REPLAY_MAX): Promise<AuditEntry[]> {
     const rows = await this.db

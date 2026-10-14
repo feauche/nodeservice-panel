@@ -11,6 +11,15 @@ const dpiRun = z.object({
   key: z.string().max(8192).optional(),
   popIds: z.array(z.number().int().positive()).max(100),
 });
+/** Замена адреса записи: адресом ноды или своим — ровно одно из двух. */
+const dnsApplyBody = z
+  .object({
+    recordId: z.string().min(1).max(512),
+    nodeUuid: z.uuid().optional(),
+    address: z.string().trim().min(2).max(64).optional(),
+    expected: z.string().min(1).max(128),
+  })
+  .refine((v) => (v.nodeUuid === undefined) !== (v.address === undefined), 'Укажите ноду или свой адрес.');
 const schedule = z.object({
   enabled: z.boolean(),
   minutes: z.number().int().min(15).max(10080),
@@ -91,18 +100,21 @@ export class IntegrationWorkspaceController {
   @Audit('integration.dns.record_changed')
   @Post('dns/apply')
   async dnsApply(@Body() body: unknown) {
-    const result = await this.dns.apply(
-      z
-        .object({
-          recordId: z.string().min(1).max(512),
-          nodeUuid: z.uuid(),
-          expected: z.string().min(1).max(128),
-        })
-        .parse(body),
-    );
-    const { changed, ...what } = result;
+    const result = await this.dns.apply(dnsApplyBody.parse(body));
+    const { changed, own, ...what } = result;
     // В «Журнал» — домен, было и стало, нода: по ним видно, что поменяли руками.
-    this.audit.extend({ metadata: { ...what, changed: changed ? 'адрес заменён' : 'только связь с нодой' } });
+    this.audit.extend({
+      metadata: {
+        ...what,
+        changed: changed
+          ? own
+            ? 'адрес заменён на свой'
+            : 'адрес заменён'
+          : own
+            ? 'адрес отмечен как свой'
+            : 'только связь с нодой',
+      },
+    });
     return { changed };
   }
 }

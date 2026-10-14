@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { domainToASCII } from 'node:url';
-import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { type BsProbeInput, type BsRun, bsAccountSchema, bsUnitSchema } from '@nodeservice/shared';
 import { and, desc, eq, like, lt, sql } from 'drizzle-orm';
 import { problem } from '../../common/filters/problem-details.filter.js';
@@ -11,6 +11,7 @@ import { publicIp } from '../incidents/check-host.service.js';
 import { NodeEventsStore } from '../node-events/node-events.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { bsErrorText } from './bs-errors.js';
+import { sniOutcome, sniShape } from './bs-sni.js';
 import { type IntegrationSession, IntegrationsService } from './integrations.service.js';
 
 type Stored = {
@@ -43,6 +44,7 @@ export class BsError extends Error {
 }
 @Injectable()
 export class BsCheckerService {
+  private readonly log = new Logger(BsCheckerService.name);
   private active = new Map<string, Promise<BsRun>>();
   constructor(
     @Inject(DB) private db: Db,
@@ -239,6 +241,18 @@ export class BsCheckerService {
       expiresAt,
     };
   }
+  /**
+   * Итог SNI точки. Форма элемента в описании сервиса не расписана: узнали — показываем, не узнали — «нет данных»,
+   * а в журнал сервера пишем только имена полей, чтобы можно было доучить разбор.
+   */
+  private sni(value: unknown): boolean | null {
+    const outcome = sniOutcome(value);
+    if (outcome === null && value !== null && value !== undefined) {
+      const keys = sniShape(value);
+      if (keys.length) this.log.warn(`Итог SNI от BS Checker не распознан; поля: ${keys.join(', ')}`);
+    }
+    return outcome;
+  }
   /** Расчёт цены идёт сам при каждом изменении формы: незапущенные расчёты старше часа убираем. Сбой — не помеха. */
   private async sweep() {
     try {
@@ -273,6 +287,9 @@ export class BsCheckerService {
               units: Array.isArray(saved.body.operators) ? saved.body.operators.length : 0,
               estimatedCredits: saved.cost,
               nodeName: saved.node?.name ?? null,
+              sniHost: Array.isArray(saved.body.sni_hosts)
+                ? String(saved.body.sni_hosts[0] ?? '') || null
+                : null,
               operators: Array.isArray(saved.body.operators) ? saved.body.operators.map(String) : [],
             },
           ];
@@ -333,6 +350,7 @@ export class BsCheckerService {
             tcp: typeof tcp.ok === 'boolean' ? tcp.ok : null,
             icmp: typeof icmp.ok === 'boolean' ? icmp.ok : null,
             tcpIsTls: leg.tcp_is_tls === true,
+            sni: this.sni(leg.sni),
             latency: ms(tcp.latency_ms) ?? ms(icmp.rtt_avg_ms) ?? ms(icmp.latency_ms),
             dnsFail: leg.dns_fail === true,
             error:

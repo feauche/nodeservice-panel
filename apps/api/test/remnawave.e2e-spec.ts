@@ -3,6 +3,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import {
   CSRF_HEADER,
+  nodeConnectionsSchema,
   type RemnawaveCert,
   type RemnawaveStatus,
   remnawaveStatusSchema,
@@ -51,6 +52,8 @@ class FakeRemnawaveClient implements RemnawaveClient {
   usersOnline = 42;
   nodesOnline = 1;
   down = false;
+  /** Подключения ноды не читаются (профиль недоступен), остальное работает. */
+  connectionsFail = false;
   cert: RemnawaveCert = CERT_OK;
   domainsAsked: string[] = [];
 
@@ -94,6 +97,24 @@ class FakeRemnawaveClient implements RemnawaveClient {
 
   async findNodeInbound() {
     return null;
+  }
+
+  async listNodeConnections() {
+    if (this.connectionsFail) throw new RemnawaveApiError('Remnawave не отвечает.', 'unreachable');
+    return {
+      items: [
+        {
+          tag: 'VLESS_TCP_REALITY',
+          protocol: 'vless',
+          security: 'reality',
+          network: 'raw',
+          port: 443,
+          names: ['www.example.com', 'example.com'],
+        },
+        { tag: 'SS_BRIDGE', protocol: 'shadowsocks', security: null, network: null, port: 9999, names: [] },
+      ],
+      primary: 'VLESS_TCP_REALITY',
+    };
   }
 
   async listSnippets() {
@@ -235,6 +256,29 @@ describe('Remnawave e2e (J4)', () => {
     const res = await agent.post('/api/nodes/refresh').set(CSRF_HEADER, csrf).expect(200);
     expect(remnawaveStatusSchema.parse(res.body).stats?.online.now).toBe(55);
     fake.usersOnline = 42;
+  });
+
+  it('подключения ноды: порты и имена SNI, основное — Reality; сбой чтения не выдаётся за «подключений нет»', async () => {
+    const uuid = 'c0000000-0000-4000-8000-000000000001';
+    const ok = nodeConnectionsSchema.parse(
+      (await agent.get(`/api/nodes/${uuid}/connections`).expect(200)).body,
+    );
+    expect(ok.failed).toBe(false);
+    expect(ok.primary).toBe('VLESS_TCP_REALITY');
+    expect(ok.items.map((i) => [i.tag, i.port])).toEqual([
+      ['VLESS_TCP_REALITY', 443],
+      ['SS_BRIDGE', 9999],
+    ]);
+    expect(ok.items[0]?.names).toEqual(['www.example.com', 'example.com']);
+    fake.connectionsFail = true;
+    const bad = nodeConnectionsSchema.parse(
+      (await agent.get(`/api/nodes/${uuid}/connections`).expect(200)).body,
+    );
+    fake.connectionsFail = false;
+    expect(bad).toEqual({ items: [], primary: null, failed: true });
+    // Не uuid — 400, без входа — 401.
+    await agent.get('/api/nodes/not-a-uuid/connections').expect(400);
+    await request(app.getHttpServer()).get(`/api/nodes/${uuid}/connections`).expect(401);
   });
 
   it('отметка «Сервер белого списка» из настроек ноды видна в списке нод', async () => {

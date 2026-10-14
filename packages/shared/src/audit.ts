@@ -148,6 +148,10 @@ export const AUDIT_ACTIONS = {
     category: 'settings',
     label: 'Серверы точки WebSocket BS Checker изменены',
   },
+  'integration.bs.ws_exits_verified': {
+    category: 'settings',
+    label: 'Точка WebSocket BS Checker проверила серверы после изменения',
+  },
   'integration.bs.ws_connect_viewed': {
     category: 'settings',
     label: 'Просмотр настроек подключения точки WebSocket BS Checker',

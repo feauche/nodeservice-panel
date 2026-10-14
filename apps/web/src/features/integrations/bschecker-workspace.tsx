@@ -5,6 +5,7 @@ import {
   bsPreviewSchema,
   bsRunSchema,
   bsWorkspaceSchema,
+  type NodeConnection,
 } from '@nodeservice/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
@@ -17,7 +18,7 @@ import {
   RefreshCwIcon,
   XIcon,
 } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { DialogPrimaryButton, DialogSecondaryButton } from '@/components/dialog-actions';
 import { PageActions } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -25,6 +26,7 @@ import { Combobox, type ComboOption } from '@/components/ui/combobox';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { connectionKind, primaryConnection, useNodeConnections } from '@/features/nodes/node-connections';
 import { nodeOption } from '@/features/nodes/node-option';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { Pill, Segmented } from '@/features/settings/settings-ui';
@@ -358,9 +360,13 @@ function ResultDialog({
           : okCount(run.rows)
             ? 'warn'
             : 'crit';
+  // Колонка SNI — если проверку заказывали с именем или сервис прислал итог SNI хотя бы по одной точке.
+  const showSni = Boolean(entry.sniHost) || run.rows.some((r) => r.sni !== null);
+  const sniUnknown = Boolean(entry.sniHost) && run.rows.length > 0 && run.rows.every((r) => r.sni === null);
   const meta = [
     when(entry.createdAt),
     points(entry.units),
+    entry.sniHost ? `SNI ${entry.sniHost}` : null,
     run.costCredits !== null ? `списано ${credits(run.costCredits)}` : null,
     run.refundedCredits ? `возврат ${credits(run.refundedCredits)}` : null,
   ]
@@ -422,6 +428,12 @@ function ResultDialog({
               </p>
             </div>
           )}
+          {run.status === 'done' && sniUnknown && (
+            <p className="text-[12.5px] text-text-3">
+              Проверку SNI заказывали, но сервис не прислал её итог в понятном виде — в таблице он не показан.
+              TCP и ICMP при этом проверены.
+            </p>
+          )}
           {!!run.skippedCount && (
             <p className="text-[12.5px] text-warn">
               {points(run.skippedCount)} сервис пропустил — они стали недоступны перед запуском; за них не
@@ -433,11 +445,13 @@ function ResultDialog({
               <table className="w-full min-w-[640px] text-left text-[12.5px]">
                 <thead className="bg-surface-2 text-[11px] tracking-[0.08em] text-text-3 uppercase">
                   <tr>
-                    {['Оператор', 'Округ', 'Белый список', 'TCP', 'ICMP'].map((h) => (
-                      <th key={h} className="px-3 py-2 font-semibold">
-                        {h}
-                      </th>
-                    ))}
+                    {['Оператор', 'Округ', 'Белый список', 'TCP', 'ICMP', ...(showSni ? ['SNI'] : [])].map(
+                      (h) => (
+                        <th key={h} className="px-3 py-2 font-semibold">
+                          {h}
+                        </th>
+                      ),
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -482,6 +496,17 @@ function ResultDialog({
                           <Pill tone="crit">нет ответа</Pill>
                         )}
                       </td>
+                      {showSni && (
+                        <td className="px-3 py-2">
+                          {r.sni === null ? (
+                            <span className="text-text-3">—</span>
+                          ) : r.sni ? (
+                            <Pill tone="ok">проходит</Pill>
+                          ) : (
+                            <Pill tone="crit">не проходит</Pill>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -497,6 +522,7 @@ function ResultDialog({
         <div className={dialogFoot}>
           <p className="min-w-0 flex-1 text-[12px] leading-snug text-text-3">
             «TLS открыт» — у этих точек TCP проверяется с рукопожатием TLS: ТСПУ рвёт связь после него.
+            {showSni && !sniUnknown && ' SNI — то же рукопожатие с выбранным именем.'}
           </p>
           <div className="flex gap-2 max-sm:flex-col">
             <DialogSecondaryButton disabled={busy} onClick={onClose} className={footButton}>
@@ -524,6 +550,148 @@ function ResultDialog({
   );
 }
 
+/** Подключения ноды из Remnawave: выбрали строку — подставились порт и имя SNI (вариант A витрины bs-dns-2026-10). */
+function ConnectionPicker({
+  items,
+  selected,
+  onPick,
+}: {
+  items: NodeConnection[];
+  selected: string | null;
+  onPick: (c: NodeConnection) => void;
+}) {
+  const move = (e: KeyboardEvent, step: number) => {
+    e.preventDefault();
+    const at = Math.max(
+      0,
+      items.findIndex((c) => c.tag === selected),
+    );
+    const next = items[(at + step + items.length) % items.length];
+    if (next) onPick(next);
+  };
+  return (
+    <div>
+      <p className={label}>
+        Подключение ноды{' '}
+        <span className="ml-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] font-medium text-text-3">
+          из профиля Remnawave
+        </span>
+      </p>
+      <div
+        role="radiogroup"
+        aria-label="Подключение ноды"
+        className="overflow-hidden rounded-[12px] border border-border"
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowRight') move(e, 1);
+          else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') move(e, -1);
+        }}
+      >
+        {items.map((c) => {
+          const on = c.tag === selected;
+          return (
+            // biome-ignore lint/a11y/useSemanticElements: см. группу выше
+            <button
+              key={c.tag}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              tabIndex={on || (!selected && c === items[0]) ? 0 : -1}
+              onClick={() => onPick(c)}
+              className={cn(
+                'grid w-full cursor-pointer grid-cols-[18px_minmax(0,1fr)] items-center gap-2.5 border-t border-border px-3 py-2.5 text-left transition-colors first:border-t-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
+                on ? 'bg-brand-soft' : 'hover:bg-surface-2/60',
+              )}
+            >
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'size-4 rounded-full border-[1.5px] border-border-2',
+                  on && 'border-[5px] border-brand',
+                )}
+              />
+              <span className="min-w-0">
+                <b className="block truncate text-[13px] font-semibold">
+                  {c.tag}
+                  {c.port !== null && (
+                    <span className="font-mono text-[12px] font-normal text-text-3"> · порт {c.port}</span>
+                  )}
+                </b>
+                <small className="block truncate text-[12px] text-text-3">
+                  {connectionKind(c)} ·{' '}
+                  {c.names.length > 1
+                    ? `${c.names.length} имён SNI`
+                    : c.names[0]
+                      ? `SNI ${c.names[0]}`
+                      : 'без имени SNI'}
+                </small>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Имя для SNI: у подключения есть имена — выбор из них и «Своё имя…»; нет — обычное поле. Вписанное вручную
+ * подключение не перезаписывает.
+ */
+function SniName({
+  names,
+  value,
+  onChange,
+}: {
+  names: string[];
+  value: string;
+  onChange: (value: string, manual: boolean) => void;
+}) {
+  const [own, setOwn] = useState(false);
+  const custom = own || (value !== '' && !names.includes(value));
+  if (!names.length)
+    return (
+      <Input
+        id="bs-sni"
+        value={value}
+        onChange={(e) => onChange(e.target.value, true)}
+        placeholder="example.com"
+        className="h-10 rounded-[10px] bg-surface-2"
+      />
+    );
+  return (
+    <div className="flex flex-col gap-2">
+      <Combobox
+        id="bs-sni"
+        ariaLabel="Имя для SNI"
+        value={custom ? '__own' : value || null}
+        onChange={(v) => {
+          if (v === '__own') setOwn(true);
+          else {
+            setOwn(false);
+            onChange(v ?? '', false);
+          }
+        }}
+        options={[
+          ...names.map((n) => ({ value: n, label: n })),
+          { value: '__own', label: 'Своё имя…', pinned: true },
+        ]}
+        placeholder="Выберите имя"
+        searchPlaceholder="Найти имя…"
+        className="h-10 w-full"
+      />
+      {custom && (
+        <Input
+          aria-label="Своё имя для SNI"
+          value={value}
+          onChange={(e) => onChange(e.target.value, true)}
+          placeholder="example.com"
+          className="h-10 rounded-[10px] bg-surface-2"
+        />
+      )}
+    </div>
+  );
+}
+
 const readUnits = (): string[] => {
   try {
     const v = JSON.parse(localStorage.getItem('ns-bs-units') ?? '[]');
@@ -539,11 +707,16 @@ const readUnits = (): string[] => {
 export function BsCheckerWorkspace({
   settings,
   initialNode,
+  initialPort,
+  initialSni,
   onInitialNodeUsed,
 }: {
   settings: () => void;
-  initialNode?: string;
-  onInitialNodeUsed?: () => void;
+  initialNode?: string | undefined;
+  /** Порт и имя SNI подключения из ссылки (событие ноды): проверка откроется заполненной. */
+  initialPort?: number | undefined;
+  initialSni?: string | undefined;
+  onInitialNodeUsed?: (() => void) | undefined;
 }) {
   const q = useQuery({
     queryKey: ['bschecker-workspace'],
@@ -565,6 +738,10 @@ export function BsCheckerWorkspace({
     [icmp, setIcmp] = useState(true),
     [sni, setSni] = useState(false),
     [sniHost, setSniHost] = useState(''),
+    /** Имя SNI выбрано или вписано самим владельцем — подключение ноды его не подменяет. */
+    [sniManual, setSniManual] = useState(false),
+    /** Выбранное подключение ноды (тег); null — порт вписан вручную. */
+    [ibTag, setIbTag] = useState<string | null>(null),
     [units, setUnits] = useState<string[]>(readUnits),
     [unitsOpen, setUnitsOpen] = useState(false),
     [selected, setSelected] = useState<BsHistoryEntry | null>(null),
@@ -574,15 +751,50 @@ export function BsCheckerWorkspace({
       localStorage.setItem('ns-bs-units', JSON.stringify(units));
     } catch {}
   }, [units]);
-  // Пришли из совета Ассистента: подставляем ноду и её адрес, как при выборе из списка.
+  const connections = useNodeConnections(manual ? null : nodeUuid);
+  /** Какое подключение просили в ссылке: порт и имя SNI — применяются, когда подключения ноды загрузятся. */
+  const wanted = useRef<{ port?: number | undefined; sni?: string | undefined } | null>(null);
+  // Пришли из события или совета Ассистента: подставляем ноду и её адрес, как при выборе из списка.
   useEffect(() => {
     if (!initialNode) return;
     const n = allNodes.find((x) => x.uuid === initialNode);
     if (!n) return;
     setNodeUuid(n.uuid);
     setIp(n.address);
+    wanted.current = { port: initialPort, sni: initialSni };
+    if (initialPort) setPort(String(initialPort));
+    if (initialSni) {
+      setSni(true);
+      setSniHost(initialSni);
+      setSniManual(true);
+    }
     onInitialNodeUsed?.();
-  }, [initialNode, allNodes, onInitialNodeUsed]);
+  }, [initialNode, initialPort, initialSni, allNodes, onInitialNodeUsed]);
+  // Подключения ноды загрузились: по умолчанию — основное (или то, что просили в ссылке); порт и SNI подставляются.
+  const appliedFor = useRef<string | null>(null);
+  useEffect(() => {
+    const data = connections.data;
+    if (!data || !nodeUuid || appliedFor.current === nodeUuid) return;
+    appliedFor.current = nodeUuid;
+    const want = wanted.current;
+    wanted.current = null;
+    const asked = want?.port
+      ? (data.items.find((c) => c.port === want.port && (!want.sni || c.names.includes(want.sni))) ??
+        data.items.find((c) => c.port === want.port))
+      : undefined;
+    const conn = asked ?? primaryConnection(data);
+    if (!conn) return;
+    setIbTag(conn.tag);
+    if (conn.port !== null) setPort(String(conn.port));
+    if (!want?.sni && !sniManual) setSniHost(conn.names[0] ?? '');
+  }, [connections.data, nodeUuid, sniManual]);
+  function pickConnection(c: NodeConnection) {
+    setIbTag(c.tag);
+    if (c.port !== null) setPort(String(c.port));
+    setSniHost(c.names[0] ?? '');
+    setSniManual(false);
+  }
+  const chosen = connections.data?.items.find((c) => c.tag === ibTag) ?? null;
   const catalog = q.data?.units ?? [];
   // Выбор держим только из доступных сейчас точек: устаревшие ключи (API 1.1) отбрасываются.
   const live = units.filter((k) => catalog.some((u) => u.op_key === k && u.probeable));
@@ -633,6 +845,7 @@ export function BsCheckerWorkspace({
       units: live.length,
       estimatedCredits: preview.data?.costCredits ?? 0,
       nodeName: node?.name ?? null,
+      sniHost: sni && sniHost.trim() ? sniHost.trim() : null,
       operators: live,
       run: { id, status: 'ready', costCredits: null, refundedCredits: null, error: null, rows: [] },
     };
@@ -662,6 +875,12 @@ export function BsCheckerWorkspace({
     setIp(t.host);
     setPort(t.port);
     if (entry.operators.length) setUnits(entry.operators);
+    // Прежняя проверка шла с SNI — «снова» значит с тем же именем.
+    appliedFor.current = node?.uuid ?? null;
+    setIbTag(null);
+    setSni(Boolean(entry.sniHost));
+    setSniHost(entry.sniHost ?? '');
+    setSniManual(true);
     setSelected(null);
   }
   const pickedUnits = catalog.filter((u) => live.includes(u.op_key));
@@ -782,6 +1001,12 @@ export function BsCheckerWorkspace({
                   ariaLabel="Нода для проверки"
                   value={manual ? '__manual' : nodeUuid}
                   onChange={(v) => {
+                    // Новая нода — свои подключения: прежние порт, имя SNI и выбор не переносим.
+                    appliedFor.current = null;
+                    wanted.current = null;
+                    setIbTag(null);
+                    setSniHost('');
+                    setSniManual(false);
                     if (v === '__manual') {
                       setManual(true);
                       setNodeUuid(null);
@@ -792,6 +1017,7 @@ export function BsCheckerWorkspace({
                     setManual(false);
                     setNodeUuid(n?.uuid ?? null);
                     setIp(n?.address ?? '');
+                    setPort('443');
                   }}
                   options={nodeOptions}
                   placeholder="Выберите ноду"
@@ -802,6 +1028,19 @@ export function BsCheckerWorkspace({
                   Ноды с отметкой «Сервер белого списка» — первыми. Можно ввести адрес вручную.
                 </p>
               </div>
+              {!manual && nodeUuid && connections.isPending && (
+                <div role="status" aria-label="Загрузка подключений ноды">
+                  <Skeleton className="h-[78px] w-full rounded-[12px]" />
+                </div>
+              )}
+              {!manual && nodeUuid && connections.data && connections.data.items.length > 0 && (
+                <ConnectionPicker items={connections.data.items} selected={ibTag} onPick={pickConnection} />
+              )}
+              {!manual && nodeUuid && (connections.data?.failed || connections.isError) && (
+                <p className="text-[12px] text-text-3">
+                  Подключения ноды из Remnawave прочитать не удалось — порт и имя SNI впишите сами.
+                </p>
+              )}
               {manual && (
                 <div>
                   <label htmlFor="bs-ip" className={label}>
@@ -825,7 +1064,11 @@ export function BsCheckerWorkspace({
                     id="bs-port"
                     inputMode="numeric"
                     value={port}
-                    onChange={(e) => setPort(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                    onChange={(e) => {
+                      const next = e.target.value.replace(/\D/g, '').slice(0, 5);
+                      setPort(next);
+                      if (chosen && String(chosen.port) !== next) setIbTag(null);
+                    }}
                     className="h-10 rounded-[10px] bg-surface-2"
                   />
                 </div>
@@ -862,12 +1105,13 @@ export function BsCheckerWorkspace({
                     <label htmlFor="bs-sni" className={label}>
                       Имя для SNI
                     </label>
-                    <Input
-                      id="bs-sni"
+                    <SniName
+                      names={chosen?.names ?? []}
                       value={sniHost}
-                      onChange={(e) => setSniHost(e.target.value)}
-                      placeholder="example.com"
-                      className="h-10 rounded-[10px] bg-surface-2"
+                      onChange={(v, manualInput) => {
+                        setSniHost(v);
+                        setSniManual(manualInput);
+                      }}
                     />
                   </div>
                 )}

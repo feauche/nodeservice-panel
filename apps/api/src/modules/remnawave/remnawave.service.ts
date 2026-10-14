@@ -1,6 +1,7 @@
 import { HttpStatus, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  type NodeConnections,
   REMNAWAVE_CERT_CHECK_INTERVAL_MIN,
   REMNAWAVE_PROBLEM,
   type RemnawaveConnectRequest,
@@ -186,6 +187,22 @@ export class RemnawaveService {
       this.log.warn(`Инбаунд ноды ${nodeUuid}: ${err instanceof Error ? err.message : err}`);
       // Запрос не прошёл — порт неизвестен. Причина «в Remnawave не нашёлся порт» здесь была бы неправдой.
       return { sni: null, port: null, protocol: null, network: null, failed: true };
+    }
+  }
+
+  /**
+   * Подключения ноды с портами и именами SNI — для проверок снаружи (BS Checker из события и из формы).
+   * Нет ключа или нода пропала — пустой список; Remnawave не ответила — failed, а не «подключений нет».
+   */
+  async nodeConnections(nodeUuid: string): Promise<NodeConnections> {
+    const creds = await this.store.credentials();
+    if (!creds) return { items: [], primary: null, failed: false };
+    try {
+      const found = await this.client.listNodeConnections(creds.domain, creds.apiKey, nodeUuid);
+      return { items: found?.items ?? [], primary: found?.primary ?? null, failed: false };
+    } catch (err) {
+      this.log.warn(`Подключения ноды ${nodeUuid}: ${err instanceof Error ? err.message : err}`);
+      return { items: [], primary: null, failed: true };
     }
   }
 

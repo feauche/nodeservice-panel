@@ -237,3 +237,127 @@ describe('BS Checker: ответ сервиса в незнакомом виде
     );
   });
 });
+
+/** Хранилище с ключами: изменения точки, отметки о записанной проверке — как в app_meta. */
+function wsFixture(ws: Record<string, unknown>) {
+  const store = new Map<string, string>();
+  const db = {
+    query: {
+      appMeta: {
+        findFirst: async (q: { where: { queryChunks?: Array<{ value?: unknown }> } }) => {
+          // where: eq(appMeta.key, 'ключ') — значение ключа лежит в параметре выражения
+          const key = q.where.queryChunks?.find((c) => typeof c?.value === 'string')?.value as
+            | string
+            | undefined;
+          const value = key === undefined ? undefined : store.get(key);
+          return value === undefined ? null : { value };
+        },
+      },
+    },
+    insert: () => ({
+      values: (v: { key: string; value: string }) => ({
+        onConflictDoUpdate: async () => void store.set(v.key, v.value),
+      }),
+    }),
+  };
+  const recorded: Record<string, unknown>[] = [];
+  const audit = {
+    record: async (e: Record<string, unknown>) => void recorded.push(e),
+    extend: vi.fn(),
+  };
+  const request = vi.fn().mockImplementation(async () => ws);
+  const service = new BsRentalsService(
+    db as never,
+    { rentalRequest: request } as never,
+    { identity: async () => 'key-1' } as never,
+    audit as never,
+  );
+  return { service, store, recorded, audit, request };
+}
+const wsBase = {
+  id: '5',
+  name: 'WS-5',
+  state: 'active',
+  applied: true,
+  exits: [
+    { host: '1.1.1.1', port: 441, backup: false, enabled: true, state: 'up' },
+    { host: '2.2.2.2', port: 441, backup: false, enabled: true, state: 'up' },
+  ],
+};
+
+describe('BS Checker: проверка серверов точки после сохранения', () => {
+  const submitted = (wsId = '5') =>
+    JSON.stringify({
+      identity: 'key-1',
+      wsId,
+      before: [],
+      after: [],
+      expiresAt: 'x',
+      started: true,
+      result: { status: 'submitted', applied: true, warnings: [] },
+    });
+
+  it('пока сервер «неизвестно» — итог не готов и в Журнал не пишется', async () => {
+    const { service, store, recorded } = wsFixture({
+      ...wsBase,
+      exits: [
+        ...wsBase.exits,
+        { host: '3.3.3.3', port: 441, backup: false, enabled: true, state: 'unknown' },
+      ],
+    });
+    store.set('bschecker.ws-change.11111111-1111-4111-8111-111111111111', submitted());
+    const r = await service.wsVerify('5', '11111111-1111-4111-8111-111111111111');
+    expect(r).toMatchObject({ done: false, total: 3, working: 2, pending: 1, failing: [] });
+    expect(recorded).toHaveLength(0);
+  });
+
+  it('итог готов: пишется в Журнал; тот же итог повторно — нет, другой (сервер починили) — да', async () => {
+    const { service, store, recorded, request } = wsFixture({
+      ...wsBase,
+      exits: [...wsBase.exits, { host: '3.3.3.3', port: 441, backup: false, enabled: true, state: 'down' }],
+    });
+    const changeId = '22222222-2222-4222-8222-222222222222';
+    store.set(`bschecker.ws-change.${changeId}`, submitted());
+    const r = await service.wsVerify('5', changeId);
+    expect(r).toMatchObject({ done: true, working: 2, failing: ['3.3.3.3:441'] });
+    await service.wsVerify('5', changeId);
+    expect(recorded).toHaveLength(1);
+    request.mockResolvedValue({
+      ...wsBase,
+      exits: [...wsBase.exits, { host: '3.3.3.3', port: 441, backup: false, enabled: true, state: 'up' }],
+    });
+    await service.wsVerify('5', changeId);
+    await service.wsVerify('5', changeId);
+    expect(recorded).toHaveLength(2);
+    expect(recorded[1]).toMatchObject({ result: 'ok', metadata: { total: 3, working: 3, failing: [] } });
+    expect(recorded[0]).toMatchObject({
+      action: 'integration.bs.ws_exits_verified',
+      result: 'failed',
+      target: { type: 'bs_ws', id: '5' },
+      metadata: { total: 3, working: 2, failing: ['3.3.3.3:441'] },
+    });
+  });
+
+  it('чужое изменение, чужая точка и выдуманный номер в Журнал не попадают', async () => {
+    const { service, store, recorded } = wsFixture(wsBase);
+    store.set('bschecker.ws-change.33333333-3333-4333-8333-333333333333', submitted('9'));
+    expect((await service.wsVerify('5', '33333333-3333-4333-8333-333333333333')).done).toBe(true);
+    await service.wsVerify('5', '44444444-4444-4444-8444-444444444444');
+    await service.wsVerify('5', 'не-номер');
+    expect(recorded).toHaveLength(0);
+  });
+
+  it('выключенный сервер в проверке не участвует; точка ещё применяет изменение — итога нет', async () => {
+    const { service } = wsFixture({
+      ...wsBase,
+      applied: false,
+      exits: [
+        ...wsBase.exits,
+        { host: '3.3.3.3', port: 441, backup: false, enabled: false, state: 'disabled' },
+      ],
+    });
+    const r = await service.wsVerify('5');
+    expect(r.total).toBe(2);
+    expect(r.done).toBe(false);
+  });
+});

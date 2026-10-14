@@ -1,11 +1,13 @@
 import { Body, Controller, Get, Header, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { bsRentalTargetsInputSchema, bsWsExitsInputSchema } from '@nodeservice/shared';
 import { createZodDto } from 'nestjs-zod';
+import { z } from 'zod';
 import { Audit } from '../audit/audit.decorator.js';
 import { BsRentalsService } from './bs-rentals.service.js';
 
 class TargetsDto extends createZodDto(bsRentalTargetsInputSchema) {}
 class ExitsDto extends createZodDto(bsWsExitsInputSchema) {}
+const verifyBody = z.object({ changeId: z.uuid().optional() });
 @Controller('integrations/bschecker/rentals')
 export class BsRentalsController {
   constructor(private readonly rentals: BsRentalsService) {}
@@ -22,6 +24,10 @@ export class BsRentalsController {
     @Param('changeId', ParseUUIDPipe) id: string,
   ) {
     return this.rentals.execute(id);
+  }
+  /** История точки из «Журнала» панели: что менялось. */
+  @Get(':id/history') history(@Param('id') id: string) {
+    return this.rentals.history('rental', id);
   }
   @Get(':id/check/:checkId') checkResult(@Param('id') id: string, @Param('checkId') checkId: string) {
     return this.rentals.checkResult(id, checkId);
@@ -50,6 +56,14 @@ export class BsWsController {
   }
   @Post(':id/changes') @HttpCode(200) prepare(@Param('id') id: string, @Body() body: ExitsDto) {
     return this.rentals.wsPrepare(id, body);
+  }
+  /** История точки из «Журнала» панели: изменения серверов, итоги проверки точкой, просмотр настроек. */
+  @Get(':id/history') history(@Param('id') id: string) {
+    return this.rentals.history('ws', id);
+  }
+  /** Проверка серверов после сохранения: итог от самой точки; готовый итог один раз пишется в «Журнал». */
+  @Post(':id/verify') @HttpCode(200) verify(@Param('id') id: string, @Body() body: unknown) {
+    return this.rentals.wsVerify(id, verifyBody.parse(body ?? {}).changeId);
   }
   @Post('changes/:changeId/execute') @HttpCode(200) @Audit('integration.bs.ws_exits_changed') execute(
     @Param('changeId', ParseUUIDPipe) id: string,

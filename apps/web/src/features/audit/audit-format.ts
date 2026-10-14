@@ -137,6 +137,8 @@ export const TARGET_TYPE_LABELS: Record<string, string> = {
   assistant: 'Джарвис',
   audit_partition: 'архив Журнала',
   scenario: 'сценарий',
+  bs_ws: 'точка WebSocket',
+  bs_rental: 'точка TCP/UDP',
 };
 
 /** Подпись поля в таблице «Изменения»; неизвестное поле — как есть. */
@@ -265,6 +267,8 @@ const KEY_LABELS: Record<string, string> = {
   changed: 'Что сделано',
   autoreplace: 'Автозамена',
   points: 'Точек',
+  working: 'Работает',
+  failing: 'Не отвечают',
 };
 
 /** Записи о решениях по изменениям, которые предложил Ассистент (J5): показываются своей строкой. */

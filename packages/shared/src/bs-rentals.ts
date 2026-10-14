@@ -152,6 +152,39 @@ export const bsWsChangePreviewSchema = z.object({
   after: z.array(bsWsExitInputSchema),
   expiresAt: z.string(),
 });
+/** Проверка серверов точки после сохранения: сколько работает, сколько ещё проверяется, какие не отвечают. */
+export const bsWsVerifySchema = z.object({
+  /** Итог известен по всем включённым серверам и точка применила изменение. */
+  done: z.boolean(),
+  applied: z.boolean().nullable(),
+  total: z.number().int().min(0),
+  working: z.number().int().min(0),
+  pending: z.number().int().min(0),
+  failing: z.array(z.string()),
+  exits: z.array(
+    z.object({
+      host: z.string(),
+      port: z.number(),
+      backup: z.boolean(),
+      state: z.string(),
+      hint: z.string().nullable(),
+    }),
+  ),
+});
+export type BsWsVerify = z.infer<typeof bsWsVerifySchema>;
+
+/** История точки из «Журнала» панели: что менялось и что показала проверка точкой. */
+export const bsPointHistoryItemSchema = z.object({
+  at: z.string(),
+  tone: z.enum(['ok', 'warn', 'crit', 'acc', 'muted']),
+  title: z.string(),
+  detail: z.string().nullable(),
+  /** Кто: «вы» или «панель». */
+  by: z.string(),
+});
+export type BsPointHistoryItem = z.infer<typeof bsPointHistoryItemSchema>;
+export const bsPointHistorySchema = z.object({ items: z.array(bsPointHistoryItemSchema) });
+
 export const bsWsChangeResultSchema = z.object({
   status: z.enum(['submitted', 'uncertain']),
   applied: z.boolean().nullable(),

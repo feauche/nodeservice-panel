@@ -527,3 +527,106 @@ describe('HttpRemnawaveClient.findNodeInbound (J10)', () => {
     expect(r).toBeNull();
   });
 });
+
+describe('HttpRemnawaveClient.listNodeConnections', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const respond = (byUrl: Record<string, unknown>) =>
+    vi.fn(async (url: string) => {
+      const hit = Object.entries(byUrl).find(([k]) => url.includes(k));
+      if (!hit) throw new Error(`неожиданный запрос: ${url}`);
+      return new Response(JSON.stringify(hit[1]), { status: 200 });
+    });
+  const reality = (...names: string[]) => ({
+    streamSettings: { security: 'reality', realitySettings: { serverNames: names, dest: 'ignored:443' } },
+  });
+  const node = (activeInbounds: unknown[]) => ({
+    response: [{ uuid: 'n1', port: 443, configProfile: { activeConfigProfileUuid: 'p1', activeInbounds } }],
+  });
+
+  it('все подключения ноды: порт, протокол и имена SNI (порт у имени отбрасывается, повторы убираются)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      respond({
+        '/api/nodes': node([
+          {
+            tag: 'VLESS_TCP',
+            type: 'vless',
+            network: 'raw',
+            security: 'reality',
+            port: 442,
+            rawInbound: reality('mail.example.com:443', 'ozon.ru', 'ozon.ru'),
+          },
+          { tag: 'SS', type: 'shadowsocks', port: 15344 },
+        ]),
+        '/api/config-profiles/p1': { response: { config: { inbounds: [] }, inbounds: [] } },
+      }),
+    );
+    const r = await new HttpRemnawaveClient().listNodeConnections('vpn-panel.example.com', 'k', 'n1');
+    expect(r).toEqual({
+      items: [
+        {
+          tag: 'VLESS_TCP',
+          protocol: 'vless',
+          security: 'reality',
+          network: 'raw',
+          port: 442,
+          names: ['mail.example.com', 'ozon.ru'],
+        },
+        { tag: 'SS', protocol: 'shadowsocks', security: null, network: null, port: 15344, names: [] },
+      ],
+      primary: 'VLESS_TCP',
+    });
+  });
+
+  it('имена, которых нет в списке нод, берутся из профиля конфигурации: TLS и Reality', async () => {
+    vi.stubGlobal(
+      'fetch',
+      respond({
+        '/api/nodes': node([
+          { tag: 'WS_TLS', type: 'vless', network: 'ws', security: 'tls', port: 441 },
+          { tag: 'XHTTP', type: 'vless', network: 'xhttp', security: 'reality', port: 18444 },
+        ]),
+        '/api/config-profiles/p1': {
+          response: {
+            config: {
+              inbounds: [
+                {
+                  tag: 'WS_TLS',
+                  streamSettings: { security: 'tls', tlsSettings: { serverName: 'radio.example.org' } },
+                },
+                { tag: 'XHTTP', ...reality('storage.example.net') },
+              ],
+            },
+          },
+        },
+      }),
+    );
+    const r = await new HttpRemnawaveClient().listNodeConnections('vpn-panel.example.com', 'k', 'n1');
+    expect(r?.items.map((c) => [c.tag, c.names])).toEqual([
+      ['WS_TLS', ['radio.example.org']],
+      ['XHTTP', ['storage.example.net']],
+    ]);
+    // по умолчанию — подключение Reality, как у проверки блокировок
+    expect(r?.primary).toBe('XHTTP');
+  });
+
+  it('профиль не прочитался — порты всё равно есть, имена пусты; нет ноды — null', async () => {
+    const stub = vi.fn(async (url: string) => {
+      if (url.includes('/api/config-profiles/')) return new Response('{}', { status: 500 });
+      return new Response(
+        JSON.stringify(node([{ tag: 'T', type: 'vless', security: 'reality', port: 8443 }])),
+        {
+          status: 200,
+        },
+      );
+    });
+    vi.stubGlobal('fetch', stub);
+    const client = new HttpRemnawaveClient();
+    const r = await client.listNodeConnections('vpn-panel.example.com', 'k', 'n1');
+    expect(r?.items).toEqual([
+      { tag: 'T', protocol: 'vless', security: 'reality', network: null, port: 8443, names: [] },
+    ]);
+    expect(await client.listNodeConnections('vpn-panel.example.com', 'k', 'missing')).toBeNull();
+  });
+});

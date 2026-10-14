@@ -297,7 +297,7 @@ describe('Серверы точки WebSocket: поля с подписями и
     await user.type(weight, '2');
     expect(weight).toHaveValue('2');
     expect(within(dialog).getByRole('textbox', { name: 'Лимит подключений сервера 1' })).toHaveValue('');
-    await user.click(within(dialog).getByRole('button', { name: 'Сохранить серверы' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить и проверить' }));
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]?.exits[0]).toMatchObject({
       host: '2.26.101.44',
@@ -318,7 +318,7 @@ describe('Серверы точки WebSocket: поля с подписями и
       await user.clear(weight);
       await user.type(weight, bad);
       expect(within(dialog).getByText('Вес — от 1 до 100')).toBeVisible();
-      await user.click(within(dialog).getByRole('button', { name: 'Сохранить серверы' }));
+      await user.click(within(dialog).getByRole('button', { name: 'Сохранить и проверить' }));
       expect(within(dialog).getByRole('alert')).toHaveTextContent('Исправьте поля, отмеченные красным.');
     }
     expect(sent).toHaveLength(0);
@@ -327,8 +327,442 @@ describe('Серверы точки WebSocket: поля с подписями и
     await user.type(weight, '100');
     expect(within(dialog).queryByText('Вес — от 1 до 100')).toBeNull();
     await user.type(within(dialog).getByRole('textbox', { name: 'Лимит подключений сервера 1' }), '50');
-    await user.click(within(dialog).getByRole('button', { name: 'Сохранить серверы' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить и проверить' }));
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]?.exits[0]).toMatchObject({ weight: 100, max_connections: 50 });
+  });
+});
+
+describe('Серверы точки WebSocket: проверка после сохранения', () => {
+  const change = '9b2f3c1e-7d4a-4e8b-9a6c-1f2e3d4c5b6a';
+  const back = '1c7d0a52-3b6e-4f19-8d2a-5e4f6a7b8c9d';
+  const exit = (host: string, state: string) => ({
+    host,
+    port: 441,
+    weight: 1,
+    backup: false,
+    enabled: true,
+    state,
+  });
+  const ws = {
+    id: '5',
+    name: 'WS-5',
+    address: 'radio.example',
+    state: 'active',
+    ready: true,
+    applied: true,
+    exits: [exit('2.26.101.44', 'up')],
+    bridges: [],
+  };
+  const verified = (second: 'up' | 'down' | 'unknown', done = true) => ({
+    done,
+    applied: done,
+    total: 2,
+    working: second === 'up' ? 2 : 1,
+    pending: second === 'unknown' ? 1 : 0,
+    failing: second === 'down' ? ['144.31.144.199:441'] : [],
+    exits: [
+      { host: '2.26.101.44', port: 441, backup: false, state: 'up', hint: null },
+      {
+        host: '144.31.144.199',
+        port: 441,
+        backup: false,
+        state: second,
+        hint: second === 'down' ? 'Порт закрыт для адресов точки.' : null,
+      },
+    ],
+  });
+  /** Открыть окно, добавить второй сервер и дойти до подтверждения; verifyReply задаёт ответ точки. */
+  async function saved(reply: () => ReturnType<typeof verified>) {
+    const changes: Array<{ exits: Array<Record<string, unknown>>; balancing: string }> = [];
+    const verifies: Array<Record<string, unknown>> = [];
+    server.use(
+      http.get('*/api/integrations/bschecker/ws', () => HttpResponse.json({ ws: [ws], unreadable: 0 })),
+      http.post('*/api/integrations/bschecker/ws/5/changes', async ({ request }) => {
+        const body = (await request.json()) as { exits: Array<Record<string, unknown>>; balancing: string };
+        changes.push(body);
+        return HttpResponse.json({
+          id: changes.length === 1 ? change : back,
+          wsId: '5',
+          before:
+            changes.length === 1 ? ws.exits.map(({ state, ...e }) => ({ ...e, max_connections: null })) : [],
+          after: body.exits,
+          expiresAt: '2026-10-13T12:00:00Z',
+        });
+      }),
+      http.post('*/api/integrations/bschecker/ws/changes/:id/execute', () =>
+        HttpResponse.json({ status: 'submitted', applied: false, warnings: [] }),
+      ),
+      http.post('*/api/integrations/bschecker/ws/5/verify', async ({ request }) => {
+        verifies.push((await request.json()) as Record<string, unknown>);
+        return HttpResponse.json(reply());
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage(Page, '/bs');
+    const card = await screen.findByRole('article', { name: 'Точка WS-5' });
+    await user.click(within(card).getByRole('button', { name: 'Изменить выходы' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Серверы точки · WS-5' });
+    await user.click(within(dialog).getByRole('button', { name: 'Добавить сервер' }));
+    await user.type(within(dialog).getByRole('textbox', { name: 'Адрес сервера 2' }), '144.31.144.199');
+    await user.click(within(dialog).getByRole('button', { name: 'Сохранить и проверить' }));
+    await user.click(await screen.findByRole('button', { name: 'Заменить серверы' }));
+    return { user, dialog, changes, verifies };
+  }
+
+  it('после сохранения окно ждёт точку: серверы строками, «проверяет», закрыть можно', async () => {
+    const { dialog, verifies } = await saved(() => verified('unknown', false));
+    const list = await within(dialog).findByRole('list', { name: 'Серверы точки после сохранения' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(2);
+    await waitFor(() => expect(list).toHaveTextContent('144.31.144.199:441'));
+    expect(list).toHaveTextContent('работает');
+    expect(await within(list).findByText('проверяет')).toBeVisible();
+    expect(dialog).toHaveTextContent('Точка проверяет серверы');
+    expect(dialog).toHaveTextContent('Окно можно закрыть — итог появится и в карточке точки.');
+    expect(within(dialog).queryByRole('button', { name: 'Сохранить и проверить' })).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Закрыть' })).toBeEnabled();
+    // Итог просим именно по этому изменению: по нему панель записывает его в «Журнал».
+    expect(verifies[0]).toEqual({ changeId: change });
+  });
+
+  it('все серверы работают — итог, «Готово»', async () => {
+    const { dialog } = await saved(() => verified('up'));
+    expect(await within(dialog).findByText(/Точка проверила серверы — все 2 работают/)).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Готово' })).toBeEnabled();
+    expect(within(dialog).queryByRole('button', { name: 'Вернуть прежний список' })).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: 'Проверить снова' })).toBeNull();
+  });
+
+  it('сервер не отвечает — причина, «Проверить снова» бесплатно и «Вернуть прежний список» новым изменением', async () => {
+    const { user, dialog, changes, verifies } = await saved(() => verified('down'));
+    expect(await within(dialog).findByText(/Сервер 144\.31\.144\.199:441 не отвечает точке/)).toBeVisible();
+    expect(dialog).toHaveTextContent('Порт закрыт для адресов точки.');
+    expect(dialog).toHaveTextContent('Откройте порт и проверьте снова');
+    expect(changes).toHaveLength(1);
+    await user.click(within(dialog).getByRole('button', { name: 'Проверить снова' }));
+    await waitFor(() => expect(verifies.length).toBeGreaterThanOrEqual(2));
+    // Проверка не создаёт изменений: лимит 48 в сутки не тратится.
+    expect(changes).toHaveLength(1);
+    // Возврат — это ещё одно изменение, и дальше снова идёт проверка уже по нему.
+    await user.click(await within(dialog).findByRole('button', { name: 'Вернуть прежний список' }));
+    await waitFor(() => expect(changes).toHaveLength(2));
+    // Уходит прежний список — один сервер, как был до изменения, — с прежними настройками распределения.
+    expect(changes[1]?.exits).toEqual([expect.objectContaining({ host: '2.26.101.44', port: 441 })]);
+    expect(changes[1]?.balancing).toBe('weighted');
+    await waitFor(() => expect(verifies.at(-1)).toEqual({ changeId: back }));
+    // Возврат уже сделан: если и после него сервер молчит, второй «возврат» вернул бы тот же список — его нет.
+    await waitFor(() =>
+      expect(within(dialog).queryByRole('button', { name: 'Вернуть прежний список' })).toBeNull(),
+    );
+    expect(await within(dialog).findByRole('button', { name: 'Проверить снова' })).toBeEnabled();
+    expect(dialog).not.toHaveTextContent('Возврат прежнего списка — ещё одно изменение');
+  });
+});
+
+describe('История точки', () => {
+  const ws = {
+    id: '5',
+    name: 'WS-5',
+    address: 'radio.example',
+    state: 'active',
+    ready: true,
+    applied: true,
+    exits: [{ host: '2.26.101.44', port: 441, weight: 1, backup: false, enabled: true, state: 'up' }],
+    bridges: [],
+  };
+  async function open(items: unknown[]) {
+    server.use(
+      http.get('*/api/integrations/bschecker/ws', () => HttpResponse.json({ ws: [ws], unreadable: 0 })),
+      http.get('*/api/integrations/bschecker/ws/5/history', () => HttpResponse.json({ items })),
+    );
+    const user = userEvent.setup();
+    renderPage(Page, '/bs');
+    const card = await screen.findByRole('article', { name: 'Точка WS-5' });
+    await user.click(within(card).getByRole('button', { name: 'История' }));
+    return { user, dialog: await screen.findByRole('dialog', { name: 'История точки · WS-5' }) };
+  }
+
+  it('события новыми сверху: заголовок, подробность и кто сделал; честная подпись про то, чего нет', async () => {
+    const { dialog } = await open([
+      {
+        at: '2026-10-14T12:03:00Z',
+        tone: 'ok',
+        title: 'Точка проверила серверы',
+        detail: 'все 2 работают',
+        by: 'панель',
+      },
+      {
+        at: '2026-10-14T12:02:00Z',
+        tone: 'acc',
+        title: 'Серверы изменены',
+        detail: 'добавлен 144.31.144.199:441',
+        by: 'вы',
+      },
+    ]);
+    const list = await within(dialog).findByRole('list', { name: 'События точки' });
+    const rows = within(list).getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent('Точка проверила серверы');
+    expect(rows[0]).toHaveTextContent('все 2 работают · панель');
+    expect(rows[1]).toHaveTextContent('добавлен 144.31.144.199:441 · вы');
+    expect(dialog).toHaveTextContent(
+      'Хранится 90 дней. Падения серверов и продления BS Checker не присылает',
+    );
+  });
+
+  it('пока ничего нет — объясняет, с какой версии ведётся история', async () => {
+    const { dialog } = await open([]);
+    expect(await within(dialog).findByText('Пока ничего не записано')).toBeVisible();
+    expect(dialog).toHaveTextContent('История ведётся с версии 0.102.0');
+  });
+});
+
+describe('BS Checker: порт и SNI из подключений ноды', () => {
+  const CONTEL = 'c0000000-0000-4000-8000-000000000001';
+  const connections = {
+    primary: 'CONTEL_PL_XHTTP',
+    failed: false,
+    items: [
+      {
+        tag: 'CONTEL_PL',
+        protocol: 'vless',
+        security: 'reality',
+        network: 'raw',
+        port: 442,
+        names: ['mail73.ru', 'ozon.ru', 'static.rutube.ru'],
+      },
+      {
+        tag: 'CONTEL_PL_XHTTP',
+        protocol: 'vless',
+        security: 'reality',
+        network: 'xhttp',
+        port: 18444,
+        names: ['storage.yandexcloud.net'],
+      },
+      { tag: 'SS_BRIDGE', protocol: 'shadowsocks', security: null, network: null, port: 15344, names: [] },
+    ],
+  };
+  const previewBodies: Array<Record<string, unknown>> = [];
+
+  beforeEach(() => {
+    previewBodies.length = 0;
+    server.use(
+      http.get('*/api/nodes/status', () =>
+        HttpResponse.json({
+          connected: true,
+          domain: 'panel.example',
+          checkedAt: null,
+          error: null,
+          stats: null,
+          cert: null,
+          nodes: [
+            {
+              uuid: CONTEL,
+              name: 'CONTEL',
+              address: '46.8.209.86',
+              port: 18443,
+              countryCode: 'RU',
+              whitelist: true,
+              isConnected: true,
+              isDisabled: false,
+              isConnecting: false,
+              lastStatusMessage: null,
+              usersOnline: 0,
+              trafficUsedBytes: null,
+              trafficLimitBytes: null,
+            },
+          ],
+        }),
+      ),
+      http.get(`*/api/nodes/${CONTEL}/connections`, () => HttpResponse.json(connections)),
+      http.post('*/api/integrations/bschecker/preview', async ({ request }) => {
+        previewBodies.push((await request.json()) as Record<string, unknown>);
+        return HttpResponse.json({
+          id,
+          costCredits: 19,
+          fullCredits: null,
+          discountPct: null,
+          levelName: null,
+          units: ['beeline|уфо|on'],
+          expiresAt: '2026-10-13T00:10:00Z',
+        });
+      }),
+    );
+    try {
+      localStorage.setItem('ns-bs-units', JSON.stringify(['beeline|уфо|on']));
+    } catch {}
+  });
+
+  it('выбрали ноду — её подключения строками, основное выбрано, порт подставлен; другое подключение меняет порт и имя', async () => {
+    const user = userEvent.setup();
+    renderPage(Page, '/bs');
+    await user.click(await screen.findByRole('combobox', { name: 'Нода для проверки' }));
+    await user.click(await screen.findByRole('option', { name: /CONTEL/ }));
+    const group = await screen.findByRole('radiogroup', { name: 'Подключение ноды' });
+    expect(within(group).getAllByRole('radio')).toHaveLength(3);
+    expect(within(group).getByRole('radio', { name: /CONTEL_PL_XHTTP/ })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByRole('textbox', { name: 'Порт' })).toHaveValue('18444');
+    expect(group).toHaveTextContent('3 имён SNI');
+    expect(group).toHaveTextContent('SNI storage.yandexcloud.net');
+    expect(group).toHaveTextContent('без имени SNI');
+    // имя SNI подставлено заранее: включили проверку SNI — оно уже в поле
+    await user.click(screen.getByRole('button', { name: 'SNI' }));
+    expect(screen.getByRole('combobox', { name: 'Имя для SNI' })).toHaveTextContent(
+      'storage.yandexcloud.net',
+    );
+    await user.click(within(group).getByRole('radio', { name: /^CONTEL_PL(?!_)/ }));
+    expect(screen.getByRole('textbox', { name: 'Порт' })).toHaveValue('442');
+    expect(screen.getByRole('combobox', { name: 'Имя для SNI' })).toHaveTextContent('mail73.ru');
+    // у подключения несколько имён: можно выбрать другое или вписать своё
+    await user.click(screen.getByRole('combobox', { name: 'Имя для SNI' }));
+    await user.click(await screen.findByRole('option', { name: 'ozon.ru' }));
+    expect(screen.getByRole('combobox', { name: 'Имя для SNI' })).toHaveTextContent('ozon.ru');
+    await user.click(screen.getByRole('combobox', { name: 'Имя для SNI' }));
+    await user.click(await screen.findByRole('option', { name: 'Своё имя…' }));
+    await user.type(screen.getByRole('textbox', { name: 'Своё имя для SNI' }), 'example.org');
+    // подключение без имён SNI: поле имени — обычное
+    await user.click(within(group).getByRole('radio', { name: /SS_BRIDGE/ }));
+    expect(screen.getByRole('textbox', { name: 'Порт' })).toHaveValue('15344');
+    expect(screen.queryByRole('combobox', { name: 'Имя для SNI' })).toBeNull();
+  });
+
+  it('порт поправили руками — подключение больше не выбрано; другая нода — свои подключения', async () => {
+    const user = userEvent.setup();
+    renderPage(Page, '/bs');
+    await user.click(await screen.findByRole('combobox', { name: 'Нода для проверки' }));
+    await user.click(await screen.findByRole('option', { name: /CONTEL/ }));
+    const group = await screen.findByRole('radiogroup', { name: 'Подключение ноды' });
+    const port = screen.getByRole('textbox', { name: 'Порт' });
+    await user.clear(port);
+    await user.type(port, '8443');
+    expect(within(group).queryByRole('radio', { checked: true })).toBeNull();
+    await user.click(within(group).getByRole('radio', { name: /CONTEL_PL_XHTTP/ }));
+    expect(port).toHaveValue('18444');
+  });
+
+  it('из ссылки события: нода, порт и имя SNI подставлены, проверка SNI включена, цена считается с ними', async () => {
+    function FromIncident() {
+      return (
+        <BsCheckerWorkspace
+          settings={() => {}}
+          initialNode={CONTEL}
+          initialPort={18444}
+          initialSni="storage.yandexcloud.net"
+        />
+      );
+    }
+    renderPage(FromIncident, '/bs');
+    const group = await screen.findByRole('radiogroup', { name: 'Подключение ноды' });
+    expect(within(group).getByRole('radio', { name: /CONTEL_PL_XHTTP/ })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByRole('textbox', { name: 'Порт' })).toHaveValue('18444');
+    expect(screen.getByRole('button', { name: 'SNI' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('combobox', { name: 'Имя для SNI' })).toHaveTextContent(
+      'storage.yandexcloud.net',
+    );
+    await waitFor(() => expect(previewBodies.length).toBeGreaterThan(0));
+    expect(previewBodies.at(-1)).toMatchObject({
+      nodeUuid: CONTEL,
+      ip: '46.8.209.86',
+      port: 18444,
+      sniHost: 'storage.yandexcloud.net',
+    });
+  });
+
+  it('в ссылке только нода (совет Ассистента): основное подключение подставляется само, SNI по умолчанию выключен', async () => {
+    function FromAdvice() {
+      return <BsCheckerWorkspace settings={() => {}} initialNode={CONTEL} />;
+    }
+    renderPage(FromAdvice, '/bs');
+    await screen.findByRole('radiogroup', { name: 'Подключение ноды' });
+    expect(screen.getByRole('textbox', { name: 'Порт' })).toHaveValue('18444');
+    expect(screen.getByRole('button', { name: 'SNI' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('Remnawave не ответила: честно сказано, порт и имя SNI вписываются самим', async () => {
+    server.use(
+      http.get(`*/api/nodes/${CONTEL}/connections`, () =>
+        HttpResponse.json({ items: [], primary: null, failed: true }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderPage(Page, '/bs');
+    await user.click(await screen.findByRole('combobox', { name: 'Нода для проверки' }));
+    await user.click(await screen.findByRole('option', { name: /CONTEL/ }));
+    expect(await screen.findByText(/Подключения ноды из Remnawave прочитать не удалось/)).toBeVisible();
+    expect(screen.queryByRole('radiogroup', { name: 'Подключение ноды' })).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Порт' })).toHaveValue('443');
+  });
+});
+
+describe('BS Checker: итог SNI в результате проверки', () => {
+  const withSni = (rows: Array<Record<string, unknown>>, sniHost: string | null) => {
+    const done = { ...run, rows };
+    server.use(
+      http.get('*/api/integrations/bschecker/history', () =>
+        HttpResponse.json({ runs: [{ ...entry, sniHost, run: done }] }),
+      ),
+      http.get('*/api/integrations/bschecker/runs/:id', () => HttpResponse.json(done)),
+    );
+  };
+  const rowSni = (unit: string, op: string, tcp: boolean, sni: boolean | null) => ({
+    ...row(unit, op, 'ЦФО', 'on', tcp, tcp),
+    sni,
+  });
+
+  it('колонка SNI: «проходит» / «не проходит» / «—», имя — в шапке окна', async () => {
+    withSni(
+      [
+        rowSni('a|цфо|on', 'МТС', true, true),
+        rowSni('b|цфо|on', 'Билайн', true, false),
+        rowSni('c|цфо|on', 'Tele2', true, null),
+      ],
+      'storage.yandexcloud.net',
+    );
+    const user = userEvent.setup();
+    renderPage(Page, '/bs');
+    await user.click(await screen.findByRole('button', { name: /8\.8\.8\.8:443/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('SNI storage.yandexcloud.net');
+    const table = within(dialog).getByRole('table');
+    expect(within(table).getByRole('columnheader', { name: 'SNI' })).toBeVisible();
+    expect(within(table).getByText('проходит')).toBeVisible();
+    expect(within(table).getByText('не проходит')).toBeVisible();
+    expect(dialog).not.toHaveTextContent('не прислал её итог');
+  });
+
+  it('SNI заказывали, а итога от сервиса нет — это сказано, а не выдано за «не проходит»', async () => {
+    withSni([rowSni('a|цфо|on', 'МТС', true, null)], 'storage.yandexcloud.net');
+    const user = userEvent.setup();
+    renderPage(Page, '/bs');
+    await user.click(await screen.findByRole('button', { name: /8\.8\.8\.8:443/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('сервис не прислал её итог в понятном виде');
+    expect(within(dialog).queryByText('не проходит')).toBeNull();
+  });
+
+  it('без SNI колонки нет', async () => {
+    withSni([rowSni('a|цфо|on', 'МТС', true, null)], null);
+    const user = userEvent.setup();
+    renderPage(Page, '/bs');
+    await user.click(await screen.findByRole('button', { name: /8\.8\.8\.8:443/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByRole('columnheader', { name: 'SNI' })).toBeNull();
+  });
+
+  it('«Проверить снова» после проверки с SNI возвращает то же имя и включает SNI', async () => {
+    withSni([rowSni('a|цфо|on', 'МТС', true, true)], 'storage.yandexcloud.net');
+    const user = userEvent.setup();
+    renderPage(Page, '/bs');
+    await user.click(await screen.findByRole('button', { name: /8\.8\.8\.8:443/ }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Проверить снова' }));
+    expect(screen.getByRole('button', { name: 'SNI' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('textbox', { name: 'Имя для SNI' })).toHaveValue('storage.yandexcloud.net');
   });
 });

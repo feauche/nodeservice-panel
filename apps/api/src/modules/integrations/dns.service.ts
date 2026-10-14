@@ -26,7 +26,28 @@ export type DnsRecord = {
   content: string;
   ttl: number;
   nodes: { uuid: string; name: string; address: string }[];
+  /** Адрес записи поставил владелец сам (не адрес ноды): автозамена её не трогает. */
+  custom: boolean;
 };
+
+/** Тело замены: нода (адрес берётся у неё) или свой адрес. */
+export type DnsApplyBody = {
+  recordId: string;
+  expected: string;
+  nodeUuid?: string | undefined;
+  address?: string | undefined;
+};
+
+/** IPv6 в привычном сжатом виде, чтобы «2001:DB8::1» и «2001:db8:0:0:0:0:0:1» считались одним адресом. */
+function normalizeIp(value: string): string {
+  const v = value.trim();
+  if (isIP(v) !== 6) return v;
+  try {
+    return new URL(`http://[${v}]`).hostname.slice(1, -1);
+  } catch {
+    return v;
+  }
+}
 @Injectable()
 export class DnsService {
   private busy = false;
@@ -95,10 +116,10 @@ export class DnsService {
    * доступов провайдеров, и новый токен Cloudflare или отключённый REG.RU молча выключали автозамену. Записи и так
    * различаются провайдером, зоной и номером — чужой аккаунт с ними не совпадёт.
    */
-  private async keyFor(kind: 'settings' | 'links') {
+  private async keyFor(kind: 'settings' | 'links' | 'custom') {
     const domain = await this.store.domain();
     const key = `dns.${kind}.${domain}`;
-    if ((await this.read(key)) === null) await this.carryOver(kind, domain, key);
+    if (kind !== 'custom' && (await this.read(key)) === null) await this.carryOver(kind, domain, key);
     return key;
   }
   /** Перенос со старых ключей: настройки — последние по времени, связи — все вместе (свежие поверх старых). */
@@ -139,6 +160,10 @@ export class DnsService {
       !data.records.some((r) => r.id === recordId && ['A', 'AAAA'].includes(r.type) && r.nodes.length === 1)
     )
       throw new BadRequestException('Выберите A/AAAA-запись с одной связанной нодой.');
+    if (enabled && data.records.some((r) => r.id === recordId && r.custom))
+      throw new BadRequestException(
+        'У записи свой адрес. Верните адрес ноды («Адрес ноды» в окне записи), тогда автозамену можно включить.',
+      );
     const status = await this.remna.status();
     const key = await this.keyFor('settings');
     const settings = await this.updateMetadata(key, async () => {
@@ -207,6 +232,7 @@ export class DnsService {
     );
     const inferredKey = await this.keyFor('links');
     const inferred = (await this.read(inferredKey)) ?? {};
+    const customMap: Record<string, string> = (await this.read(await this.keyFor('custom'))) ?? {};
     const nextInferred = { ...inferred };
     const names = new Map<string, string[]>();
     for (const h of hosts) {
@@ -279,6 +305,10 @@ export class DnsService {
               nodes: status.nodes
                 .filter((n) => linked.includes(n.uuid))
                 .map((n) => ({ uuid: n.uuid, name: n.name, address: n.address })),
+              // Свой адрес держится, пока запись ведёт именно на него: поменяли в Cloudflare или REG.RU — отметка снимается.
+              custom:
+                ['A', 'AAAA'].includes(type) &&
+                customMap[[provider, zoneId, recordId].join('|')] === normalizeIp(content),
             });
           }
         }
@@ -312,11 +342,7 @@ export class DnsService {
     this.cache = cache;
     return { ...cache.data, settings: await this.settings() };
   }
-  async apply(
-    body: { recordId: string; nodeUuid: string; expected: string },
-    automatic = false,
-    expectedScope?: string,
-  ) {
+  async apply(body: DnsApplyBody, automatic = false, expectedScope?: string) {
     if (this.locks.has(body.recordId))
       throw new BadRequestException('Эта запись уже обновляется. Дождитесь результата.');
     this.locks.add(body.recordId);
@@ -326,58 +352,82 @@ export class DnsService {
       this.locks.delete(body.recordId);
     }
   }
-  private async applyLocked(
-    body: { recordId: string; nodeUuid: string; expected: string },
-    automatic: boolean,
-    expectedScope?: string,
-  ) {
+  private async applyLocked(body: DnsApplyBody, automatic: boolean, expectedScope?: string) {
     const scope = expectedScope ?? (await this.scope());
     if (scope !== (await this.scope()))
       throw new BadRequestException('Подключение изменилось. Обновите список.');
     const data = await this.overview(true);
     const record = data.records.find((r) => r.id === body.recordId);
-    const node = automatic
-      ? record?.nodes.find((n) => n.uuid === body.nodeUuid)
-      : (await this.remna.status()).nodes.find((n) => n.uuid === body.nodeUuid);
-    if (!record || !node) throw new BadRequestException('Связь записи и ноды изменилась. Обновите список.');
+    // Адрес — ноды (берётся у неё) или свой: тогда нода не нужна, а запись остаётся связанной с прежней.
+    const own = body.address !== undefined;
+    const node = own
+      ? undefined
+      : automatic
+        ? record?.nodes.find((n) => n.uuid === body.nodeUuid)
+        : (await this.remna.status()).nodes.find((n) => n.uuid === body.nodeUuid);
+    if (!record || (!own && !node))
+      throw new BadRequestException('Связь записи и ноды изменилась. Обновите список.');
     if (record.content !== body.expected)
       throw new BadRequestException('DNS-запись уже изменилась. Обновите список перед заменой.');
     if (!['A', 'AAAA'].includes(record.type))
       throw new BadRequestException('Замена IP доступна только для A/AAAA.');
-    if (!isIP(node.address) || isIP(node.address) !== (record.type === 'A' ? 4 : 6))
-      throw new BadRequestException('Адрес ноды должен соответствовать типу A / AAAA.');
+    const address = normalizeIp(own ? (body.address ?? '') : (node?.address ?? ''));
+    const family = record.type === 'A' ? 4 : 6;
+    if (isIP(address) !== family)
+      throw new BadRequestException(
+        own
+          ? `Введите ${family === 4 ? 'IPv4-адрес, например 203.0.113.10' : 'IPv6-адрес, например 2001:db8::1'}: так устроена ${record.type}-запись.`
+          : 'Адрес ноды должен соответствовать типу A / AAAA.',
+      );
     const session = await this.integrations.session(record.provider);
     if (scope !== (await this.scope()))
       throw new BadRequestException('Подключение изменилось. Обновите список.');
     if (automatic && !this.automatic(await this.settings(), record))
       throw new BadRequestException('Автоматическое обновление этой записи выключено.');
     const remember = async () => {
-      const key = await this.keyFor('links');
+      // У REG.RU номер записи включает адрес: после замены это уже другая запись, настройки переезжают на неё.
       const id =
         record.provider === 'cloudflare'
           ? record.id
-          : [record.provider, record.zoneId, [record.subname, record.type, node.address].join(':')].join('|');
-      await this.updateMetadata(key, async () => {
-        const links = (await this.read(key)) ?? {};
-        await this.write(key, { ...links, [id]: node.uuid });
+          : [record.provider, record.zoneId, [record.subname, record.type, address].join(':')].join('|');
+      if (node) {
+        const key = await this.keyFor('links');
+        await this.updateMetadata(key, async () => {
+          const links = (await this.read(key)) ?? {};
+          await this.write(key, { ...links, [id]: node.uuid });
+        });
+      }
+      const customKey = await this.keyFor('custom');
+      await this.updateMetadata(customKey, async () => {
+        const marks: Record<string, string> = (await this.read(customKey)) ?? {};
+        delete marks[record.id];
+        delete marks[id];
+        if (own) marks[id] = address;
+        await this.write(customKey, marks);
       });
-      if (id !== record.id) {
+      if (id !== record.id || own) {
         const settingsKey = await this.keyFor('settings');
         await this.updateMetadata(settingsKey, async () => {
           const settings = { automaticNodes: [], automaticRecords: [], ...(await this.read(settingsKey)) };
-          if (settings.automaticRecords.includes(record.id)) {
-            settings.automaticRecords = settings.automaticRecords.map((value: string) =>
-              value === record.id ? id : value,
-            );
-            await this.write(settingsKey, settings);
-          }
+          const had = settings.automaticRecords.includes(record.id);
+          settings.automaticRecords = settings.automaticRecords
+            .map((value: string) => (value === record.id ? id : value))
+            // Со своим адресом автозамена записи выключается: иначе панель вернула бы адрес ноды.
+            .filter((value: string) => !own || value !== id);
+          if (had || own) await this.write(settingsKey, settings);
         });
       }
       this.cache = null;
     };
     // Что и где поменяли — для «Журнала» (адреса и имя ноды, без внутренних номеров записи).
-    const what = { domain: record.name, from: record.content, to: node.address, nodeName: node.name };
-    if (node.address === record.content) {
+    const what = {
+      domain: record.name,
+      from: record.content,
+      to: address,
+      ...(node ? { nodeName: node.name } : {}),
+      own,
+    };
+    if (address === record.content) {
       await remember();
       return { changed: false, ...what };
     }
@@ -386,8 +436,9 @@ export class DnsService {
       domain: record.name,
       provider: record.provider,
       old: record.content,
-      next: node.address,
+      next: address,
       automatic,
+      ...(own ? { custom: true } : {}),
     };
     try {
       if (record.provider === 'cloudflare') {
@@ -398,41 +449,30 @@ export class DnsService {
             '/dns_records/' +
             encodeURIComponent(record.recordId),
           'PATCH',
-          { content: node.address },
+          { content: address },
           undefined,
           session,
         );
         if (result.success !== true) throw new Error('Provider refused');
       } else {
-        if (
-          !data.records.some(
-            (r) =>
-              r.provider === record.provider &&
-              r.name === record.name &&
-              r.type === record.type &&
-              r.content === node.address,
-          )
-        )
+        const sameRecord = (r: DnsRecord) =>
+          r.provider === record.provider &&
+          r.name === record.name &&
+          r.type === record.type &&
+          normalizeIp(r.content) === address;
+        if (!data.records.some(sameRecord))
           await this.integrations.reg(
             record.type === 'A' ? 'zone/add_alias' : 'zone/add_aaaa',
             {
               domains: [{ dname: record.zone }],
               subdomain: record.subname,
-              ipaddr: node.address,
+              ipaddr: address,
               ttl: record.ttl,
             },
             session,
           );
         const verified = await this.overview(true);
-        if (
-          !verified.records.some(
-            (r) =>
-              r.provider === record.provider &&
-              r.name === record.name &&
-              r.type === record.type &&
-              r.content === node.address,
-          )
-        )
+        if (!verified.records.some(sameRecord))
           throw new BadRequestException(
             'Новая запись не подтверждена. Старая запись сохранена. Проверьте REG.RU.',
           );
@@ -458,11 +498,17 @@ export class DnsService {
       await this.log({ ...change, status: 'success' });
       this.cache = null;
       if (!automatic)
-        await this.note(node.uuid, record.id, {
-          action: `DNS-запись ${record.name} обновлена вручную`,
-          tone: 'ok',
-          detail: `${record.content} → ${node.address}`,
-        });
+        // Запись связана с нодой (или выбрана нода) — в её незакрытом событии остаётся след этой замены.
+        for (const linked of node ? [node] : record.nodes)
+          await this.note(linked.uuid, record.id, {
+            action: own
+              ? `DNS-запись ${record.name}: поставлен свой адрес`
+              : `DNS-запись ${record.name} обновлена вручную`,
+            tone: own ? 'info' : 'ok',
+            detail: own
+              ? `${record.content} → ${address} · вместо адреса ноды ${linked.name}`
+              : `${record.content} → ${address}`,
+          });
       return { changed: true, ...what };
     } catch (e) {
       await this.log({ ...change, status: partial ? 'partial' : 'error' });
@@ -517,6 +563,16 @@ export class DnsService {
               to: '/integrations/dns',
               search: { record: r.id },
             };
+            // Адрес поставил владелец: запись не переписываем, но о смене адреса ноды говорим.
+            if (r.custom) {
+              await this.note(n.uuid, r.id, {
+                action: `DNS-запись ${r.name} оставлена со своим адресом`,
+                tone: 'info',
+                detail: `Адрес ноды сменился на ${n.address}, а запись ведёт на ${r.content} — вы поставили его сами.`,
+                link: open,
+              });
+              continue;
+            }
             if (r.content === n.address) {
               await this.note(n.uuid, r.id, {
                 action: `DNS-запись ${r.name} уже ведёт на новый адрес`,

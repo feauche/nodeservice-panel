@@ -148,6 +148,41 @@ describe('BS Checker: стоимость и повтор без второго �
     await service.execute(preview.id);
     expect(probes).toBe(2);
   });
+  it('проверка с SNI: имя уходит в сервис, итог по точке читается, в истории видно имя', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/operators')) return json({ units: [unit] });
+        if (url.endsWith('/probe/preview')) return json({ cost_credits: 30 });
+        if (url.endsWith('/probe'))
+          return json({
+            outcome: 'done',
+            cost_credits: 30,
+            by_target: {
+              '8.8.8.8:443': {
+                by_operator: {
+                  [unit.op_key]: {
+                    operator: 'test',
+                    region: 'РФ',
+                    dpi: 'on',
+                    tcp: { ok: true },
+                    sni: [{ host: 'storage.example.net', ok: false }],
+                  },
+                },
+              },
+            },
+          });
+        throw Error(url);
+      }),
+    );
+    const { service } = fixture();
+    const preview = await service.preview({ ...input, sniHost: 'storage.example.net' });
+    const run = await service.execute(preview.id);
+    expect(run.rows[0]).toMatchObject({ tcp: true, sni: false });
+    const history = await service.history();
+    expect(history.runs[0]?.sniHost).toBe('storage.example.net');
+  });
+
   it('503 «нет подходящих точек» — окончательно и «кредиты не списаны»; 500 — итог неизвестен, повтор тем же ключом', async () => {
     let status = 503;
     vi.stubGlobal(
