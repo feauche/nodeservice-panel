@@ -213,8 +213,11 @@ const NodeTreeItem = forwardRef<HTMLDivElement, TreeItemComponentProps<NodeTreeD
     });
     const online = kids.reduce((sum, n) => sum + (n.isDisabled ? 0 : (n.usersOnline ?? 0)), 0);
     const failing = kids.filter(
-      (n) => (!n.isConnected && !n.isDisabled) || context.incidents.get(n.uuid)?.tone === 'crit',
+      (n) =>
+        !n.maintenance &&
+        ((!n.isConnected && !n.isDisabled) || context.incidents.get(n.uuid)?.tone === 'crit'),
     ).length;
+    const maintained = kids.filter((n) => n.maintenance).length;
     const open = !collapsed && !context.closing.has(folderId);
     const toggleLocked = context.locked || context.searching;
     return (
@@ -278,8 +281,15 @@ const NodeTreeItem = forwardRef<HTMLDivElement, TreeItemComponentProps<NodeTreeD
             <span className="ml-auto flex flex-none items-center gap-3.5 pl-2 text-[12.5px] whitespace-nowrap text-text-3">
               <span className="tabular-nums">онлайн {online.toLocaleString('ru-RU')}</span>
               {kids.length > 0 && (
-                <span className={cn('max-sm:hidden', failing > 0 && 'text-crit')}>
-                  ● {failing > 0 ? `${failing} со сбоем` : 'все в норме'}
+                <span
+                  className={cn('max-sm:hidden', failing > 0 ? 'text-crit' : maintained > 0 && 'text-brand')}
+                >
+                  ●{' '}
+                  {failing > 0
+                    ? `${failing} со сбоем${maintained > 0 ? ` · ${maintained} на обслуживании` : ''}`
+                    : maintained > 0
+                      ? `${maintained} на обслуживании`
+                      : 'все в норме'}
                 </span>
               )}
             </span>

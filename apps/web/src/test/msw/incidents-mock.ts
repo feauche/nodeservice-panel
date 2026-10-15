@@ -324,10 +324,18 @@ export const incidentsHandlers = [
     const url = new URL(request.url);
     const status = (url.searchParams.get('status') ?? 'all') as 'all' | 'open' | 'resolved';
     const openedFrom = url.searchParams.get('openedFrom');
+    // Как в настоящем API (0.106.0): `waves=grouped` — события нод, вошедших в волну, не повторяются.
+    const grouped = url.searchParams.get('waves') === 'grouped';
+    const inWave = new Set(
+      mockIncidents.items.flatMap((i) =>
+        i.kind === 'wave' ? (i.snapshot?.fleet?.members ?? []).map((m) => m.incidentId ?? '') : [],
+      ),
+    );
     const filtered = mockIncidents.items
       .filter((i) =>
         status === 'open' ? i.status !== 'resolved' : status === 'resolved' ? i.status === 'resolved' : true,
       )
+      .filter((i) => !grouped || !inWave.has(i.id))
       .filter((i) => !openedFrom || new Date(i.openedAt).getTime() >= new Date(openedFrom).getTime())
       .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime());
     // «Открытые» всегда целиком, как в настоящем API — резать их постранично не нужно, их и так мало.

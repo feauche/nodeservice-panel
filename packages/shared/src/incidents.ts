@@ -28,6 +28,8 @@ export const INCIDENT_KINDS = [
   'mem_high',
   'disk_high',
   'node_blocked',
+  // Волна (0.106.0): общее событие для нод одного провайдера (или страны), упавших почти одновременно.
+  'wave',
 ] as const;
 export type IncidentKind = (typeof INCIDENT_KINDS)[number];
 
@@ -46,6 +48,7 @@ export const INCIDENT_KIND_META: Record<
   mem_high: { label: 'Память на пределе', component: 'Память', severity: 'warn' },
   disk_high: { label: 'Диск заполняется', component: 'Диск', severity: 'warn' },
   node_blocked: { label: 'Похоже на блокировку', component: 'Блокировка', severity: 'crit' },
+  wave: { label: 'Волна', component: 'Провайдер', severity: 'crit' },
 };
 
 /* ---------- уровни действий и реестр (§2 мастер-плана) ---------- */
@@ -224,6 +227,8 @@ export const INCIDENT_CHAINS: Record<IncidentKind, ActionKey[]> = {
   server_down: [],
   // Автопочинки для подозрения на блокировку нет: решение — сменить IP или сам сервер, это всегда T3 вручную.
   node_blocked: [],
+  // Волна — сбой у провайдера: чинить на нодах нечего.
+  wave: [],
 };
 
 /* ---------- попытки починки ---------- */
@@ -365,8 +370,21 @@ export const incidentSnapshotSchema = z.object({
           nodeUuid: z.string().nullable(),
           name: z.string(),
           baseline: z.number().nullable(),
+          /** Волна (0.106.0): событие ноды, с которым она вошла в волну, когда упала и когда поднялась. */
+          incidentId: z.string().optional(),
+          countryCode: z.string().nullable().optional(),
+          downAt: z.string().optional(),
+          upAt: z.string().nullable().optional(),
         }),
       ),
+      /** Волна: сколько нод в группе всего (упавших и уцелевших) — «3 из 5». */
+      total: z.number().int().nonnegative().optional(),
+      /** Волна: когда группа стала волной (вторая нода), — «признана волной в 14:04». */
+      formedAt: z.string().optional(),
+      /** Волна: сценарии с исключением «нода в волне», которые не сработали из-за неё. */
+      skipped: z
+        .array(z.object({ ruleId: z.string(), ruleName: z.string(), nodeUuid: z.string() }))
+        .optional(),
     })
     .optional(),
 });
@@ -508,6 +526,11 @@ export const incidentsListQuerySchema = z.object({
    * длины номером не адресуются. Задано — `page` не учитывается.
    */
   offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
+  /**
+   * Волны (0.106.0): `grouped` — события нод, вошедших в волну, в выдаче не повторяются: волна — одна строка, её
+   * ноды раскрываются из неё самой. `flat` — все события как есть.
+   */
+  waves: z.enum(['flat', 'grouped']).default('flat'),
 });
 export type IncidentsListQuery = z.infer<typeof incidentsListQuerySchema>;
 

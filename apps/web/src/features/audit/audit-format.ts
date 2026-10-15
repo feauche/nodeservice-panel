@@ -185,6 +185,15 @@ const CHANGE_LABELS: Record<string, string> = {
 
 const KEY_LABELS: Record<string, string> = {
   login: 'Логин',
+  // Обслуживание ноды (0.106.0)
+  term: 'Срок',
+  until: 'До',
+  hideHosts: 'Скрыть Host',
+  hiddenHosts: 'Скрыты Host',
+  hostsError: 'Host не скрыты',
+  closedEvents: 'Закрыто событий',
+  restoredHosts: 'Возвращены Host',
+  hostsFailed: 'Host не вернули',
   amr: 'Способ входа',
   reason: 'Причина',
   lockAfterMinutes: 'Блокировка после, мин',

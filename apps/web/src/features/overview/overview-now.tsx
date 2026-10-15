@@ -66,11 +66,12 @@ const MONTH_IN = [
   'декабре',
 ];
 
-const DOT: Record<'ok' | 'warn' | 'crit' | 'muted', string> = {
+const DOT: Record<'ok' | 'warn' | 'crit' | 'muted' | 'info', string> = {
   ok: 'bg-ok',
   warn: 'bg-warn',
   crit: 'bg-crit',
   muted: 'bg-text-3',
+  info: 'bg-brand',
 };
 
 function Dot({ tone, glow = false }: { tone: keyof typeof DOT; glow?: boolean }) {
@@ -115,6 +116,11 @@ function HealthBar({ counts }: { counts: Record<NodeHealth, number> }) {
         <span className="flex items-center gap-[7px]">
           <Dot tone="crit" /> {counts.crit} со сбоем
         </span>
+        {counts.maintenance > 0 && (
+          <span className="flex items-center gap-[7px]">
+            <Dot tone="info" /> {counts.maintenance} на обслуживании
+          </span>
+        )}
         {counts.off > 0 && (
           <span className="flex items-center gap-[7px]">
             <Dot tone="muted" /> {counts.off} {counts.off === 1 ? 'не используется' : 'не используются'}
@@ -313,7 +319,7 @@ export function OverviewNow() {
   const nodes = status.nodes;
   const open: Incident[] = (incidents.data?.items ?? []).filter((i) => i.status !== 'resolved');
   const health = new Map(nodes.map((n) => [n.uuid, nodeHealth(n, open)]));
-  const counts: Record<NodeHealth, number> = { ok: 0, warn: 0, crit: 0, off: 0 };
+  const counts: Record<NodeHealth, number> = { ok: 0, warn: 0, crit: 0, off: 0, maintenance: 0 };
   for (const h of health.values()) counts[h] += 1;
   const enabled = nodes.filter((n) => !n.isDisabled);
   const connected = enabled.filter((n) => n.isConnected);
@@ -364,7 +370,7 @@ export function OverviewNow() {
     }),
     // Нода без связи, по которой события ещё нет, — тоже сюда: открывается её окно.
     ...enabled
-      .filter((n) => !n.isConnected && !open.some((i) => i.nodeUuid === n.uuid))
+      .filter((n) => !n.isConnected && !n.maintenance && !open.some((i) => i.nodeUuid === n.uuid))
       .map((n) => ({
         key: `n:${n.uuid}`,
         node: n,

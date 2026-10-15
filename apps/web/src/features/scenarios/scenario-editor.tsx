@@ -49,6 +49,7 @@ import {
   SlidersHorizontalIcon,
   Trash2Icon,
   TypeIcon,
+  WavesIcon,
   XIcon,
   ZapIcon,
 } from 'lucide-react';
@@ -100,6 +101,7 @@ export function changesOf(a: Scenario, b: Scenario): string[] {
   if (JSON.stringify(a.hostBindings) !== JSON.stringify(b.hostBindings)) out.push('привязка Host');
   if (a.cooldownMinutes !== b.cooldownMinutes)
     out.push(`пауза ${b.cooldownMinutes} → ${a.cooldownMinutes} мин`);
+  if ((a.except ?? []).join() !== (b.except ?? []).join()) out.push('исключение');
   return out;
 }
 
@@ -313,6 +315,7 @@ export function ScenarioEditor({
   const nodes = useNodes();
   const telegram = useTelegramSettings();
   const monitoring = useMonitoring();
+  const waveExcept = (draft.except ?? []).includes('wave');
   const [search, setSearch] = useState('');
   const [holdInput, setHoldInput] = useState(String(draft.holdMinutes));
   const [cooldownInput, setCooldownInput] = useState(String(draft.cooldownMinutes));
@@ -478,6 +481,7 @@ export function ScenarioEditor({
             <DialogDescription className="mt-0.5 line-clamp-2 text-[12.5px] text-text-3">
               Если {conditionsPhrase(draft)} держится {draft.holdMinutes} мин{' '}
               {readScope ? `на ${readScope}` : '(ноды не выбраны)'}
+              {waveExcept ? ', кроме нод в волне' : ''}
             </DialogDescription>
           </div>
           <div className="flex h-10 flex-none items-center gap-2.5 rounded-[10px] border border-border px-3">
@@ -857,6 +861,49 @@ export function ScenarioEditor({
                         </li>
                       )}
                   </ul>
+                  {/* Исключения (витрина wave-maintenance-2026-10, раздел 5 — C): когда сценарию не срабатывать. */}
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ai/20 pt-3">
+                    <span className="text-[13px] font-semibold text-text-2">Кроме</span>
+                    {waveExcept ? (
+                      <span className={cn(CHIP, 'cursor-default border-ai/45 bg-ai/[0.12] pr-1')}>
+                        <WavesIcon aria-hidden="true" />
+                        нода в волне
+                        <button
+                          type="button"
+                          aria-label="Убрать исключение «нода в волне»"
+                          onClick={() => change({ except: [] })}
+                          className="grid size-6 cursor-pointer place-items-center rounded-[7px] text-text-3 hover:bg-surface-3 hover:text-foreground"
+                        >
+                          <XIcon aria-hidden="true" />
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-[9px] border border-dashed border-border-2 px-2.5 text-[12.5px] font-medium text-text-2 hover:border-ai/50 hover:text-foreground"
+                        onClick={() => change({ except: ['wave'] })}
+                      >
+                        <PlusIcon className="size-3.5" aria-hidden="true" />
+                        Исключение
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-2 text-[12px] leading-snug text-text-3">
+                    {waveExcept ? (
+                      <>
+                        <b className="font-semibold text-text-2">Нода в волне:</b> за{' '}
+                        {monitoring.data?.waveWindowMinutes ?? 10} мин упали{' '}
+                        {monitoring.data?.waveMinNodes ?? 2} и больше ноды одного провайдера (или одной
+                        страны, если провайдер не указан). Такую ноду сценарий пропустит — скорее всего, сбой
+                        у провайдера, а не у ноды.
+                        {monitoring.data && !monitoring.data.waveEnabled && (
+                          <span className="text-warn"> Сейчас волны выключены в «Мониторинге нод».</span>
+                        )}
+                      </>
+                    ) : (
+                      'Исключение — когда сценарию не срабатывать. Сейчас одно: «нода в волне».'
+                    )}
+                  </p>
                 </section>
                 {monitoring.data && !monitoring.data.enabled && (
                   <Note tone="warn">
@@ -1042,6 +1089,11 @@ export function ScenarioEditor({
                       </>
                     ) : (
                       <b className="text-warn">(ноды не выбраны)</b>
+                    )}
+                    {waveExcept && (
+                      <>
+                        , <b>кроме нод в волне</b>
+                      </>
                     )}
                     , то:{' '}
                     {steps.length ? (

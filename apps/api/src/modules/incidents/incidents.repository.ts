@@ -28,6 +28,20 @@ export interface IncidentActionStat {
   lastAt: string | null;
 }
 
+/** Событие ноды, с которым она вошла в какую-либо волну (её строка волны показывает его сама). */
+const WAVE_MEMBER = sql`exists (
+  select 1 from ${incidents} as w
+  cross join lateral jsonb_array_elements(coalesce(w.snapshot->'fleet'->'members', '[]'::jsonb)) as m
+  where w.kind = 'wave' and m->>'incidentId' = ${incidents.id}::text
+)`;
+/** Событие ноды, которая сейчас лежит в открытой волне (любое её событие тех видов, что собираются в волну). */
+const OPEN_WAVE_MEMBER = sql`(${incidents.kind} in ('node_down', 'node_blocked', 'server_down') and exists (
+  select 1 from ${incidents} as w
+  cross join lateral jsonb_array_elements(coalesce(w.snapshot->'fleet'->'members', '[]'::jsonb)) as m
+  where w.kind = 'wave' and w.status <> 'resolved' and m->>'nodeUuid' = ${incidents.nodeUuid}::text
+    and m->>'upAt' is null
+))`;
+
 /** Хранилище инцидентов. Один открытый инцидент на (server_id, kind) держит частичный уникальный индекс. */
 @Injectable()
 export class IncidentsRepository {
@@ -104,10 +118,13 @@ export class IncidentsRepository {
     pageSize: number;
     /** С какой строки начать (с нуля); задано — `page` не учитывается и к последней странице не подгоняется. */
     offset?: number | undefined;
+    /** `grouped` — события нод, вошедших в волну, не повторяются: их показывает строка волны (0.106.0). */
+    waves?: 'flat' | 'grouped';
   }): Promise<IncidentsPage> {
     const where = and(
       this.where(query.status, query.openedFrom),
       inArray(incidents.kind, [...INCIDENT_KINDS]),
+      query.waves === 'grouped' ? sql`not ${WAVE_MEMBER}` : undefined,
     );
     if (query.status === 'open') {
       const rows = await this.db.select().from(incidents).where(where).orderBy(desc(incidents.openedAt));
@@ -143,31 +160,33 @@ export class IncidentsRepository {
   /** Счётчики для шапки — всегда по всей таблице, независимо от текущей страницы/фильтра. */
   /** Лёгкая выборка для полосы «за 7 дней»: только поля подсчёта, без разборов и хронологии. */
   async weekRows(openedFrom: Date) {
-    return this.db
-      .select({
-        status: incidents.status,
-        openedAt: incidents.openedAt,
-        resolvedAt: incidents.resolvedAt,
-        resolvedBy: incidents.resolvedBy,
-        attempts: incidents.attempts,
-      })
-      .from(incidents)
-      .where(gte(incidents.openedAt, openedFrom));
+    return (
+      this.db
+        .select({
+          status: incidents.status,
+          openedAt: incidents.openedAt,
+          resolvedAt: incidents.resolvedAt,
+          resolvedBy: incidents.resolvedBy,
+          attempts: incidents.attempts,
+        })
+        .from(incidents)
+        // Волна — не отдельный сбой, а группа уже посчитанных сбоев нод.
+        .where(and(gte(incidents.openedAt, openedFrom), ne(incidents.kind, 'wave')))
+    );
   }
 
+  /** Открытая волна считается за одно событие: события её нод в счётчиках (значок «События») не повторяются. */
   async counts(): Promise<{ open: number; crit: number; warn: number }> {
-    const [open] = await this.db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(incidents)
-      .where(ne(incidents.status, 'resolved'));
+    const live = and(ne(incidents.status, 'resolved'), sql`not ${OPEN_WAVE_MEMBER}`);
+    const [open] = await this.db.select({ n: sql<number>`count(*)::int` }).from(incidents).where(live);
     const [crit] = await this.db
       .select({ n: sql<number>`count(*)::int` })
       .from(incidents)
-      .where(and(ne(incidents.status, 'resolved'), eq(incidents.severity, 'crit')));
+      .where(and(live, eq(incidents.severity, 'crit')));
     const [warn] = await this.db
       .select({ n: sql<number>`count(*)::int` })
       .from(incidents)
-      .where(and(ne(incidents.status, 'resolved'), eq(incidents.severity, 'warn')));
+      .where(and(live, eq(incidents.severity, 'warn')));
     return { open: open?.n ?? 0, crit: crit?.n ?? 0, warn: warn?.n ?? 0 };
   }
 

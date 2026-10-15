@@ -6,6 +6,7 @@ import { errorText } from '../../common/filters/problem-details.filter.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { appMeta } from '../../infra/db/schema/index.js';
 import { NodeEventsStore } from '../node-events/node-events.store.js';
+import { NodeMaintenanceStore } from '../remnawave/node-maintenance.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { type IntegrationSession, IntegrationsService } from './integrations.service.js';
 export const obj = (v: unknown): Record<string, unknown> =>
@@ -134,6 +135,7 @@ export class DpiService {
     private integrations: IntegrationsService,
     private remna: RemnawaveService,
     @Optional() private timeline?: NodeEventsStore,
+    @Optional() private maintenance?: NodeMaintenanceStore,
   ) {}
   private async read(key: string) {
     const row = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, key) });
@@ -539,10 +541,14 @@ export class DpiService {
     });
     const failed: string[] = [];
     let fatal: string | null = null;
+    // Платная проверка ноды на обслуживании ничего не скажет: нода может быть выключена. Пропускаем без ошибки.
+    const maintained = new Set(
+      (await this.maintenance?.active(schedule.panel ?? null).catch(() => null))?.keys() ?? [],
+    );
     for (const uuid of schedule.nodes) {
       const current = await this.read(key);
       if (!current?.enabled || current.panel !== schedule.panel) return;
-      if (!current.nodes.includes(uuid)) continue;
+      if (!current.nodes.includes(uuid) || maintained.has(uuid)) continue;
       try {
         await this.start(
           { nodeUuid: uuid, kind: 'ip', popIds: schedule.pops, requestId: randomUUID() },

@@ -11,6 +11,6 @@ import { ScenariosStore } from './scenarios.store.js';
   imports: [RemnawaveModule, SettingsModule, CheckHostModule, NotificationsModule, IncidentsModule],
   providers: [ScenariosStore, ScenariosJob],
   controllers: [ScenariosController],
-  exports: [ScenariosStore],
+  exports: [ScenariosStore, ScenariosJob],
 })
 export class ScenariosModule {}

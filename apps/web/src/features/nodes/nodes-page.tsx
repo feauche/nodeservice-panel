@@ -113,14 +113,18 @@ export function NodesPage() {
   const enabledCount = enabledNodes.length;
   const disabledCount = nodes.length - enabledCount;
   const connectedCount = enabledNodes.filter((n) => n.isConnected).length;
-  const downCount = enabledCount - connectedCount;
+  // Нода на обслуживании — не авария: в «без связи» и «со сбоем» не считается, у неё своя подпись.
+  const maintenanceCount = enabledNodes.filter((n) => n.maintenance).length;
+  const downCount = enabledNodes.filter((n) => !n.isConnected && !n.maintenance).length;
   const onlineCount = enabledNodes.reduce((sum, n) => sum + (n.usersOnline ?? 0), 0);
   const critNodes = new Set(
     (incidents.data?.items ?? [])
       .filter((i) => i.status !== 'resolved' && i.severity === 'crit' && i.nodeUuid)
       .map((i) => i.nodeUuid as string),
   );
-  const failingCount = enabledNodes.filter((n) => !n.isConnected || critNodes.has(n.uuid)).length;
+  const failingCount = enabledNodes.filter(
+    (n) => !n.maintenance && (!n.isConnected || critNodes.has(n.uuid)),
+  ).length;
   const lifetimeText = status?.stats ? traffic(status.stats.trafficBytesLifetime) : '—';
   const lifetimeAt = lifetimeText.lastIndexOf(' ');
   const lifetime =
@@ -134,7 +138,15 @@ export function NodesPage() {
           `${n.name} ${n.address} ${n.countryCode ?? ''} ${n.providerName ?? ''}`
             .toLowerCase()
             .includes(search.toLowerCase().trim()) &&
-          (filter === 'all' || filter === (n.isDisabled ? 'disabled' : n.isConnected ? 'connected' : 'down')),
+          (filter === 'all' ||
+            filter ===
+              (n.isDisabled
+                ? 'disabled'
+                : n.maintenance
+                  ? 'maintenance'
+                  : n.isConnected
+                    ? 'connected'
+                    : 'down')),
       ),
     [nodes, search, filter],
   );
@@ -329,8 +341,14 @@ export function NodesPage() {
               label="На связи"
               value={connectedCount}
               unit={`/ ${enabledCount}`}
-              status={downCount > 0 ? `${downCount} без связи` : 'Без потерь связи'}
-              tone={downCount > 0 ? 'crit' : 'ok'}
+              status={
+                downCount > 0
+                  ? `${downCount} без связи`
+                  : maintenanceCount > 0
+                    ? `${maintenanceCount} на обслуживании`
+                    : 'Без потерь связи'
+              }
+              tone={downCount > 0 ? 'crit' : maintenanceCount > 0 ? 'info' : 'ok'}
             />
             <KpiCard
               label="Онлайн"
@@ -390,6 +408,7 @@ export function NodesPage() {
                       { value: 'all', label: 'Все состояния' },
                       { value: 'connected', label: 'На связи' },
                       { value: 'down', label: 'Не на связи' },
+                      { value: 'maintenance', label: 'На обслуживании' },
                       { value: 'disabled', label: 'Отключены' },
                     ]}
                     className="h-10 w-[180px] shrink-0 rounded-[10px] max-sm:w-full"

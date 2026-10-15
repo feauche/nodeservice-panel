@@ -163,6 +163,24 @@ describe('Редактор сценария «Если → то»', () => {
     );
   });
 
+  it('исключение «нода в волне»: добавляется и убирается, объяснено, видно в пересказе и в изменениях', async () => {
+    const user = userEvent.setup();
+    renderPage(() => <SavedHarness />, '/scenarios');
+    await screen.findByRole('dialog');
+    expect(
+      screen.getByText('Исключение — когда сценарию не срабатывать. Сейчас одно: «нода в волне».'),
+    ).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Исключение' }));
+    expect(screen.getByText(/Такую ноду сценарий пропустит — скорее всего, сбой у провайдера/)).toBeVisible();
+    expect(reading()).toHaveTextContent('кроме нод в волне');
+    expect(screen.getByText(/Есть несохранённые изменения: исключение/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    expect(saved?.except).toEqual(['wave']);
+    await user.click(screen.getByRole('button', { name: 'Убрать исключение «нода в волне»' }));
+    expect(reading()).not.toHaveTextContent('кроме нод в волне');
+    expect(screen.getByRole('button', { name: 'Исключение' })).toBeVisible();
+  });
+
   it('выбранные ноды: без выбора сохранить нельзя, «Выбрать все» и «Очистить», счёт и имена в пересказе', async () => {
     const user = userEvent.setup();
     renderPage(() => <Harness />, '/scenarios');

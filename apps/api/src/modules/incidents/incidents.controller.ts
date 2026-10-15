@@ -35,6 +35,7 @@ export class IncidentsController {
       page: query.page,
       pageSize: query.pageSize,
       offset: query.offset,
+      waves: query.waves,
     });
   }
 

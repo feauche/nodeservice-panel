@@ -65,6 +65,12 @@ export interface PushInput {
     severity?: NotificationSeverity | null;
     /** Событие `resolved`: чем закрылось дело (см. IncidentClosed). */
     closed?: IncidentClosed | null;
+    /** Свой значок сообщения (🌊 у волны). */
+    icon?: string | null;
+    /** Обычным текстом, без расширенного оформления: такое сообщение можно потом править (волна). */
+    plain?: boolean;
+    /** Без звука в любом случае (тихий ответ). */
+    silent?: boolean;
   } | null;
 }
 
@@ -362,6 +368,35 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
     });
   }
 
+  /**
+   * Переписать уже отправленное сообщение по делу (волна дописывает новую ноду). Не вышло — тихий ответ на него
+   * (`fallback`), чтобы новость не пропала.
+   */
+  async editIncident(input: PushInput, fallback: PushInput): Promise<void> {
+    const t = input.telegram;
+    const incidentId = t?.incidentId;
+    if (!t || !incidentId) return;
+    const toDispatch = (p: PushInput): TelegramDispatch => ({
+      event: p.telegram?.event ?? t.event,
+      incidentId,
+      kind: t.kind ?? null,
+      serverKey: t.serverKey ?? null,
+      title: p.title,
+      body: p.body ?? null,
+      server: null,
+      link: p.link ?? null,
+      severity: p.severity,
+      icon: p.telegram?.icon ?? null,
+      plain: true,
+      silent: true,
+    });
+    await this.turn(incidentId, () =>
+      this.telegram.editIncident(toDispatch(input), toDispatch(fallback)),
+    ).catch((err) =>
+      this.log.warn(`Telegram: правка сообщения по делу ${incidentId}: ${(err as Error).message}`),
+    );
+  }
+
   /** Уйдёт ли в Telegram сообщение этого типа сейчас (см. TelegramService.outlook); не узнали — null. */
   telegramOutlook(event: TelegramEvent) {
     return this.telegram.outlook(event).catch(() => null);
@@ -391,6 +426,9 @@ export class NotificationsService implements OnModuleDestroy, BeforeApplicationS
         recovery: t.recovery ?? null,
         lastedMs: t.lastedMs ?? null,
         severity: t.severity ?? input.severity,
+        icon: t.icon ?? null,
+        plain: t.plain ?? false,
+        ...(t.silent ? { silent: true } : {}),
       };
       // Сообщения по делу идут по очереди дела (см. route): ждём только решения, сама отправка — в фоне.
       if (incidentId && !t.html)

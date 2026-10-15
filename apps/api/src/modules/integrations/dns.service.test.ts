@@ -200,7 +200,7 @@ describe('DNS: автозамена и связи не теряются при �
 });
 
 describe('DNS: шаги в событии ноды после смены адреса', () => {
-  function moved(automatic: boolean) {
+  function moved(automatic: boolean, maintained = new Set<string>()) {
     const noteNode = vi.fn(async () => 1);
     const providerRequest = vi.fn().mockResolvedValue({ success: true });
     const service = new DnsService(
@@ -217,6 +217,7 @@ describe('DNS: шаги в событии ноды после смены адр�
       } as never,
       undefined,
       { noteNode } as never,
+      { active: async () => new Map([...maintained].map((u) => [u, { nodeUuid: u }])) } as never,
     );
     const record = {
       id: 'cloudflare|zone|record',
@@ -246,8 +247,18 @@ describe('DNS: шаги в событии ноды после смены адр�
       automaticNodes: [],
       automaticRecords: automatic ? [record.id] : [],
     });
-    return { service, noteNode, providerRequest, record };
+    return { service, noteNode, providerRequest, record, write: internals.write as ReturnType<typeof vi.fn> };
   }
+  it('нода на обслуживании: запись ждёт, прежний адрес не перезаписан — замена сразу после окончания', async () => {
+    const maintained = new Set(['node-b']);
+    const f = moved(true, maintained);
+    await f.service.runTick();
+    expect(f.providerRequest).not.toHaveBeenCalled();
+    expect(f.write).toHaveBeenCalledWith('dns.addresses.panel', { 'node-b': '192.0.2.1' });
+    maintained.clear();
+    await f.service.runTick();
+    expect(f.providerRequest).toHaveBeenCalledOnce();
+  });
   it('автозамена включена: запись обновляется, в событии «обновлена автоматически»; тот же шаг дважды не пишется', async () => {
     const f = moved(true);
     await f.service.runTick();

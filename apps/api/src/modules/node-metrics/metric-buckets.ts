@@ -7,11 +7,12 @@ type Values = Record<Field, number | null>;
 
 /**
  * Была ли нода на связи в замере. До 0.91.0 этого признака в замерах не было: тогда «на связи» — если нода
- * прислала память, нагрузку или хоть одного пользователя.
+ * прислала память, нагрузку или хоть одного пользователя. Замер во время обслуживания ноды (0.106.0, `mt`) —
+ * пусто: в среднем «на связи» и аптайме он не участвует, работы владельца аптайм не портят.
  */
-export const UP_SQL = sql.raw(`COALESCE((values->>'up')::float,
+export const UP_SQL = sql.raw(`CASE WHEN values ? 'mt' THEN NULL ELSE COALESCE((values->>'up')::float,
   CASE WHEN values->>'ram' IS NOT NULL OR values->>'load' IS NOT NULL OR COALESCE((values->>'online')::float, 0) > 0
-  THEN 1 ELSE 0 END)`);
+  THEN 1 ELSE 0 END) END`);
 
 /**
  * Скорость за корзину, байт в секунду: сумма байт за промежутки, делённая на сумму их длительности по часам ноды

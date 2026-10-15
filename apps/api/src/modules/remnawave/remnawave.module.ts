@@ -8,6 +8,7 @@ import { SettingsModule } from '../settings/settings.module.js';
 import { DnsHostResolver, HOST_RESOLVER, HostAddressesService } from './host-addresses.service.js';
 import { NodeActionsController } from './node-actions.controller.js';
 import { NodeLayoutStore } from './node-layout.store.js';
+import { NodeMaintenanceStore } from './node-maintenance.store.js';
 import { NodePreferencesStore } from './node-preferences.store.js';
 import { NodeRatesStore } from './node-rates.store.js';
 import { NodeTcpHistoryService } from './node-tcp-history.service.js';
@@ -47,6 +48,7 @@ import { RemnawaveTopologyService } from './remnawave-topology.service.js';
     RemnaPermissionsService,
     RemnawaveSettingsStore,
     NodePreferencesStore,
+    NodeMaintenanceStore,
     NodeRatesStore,
     RemnaProvidersService,
     RemnaProviderAssetsService,
@@ -57,6 +59,7 @@ import { RemnawaveTopologyService } from './remnawave-topology.service.js';
     { provide: HOST_RESOLVER, useClass: DnsHostResolver },
   ],
   exports: [
+    NodeMaintenanceStore,
     NodePreferencesStore,
     NodeRatesStore,
     RemnaPermissionsService,

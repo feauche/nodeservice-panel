@@ -25,6 +25,7 @@ import { HousekeepingModule } from './modules/housekeeping/housekeeping.module.j
 import { IncidentsModule } from './modules/incidents/incidents.module.js';
 import { IntegrationsModule } from './modules/integrations/integrations.module.js';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module.js';
+import { NodeMaintenanceModule } from './modules/maintenance/maintenance.module.js';
 import { NodeEventsModule } from './modules/node-events/node-events.module.js';
 import { NodeMetricsModule } from './modules/node-metrics/node-metrics.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
@@ -37,6 +38,7 @@ import { SettingsModule } from './modules/settings/settings.module.js';
 @Module({
   imports: [
     ScenariosModule,
+    NodeMaintenanceModule,
     NodeEventsModule,
     NodeMetricsModule,
     ConfigModule,

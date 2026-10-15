@@ -1,4 +1,4 @@
-import { INCIDENT_KIND_META, type Incident, type IncidentStatus } from '@nodeservice/shared';
+import { INCIDENT_KIND_META, type Incident, type IncidentStatus, waveGroupOf } from '@nodeservice/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeftIcon, CheckIcon, ServerIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
@@ -27,6 +27,7 @@ import {
   useResolveIncident,
 } from './incidents-api';
 import { OutsideCheckCard, showsOutsideCheck } from './outside-check';
+import { WaveExplain, WaveMembers } from './wave-rows';
 
 const STATUS_PILL: Record<IncidentStatus, { tone: 'ok' | 'warn' | 'crit' | 'muted'; label: string }> = {
   open: { tone: 'crit', label: 'Активно' },
@@ -86,13 +87,28 @@ export function IncidentCasePage({ id }: { id: string }) {
   // Нода Remnawave этого события, если она ещё есть в подключении: её окно открывается поверх страницы.
   const node = inc.nodeUuid ? nodes.data?.nodes.find((n) => n.uuid === inc.nodeUuid) : undefined;
 
+  const groupKey = inc.snapshot?.fleet?.groupKey;
   const similar = (all.data?.items ?? []).filter(
     (i) =>
       i.id !== inc.id &&
-      (inc.nodeUuid ? i.nodeUuid === inc.nodeUuid : inc.serverId !== null && i.serverId === inc.serverId) &&
+      (inc.kind === 'wave'
+        ? i.snapshot?.fleet?.groupKey === groupKey
+        : inc.nodeUuid
+          ? i.nodeUuid === inc.nodeUuid
+          : inc.serverId !== null && i.serverId === inc.serverId) &&
       i.kind === inc.kind &&
       now - new Date(i.openedAt).getTime() < 7 * 86_400_000,
   );
+  // Волна: ноды той же группы, которые не падали, — «уцелевшие».
+  const calm =
+    inc.kind === 'wave'
+      ? (nodes.data?.nodes ?? []).filter(
+          (n) =>
+            !n.isDisabled &&
+            waveGroupOf(n)?.key === groupKey &&
+            !inc.snapshot?.fleet?.members.some((m) => m.nodeUuid === n.uuid),
+        )
+      : [];
 
   return (
     <div className="flex flex-col gap-4">
@@ -201,7 +217,9 @@ export function IncidentCasePage({ id }: { id: string }) {
             {/* Доступность ноды: сверху шаги восстановления — что готово, чего ждём, что сделать (витрина, B). */}
             {RECOVERY_KINDS.includes(inc.kind) && inc.nodeUuid && <RecoveryCard inc={inc} node={node} />}
             {/* Текст бывает блоками по строкам (падение онлайна: откуда проверяли, вывод) — строки сохраняем. */}
-            {inc.diagnostics ? (
+            {inc.kind === 'wave' ? (
+              <WaveExplain inc={inc} />
+            ) : inc.diagnostics ? (
               <TcpResults report={inc.diagnostics.report} online={inc.diagnostics.online} />
             ) : (
               <LegacyIncidentDetail detail={inc.detail} outcome={outcomeSentence(inc)} />
@@ -210,7 +228,7 @@ export function IncidentCasePage({ id }: { id: string }) {
             {node && showsOutsideCheck(inc) && <OutsideCheckCard node={node} />}
             <section>
               <h3 className="mb-2 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
-                Что происходило
+                {inc.kind === 'wave' ? 'Как шла волна' : 'Что происходило'}
               </h3>
               <Timeline events={inc.timeline} severity={inc.severity} />
             </section>
@@ -219,8 +237,9 @@ export function IncidentCasePage({ id }: { id: string }) {
           {/* Правая колонка: короткие значения, цепочка списком — ничего не переносится «в кашу» */}
           <aside className="flex flex-col gap-5 border-t border-border bg-bg-2 px-5 py-4 md:border-t-0">
             {inc.nodeUuid && <NodeNow inc={inc} node={node} />}
+            {inc.kind === 'wave' && <WaveMembers inc={inc} calm={calm} />}
             {/* Снимок от агента на сервере — только у старых событий, когда агенты ещё были. */}
-            {inc.snapshot && (
+            {inc.snapshot && inc.kind !== 'wave' && (
               <section>
                 <h3 className="mb-2.5 text-[11px] font-semibold tracking-[0.09em] text-text-3 uppercase">
                   Сигналы в момент сбоя
@@ -242,9 +261,13 @@ export function IncidentCasePage({ id }: { id: string }) {
                 Похожие
               </h3>
               <p className="text-[12.5px] leading-snug text-text-2">
-                {similar.length === 0
-                  ? 'На этой ноде за 7 дней такого не было.'
-                  : `На этой ноде ${similar.length + 1} ${plural(similar.length + 1, 'раз', 'раза', 'раз')} за 7 дней.`}
+                {inc.kind === 'wave'
+                  ? similar.length === 0
+                    ? 'Других волн у этой группы нод за 7 дней не было.'
+                    : `У этой группы нод ${similar.length + 1} ${plural(similar.length + 1, 'волна', 'волны', 'волн')} за 7 дней.`
+                  : similar.length === 0
+                    ? 'На этой ноде за 7 дней такого не было.'
+                    : `На этой ноде ${similar.length + 1} ${plural(similar.length + 1, 'раз', 'раза', 'раз')} за 7 дней.`}
               </p>
             </section>
           </aside>

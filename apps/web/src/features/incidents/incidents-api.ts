@@ -21,6 +21,8 @@ export interface IncidentsListParams {
   pageSize?: number;
   /** С какой строки начать (с нуля) — вместо номера страницы: страницы реестра разной длины. */
   offset?: number;
+  /** Волна — одной строкой: события её нод в выдаче не повторяются (0.106.0). */
+  waves?: 'grouped';
 }
 
 export const incidentsApi = {
@@ -34,6 +36,7 @@ export const incidentsApi = {
     if (params?.page) q.set('page', String(params.page));
     if (params?.pageSize) q.set('pageSize', String(params.pageSize));
     if (params?.offset !== undefined) q.set('offset', String(params.offset));
+    if (params?.waves) q.set('waves', params.waves);
     return api.get(`/incidents?${q}`, incidentsListResponseSchema, signal);
   },
   weekStats: (signal?: AbortSignal): Promise<IncidentWeekStats> =>

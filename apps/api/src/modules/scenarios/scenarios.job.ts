@@ -4,6 +4,8 @@ import { Interval } from '@nestjs/schedule';
 import {
   formatScenarioHostName,
   type MonitoringSettings,
+  type NodeMaintenanceHostPreview,
+  type NodeMaintenanceHosts,
   type RemnawaveNode,
   type Scenario,
   type ScenarioRunStep,
@@ -21,8 +23,10 @@ import { sql } from 'drizzle-orm';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { CheckHostService } from '../incidents/check-host.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
+import { WaveService } from '../incidents/wave.service.js';
 import { NodeEventsStore } from '../node-events/node-events.store.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { NodeMaintenanceStore } from '../remnawave/node-maintenance.store.js';
 import { HOSTS_UPDATE_SCOPE, RemnaPermissionsService } from '../remnawave/remna-permissions.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { getJson, RemnawaveApiError } from '../remnawave/remnawave-client.js';
@@ -30,6 +34,9 @@ import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js
 import { RemnawaveTopologyService } from '../remnawave/remnawave-topology.service.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
 import { ScenariosStore } from './scenarios.store.js';
+
+/** Владелец изменения Host в общем учёте, когда Host скрыло обслуживание ноды (0.106.0), а не сценарий. */
+export const MAINTENANCE_OWNER = 'maintenance';
 
 type State = {
   since: number | null;
@@ -279,7 +286,18 @@ export class ScenariosJob {
     @Optional() private topology?: RemnawaveTopologyService,
     @Optional() private permissions?: RemnaPermissionsService,
     @Optional() private incidents?: IncidentsService,
+    @Optional() private maintenance?: NodeMaintenanceStore,
+    @Optional() private wave?: WaveService,
   ) {}
+  /** Ноды на обслуживании (0.106.0): сценарии их пропускают, сбой ловят заново после окончания. */
+  private async maintained(panel: string | null): Promise<Set<string>> {
+    if (!this.maintenance) return new Set();
+    try {
+      return new Set((await this.maintenance.active(panel)).keys());
+    } catch {
+      return new Set();
+    }
+  }
   /**
    * Изменение Host в Remnawave с учётом права ключа: отказ виден в «Разрешениях API-ключа», а в итоге
    * сценария — словами, какого права не хватает (а не «токен неверный»).
@@ -449,6 +467,11 @@ export class ScenariosJob {
       );
       const issue = (uuid: string, kinds: string[]) =>
         incidents.rows.some((i) => i.node_uuid === uuid && kinds.includes(String(i.kind)));
+      const maintained = await this.maintained(panel);
+      // Ноды открытых волн — для сценариев с исключением «нода в волне» (0.106.0).
+      const inWave = rules.some((r) => r.enabled && (r.except ?? []).includes('wave'))
+        ? ((await this.wave?.nodesInWave().catch(() => null)) ?? new Map<string, string>())
+        : new Map<string, string>();
       for (const rule of rules.filter((r) => r.enabled))
         for (const node of status.nodes.filter(
           (n) => !n.isDisabled && (rule.scope === 'all' || rule.nodes.includes(n.uuid)),
@@ -461,6 +484,33 @@ export class ScenariosJob {
               lastRun: 0,
             };
           if (stamp <= state.stamp) continue;
+          if (maintained.has(node.uuid)) {
+            // Обслуживание: сбой не копится, и после окончания «держится N мин» отсчитывается заново.
+            state.since = null;
+            state.latched = false;
+            state.stamp = stamp;
+            await this.store.write(stateKey, state);
+            continue;
+          }
+          const waveId = (rule.except ?? []).includes('wave') ? inWave.get(node.uuid) : undefined;
+          if (waveId) {
+            // Исключение «нода в волне»: сбой у провайдера, а не у ноды, — сценарий её пропускает. Срабатывание,
+            // которое было бы, видно в карточке волны.
+            if (
+              scenarioConditionMatches(
+                rule,
+                await this.signals(panel, rule, node, incidents.rows, cfg, false),
+              )
+            )
+              await this.wave
+                ?.noteSkipped(waveId, { ruleId: rule.id, ruleName: rule.name, nodeUuid: node.uuid })
+                .catch(() => undefined);
+            state.since = null;
+            state.latched = false;
+            state.stamp = stamp;
+            await this.store.write(stateKey, state);
+            continue;
+          }
           if (state.stamp && stamp - state.stamp > cfg.staleAfterMinutes * 60000) state.since = null;
           const condition = scenarioConditionMatches(
             rule,
@@ -693,7 +743,7 @@ export class ScenariosJob {
    * проходит), прежде чем делать вывод о том, чьи Host. Когда у ноды Host уже определились, не ждёт: Host с молчащим DNS
    * (например, давно мёртвый домен) тогда просто попадают в итог как «не проверены».
    */
-  private async readHosts(panel: string, apiKey: string, node: RemnawaveNode, rule: Scenario) {
+  private async readHosts(panel: string, apiKey: string, node: RemnawaveNode, rule?: Scenario) {
     const read = async () => {
       const [hosts, view] = await Promise.all([this.hosts(panel, apiKey), this.hostLinks()]);
       return {
@@ -768,13 +818,15 @@ export class ScenariosJob {
               ownedBy: ledger && !ledger.restored ? ledger.ruleId : null,
               restoration:
                 ledger && !ledger.restored
-                  ? !ledger.confirmed
-                    ? 'Результат изменения не подтверждён — требуется ручная проверка'
-                    : !stillOurs(h, ledger)
-                      ? 'Host изменён вручную после сценария — сценарий его не вернёт'
-                      : rules.find((r) => r.id === ledger.ruleId)?.autoRestore
-                        ? 'Изменён сценарием — вернётся после восстановления ноды'
-                        : 'Изменён сценарием — возврат выключен, верните его в Remnawave сами'
+                  ? ledger.ruleId === MAINTENANCE_OWNER
+                    ? 'Скрыт на время обслуживания ноды — вернётся после него'
+                    : !ledger.confirmed
+                      ? 'Результат изменения не подтверждён — требуется ручная проверка'
+                      : !stillOurs(h, ledger)
+                        ? 'Host изменён вручную после сценария — сценарий его не вернёт'
+                        : rules.find((r) => r.id === ledger.ruleId)?.autoRestore
+                          ? 'Изменён сценарием — вернётся после восстановления ноды'
+                          : 'Изменён сценарием — возврат выключен, верните его в Remnawave сами'
                   : null,
             };
           }),
@@ -866,12 +918,15 @@ export class ScenariosJob {
       if (
         !freshNode ||
         freshNode.isDisabled ||
+        (await this.maintained(panel)).has(node.uuid) ||
         !scenarioConditionMatches(
           rule,
           await this.signals(panel, rule, freshNode, freshIssues.rows, await this.monitoring.get(), false),
         )
       )
-        throw new Error('Условия больше не подтверждены или нода исключена — изменение Host отменено');
+        throw new Error(
+          'Условия больше не подтверждены, нода исключена или на обслуживании — изменение Host отменено',
+        );
       let freshLinks = await this.hostLinks();
       // Привязку подтверждаем тем же DNS: короткий сбой на этом чтении не должен отменять изменение.
       for (const delay of this.relinkDelaysMs) {
@@ -937,6 +992,139 @@ export class ScenariosJob {
     // До трёх Host — по именам, больше — числом: строка уходит и в событие, и в Telegram.
     const text = `${what} Host: ${changed > 0 && changed <= 3 ? names.join(', ') : changed}${shared ? `; общих Host пропущено: ${shared}` : ''}`;
     return { text, hidden, renamed, shared, own, held, scanned: hosts.length, unresolved: unknown.length };
+  }
+  /** Обслуживание ноды: какие Host скроются (свои Host ноды, ещё не скрытые) — для окна включения. */
+  async maintenancePreview(nodeUuid: string): Promise<NodeMaintenanceHostPreview> {
+    const { hosts } = await this.previewHosts();
+    const mine = hosts.filter((h) => h.nodes.includes(nodeUuid));
+    const own = mine.filter((h) => h.nodes.length === 1);
+    return {
+      hosts: own
+        .filter((h) => !h.disabled)
+        .map((h) => ({ uuid: h.uuid, name: h.name, address: h.address, port: h.port })),
+      shared: mine.length - own.length,
+      alreadyHidden: own.filter((h) => h.disabled).length,
+    };
+  }
+  /**
+   * Обслуживание ноды: скрыть её собственные Host. Тот же учёт изменений, что у сценариев: Host, который держит
+   * сценарий, не трогаем; Host, скрытый обслуживанием, не трогают сценарии. Общие Host нескольких нод пропускаются.
+   */
+  async hideForMaintenance(node: RemnawaveNode): Promise<NodeMaintenanceHosts> {
+    const c = await this.credentials.credentials();
+    if (!c) return { hidden: [], shared: 0, error: 'Remnawave не подключена — Host не скрыты.' };
+    const scope = this.store.scope(c.domain);
+    const { hosts, view, unknown } = await this.readHosts(c.domain, c.apiKey, node);
+    const hidden: string[] = [],
+      failed: string[] = [];
+    let shared = 0,
+      own = 0;
+    for (const host of hosts) {
+      const nodes = this.linkedNodes(host, view.links);
+      if (!nodes.includes(node.uuid)) continue;
+      if (nodes.length !== 1) {
+        shared++;
+        continue;
+      }
+      if (typeof host.uuid !== 'string') continue;
+      own++;
+      if (host.isDisabled) continue;
+      const key = `scenarios.host.${scope}.${host.uuid}`,
+        old = await this.store.read<Ledger>(key);
+      if (old && !old.restored && (old.confirmed || !untouched(host, old.original))) continue;
+      const ledger: Ledger = {
+        ruleId: MAINTENANCE_OWNER,
+        nodeUuid: node.uuid,
+        hostUuid: host.uuid,
+        afterHash: null,
+        confirmed: false,
+        hasVersion: false,
+        restored: false,
+        original: { isDisabled: false },
+      };
+      await this.store.write(key, ledger);
+      try {
+        await this.patchHost(c, { uuid: host.uuid, ...keepDisabled(host), isDisabled: true });
+      } catch (e) {
+        if (e instanceof RemnawaveApiError && e.status !== null && e.status < 500)
+          await this.store.remove(key);
+        failed.push(
+          `«${previousName(host)}»: ${lowerFirst(e instanceof Error ? e.message : 'Remnawave не ответила')}`,
+        );
+        continue;
+      }
+      const after = (await this.hosts(c.domain, c.apiKey)).find((h) => h.uuid === host.uuid);
+      if (after?.isDisabled !== true) {
+        failed.push(`«${previousName(host)}»: изменение не подтверждено`);
+        continue;
+      }
+      ledger.afterHash = hostFingerprint(after);
+      ledger.after = { isDisabled: true };
+      ledger.confirmed = true;
+      ledger.hasVersion = typeof after.updatedAt === 'string';
+      await this.store.write(key, ledger);
+      hidden.push(previousName(host));
+    }
+    const error = failed.length
+      ? `Не скрыты: ${someNames(failed)}`
+      : own === 0 && shared === 0 && unknown.length > 0
+        ? `Не удалось определить Host ноды: DNS не ответил для ${unknown.length} из ${hosts.length} Host. Host не тронуты.`
+        : null;
+    return { hidden, shared, error };
+  }
+  /**
+   * Обслуживание закончилось: вернуть Host, которые скрыло обслуживание, если их с тех пор не меняли. Ждать, пока
+   * нода поднимется, не нужно: владелец сам сказал, что работы закончены. Итог — словами, для «Журнала».
+   */
+  async restoreAfterMaintenance(nodeUuid: string): Promise<{ restored: string[]; failed: string[] }> {
+    const restored: string[] = [],
+      failed: string[] = [];
+    const c = await this.credentials.credentials();
+    if (!c) return { restored, failed };
+    const scope = this.store.scope(c.domain);
+    for (const host of await this.hosts(c.domain, c.apiKey)) {
+      if (typeof host.uuid !== 'string') continue;
+      const key = `scenarios.host.${scope}.${host.uuid}`,
+        ledger = await this.store.read<Ledger>(key);
+      if (!ledger || ledger.restored || ledger.ruleId !== MAINTENANCE_OWNER || ledger.nodeUuid !== nodeUuid)
+        continue;
+      const name = previousName(host);
+      const release = async () => {
+        ledger.restored = true;
+        await this.store.write(key, ledger);
+      };
+      if (untouched(host, ledger.original)) {
+        // Host уже открыт (вернули вручную или скрытие так и не применилось) — возвращать нечего.
+        await release();
+        if (ledger.confirmed) restored.push(name);
+        continue;
+      }
+      if (!ledger.confirmed) {
+        await release();
+        failed.push(`«${name}»: скрытие не подтвердилось — проверьте Host в Remnawave`);
+        continue;
+      }
+      if (!stillOurs(host, ledger)) {
+        await release();
+        failed.push(`«${name}»: после обслуживания его изменили вручную — проверьте его в Remnawave`);
+        continue;
+      }
+      try {
+        await this.patchHost(c, { uuid: host.uuid, ...keepDisabled(host), isDisabled: false });
+      } catch (e) {
+        await release();
+        failed.push(
+          `«${name}»: ${lowerFirst(e instanceof Error ? e.message : 'Remnawave не ответила')} Верните его в Remnawave сами`,
+        );
+        continue;
+      }
+      const after = (await this.hosts(c.domain, c.apiKey)).find((h) => h.uuid === host.uuid);
+      await release();
+      if (after?.isDisabled !== false)
+        failed.push(`«${name}»: возврат не подтверждён — проверьте его в Remnawave`);
+      else restored.push(previousName(after));
+    }
+    return { restored, failed };
   }
   /**
    * После восстановления ноды: вернуть Host, которые менял этот сценарий, или сказать в событии ноды, почему

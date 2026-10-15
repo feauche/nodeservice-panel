@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   NotFoundException,
+  Optional,
   Param,
   ParseUUIDPipe,
   Post,
@@ -16,6 +17,7 @@ import { createZodDto } from 'nestjs-zod';
 import { CheckHostService } from '../incidents/check-host.service.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
 import { NodeLayoutStore } from './node-layout.store.js';
+import { NodeMaintenanceStore } from './node-maintenance.store.js';
 import { NodePreferencesStore } from './node-preferences.store.js';
 import { NodeTcpHistoryService } from './node-tcp-history.service.js';
 import { NodesConnectRequestDto, NodesStatusDto } from './nodes.dto.js';
@@ -39,6 +41,7 @@ export class NodesController {
     private readonly tcp: CheckHostService,
     private readonly monitoring: MonitoringStore,
     private readonly tcpHistory: NodeTcpHistoryService,
+    @Optional() private readonly maintenance?: NodeMaintenanceStore,
   ) {}
 
   @Post(':uuid/tcp-check')
@@ -102,16 +105,32 @@ export class NodesController {
     }
   }
 
-  /** Отметка «Сервер белого списка» из настроек ноды — для метки «БС» в списке нод. */
+  /**
+   * Отметка «Сервер белого списка» из настроек ноды — для метки «БС» в списке нод; идущее обслуживание ноды
+   * (0.106.0) — для метки «Обслуживание» и счётчиков.
+   */
   private async withWhitelist(status: NodesStatusDto): Promise<NodesStatusDto> {
     let marked = new Set<string>();
+    let maintained = new Map<string, NonNullable<NodesStatusDto['nodes'][number]['maintenance']>>();
     try {
       marked = await this.preferences.whitelisted(status.domain);
     } catch {
       // Сбой чтения отметок не должен ломать список нод: просто без метки «БС».
     }
-    if (marked.size === 0) return status;
-    return { ...status, nodes: status.nodes.map((n) => ({ ...n, whitelist: marked.has(n.uuid) })) };
+    try {
+      maintained = (await this.maintenance?.active(status.domain)) ?? maintained;
+    } catch {
+      // Так же: без метки «Обслуживание», список нод на месте.
+    }
+    if (marked.size === 0 && maintained.size === 0) return status;
+    return {
+      ...status,
+      nodes: status.nodes.map((n) => ({
+        ...n,
+        ...(marked.size ? { whitelist: marked.has(n.uuid) } : {}),
+        ...(maintained.has(n.uuid) ? { maintenance: maintained.get(n.uuid) } : {}),
+      })),
+    };
   }
 
   @Post('connect')

@@ -55,7 +55,10 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
   };
   const status = { connected: true, domain: 'panel.example.com', checkedAt: '', error: null, nodes: [node] };
   const remna = { status: vi.fn(async () => structuredClone(status)) };
-  const notifications = { push: vi.fn().mockResolvedValue(undefined) };
+  const notifications = {
+    push: vi.fn().mockResolvedValue(undefined),
+    editIncident: vi.fn().mockResolvedValue(undefined),
+  };
   const report = (verdict: TcpVerdict): TcpReport => ({
     verdict,
     checkedAt: new Date().toISOString(),
@@ -124,7 +127,9 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
   });
   beforeEach(async () => {
     await db.execute(sql`truncate incidents cascade`);
-    await db.execute(sql`delete from app_meta where key like 'monitor.%' or key like 'settings.node-view.%'`);
+    await db.execute(
+      sql`delete from app_meta where key like 'monitor.%' or key like 'settings.node-view.%' or key like 'nodes.maintenance.%'`,
+    );
     Object.assign(node, {
       address: '198.51.100.9',
       loadAverage: [0.4, 0.4, 0.4],
@@ -134,7 +139,7 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
       isConnected: true,
       isDisabled: false,
     });
-    Object.assign(status, { connected: true, domain: 'panel.example.com', error: null });
+    Object.assign(status, { connected: true, domain: 'panel.example.com', error: null, nodes: [node] });
     stamp = Date.now();
     status.checkedAt = new Date(stamp).toISOString();
     await settings.set({
@@ -146,6 +151,98 @@ describe('Remnawave → Check-Host → persisted incidents (e2e)', () => {
     });
     tcp.checkNode.mockReset().mockImplementation(async () => report('russia_unreachable'));
     notifications.push.mockClear();
+  });
+
+  it('обслуживание: закрывает открытое событие без Telegram, лежащая нода молчит, после окончания — обычное подтверждение', async () => {
+    const csrf = (await agent.get('/api/auth/csrf').expect(200)).body.token;
+    // «Журнал» общий для прогонов: смотрим только записи этого теста.
+    const since = new Date().toISOString();
+    node.isConnected = false;
+    for (let i = 0; i < 3; i++) await snapshot();
+    expect((await list()).map((i) => i.kind)).toContain('node_down');
+    notifications.push.mockClear();
+    const started = await agent
+      .put(`/api/nodes/${uuid}/maintenance`)
+      .set(CSRF_HEADER, csrf)
+      .send({ minutes: 60, reason: 'Обновляю ядро', hideHosts: false })
+      .expect(200);
+    expect(started.body).toMatchObject({
+      nodeUuid: uuid,
+      nodeName: 'Нода Remnawave',
+      reason: 'Обновляю ядро',
+    });
+    expect(Date.parse(started.body.until) - Date.now()).toBeGreaterThan(59 * 60_000);
+    expect(await list()).toEqual([]);
+    for (let i = 0; i < 6; i++) await snapshot();
+    expect(await list()).toEqual([]);
+    expect(notifications.push).not.toHaveBeenCalled();
+    const extended = await agent
+      .post(`/api/nodes/${uuid}/maintenance/extend`)
+      .set(CSRF_HEADER, csrf)
+      .expect(200);
+    expect(Date.parse(extended.body.until) - Date.parse(started.body.until)).toBe(60 * 60_000);
+    await agent.delete(`/api/nodes/${uuid}/maintenance`).set(CSRF_HEADER, csrf).expect(200);
+    await agent.delete(`/api/nodes/${uuid}/maintenance`).set(CSRF_HEADER, csrf).expect(404);
+    const journal = await db.execute(
+      sql`select action, result from audit_log where action like 'incident.node_maintenance.%' and occurred_at >= ${since}::timestamptz order by occurred_at`,
+    );
+    // Повторное «Закончить» — отказ «не идёт», в «Журнале» он тоже виден, но как неудачный.
+    expect(journal.rows.map((r) => `${r.action} ${r.result}`)).toEqual([
+      'incident.node_maintenance.start ok',
+      'incident.node_maintenance.extend ok',
+      'incident.node_maintenance.end ok',
+      'incident.node_maintenance.end failed',
+    ]);
+    for (let i = 0; i < 2; i++) await snapshot();
+    expect(await list()).toEqual([]);
+    await snapshot();
+    expect((await list()).map((i) => i.kind)).toEqual(['node_down']);
+  });
+
+  it('волна: две ноды одного провайдера — одно событие и одно сообщение, в конце одно «Волна закончилась»', async () => {
+    const twin = {
+      ...structuredClone(node),
+      uuid: 'f3c1b7a2-5d4e-4c8b-9a6f-1e2d3c4b5a69',
+      name: 'Нода Remnawave 2',
+      address: '198.51.100.10',
+    };
+    Object.assign(node, { providerUuid: 'aeza', providerName: 'Aeza', countryCode: 'NL' });
+    Object.assign(twin, { providerUuid: 'aeza', providerName: 'Aeza', countryCode: 'DE' });
+    status.nodes = [node, twin];
+    node.isConnected = false;
+    for (let i = 0; i < 3; i++) await snapshot();
+    twin.isConnected = false;
+    for (let i = 0; i < 3; i++) await snapshot();
+    const open = await list();
+    const wave = open.find((i) => i.kind === 'wave');
+    expect(wave).toMatchObject({ title: 'Волна · Aeza', nodeUuid: null, severity: 'crit' });
+    expect(wave?.snapshot?.fleet?.members.map((m) => m.name)).toEqual(['Нода Remnawave', 'Нода Remnawave 2']);
+    expect(open.filter((i) => i.kind === 'node_down')).toHaveLength(2);
+    // Значок «События»: волна — одно событие, а не три.
+    expect((await agent.get('/api/incidents?status=open').expect(200)).body.counts.open).toBe(1);
+    // В Telegram: тревога первой ноды и сообщение волны; своей тревоги у второй ноды нет.
+    const sent = notifications.push.mock.calls.map(([p]) => `${p.telegram?.kind} ${p.title}`);
+    expect(sent).toEqual(['node_down Нода не на связи', 'wave Волна · Aeza']);
+    notifications.push.mockClear();
+    node.isConnected = true;
+    twin.isConnected = true;
+    for (let i = 0; i < 4; i++) await snapshot();
+    expect(await list()).toEqual([]);
+    expect(notifications.push.mock.calls.map(([p]) => `${p.telegram?.event} ${p.title}`)).toEqual([
+      'resolved Волна закончилась',
+    ]);
+    const done = (await list('resolved')).find((i) => i.kind === 'wave');
+    expect(done?.timeline.at(-1)?.action).toBe('Все ноды снова на связи — волна закончилась');
+    // История по волнам: одна строка волны, её ноды раскрываются из неё самой.
+    const grouped = await agent
+      .get('/api/incidents?status=resolved&waves=grouped&offset=0&pageSize=20')
+      .expect(200);
+    expect(grouped.body.items.map((i: { kind: string }) => i.kind)).toEqual(['wave']);
+    expect(grouped.body.total).toBe(1);
+    const flat = await agent.get('/api/incidents?status=resolved&offset=0&pageSize=20').expect(200);
+    expect(flat.body.total).toBe(3);
+    // Полоса «за 7 дней» считает сбои нод, а не волну отдельно.
+    expect((await agent.get('/api/incidents/week-stats').expect(200)).body.total).toBe(2);
   });
 
   it('сценарий сохраняет И/ИЛИ и выключенное состояние через настоящий HTTP/БД', async () => {

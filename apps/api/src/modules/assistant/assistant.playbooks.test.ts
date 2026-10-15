@@ -64,6 +64,7 @@ describe('плейбуки по нодам', () => {
         'high_load',
         'node_offline',
         'online_drop',
+        'provider_wave',
         'server_unreachable',
         'whitelist_server',
       ].sort(),

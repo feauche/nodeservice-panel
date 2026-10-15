@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { CountryFlag } from '@/components/country-flag';
 import { mbitText, toMbit } from '@/lib/units';
 import { cn } from '@/lib/utils';
+import { MaintenanceBadge, maintenanceUntil } from './maintenance';
 import { RemnaProviderIcon } from './remna-providers-page';
 
 export function nodeState(node: RemnawaveNode) {
@@ -51,6 +52,8 @@ const tones = {
   crit: 'border-crit/35 bg-linear-to-r from-crit/17 via-crit/10 to-crit/5 hover:border-crit/60',
   warn: 'border-warn/30 bg-linear-to-r from-warn/14 to-warn/4 hover:border-warn/60',
   muted: 'border-border bg-surface hover:bg-surface-2',
+  // Обслуживание (витрина wave-maintenance-2026-10, раздел 2 — C): пунктирная голубая кромка, не авария.
+  maintenance: 'border-dashed border-brand/55 bg-brand/[0.05] hover:border-brand/80 hover:bg-brand/[0.08]',
 };
 
 /** Нагрузка на ядро, %: средняя нагрузка за минуту, делённая на число ядер (1,0 на ядро — это 100 %). */
@@ -112,8 +115,9 @@ export function NodeCard({
   incident?: { title: string; tone: 'crit' | 'warn' } | null;
 }) {
   const state = nodeState(node),
-    tone = stale ? 'muted' : state.tone;
-  const down = !node.isConnected && !node.isDisabled;
+    maintenance = node.maintenance ?? null,
+    tone = stale ? 'muted' : maintenance ? 'maintenance' : state.tone;
+  const down = !node.isConnected && !node.isDisabled && !maintenance;
   return (
     <button
       type="button"
@@ -134,11 +138,13 @@ export function NodeCard({
               'size-1.5 shrink-0 rounded-full',
               tone === 'ok'
                 ? 'bg-ok'
-                : tone === 'crit'
-                  ? 'bg-crit'
-                  : tone === 'warn'
-                    ? 'bg-warn'
-                    : 'bg-text-3',
+                : tone === 'maintenance'
+                  ? 'bg-brand'
+                  : tone === 'crit'
+                    ? 'bg-crit'
+                    : tone === 'warn'
+                      ? 'bg-warn'
+                      : 'bg-text-3',
             )}
           />
           {node.countryCode && <CountryFlag code={node.countryCode} size="md" />}
@@ -155,6 +161,7 @@ export function NodeCard({
               {incident.title}
             </span>
           )}
+          {maintenance && <MaintenanceBadge m={maintenance} />}
           {node.whitelist && <WhitelistBadge />}
         </span>
         <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[11.5px] text-text-3">
@@ -198,9 +205,17 @@ export function NodeCard({
           {mbitPerSecond(node.txBytesPerSec)}
         </span>
       </Metric>
-      <Metric label="Работает" className="hidden @min-[1000px]/nodes:block">
-        <span className="block truncate text-[12.5px]">{uptime(node.uptime)}</span>
-      </Metric>
+      {maintenance ? (
+        <Metric label="Обслуживание" className="hidden @min-[1000px]/nodes:block">
+          <span className="block truncate text-[12.5px] font-semibold text-brand">
+            {maintenanceUntil(maintenance)}
+          </span>
+        </Metric>
+      ) : (
+        <Metric label="Работает" className="hidden @min-[1000px]/nodes:block">
+          <span className="block truncate text-[12.5px]">{uptime(node.uptime)}</span>
+        </Metric>
+      )}
     </button>
   );
 }

@@ -274,6 +274,13 @@ export const AUDIT_ACTIONS = {
   'incident.analysis.cancelled': { category: 'server', label: 'Событие: разбор отменён' },
   'incident.deleted': { category: 'server', label: 'Событие удалено' },
   'incident.resolved.deleted': { category: 'server', label: 'Решённые инциденты удалены' },
+  'incident.node_maintenance.start': { category: 'server', label: 'Обслуживание ноды включено' },
+  'incident.node_maintenance.extend': { category: 'server', label: 'Обслуживание ноды продлено' },
+  'incident.node_maintenance.end': { category: 'server', label: 'Обслуживание ноды закончено' },
+  'incident.node_maintenance.expired': {
+    category: 'server',
+    label: 'Обслуживание ноды закончилось по сроку',
+  },
   'system.started': { category: 'system', label: 'Сервис запущен' },
   'system.audit.partition_created': { category: 'system', label: 'Журнал: создан раздел на месяц' },
   'system.audit.partition_dropped': {

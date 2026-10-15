@@ -190,6 +190,10 @@ export interface ToolDeps extends ReadDeps, PanelDeps {
   remnawave?: { status: () => Promise<import('@nodeservice/shared').RemnawaveStatus> };
   /** UUID нод с отметкой «Сервер белого списка» (настройки ноды). Для них советуется BS Checker. */
   whitelisted?: (domain: string | null) => Promise<Set<string>>;
+  /** Обслуживание нод (0.106.0): какие ноды владелец сейчас обслуживает — до скольки и почему. */
+  maintenance?: (
+    domain: string | null,
+  ) => Promise<Map<string, import('@nodeservice/shared').NodeMaintenance>>;
   /** Пополнение глоссария «Пояснения». Работает всегда, отдельного разрешения нет. */
   addGlossary: (
     terms: Array<{ term: string; explain: string; update?: boolean }>,
@@ -316,7 +320,13 @@ export async function runTool(name: string, input: unknown, deps: ToolDeps): Pro
       };
     const marked = (await deps.whitelisted?.(st.domain).catch(() => null)) ?? new Set<string>();
     // whitelist — отметка владельца «Сервер белого списка»: для таких нод проверка — BS Checker.
-    const nodes = st.nodes.map((n) => ({ ...n, whitelist: marked.has(n.uuid) }));
+    const maintained = (await deps.maintenance?.(st.domain).catch(() => null)) ?? new Map();
+    // maintenance — идущее обслуживание ноды: лежащая нода на обслуживании — не авария, владелец с ней работает.
+    const nodes = st.nodes.map((n) => ({
+      ...n,
+      whitelist: marked.has(n.uuid),
+      ...(maintained.has(n.uuid) ? { maintenance: maintained.get(n.uuid) } : {}),
+    }));
     const fresh = !st.error && !!st.checkedAt && Date.now() - Date.parse(st.checkedAt) < 90000;
     const snapshot = {
       source: 'Remnawave',

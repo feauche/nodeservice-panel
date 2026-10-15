@@ -105,6 +105,7 @@ export class IncidentsService {
       page?: number;
       pageSize?: number;
       offset?: number | undefined;
+      waves?: 'flat' | 'grouped';
     },
   ): Promise<IncidentsListResponse> {
     // Вид, которого в контракте уже нет (после переименований), не должен ломать страницу целиком. Постранично
@@ -119,6 +120,7 @@ export class IncidentsService {
           page: opts.page ?? 1,
           pageSize: opts.pageSize ?? INCIDENTS_PAGE_SIZE_DEFAULT,
           offset: opts.offset,
+          waves: opts.waves ?? 'flat',
         })
       : await (async () => {
           const rows = (await this.repo.list(status)).filter((r) => known.has(r.kind));
@@ -191,6 +193,29 @@ export class IncidentsService {
   /** Строка автоматики в «Что происходило» события (срабатывание сценария и его итог). */
   async note(id: string, action: string, result: IncidentEvent['result']): Promise<void> {
     await this.repo.appendTimeline(id, ev('auto', action, result));
+  }
+
+  /**
+   * Включено обслуживание ноды (0.106.0): её открытые события закрываются строкой «закрыто: включено обслуживание»,
+   * без сообщения в Telegram — владелец сам знает, что с нодой. Ждавшие отправки тревоги тоже снимаются.
+   */
+  async closeForMaintenance(nodeUuid: string): Promise<number> {
+    const rows = (await this.repo.list('open')).filter((r) => r.nodeUuid === nodeUuid);
+    for (const r of rows) {
+      await this.runner.cancelRunning(r.id, 'Прервано: включено обслуживание ноды');
+      await this.repo.appendTimeline(
+        r.id,
+        ev('manual', 'Закрыто: на ноде включено обслуживание', 'resolved'),
+      );
+      await this.repo.update(r.id, {
+        status: 'resolved',
+        resolvedAt: new Date(),
+        resolvedBy: 'manual',
+        proposal: null,
+      });
+      await this.notifications.cancelIncidentDeliveries(r.id);
+    }
+    return rows.length;
   }
 
   /** Ручное закрытие администратором. */

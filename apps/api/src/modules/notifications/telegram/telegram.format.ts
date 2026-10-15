@@ -47,6 +47,8 @@ export interface TelegramMessageInput {
   ports?: TcpCheckReport | null;
   /** «Восстановление» — короткими строками вместо одной фразы (витрина telegram-2026-10, вариант A). */
   recovery?: RecoveryFacts | null;
+  /** Свой значок вместо значка события: 🌊 у волны (0.106.0). */
+  icon?: string | null;
 }
 
 /** Что вернулось после сбоя — для сообщения «Восстановление». */
@@ -241,7 +243,7 @@ function formatLine(line: string): string {
 export function formatTelegramMessage(m: TelegramMessageInput): string {
   const name = m.server?.name;
   const title = name && m.title.endsWith(` · ${name}`) ? m.title.slice(0, -` · ${name}`.length) : m.title;
-  const parts = [`${TELEGRAM_EVENT_ICON[m.event]} <b>${esc(title)}</b>`];
+  const parts = [`${m.icon ?? TELEGRAM_EVENT_ICON[m.event]} <b>${esc(title)}</b>`];
   if (m.server)
     parts.push(`<b>${esc(m.server.name)}</b>${m.server.host ? ` · <code>${esc(m.server.host)}</code>` : ''}`);
   const body = m.body?.trim();

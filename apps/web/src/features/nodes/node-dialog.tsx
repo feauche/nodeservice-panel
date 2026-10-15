@@ -11,6 +11,7 @@ import {
   RadarIcon,
   Settings2Icon,
   TerminalIcon,
+  WrenchIcon,
   XIcon,
 } from 'lucide-react';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
@@ -32,6 +33,8 @@ import { apiErrorMessage } from '@/lib/api';
 import { mbitText } from '@/lib/units';
 import { cn } from '@/lib/utils';
 import { ChannelLimitDialog } from './channel-limit-dialog';
+import { MaintenanceBadge, MaintenanceCard, MaintenanceDialog, maintenanceUntil } from './maintenance';
+import { useEndMaintenance } from './maintenance-api';
 import {
   bytes,
   LoadBar,
@@ -188,7 +191,10 @@ export function NodeDialog({
     [saved, setSaved] = useState(false),
     [provider, setProvider] = useState(node.providerUuid ?? null),
     [providerDirty, setProviderDirty] = useState(false),
-    [channelHelp, setChannelHelp] = useState(false);
+    [channelHelp, setChannelHelp] = useState(false),
+    [maintenanceOpen, setMaintenanceOpen] = useState(false),
+    endMaintenance = useEndMaintenance(node.uuid);
+  const maintenance = node.maintenance ?? null;
   useEffect(() => {
     if (query.data && !dirty) setForm(query.data);
   }, [query.data, dirty]);
@@ -222,8 +228,9 @@ export function NodeDialog({
       // Ошибка показана под полями: save.error и assign.error.
     }
   }
-  const dot =
-    stale || state.tone === 'muted'
+  const dot = maintenance
+    ? 'bg-brand shadow-[0_0_0_4px_var(--ns-accent-soft)]'
+    : stale || state.tone === 'muted'
       ? 'bg-text-3'
       : state.tone === 'crit'
         ? 'bg-crit shadow-[0_0_0_4px_var(--ns-crit-soft)]'
@@ -262,6 +269,32 @@ export function NodeDialog({
           if (uuid === node.uuid && next) setTab(next);
         }}
       />
+      {!maintenance ? (
+        <button
+          type="button"
+          onClick={() => setMaintenanceOpen(true)}
+          className={cn(SIDE_BTN, compact && 'w-auto')}
+        >
+          <WrenchIcon aria-hidden="true" />
+          Обслуживание
+        </button>
+      ) : (
+        // В паспорте у обслуживания своя карточка с кнопками; на телефоне паспорта нет — кнопка в ленте.
+        compact && (
+          <button
+            type="button"
+            disabled={endMaintenance.isPending}
+            onClick={() => endMaintenance.mutate()}
+            className={cn(
+              SIDE_BTN,
+              'w-auto border-brand/45 bg-brand-soft text-brand hover:bg-brand-soft hover:text-brand',
+            )}
+          >
+            <WrenchIcon aria-hidden="true" />
+            Закончить обслуживание · {maintenanceUntil(maintenance)}
+          </button>
+        )
+      )}
       <button type="button" onClick={runTcp} className={cn(SIDE_BTN, compact && 'w-auto')}>
         <RadarIcon aria-hidden="true" />
         Проверить порт · Check-Host
@@ -285,7 +318,9 @@ export function NodeDialog({
   );
   const pills = (
     <>
-      <Pill tone={stale ? 'muted' : state.tone}>{stale ? 'Старый снимок' : state.label}</Pill>
+      {maintenance && <MaintenanceBadge m={maintenance} long />}
+      {/* Лежащая нода на обслуживании — не авария: состояние без красного. */}
+      <Pill tone={stale || maintenance ? 'muted' : state.tone}>{stale ? 'Старый снимок' : state.label}</Pill>
       {whitelist && <WhitelistBadge />}
       {node.xrayVersion && <Pill>Xray {node.xrayVersion}</Pill>}
     </>
@@ -316,6 +351,7 @@ export function NodeDialog({
             </DialogDescription>
             <div className="mt-2.5 flex flex-wrap gap-1.5">{pills}</div>
           </div>
+          {maintenance && <MaintenanceCard node={node} m={maintenance} />}
           <dl className="m-0 flex flex-col gap-[13px]">
             {[
               [
@@ -828,6 +864,7 @@ export function NodeDialog({
             )}
           </div>
         </div>
+        {maintenanceOpen && <MaintenanceDialog node={node} onClose={() => setMaintenanceOpen(false)} />}
       </DialogContent>
     </Dialog>
   );

@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 
 import { TelegramService } from '../notifications/telegram/telegram.service.js';
+import { NodeMaintenanceStore } from '../remnawave/node-maintenance.store.js';
+import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js';
 import { IncidentsRepository } from './incidents.repository.js';
 
 /**
@@ -16,6 +18,8 @@ export class IncidentReminderJob {
   constructor(
     private readonly repo: IncidentsRepository,
     private readonly telegram: TelegramService,
+    @Optional() private readonly maintenance?: NodeMaintenanceStore,
+    @Optional() private readonly remnawave?: RemnawaveSettingsStore,
   ) {}
 
   @Interval(5 * 60_000)
@@ -28,8 +32,13 @@ export class IncidentReminderJob {
     const hours = await this.telegram.remindHours();
     if (hours === null) return;
     const due = Date.now() - hours * 3_600_000;
+    // Нода на обслуживании: владелец и так знает, что с ней, — не напоминаем.
+    const maintained =
+      this.maintenance && this.remnawave
+        ? new Set((await this.maintenance.active(await this.remnawave.domain())).keys())
+        : new Set<string>();
     for (const row of await this.repo.list('open')) {
-      if (row.severity !== 'crit') continue;
+      if (row.severity !== 'crit' || (row.nodeUuid && maintained.has(row.nodeUuid))) continue;
       const last = await this.telegram.lastMessageAt(row.id);
       // Ни одного сообщения не было (вид выключен или чатов не было) — напоминать не о чем.
       if (!last || last.getTime() > due) continue;

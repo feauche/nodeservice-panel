@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { nodeMaintenanceSchema } from './maintenance.js';
 
 /** Ноды и метрики читаются из Remnawave. Название и ссылка провайдера сохраняются
  * обратно по его UUID только по явному действию владельца; остальные поля не изменяются. */
@@ -55,6 +56,8 @@ export const remnawaveNodeSchema = z.object({
   xrayVersion: z.string().nullable().optional(),
   /** Отметка «Сервер белого списка» из настроек ноды; считается при отдаче статуса. */
   whitelist: z.boolean().optional(),
+  /** Идущее обслуживание ноды (0.106.0); считается при отдаче статуса. Нет — нода работает как обычно. */
+  maintenance: nodeMaintenanceSchema.nullable().optional(),
 });
 export type RemnawaveNode = z.infer<typeof remnawaveNodeSchema>;
 

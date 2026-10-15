@@ -81,6 +81,10 @@ export interface TelegramDispatch {
    * выключенном «Починилось» о сбое не пришло бы ничего — ни тревоги, ни вести о том, что он был.
    */
   replaces?: TelegramEvent | null;
+  /** Свой значок вместо значка события: 🌊 у волны. */
+  icon?: string | null;
+  /** Обычным текстом, без расширенного оформления: такое сообщение потом можно править (волна). */
+  plain?: boolean;
 }
 
 /** Со звуком при «Предупреждения без звука»: только то, что требует внимания сейчас. */
@@ -516,6 +520,61 @@ export class TelegramService {
     };
   }
 
+  /**
+   * Переписать первое сообщение по делу во всех чатах, где оно есть (волна дописывает новую ноду; Telegram о правке
+   * не звенит). Подпись — со временем открытия дела. Где править не вышло (сообщение удалили, Telegram отказал), —
+   * тихий ответ `fallback` на него, чтобы новость не пропала.
+   */
+  async editIncident(m: TelegramDispatch, fallback: TelegramDispatch): Promise<void> {
+    if (!m.incidentId) return;
+    const s = await this.store.load();
+    if (s.destinations.length === 0 || (m.kind && !s.kinds[m.kind])) return;
+    const [first] = await this.db
+      .select({ at: telegramMessages.createdAt })
+      .from(telegramMessages)
+      .where(eq(telegramMessages.incidentId, m.incidentId))
+      .orderBy(asc(telegramMessages.createdAt))
+      .limit(1);
+    if (!first) return;
+    const zone = (await panelTimeZone(this.db)) ?? s.quiet.timeZone;
+    const text = formatTelegramMessage({
+      event: m.event,
+      title: m.title,
+      body: m.body ?? null,
+      footer: `${TELEGRAM_EVENT_LABELS[m.event]} · ${localTime(first.at, zone)}`,
+      timeZone: zone,
+      icon: m.icon ?? null,
+    });
+    const buttons = this.buttons(m.link, null);
+    let failed = false;
+    for (const d of this.store.live(s)) {
+      const own = await this.firstMessage(m.incidentId, d.id);
+      if (own === null) continue;
+      const res = await this.botTurn(d.token, () =>
+        this.client
+          .call<unknown>(
+            d.token,
+            'editMessageText',
+            {
+              chat_id: d.chatId,
+              message_id: own,
+              text,
+              parse_mode: 'HTML',
+              link_preview_options: { is_disabled: true },
+              ...(buttons.length
+                ? { reply_markup: { inline_keyboard: [buttons.map((b) => ({ text: b.text, url: b.url }))] } }
+                : {}),
+            },
+            d.proxy ?? null,
+          )
+          .catch(() => null),
+      );
+      // «Сообщение не изменилось» — не ошибка: текст уже такой.
+      if (!res || (!res.ok && !/not modified/i.test(res.description ?? ''))) failed = true;
+    }
+    if (failed) await this.dispatch({ ...fallback, silent: true });
+  }
+
   /** У сохранённого чата новый номер: правим настройки и оставляем след в Журнале. */
   private async chatMoved(d: LiveDestination, chatId: string): Promise<void> {
     const saved = await this.store.migrateChat(d.id, chatId).catch(() => false);
@@ -740,12 +799,13 @@ export class TelegramService {
         timeZone: zone,
         ports: m.ports ?? null,
         recovery: m.recovery ?? null,
+        icon: m.icon ?? null,
       };
       const text = m.html ?? formatTelegramMessage(input);
       // Специальное сообщение может передать готовую таблицу; для остальных блоки строятся из title/body.
       // Scenario results always use the approved rich presentation; the existing fallback still handles old Bot API servers.
       const rich =
-        s.delivery.rich || m.event === 'scenario'
+        !m.plain && (s.delivery.rich || m.event === 'scenario')
           ? (m.rich ?? (!m.html ? richMessageBlocks(input) : null))
           : null;
       const buttons = this.buttons(m.link, m.tcp ?? null);

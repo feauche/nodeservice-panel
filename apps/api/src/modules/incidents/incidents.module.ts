@@ -11,6 +11,7 @@ import { IncidentRunnerService } from './incident-runner.service.js';
 import { IncidentsController } from './incidents.controller.js';
 import { IncidentsRepository } from './incidents.repository.js';
 import { IncidentsService } from './incidents.service.js';
+import { WaveService } from './wave.service.js';
 
 /** События нод: мониторинг Remnawave с подтверждением, напоминания, ручное закрытие. */
 @Module({
@@ -29,7 +30,8 @@ import { IncidentsService } from './incidents.service.js';
     IncidentsService,
     IncidentRunnerService,
     IncidentReminderJob,
+    WaveService,
   ],
-  exports: [IncidentsService, IncidentRunnerService],
+  exports: [IncidentsService, IncidentRunnerService, WaveService],
 })
 export class IncidentsModule {}

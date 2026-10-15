@@ -1,4 +1,4 @@
-import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   ASSISTANT_ADVICE_MAX,
@@ -24,6 +24,7 @@ import { KnowledgeRepository } from '../knowledge/knowledge.repository.js';
 import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import { NodeMetricsService } from '../node-metrics/node-metrics.controller.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { NodeMaintenanceStore } from '../remnawave/node-maintenance.store.js';
 import { NodePreferencesStore } from '../remnawave/node-preferences.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { RemnawaveTopologyService } from '../remnawave/remnawave-topology.service.js';
@@ -90,6 +91,7 @@ export class AssistantService {
     private readonly config: ConfigService<Env, true>,
     private readonly nodePrefs: NodePreferencesStore,
     private readonly panelReader: AssistantPanelReader,
+    @Optional() private readonly nodeMaintenance?: NodeMaintenanceStore,
   ) {}
 
   status(): Promise<AssistantStatus> {
@@ -283,6 +285,7 @@ export class AssistantService {
       },
       addGlossary: (terms) => this.knowledge.appendGlossary(terms, { auditSource: 'auto' }),
       whitelisted: (domain) => this.nodePrefs.whitelisted(domain),
+      maintenance: async (domain) => (await this.nodeMaintenance?.active(domain)) ?? new Map(),
       // Сценарии, интеграции, копии, сайты, провайдеры и разделы настроек — только чтение.
       ...this.panelReader.deps(),
     };

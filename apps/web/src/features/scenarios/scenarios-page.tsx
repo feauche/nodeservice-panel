@@ -33,6 +33,7 @@ const make = (over: Partial<Scenario> = {}): Scenario => ({
   hostBindings: [],
   autoRestore: true,
   cooldownMinutes: 30,
+  except: [],
   ...over,
 });
 
@@ -400,6 +401,7 @@ export function ScenariosPage({
                         <b className="font-semibold text-text-2">{conditionsPhrase(rule)}</b> · держится{' '}
                         {rule.holdMinutes} мин ·{' '}
                         {scope ?? <span className="font-semibold text-warn">ноды не выбраны</span>}
+                        {(rule.except ?? []).includes('wave') && ' · кроме нод в волне'}
                       </span>
                     </span>
                     <span className="max-xl:hidden">

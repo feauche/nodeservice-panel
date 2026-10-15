@@ -12,6 +12,7 @@ import { Interval } from '@nestjs/schedule';
 import { CAPACITY_DAYS, NODE_STATS_DAYS, type NodeCapacity, type NodeMetrics } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
 import { DB, type Db } from '../../infra/db/db.module.js';
+import { NodeMaintenanceStore } from '../remnawave/node-maintenance.store.js';
 import { NodePreferencesStore } from '../remnawave/node-preferences.store.js';
 import { NodeRatesStore } from '../remnawave/node-rates.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
@@ -60,6 +61,7 @@ export class NodeMetricsService {
     private readonly remna: RemnawaveService,
     @Optional() private readonly monitoring?: MonitoringStore,
     @Optional() private readonly rates?: NodeRatesStore,
+    @Optional() private readonly maintenance?: NodeMaintenanceStore,
   ) {}
   /**
    * Точки отсчёта после перезапуска панели — из последнего записанного показания каждой ноды: первая минута после
@@ -133,6 +135,7 @@ export class NodeMetricsService {
     const minute = Math.floor(at / MINUTE_MS);
     if ((this.recordedMinutes.get(domain) ?? -1) >= minute) return;
     const t = new Date(at);
+    const maintained = new Set((await this.maintenance?.active(domain, at).catch(() => null))?.keys() ?? []);
     const inserts = status.nodes.map((n) => {
       const online = n.isConnected && !n.isDisabled;
       // Трафик — по разнице счётчиков ноды с прошлого принятого показания: байты и секунды по часам ноды.
@@ -165,6 +168,8 @@ export class NodeMetricsService {
         tx,
         online: online ? (n.usersOnline ?? null) : 0,
         up: online ? 1 : 0,
+        // Нода на обслуживании: замер есть, но в аптайм не идёт (см. UP_SQL).
+        ...(maintained.has(n.uuid) ? { mt: 1 } : {}),
         rxBytes: step.net?.rxBytes ?? null,
         txBytes: step.net?.txBytes ?? null,
         dt: step.net?.dt ?? null,

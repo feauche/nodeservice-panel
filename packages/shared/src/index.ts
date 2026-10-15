@@ -3,7 +3,7 @@
  * Этап 1: auth API, настройки. Этап 2: Журнал (аудит).
  */
 /** Версия панели x.y.z. Поднимается каждой поставкой: `node scripts/bump-version.mjs patch` (фиксы) или `minor` (новые возможности). */
-export const SHARED_VERSION = '0.105.0';
+export const SHARED_VERSION = '0.106.0';
 export * from './assistant.js';
 export * from './audit.js';
 export * from './auth.js';
@@ -18,6 +18,7 @@ export * from './incidents.js';
 export * from './integration-workspaces.js';
 export * from './integrations.js';
 export * from './knowledge.js';
+export * from './maintenance.js';
 export * from './monitoring.js';
 export * from './node-capacity.js';
 export * from './node-metrics.js';
@@ -32,5 +33,6 @@ export * from './security.js';
 export * from './settings.js';
 export * from './tcp-check.js';
 export * from './telegram.js';
+export * from './wave.js';
 // Русские тексты ошибок проверки полей — подключаются при загрузке пакета (z.config).
 export * from './zod-ru.js';

@@ -115,7 +115,7 @@ export const TELEGRAM_EVENTS_DEFAULT: TelegramEvents = {
 /** Виды инцидентов по группам для тумблеров «Какие инциденты» (витрина `telegram-messages-variants.html`, 2A). */
 export const TELEGRAM_KIND_GROUPS: ReadonlyArray<{ title: string; keys: readonly IncidentKind[] }> = [
   { title: 'Связь', keys: ['server_down', 'agent_offline', 'ssh_down'] },
-  { title: 'Нода', keys: ['node_down', 'node_blocked'] },
+  { title: 'Нода', keys: ['node_down', 'node_blocked', 'wave'] },
   { title: 'Ресурсы', keys: ['cpu_high', 'mem_high', 'disk_high'] },
 ];
 export const TELEGRAM_KIND_LABELS: Record<IncidentKind, string> = {
@@ -127,6 +127,7 @@ export const TELEGRAM_KIND_LABELS: Record<IncidentKind, string> = {
   cpu_high: 'Нагрузка на процессор',
   mem_high: 'Память на пределе',
   disk_high: 'Диск заполняется',
+  wave: 'Волна — сбой нескольких нод одного провайдера',
 };
 export const TELEGRAM_KIND_HINTS: Record<IncidentKind, string> = {
   agent_offline: 'Агент перестал присылать сигнал, а сам сервер отвечает — дело в агенте.',
@@ -138,6 +139,7 @@ export const TELEGRAM_KIND_HINTS: Record<IncidentKind, string> = {
   cpu_high: 'Загрузка держится выше порога дольше времени реакции.',
   mem_high: 'Занятость памяти держится выше порога.',
   disk_high: 'Заполнение диска держится выше порога.',
+  wave: 'За несколько минут упали 2 и больше ноды одного провайдера: одно сообщение вместо отдельного по каждой ноде.',
 };
 export type TelegramKinds = Record<IncidentKind, boolean>;
 export const TELEGRAM_KINDS_DEFAULT: TelegramKinds = Object.fromEntries(

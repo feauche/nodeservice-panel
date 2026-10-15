@@ -37,6 +37,10 @@ function fixture(
     telegram?: 'send' | 'quiet' | 'off' | 'event_off';
     /** Свои ответы карты Remnawave: по одному на чтение, последний повторяется (например, сбой DNS и затем порядок). */
     topology?: Array<{ nodeUuids: string[]; addressResolved: boolean }>;
+    /** Ноды на обслуживании (0.106.0). */
+    maintained?: Set<string>;
+    /** Ноды открытых волн: нода → волна (0.106.0). */
+    inWave?: Map<string, string>;
   } = {},
 ) {
   const data = new Map<string, unknown>();
@@ -86,6 +90,10 @@ function fixture(
     forNode: vi.fn(async () => opts.incident ?? null),
     note: vi.fn(async () => {}),
   };
+  const wave = {
+    nodesInWave: vi.fn(async () => opts.inWave ?? new Map<string, string>()),
+    noteSkipped: vi.fn(async () => {}),
+  };
   const events = { append: vi.fn() },
     notify = { push: vi.fn(), telegramOutlook: vi.fn(async () => opts.telegram ?? 'send') },
     tcp = { checkNode: vi.fn() };
@@ -120,9 +128,16 @@ function fixture(
         : undefined,
     permissions as never,
     incidents as never,
+    opts.maintained
+      ? ({
+          active: async () => new Map([...(opts.maintained ?? [])].map((u) => [u, { nodeUuid: u }])),
+        } as never)
+      : undefined,
+    opts.inWave ? (wave as never) : undefined,
   );
   return {
     job,
+    wave,
     permissions,
     incidents,
     store,
@@ -149,6 +164,55 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
+describe('Обслуживание ноды: Host скрываются и возвращаются по общему учёту', () => {
+  it('свой Host скрывается и возвращается; запись владения — «обслуживание», а не сценарий', async () => {
+    const f = fixture();
+    const hide = await f.job.hideForMaintenance(node as never);
+    expect(hide).toEqual({ hidden: ['Host'], shared: 0, error: null });
+    expect(f.calls).toEqual([{ uuid: 'host', isDisabled: true }]);
+    expect(f.data.get('scenarios.host.scope.host')).toMatchObject({ ruleId: 'maintenance', confirmed: true });
+    const back = await f.job.restoreAfterMaintenance(node.uuid);
+    expect(back).toEqual({ restored: ['Host'], failed: [] });
+    expect(f.calls.at(-1)).toEqual({ uuid: 'host', isDisabled: false });
+  });
+  it('общий Host нескольких нод не трогается, но считается', async () => {
+    const f = fixture({ uuid: 'host', nodes: [node.uuid, 'another'], isDisabled: false, remark: 'Общий' });
+    expect(await f.job.hideForMaintenance(node as never)).toEqual({ hidden: [], shared: 1, error: null });
+    expect(f.calls).toEqual([]);
+  });
+  it('Host, который держит сценарий, обслуживание не трогает и не возвращает', async () => {
+    const f = fixture();
+    f.data.set('scenarios.host.scope.host', {
+      ruleId: rule.id,
+      nodeUuid: node.uuid,
+      hostUuid: 'host',
+      confirmed: true,
+      restored: false,
+      original: { isDisabled: false },
+    });
+    expect((await f.job.hideForMaintenance(node as never)).hidden).toEqual([]);
+    expect(await f.job.restoreAfterMaintenance(node.uuid)).toEqual({ restored: [], failed: [] });
+    expect(f.calls).toEqual([]);
+  });
+  it('Host изменили вручную после обслуживания — не возвращаем и говорим, почему', async () => {
+    const f = fixture();
+    await f.job.hideForMaintenance(node as never);
+    f.setHost({ ...f.getHost(), remark: 'Переименован вручную', updatedAt: 'manual' });
+    const back = await f.job.restoreAfterMaintenance(node.uuid);
+    expect(back.restored).toEqual([]);
+    expect(back.failed[0]).toContain('после обслуживания его изменили вручную');
+    expect(f.calls).toHaveLength(1);
+  });
+  it('сценарий не меняет Host, скрытый обслуживанием: его держит обслуживание', async () => {
+    const f = fixture();
+    await f.job.hideForMaintenance(node as never);
+    const renaming = { ...rule, actions: ['rename_host'] as never, renameText: '⚠️' };
+    const change = await f.job.hideHosts('panel.test', 'scope', renaming as never, node as never);
+    expect(change.held).toBe(1);
+    expect(f.calls).toHaveLength(1);
+  });
+});
+
 describe('Сценарии: реальные правила владения Host', () => {
   it('не включает выключенный сценарий и не выполняет сеть', async () => {
     const f = fixture();
@@ -263,6 +327,55 @@ describe('Сценарии: реальные правила владения Hos
     f.current.checkedAt = new Date().toISOString();
     await f.job.run();
     expect(f.calls).toHaveLength(1);
+  });
+  it('нода на обслуживании: Host не трогаем, а после окончания «держится 5 мин» отсчитывается заново', async () => {
+    vi.useFakeTimers();
+    const start = Date.parse('2026-10-15T08:00:00Z');
+    vi.setSystemTime(start);
+    const maintained = new Set([node.uuid]);
+    const f = fixture(undefined, undefined, { maintained });
+    for (let i = 0; i <= 10; i++) {
+      vi.setSystemTime(start + i * 60000);
+      f.current.checkedAt = new Date().toISOString();
+      await f.job.run();
+    }
+    expect(f.calls).toEqual([]);
+    maintained.clear();
+    for (let i = 11; i <= 15; i++) {
+      vi.setSystemTime(start + i * 60000);
+      f.current.checkedAt = new Date().toISOString();
+      await f.job.run();
+    }
+    expect(f.calls).toEqual([]);
+    vi.setSystemTime(start + 16 * 60000);
+    f.current.checkedAt = new Date().toISOString();
+    await f.job.run();
+    expect(f.calls).toHaveLength(1);
+  });
+  it('исключение «нода в волне»: Host не трогаем, пропуск отмечаем в волне; без исключения — как обычно', async () => {
+    vi.useFakeTimers();
+    const start = Date.parse('2026-10-15T08:00:00Z');
+    const run = async (except: Array<'wave'>) => {
+      vi.setSystemTime(start);
+      const f = fixture(undefined, undefined, { inWave: new Map([[node.uuid, 'wave-1']]) });
+      f.setRules([{ ...rule, except } as never]);
+      for (let i = 0; i <= 10; i++) {
+        vi.setSystemTime(start + i * 60000);
+        f.current.checkedAt = new Date().toISOString();
+        await f.job.run();
+      }
+      return f;
+    };
+    const skipping = await run(['wave']);
+    expect(skipping.calls).toEqual([]);
+    expect(skipping.wave.noteSkipped).toHaveBeenCalledWith('wave-1', {
+      ruleId: rule.id,
+      ruleName: rule.name,
+      nodeUuid: node.uuid,
+    });
+    const usual = await run([]);
+    expect(usual.calls).toHaveLength(1);
+    expect(usual.wave.noteSkipped).not.toHaveBeenCalled();
   });
   it('И: потеря связи + TCP недоступен проверяется без прежнего инцидента и не дублирует запросы', async () => {
     vi.useFakeTimers();

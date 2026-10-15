@@ -15,7 +15,7 @@ import { incidentsHandlers, seedIncidents } from './incidents-mock';
 import { knowledgeHandlers, seedKnowledge } from './knowledge-mock';
 import { notificationsHandlers, seedNotifications } from './notifications-mock';
 import { providersHandlers, seedProviders } from './providers-mock';
-import { seedRemnawave } from './remnawave-mock';
+import { maintenanceHandlers, mockRemnawave, seedRemnawave } from './remnawave-mock';
 import { mockSecurity, securityHandlers, seedSecurity } from './security-mock';
 import { mockTelegram, resetTelegram, telegramHandlers } from './telegram-mock';
 
@@ -175,17 +175,8 @@ const QR_SVG =
   );
 
 export const handlers = [
-  http.get('/api/nodes/status', () =>
-    HttpResponse.json({
-      connected: false,
-      domain: null,
-      checkedAt: null,
-      error: null,
-      stats: null,
-      nodes: [],
-      cert: null,
-    }),
-  ),
+  // По умолчанию Remnawave не подключена (seedRemnawave); учебный режим и тесты могут подставить свои ноды.
+  http.get('/api/nodes/status', () => HttpResponse.json(mockRemnawave)),
   http.get('/api/integrations', () =>
     HttpResponse.json({
       items: ['dpi', 'regru', 'cloudflare'].map((provider) => ({
@@ -208,6 +199,7 @@ export const handlers = [
   ...securityHandlers,
   ...telegramHandlers,
   ...heartbeatHandlers,
+  ...maintenanceHandlers,
   ...providersHandlers,
   ...billingHandlers,
   ...backupsHandlers,

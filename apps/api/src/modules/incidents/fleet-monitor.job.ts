@@ -18,6 +18,7 @@ import { PanelPulse } from '../health/panel-pulse.js';
 import { NodeMetricsService } from '../node-metrics/node-metrics.controller.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import type { RecoveryFacts } from '../notifications/telegram/telegram.format.js';
+import { NodeMaintenanceStore } from '../remnawave/node-maintenance.store.js';
 import { NodePreferencesStore } from '../remnawave/node-preferences.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
@@ -31,6 +32,7 @@ import {
   stableBaseline,
 } from './fleet-monitor.logic.js';
 import { IncidentsRepository } from './incidents.repository.js';
+import { WaveService, type WaveVerdict } from './wave.service.js';
 
 type State = {
   samples: Sample[];
@@ -141,7 +143,27 @@ export class FleetMonitorJob {
     private readonly pulse: PanelPulse,
     @Optional() private readonly preferences?: NodePreferencesStore,
     @Optional() private readonly metrics?: NodeMetricsService,
+    @Optional() private readonly maintenance?: NodeMaintenanceStore,
+    @Optional() private readonly wave?: WaveService,
   ) {}
+  /** Решение волны о сообщении ноды; сбой волны не должен глушить обычную тревогу. */
+  private async waveVerdict(ask: () => Promise<WaveVerdict> | undefined): Promise<WaveVerdict> {
+    try {
+      return (await ask()) ?? 'notify';
+    } catch (e) {
+      this.log.warn(`Волна: ${e instanceof Error ? e.message : e}`);
+      return 'notify';
+    }
+  }
+  /** Ноды на обслуживании сейчас (0.106.0): по ним событий нет, а счётчики после окончания начинаются заново. */
+  private async maintained(domain: string | null): Promise<Set<string>> {
+    if (!this.maintenance) return new Set();
+    try {
+      return new Set((await this.maintenance.active(domain)).keys());
+    } catch {
+      return new Set();
+    }
+  }
   private scope(domain: string | null) {
     return createHash('sha256')
       .update(domain ?? '')
@@ -223,12 +245,19 @@ export class FleetMonitorJob {
       )
         return;
       const stamp = Date.parse(status.checkedAt),
-        scope = this.scope(status.domain);
+        scope = this.scope(status.domain),
+        maintained = await this.maintained(status.domain);
       for (const node of status.nodes) {
         if (node.isDisabled) continue;
         const key = `monitor.history.${scope}.${node.uuid}`;
         const st = (await this.read<State>(key)) ?? empty();
         if (stamp <= st.lastAt) continue;
+        if (maintained.has(node.uuid)) {
+          // Обслуживание: ни событий, ни подтверждений. Счётчики обнуляются на каждом снимке — после окончания
+          // нода проходит обычное подтверждение заново, а не получает тревогу по накопленным за время работ опросам.
+          await this.write(key, { ...empty(), address: node.address, lastAt: stamp } satisfies State);
+          continue;
+        }
         if (st.lastAt && stamp - st.lastAt > cfg.staleAfterMinutes * 60000) {
           Object.assign(st, empty(), { address: st.address });
         }
@@ -367,6 +396,10 @@ export class FleetMonitorJob {
         st.lastAt = stamp;
         await this.write(key, st);
       }
+      // Ноды волны могли подняться в обход наблюдения (закрыли вручную, обслуживание) — волна закрывается и тогда.
+      await this.wave
+        ?.reconcileAll()
+        .catch((e) => this.log.warn(`Волна: ${e instanceof Error ? e.message : e}`));
     } catch (e) {
       this.log.warn(e instanceof Error ? e.message : 'Ошибка мониторинга');
     } finally {
@@ -552,6 +585,8 @@ export class FleetMonitorJob {
     detail: string,
     diagnostics?: NodeTcpDiagnostics,
   ) {
+    // Проверка падения идёт в фоне и могла закончиться, когда владелец уже включил обслуживание.
+    if ((await this.maintained((await this.remna.status()).domain)).has(node.uuid)) return;
     const row = await this.repo.open({
       nodeUuid: node.uuid,
       serverId: null,
@@ -570,6 +605,8 @@ export class FleetMonitorJob {
         },
       ],
     });
+    // Волна: нода вошла в волну своего провайдера — вместо её сообщения правится сообщение волны.
+    if (row && (await this.waveVerdict(() => this.wave?.onNodeOpened(node, row))) === 'absorbed') return;
     if (row)
       await this.notifications.push({
         severity: row.severity as 'crit' | 'warn',
@@ -602,6 +639,8 @@ export class FleetMonitorJob {
     const text = detail(row);
     await this.repo.appendTimeline(row.id, entry(text, { step: 'close', tone: 'ok' }, 'resolved'));
     await this.repo.update(row.id, { status: 'resolved', resolvedAt: new Date(), resolvedBy: 'auto' });
+    // Нода из волны поднялась: её «Восстановление» заменит одно «Волна закончилась».
+    if ((await this.waveVerdict(() => this.wave?.onNodeResolved(row))) === 'absorbed') return;
     const recovery = facts?.(row) ?? null;
     // DNS-запись ждёт ручной замены — кнопка прямо к ней (окно записи в «DNS интеграциях» откроется само).
     const dnsLink = recovery ? dnsManualLink(row.timeline) : null;
@@ -643,9 +682,10 @@ export class FleetMonitorJob {
         return;
       const scope = this.scope(status.domain);
       const openRows = await this.repo.list('open');
+      const maintained = await this.maintained(status.domain);
       let count = 0;
       for (const node of status.nodes) {
-        if (node.isDisabled || this.verifying.has(node.uuid)) continue;
+        if (node.isDisabled || this.verifying.has(node.uuid) || maintained.has(node.uuid)) continue;
         const key = `monitor.tcp.${scope}.${node.uuid}`,
           old = await this.read<ProbeState>(key);
         // Пока открыто событие о доступности — проверяем чаще (как повторная проверка при падении), иначе оно

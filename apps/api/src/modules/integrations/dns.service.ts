@@ -9,6 +9,7 @@ import { DB, type Db } from '../../infra/db/db.module.js';
 import { appMeta } from '../../infra/db/schema/index.js';
 import { AuditService } from '../audit/audit.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
+import { NodeMaintenanceStore } from '../remnawave/node-maintenance.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { getJson } from '../remnawave/remnawave-client.js';
 import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js';
@@ -76,6 +77,7 @@ export class DnsService {
     private remna: RemnawaveService,
     @Optional() private audit?: AuditService,
     @Optional() private incidents?: IncidentsService,
+    @Optional() private maintenance?: NodeMaintenanceStore,
   ) {}
   /** Что уже написано в событие ноды по каждой записи: одна строка на состояние, а не на каждую минуту. */
   private noted = new Map<string, string>();
@@ -534,7 +536,13 @@ export class DnsService {
       const key = `dns.addresses.${status.domain}`;
       const previous = (await this.read(key)) ?? {};
       const next = { ...previous };
+      const maintained = new Set(
+        (await this.maintenance?.active(status.domain).catch(() => null))?.keys() ?? [],
+      );
       for (const n of status.nodes) {
+        // Обслуживание ноды: запись ждёт. Прежний адрес не перезаписываем — смена адреса за время работ
+        // заменит запись сразу после окончания, а не потеряется.
+        if (maintained.has(n.uuid)) continue;
         const old = previous[n.uuid];
         if (old && old !== n.address) {
           if (scope !== (await this.scope())) break;

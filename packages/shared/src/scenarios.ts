@@ -25,6 +25,11 @@ export const scenarioSchema = z
     renameText: z.string().trim().max(200).default(''),
     autoRestore: z.boolean().default(true),
     cooldownMinutes: z.number().int().min(5).max(1440).default(30),
+    /** Исключения (0.106.0): когда сценарию не срабатывать. «wave» — нода входит в открытую волну. */
+    except: z
+      .array(z.enum(['wave']))
+      .max(1)
+      .default([]),
   })
   .refine(
     (r) => r.scope === 'all' || r.nodes.length > 0,

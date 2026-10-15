@@ -33,7 +33,7 @@ export function eventTitle(title: string, node: string) {
   return title.endsWith(` · ${node}`) ? title.slice(0, -` · ${node}`.length) : title;
 }
 
-export type NodeHealth = 'ok' | 'warn' | 'crit' | 'off';
+export type NodeHealth = 'ok' | 'warn' | 'crit' | 'off' | 'maintenance';
 
 /**
  * Состояние ноды для полосы здоровья и «Требует внимания»: сбой — нет связи или открытое критичное событие,
@@ -41,6 +41,8 @@ export type NodeHealth = 'ok' | 'warn' | 'crit' | 'off';
  */
 export function nodeHealth(node: RemnawaveNode, open: Incident[]): NodeHealth {
   if (node.isDisabled) return 'off';
+  // Нода на обслуживании — не сбой: владелец с ней работает (0.106.0).
+  if (node.maintenance) return 'maintenance';
   const mine = open.filter((i) => i.nodeUuid === node.uuid);
   if (!node.isConnected || mine.some((i) => i.severity === 'crit')) return 'crit';
   return mine.length > 0 ? 'warn' : 'ok';

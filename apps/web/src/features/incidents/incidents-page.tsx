@@ -48,6 +48,7 @@ import {
   toPrev,
 } from './incidents-fit';
 import { IncidentsPager } from './incidents-pager';
+import { planWaves, WaveBlock } from './wave-rows';
 
 const FILTERS: ReadonlyArray<{ key: IncidentsFilter; label: string }> = [
   { key: 'all', label: 'Все' },
@@ -169,6 +170,7 @@ export function IncidentsPage() {
   const resolvedPaged = useIncidents('resolved', {
     offset: win.offset,
     pageSize: win.limit,
+    waves: 'grouped',
     // Размер запроса зависит от высоты окна и числа открытых — ждём и то и другое, чтобы не запрашивать дважды.
     enabled: needsResolved && measured !== undefined && (!needsOpen || !open.isPending),
   });
@@ -179,13 +181,23 @@ export function IncidentsPage() {
   const weekly = useIncidentWeekStats();
 
   const now = useNow(openItems.length > 0, 1000);
+  // Волны: события нод открытой волны — под её строкой, а не отдельными строками (витрина wave-maintenance-2026-10).
+  const waves = useMemo(() => planWaves(openItems), [openItems]);
+  const [openWaves, setOpenWaves] = useState<ReadonlySet<string>>(new Set());
+  const toggleWave = (id: string) =>
+    setOpenWaves((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const deleteResolved = useDeleteResolvedIncidents();
   const [confirmClear, setConfirmClear] = useState(false);
   const queryClient = useQueryClient();
   // Сколько раз удаляли решённые — после удаления из кэша убирается страница, бывшая тогда на экране.
   const [cleared, setCleared] = useState(0);
 
-  const openCount = openItems.length;
+  const openCount = waves.items.length;
   const pending = (needsOpen && open.isPending) || (needsResolved && resolvedPaged.isPending);
   const failed = open.isError ? open.error : resolvedPaged.isError ? resolvedPaged.error : null;
   const total = needsResolved && !pending && !failed ? (resolvedPaged.data?.total ?? 0) : 0;
@@ -264,7 +276,7 @@ export function IncidentsPage() {
   const showResolved = needsResolved && resolvedRows.length > 0;
   const groups = useMemo(() => {
     const out: Array<{ key: string; label: string; note?: string; items: Incident[] }> = [];
-    if (showOpen) out.push({ key: 'now', label: 'Сейчас', items: openItems });
+    if (showOpen) out.push({ key: 'now', label: 'Сейчас', items: waves.items });
     if (showResolved && shown) {
       // Соседней строки в окне нет (больше ста сервер не отдаёт) — берём крайнюю строку самой страницы: так
       // крайний день скорее назовём «на этой странице», чем целым.
@@ -278,7 +290,7 @@ export function IncidentsPage() {
       );
     }
     return out;
-  }, [showOpen, openItems, showResolved, shown, resolvedRows, now, total]);
+  }, [showOpen, waves.items, showResolved, shown, resolvedRows, now, total]);
   // Высота каждой строки, при которой реестр кончается ровно у нижнего поля; null — обычная высота.
   // Страница полная, если решённые на ней не кончаются: дальше (или раньше, когда листали назад) есть ещё.
   const rowCount = groups.reduce((n, g) => n + g.items.length, 0);
@@ -384,14 +396,26 @@ export function IncidentsPage() {
                   <span className="text-[12.5px] font-semibold text-text-2">{g.label}</span>
                   {g.note && <span>{g.note}</span>}
                 </h2>
-                {g.items.map((inc, i) => (
-                  <IncidentRow
-                    key={inc.id}
-                    inc={inc}
-                    now={now}
-                    height={heights?.[(groupStart[gi] ?? 0) + i]}
-                  />
-                ))}
+                {g.items.map((inc, i) =>
+                  inc.kind === 'wave' ? (
+                    <WaveBlock
+                      key={inc.id}
+                      wave={inc}
+                      members={waves.members.get(inc.id) ?? []}
+                      now={now}
+                      height={heights?.[(groupStart[gi] ?? 0) + i]}
+                      expanded={openWaves.has(inc.id)}
+                      onToggle={() => toggleWave(inc.id)}
+                    />
+                  ) : (
+                    <IncidentRow
+                      key={inc.id}
+                      inc={inc}
+                      now={now}
+                      height={heights?.[(groupStart[gi] ?? 0) + i]}
+                    />
+                  ),
+                )}
               </section>
             ))}
           </div>

@@ -26,6 +26,12 @@ export const monitoringSettingsSchema = z.object({
   checkHostPort: integer(1, 65535),
   checkHostOnDrop: z.boolean(),
   checkHostCooldownMinutes: integer(5, 1440),
+  /** Волна (0.106.0): ноды одного провайдера (или страны), упавшие почти одновременно, — одно событие. */
+  waveEnabled: z.boolean(),
+  /** Со скольких упавших нод одной группы начинается волна. */
+  waveMinNodes: integer(2, 10),
+  /** За какое время они должны упасть, минут. */
+  waveWindowMinutes: integer(5, 30),
 });
 export type MonitoringSettings = z.infer<typeof monitoringSettingsSchema>;
 /**
@@ -54,6 +60,9 @@ export const MONITORING_DEFAULTS: MonitoringSettings = {
   checkHostPort: 5492,
   checkHostOnDrop: true,
   checkHostCooldownMinutes: 5,
+  waveEnabled: true,
+  waveMinNodes: 2,
+  waveWindowMinutes: 10,
 };
 /**
  * Значения по умолчанию до 0.94.0. Сохранённая настройка, равная прежнему значению, при обновлении переходит

@@ -20,6 +20,7 @@ import {
   SettingsSkeleton,
   Toggle,
 } from './settings-ui';
+import { WaveGroups } from './wave-groups';
 
 type Key = keyof MonitoringSettings;
 type Field = {
@@ -32,7 +33,10 @@ type Field = {
   /** Дробное число (нагрузка на ядро): в поле с запятой, на сервер — числом. */
   decimal?: boolean;
 };
-const sections: Record<'checks' | 'incidents', { title: string; hint?: string; fields: Field[] }[]> = {
+const sections: Record<
+  'checks' | 'incidents',
+  { title: string; hint?: string; fields: Field[]; extra?: 'waveGroups' }[]
+> = {
   checks: [
     {
       title: 'Данные Remnawave',
@@ -108,6 +112,35 @@ const sections: Record<'checks' | 'incidents', { title: string; hint?: string; f
           max: 1440,
         },
       ],
+    },
+    {
+      // Волна (0.106.0, витрина wave-maintenance-2026-10, раздел 6 — B).
+      title: 'Волна — общий сбой нескольких нод',
+      hint: 'Ноды одного провайдера (если провайдер не указан — одной страны), упавшие почти одновременно, объединяются в одно событие.',
+      fields: [
+        {
+          key: 'waveEnabled',
+          label: 'Склеивать в волну',
+          hint: 'Одно событие и одно сообщение в Telegram вместо отдельных по каждой ноде. Выключено — каждая нода сама по себе, как раньше.',
+        },
+        {
+          key: 'waveMinNodes',
+          label: 'Сколько нод',
+          hint: 'Со скольких упавших нод одной группы начинается волна.',
+          unit: 'нод',
+          min: 2,
+          max: 10,
+        },
+        {
+          key: 'waveWindowMinutes',
+          label: 'За какое время',
+          hint: 'Ноды должны упасть в пределах этого окна. Больше окно — больше случайных совпадений.',
+          unit: 'мин',
+          min: 5,
+          max: 30,
+        },
+      ],
+      extra: 'waveGroups',
     },
   ],
   incidents: [
@@ -334,6 +367,12 @@ export function MonitoringPage({ section }: { section: 'checks' | 'incidents' })
                 )}
               </SettingsRow>
             ))}
+            {s.extra === 'waveGroups' && (
+              <WaveGroups
+                minNodes={Number(draft.waveMinNodes) || 2}
+                windowMinutes={Number(draft.waveWindowMinutes) || 10}
+              />
+            )}
           </SettingsCard>
         ))}
       {section === 'incidents' && <IncidentTelegramCard state={telegram} />}
