@@ -525,3 +525,106 @@ describe('RemnawaveService: падение ноды видно сразу', () =
     expect(ctx.events).toHaveLength(1);
   });
 });
+
+describe('RemnawaveService: Ассистент читает разделы Remnawave', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('без подключения и с чужим разделом — объяснение, к Remnawave не обращается', async () => {
+    const ctx = make();
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    expect(await ctx.svc.readForAssistant('users')).toEqual({
+      connected: false,
+      error: 'Remnawave не подключена.',
+    });
+    await ctx.svc.connect({ domain: 'x.example.com', apiKey: 'k' });
+    expect(await ctx.svc.readForAssistant('api_tokens')).toMatchObject({
+      error: expect.stringContaining('Нет раздела «api_tokens». Разделы: users, user_traffic'),
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('у ключа нет права — сказано, какое добавить', async () => {
+    const ctx = make();
+    await ctx.svc.connect({ domain: 'x.example.com', apiKey: 'k' });
+    const fetch = vi.fn(async () => new Response('{}', { status: 403 }));
+    vi.stubGlobal('fetch', fetch);
+    const out = await ctx.svc.readForAssistant('devices');
+    expect(out).toMatchObject({ connected: true, topic: 'devices' });
+    expect(out.error).toMatch(
+      /^Нет права читать раздел «устройства: .+»: добавьте ключу Remnawave право hwid:read/,
+    );
+    expect(fetch.mock.calls.map((c) => String((c as unknown[])[0]))).toContain(
+      'https://x.example.com/api/hwid/devices/stats',
+    );
+  });
+
+  it('раздел отдаётся с пометкой, что личное не передаётся; ноды берутся из последнего снимка', async () => {
+    const ctx = make();
+    await ctx.svc.connect({ domain: 'x.example.com', apiKey: 'k' });
+    const fetch = vi.fn(async (url: string) => {
+      const path = new URL(url).pathname;
+      const body =
+        path === '/api/bandwidth-stats/nodes/n1/users'
+          ? { topUsers: [{ username: 'vasya', total: 1024 ** 3 }] }
+          : {};
+      return new Response(JSON.stringify({ response: body }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetch);
+    const out = await ctx.svc.readForAssistant('node_users_traffic', { node: 'bridge' });
+    expect(out).toMatchObject({
+      connected: true,
+      topic: 'node_users_traffic',
+      node: 'bridge',
+      topUsers: [{ username: 'vasya', total: '1 ГБ' }],
+      safety: expect.stringContaining('IP-адреса клиентов не передаются'),
+    });
+  });
+});
+
+describe('RemnawaveService: пользователь с именем из Telegram ID', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('имя приходит маской, по маске пользователь находится, Telegram ID не уходит', async () => {
+    const ctx = make();
+    await ctx.svc.connect({ domain: 'x.example.com', apiKey: 'k' });
+    const user = {
+      id: 77,
+      username: 'user_5551234567',
+      telegramId: 5551234567,
+      status: 'ACTIVE',
+      description: 'оплатил 5551234567',
+      userTraffic: {},
+    };
+    ctx.world.user = user;
+    const asked: string[] = [];
+    const client = (
+      ctx.svc as unknown as { client: { userByUsername: (...a: string[]) => Promise<unknown> } }
+    ).client;
+    client.userByUsername = async (_d, _k, name) => {
+      asked.push(name);
+      return name === 'user_5551234567' ? user : null;
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ response: { users: [user], hasMore: false } }), { status: 200 }),
+      ),
+    );
+    const byFull = await ctx.svc.userForAssistant('user_5551234567');
+    const byMask = await ctx.svc.userForAssistant('user_•••4567');
+    expect(asked).toEqual(['user_5551234567', 'user_5551234567']);
+    for (const out of [byFull, byMask]) {
+      expect(out).toMatchObject({
+        found: true,
+        user: { username: 'user_•••4567', description: 'оплатил •••4567' },
+      });
+      expect(JSON.stringify(out)).not.toContain('5551234567');
+    }
+    expect(await ctx.svc.userForAssistant('•••0000')).toMatchObject({
+      found: false,
+      error: 'Пользователя «•••0000» нет.',
+    });
+  });
+});

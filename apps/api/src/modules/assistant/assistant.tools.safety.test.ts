@@ -61,6 +61,8 @@ describe('набор инструментов Ассистента', () => {
         'get_settings',
         'get_sites_and_providers',
         'list_incidents',
+        // Только чтение Remnawave; POST — лишь задачи чтения подключений и геопроверки (см. remnawave-read.test.ts).
+        'read_remnawave',
         'recommend_check',
         'save_kb_article',
         'search_audit',

@@ -79,6 +79,7 @@ it('в списке только чтение: никаких инструмен
     'get_remnawave_squads',
     'get_remnawave_topology',
     'list_incidents',
+    'read_remnawave',
   ]);
 });
 

@@ -3,6 +3,7 @@ import type { Incident } from '@nodeservice/shared';
 import type { BillingService } from '../billing/billing.service.js';
 import type { IncidentsService } from '../incidents/incidents.service.js';
 import type { RemnawaveService } from '../remnawave/remnawave.service.js';
+import { REMNAWAVE_READ_TOPICS } from '../remnawave/remnawave-read.js';
 import type { RemnawaveTopologyService } from '../remnawave/remnawave-topology.service.js';
 import { PLAYBOOKS, playbookById, renderPlaybook } from './assistant.playbooks.js';
 import { REFERENCE, referenceById } from './assistant.reference.js';
@@ -35,11 +36,39 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
   {
     name: 'find_remnawave_user',
     description:
-      'Пользователь Remnawave по точному имени (username), только чтение: статус (ACTIVE, DISABLED, LIMITED, EXPIRED), срок, трафик и лимит, сквады, сколько устройств и их лимит, когда был онлайн и на какой ноде, когда открывал подписку и каким приложением, тег и заметка. Ссылка подписки, ключи, пароли, UUID, почта и Telegram ID не передаются. Используй, когда владелец спрашивает про конкретного пользователя («почему у Васи не работает»).',
+      'Пользователь Remnawave по точному имени (username), только чтение: статус (ACTIVE, DISABLED, LIMITED, EXPIRED), срок, трафик и лимит, сквады, сколько устройств и их лимит, когда был онлайн и на какой ноде, когда открывал подписку и каким приложением, тег и заметка. Ссылка подписки, ключи, пароли, UUID, почта и Telegram ID не передаются; длинное число в имени (обычно Telegram ID) приходит последними 4 цифрами — «•••6789», и такое имя тоже можно передать. Используй, когда владелец спрашивает про конкретного пользователя («почему у Васи не работает»).',
     input_schema: {
       type: 'object',
       properties: { username: { type: 'string', description: 'имя пользователя точно как в Remnawave' } },
       required: ['username'],
+    },
+  },
+  {
+    name: 'read_remnawave',
+    description: `Прочитать любой другой раздел подключённой Remnawave, только чтение. topic — раздел: ${Object.entries(
+      REMNAWAVE_READ_TOPICS,
+    )
+      .map(([k, v]) => `${k} — ${v.about}`)
+      .join(
+        '; ',
+      )}. Параметры по разделу: username — точно как в Remnawave; node — имя или UUID ноды; squad — имя внутреннего сквада; days — период от 1 до 90 дней (по умолчанию 7); для users ещё status (ACTIVE, DISABLED, LIMITED, EXPIRED), tag, search (часть имени), sort (traffic, expire, online, created), expiringDays, inactiveDays, limit (до 50). Почта, Telegram ID, ссылки подписок, ключи, пароли, HWID и IP-адреса клиентов не передаются: по подключениям — только сколько разных IP и когда их видели. Длинные числа в именах пользователей (обычно Telegram ID) приходят последними 4 цифрами — «•••6789», «user_•••6789»: так и называй пользователя владельцу и так передавай в username. user_connections, node_connections и node_geocheck просят ноду собрать данные (задача Remnawave на чтение, ответ за 5–20 секунд) — вызывай их, только когда владелец спрашивает про подключения, общий доступ к подписке или страну IP ноды. Если у ключа нет права, ответ скажет, какое добавить. Пользователь со статусом и сроком — find_remnawave_user; конфиги нод — get_remnawave_profiles; сквады — get_remnawave_squads.`,
+    input_schema: {
+      type: 'object',
+      properties: {
+        topic: { type: 'string', enum: Object.keys(REMNAWAVE_READ_TOPICS) },
+        username: { type: 'string' },
+        node: { type: 'string' },
+        squad: { type: 'string' },
+        days: { type: 'number' },
+        status: { type: 'string' },
+        tag: { type: 'string' },
+        search: { type: 'string' },
+        sort: { type: 'string', enum: ['traffic', 'expire', 'online', 'created'] },
+        expiringDays: { type: 'number' },
+        inactiveDays: { type: 'number' },
+        limit: { type: 'number' },
+      },
+      required: ['topic'],
     },
   },
   {
@@ -97,7 +126,9 @@ export const READ_TOOL_DEFS: LlmToolDef[] = [
 export interface ReadDeps {
   incidents: IncidentsService;
   /** Безопасное чтение конфигураций, сквадов и пользователей Remnawave; секреты удаляет сам сервис до передачи модели. */
-  remnawaveProfiles?: Partial<Pick<RemnawaveService, 'squadsForAssistant' | 'userForAssistant'>> &
+  remnawaveProfiles?: Partial<
+    Pick<RemnawaveService, 'squadsForAssistant' | 'userForAssistant' | 'readForAssistant'>
+  > &
     Pick<RemnawaveService, 'profilesForAssistant'>;
   remnawaveTopology?: Pick<RemnawaveTopologyService, 'forAssistant'>;
   /** Биллинг: оплаты, сроки, итоги. Нет — инструмент скажет, что раздел недоступен. */
@@ -200,6 +231,11 @@ export async function runReadTool(
   if (name === 'find_remnawave_user') {
     if (!deps.remnawaveProfiles?.userForAssistant) return none('Пользователи Remnawave сейчас недоступны.');
     return none(JSON.stringify(await deps.remnawaveProfiles.userForAssistant(arg.username)));
+  }
+  if (name === 'read_remnawave') {
+    if (!deps.remnawaveProfiles?.readForAssistant) return none('Чтение Remnawave сейчас недоступно.');
+    const { topic, ...rest } = arg;
+    return none(JSON.stringify(await deps.remnawaveProfiles.readForAssistant(topic, rest)));
   }
   if (name === 'get_remnawave_topology') {
     if (!deps.remnawaveTopology) return none('Карта Remnawave сейчас недоступна.');

@@ -36,55 +36,17 @@ export function nodeStatusKey(
     .join('|');
 }
 
-const HIDDEN = '[скрыто]';
-const SECRET_FIELDS = new Set([
-  'accesskey',
-  'apikey',
-  'auth',
-  'authorization',
-  'certificate',
-  'certificates',
-  'email',
-  'id',
-  'key',
-  'password',
-  'passwd',
-  'presharedkey',
-  'privatekey',
-  'publickey',
-  'secret',
-  'secretkey',
-  'seed',
-  'mldsa65seed',
-  'shortid',
-  'shortids',
-  'token',
-  'uuid',
-]);
-const PRIVATE_LISTS = new Set(['clients', 'users']);
+import {
+  isReadTopic,
+  maskName,
+  REMNAWAVE_READ_TOPICS,
+  type RemnawaveReadIo,
+  readRemnawaveTopic,
+  resolveMaskedName,
+} from './remnawave-read.js';
+import { HIDDEN, sanitizeRemnawaveProfile } from './remnawave-sanitize.js';
 
-/** Конфиг Remnawave недоверенный и может содержать доступы: до LLM доходит только безопасная копия. */
-export function sanitizeRemnawaveProfile(value: unknown, field = '', depth = 0): unknown {
-  const key = field.toLowerCase().replace(/[_-]/g, '');
-  if (PRIVATE_LISTS.has(key) && Array.isArray(value)) return { hidden: true, count: value.length };
-  if (SECRET_FIELDS.has(key)) return value === null || value === undefined ? value : HIDDEN;
-  if (depth >= 12) return '[слишком глубокая структура]';
-  if (typeof value === 'string') {
-    if (/^(?:vless|vmess|trojan|ss|hysteria2|hy2):\/\//i.test(value)) return HIDDEN;
-    const clean = value
-      .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, HIDDEN)
-      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, HIDDEN);
-    return clean.length > 2_000 ? `${clean.slice(0, 2_000)}…` : clean;
-  }
-  if (Array.isArray(value))
-    return value.slice(0, 50).map((item) => sanitizeRemnawaveProfile(item, '', depth + 1));
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .slice(0, 100)
-      .map(([name, item]) => [name, sanitizeRemnawaveProfile(item, name, depth + 1)]),
-  );
-}
+export { sanitizeRemnawaveProfile };
 
 /** YAML-шаблон подписки (Mihomo, Clash, Stash) — строки «ключ: значение» с паролями и ключами скрываются. */
 export function sanitizeTemplateYaml(yaml: string): string {
@@ -101,12 +63,27 @@ export function sanitizeTemplateYaml(yaml: string): string {
     .join('\n');
 }
 
+/** Чтение Remnawave для Ассистента: путь без домена, ответ — поле response. */
+function readIo(creds: { domain: string; apiKey: string }): RemnawaveReadIo {
+  const base = `https://${creds.domain}`;
+  return {
+    get: async (path) => (await getJson(`${base}${path}`, creds.apiKey)).response,
+    post: async (path, body) =>
+      (await getJson(`${base}${path}`, creds.apiKey, { method: 'POST', body: JSON.stringify(body ?? {}) }))
+        .response,
+  };
+}
+
 /** Права ключа, без которых часть данных Remnawave не прочитать: причина по-русски. */
-function readError(err: unknown, what: string, scope: string): string {
+function readError(
+  err: unknown,
+  what: string,
+  scope: string,
+  missing = `Эта версия Remnawave не отдаёт ${what} (сниппеты и внешние сквады появились в Remnawave 2.2).`,
+): string {
   if (err instanceof RemnawaveApiError && err.status === 403)
     return `Нет права читать ${what}: добавьте ключу Remnawave право ${scope} («Ноды» → «Настроить подключение» → «Права ключа»).`;
-  if (err instanceof RemnawaveApiError && err.status === 404)
-    return `Эта версия Remnawave не отдаёт ${what} (сниппеты и внешние сквады появились в Remnawave 2.2).`;
+  if (err instanceof RemnawaveApiError && err.status === 404) return missing;
   if (err instanceof RemnawaveApiError && err.kind === 'unauthorized')
     return 'Remnawave не приняла ключ: он неверный, отозван или просрочен.';
   return err instanceof Error ? err.message : `Не удалось прочитать ${what}.`;
@@ -424,13 +401,61 @@ export class RemnawaveService {
    * Пользователь Remnawave по имени для Ассистента (вариант A владельца): статус, срок, трафик, сквады, устройства,
    * когда был онлайн. Ссылка подписки, ключи, пароли, UUID, почта и Telegram ID не передаются — белый список полей.
    */
+  /**
+   * Любой раздел Remnawave для Ассистента, только чтение: пользователи списком, трафик, подключения, устройства,
+   * торрент-блокер, оплаты и сводка самой Remnawave, настройки, Host, inbound, теги. Конфиденциальное не передаётся.
+   */
+  async readForAssistant(
+    topic: unknown,
+    args: Record<string, unknown> = {},
+  ): Promise<Record<string, unknown>> {
+    if (!isReadTopic(topic))
+      return {
+        error: `Нет раздела «${String(topic)}». Разделы: ${Object.keys(REMNAWAVE_READ_TOPICS).join(', ')}.`,
+      };
+    const creds = await this.store.credentials();
+    if (!creds) return { connected: false, error: 'Remnawave не подключена.' };
+    const io = readIo(creds);
+    try {
+      const nodes = (await this.status()).nodes.map((n) => ({
+        uuid: n.uuid,
+        name: n.name,
+        countryCode: n.countryCode,
+      }));
+      return {
+        connected: true,
+        topic,
+        ...(await readRemnawaveTopic(topic, args, { io, nodes })),
+        safety:
+          'Почта, Telegram ID, ссылки и короткие UUID подписок, ключи, пароли, HWID и IP-адреса клиентов не передаются. Длинные числа в именах (обычно Telegram ID) — последними 4 цифрами: «•••6789».',
+      };
+    } catch (err) {
+      return {
+        connected: true,
+        topic,
+        error: readError(
+          err,
+          `раздел «${REMNAWAVE_READ_TOPICS[topic].about}»`,
+          REMNAWAVE_READ_TOPICS[topic].scope,
+          'Remnawave не нашла это: раздела нет в этой версии Remnawave или запись уже удалена.',
+        ),
+      };
+    }
+  }
+
   async userForAssistant(username: unknown): Promise<Record<string, unknown>> {
     const name = typeof username === 'string' ? username.trim() : '';
     if (!name) return { error: 'Укажите имя пользователя (username) так, как оно записано в Remnawave.' };
     const creds = await this.store.credentials();
     if (!creds) return { connected: false, error: 'Remnawave не подключена.' };
     try {
-      const user = await this.client.userByUsername(creds.domain, creds.apiKey, name);
+      let lookup = name;
+      if (name.includes('•••')) {
+        const found = await resolveMaskedName(readIo(creds), name);
+        if (typeof found === 'string') return { connected: true, found: false, error: found };
+        lookup = found.username;
+      }
+      const user = await this.client.userByUsername(creds.domain, creds.apiKey, lookup);
       if (!user)
         return {
           connected: true,
@@ -466,7 +491,7 @@ export class RemnawaveService {
         connected: true,
         found: true,
         user: {
-          username: text(user.username),
+          username: maskName(text(user.username)),
           status: text(user.status) || null,
           expireAt: text(user.expireAt) || null,
           createdAt: text(user.createdAt) || null,
@@ -486,10 +511,11 @@ export class RemnawaveService {
           hwidDeviceLimit: num(user.hwidDeviceLimit),
           hwidDevices: devices,
           tag: text(user.tag) || null,
-          description: (sanitizeRemnawaveProfile(text(user.description)) as string) || null,
+          description: maskName(sanitizeRemnawaveProfile(text(user.description)) as string) || null,
         },
         hint: 'trafficLimitBytes 0 — без лимита. status: ACTIVE — работает, DISABLED — выключен, LIMITED — исчерпан трафик, EXPIRED — истёк срок. hwidDevices null — устройства не прочитаны (нет права hwid:read).',
-        safety: 'Ссылка подписки, ключи, пароли, UUID, почта и Telegram ID пользователя не передаются.',
+        safety:
+          'Ссылка подписки, ключи, пароли, UUID, почта и Telegram ID пользователя не передаются. Длинные числа в имени (обычно Telegram ID) — последними 4 цифрами: «•••6789».',
       };
     } catch (err) {
       return { connected: true, error: readError(err, 'пользователей', 'users:read') };
