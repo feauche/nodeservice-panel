@@ -96,6 +96,8 @@
   --animate-fade: ns-fade 0.25s var(--ease-ns);
   /* Каркасы загрузки (витрина redesign-2026-10, вариант B): спокойный пульс вместо бегущего блика. */
   --animate-pulse: ns-skp 1.3s ease-in-out infinite;
+  /* Сигнал «панель работает» идёт: значок сердца мягко бьётся (Настройки → Уведомления). */
+  --animate-beat: ns-beat 1.6s ease-in-out infinite;
 
   @keyframes ns-skp {
     0%,
@@ -104,6 +106,16 @@
     }
     50% {
       opacity: 1;
+    }
+  }
+
+  @keyframes ns-beat {
+    0%,
+    100% {
+      transform: none;
+    }
+    50% {
+      transform: scale(1.12);
     }
   }
 

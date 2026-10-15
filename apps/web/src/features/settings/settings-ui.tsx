@@ -38,6 +38,7 @@ export function SettingsCard({
   hint,
   children,
   footer,
+  aside,
   className,
 }: {
   title: string;
@@ -45,15 +46,29 @@ export function SettingsCard({
   children: ReactNode;
   /** Своё действие карточки (например, «Сменить пароль»): прижато вправо, слева — пояснение. */
   footer?: ReactNode;
+  /** Состояние справа в шапке (пилюля «Сигнал идёт»); на телефоне — над заголовком. */
+  aside?: ReactNode;
   className?: string;
 }) {
+  const head = (
+    <>
+      <h3 className="m-0 font-heading text-[14.5px] font-semibold tracking-[-0.005em]">{title}</h3>
+      {/* Пояснение может быть разметкой (например, скелетон даты) — поэтому div, а не p. */}
+      {hint && <div className="mt-0.5 text-[12px] leading-snug text-text-3">{hint}</div>}
+    </>
+  );
   return (
     <section className={cn('overflow-hidden rounded-2xl border border-border bg-surface', className)}>
-      <div className="flex min-h-14 flex-col justify-center border-b border-border px-5 py-3 max-md:px-4">
-        <h3 className="m-0 font-heading text-[14.5px] font-semibold tracking-[-0.005em]">{title}</h3>
-        {/* Пояснение может быть разметкой (например, скелетон даты) — поэтому div, а не p. */}
-        {hint && <div className="mt-0.5 text-[12px] leading-snug text-text-3">{hint}</div>}
-      </div>
+      {aside ? (
+        <div className="flex min-h-14 items-start gap-3 border-b border-border px-5 py-3 max-md:px-4 max-sm:flex-col-reverse max-sm:gap-2">
+          <div className="min-w-0 flex-1">{head}</div>
+          <div className="flex flex-none items-center pt-px">{aside}</div>
+        </div>
+      ) : (
+        <div className="flex min-h-14 flex-col justify-center border-b border-border px-5 py-3 max-md:px-4">
+          {head}
+        </div>
+      )}
       <div className="px-5 max-md:px-4">{children}</div>
       {footer && (
         <div className="flex flex-wrap items-center justify-end gap-2.5 border-t border-border bg-bg-2 px-5 py-3.5 max-md:px-4 [&>button]:h-10">

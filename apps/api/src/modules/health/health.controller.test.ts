@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HealthController, NOT_READY_PROBLEM } from './health.controller.js';
 import { PanelPulse } from './panel-pulse.js';
+import { PanelReadiness } from './panel-readiness.js';
 
 /** Сырой текст ошибки базы — с адресом и паролем: наружу он попадать не должен. */
 const DB_ERROR = 'connect ECONNREFUSED postgres://nodeservice:s3cret-pass@postgres:5432/nodeservice';
@@ -18,14 +19,14 @@ interface Parts {
 function make(parts: Parts = {}) {
   const pulse = new PanelPulse();
   if (parts.ticked !== false) pulse.incidentsTick();
-  const ctrl = new HealthController(
+  const readiness = new PanelReadiness(
     { execute: parts.db ?? (async () => ({ rows: [{ '?column?': 1 }] })) } as never,
     { ping: parts.ping ?? (async () => 'PONG') } as never,
-    { get: () => undefined } as never,
     pulse,
   );
   // Ожидание каждой проверки сокращаем: зависшая часть должна давать 503, а не держать тест.
-  ctrl.timeoutMs = 50;
+  readiness.timeoutMs = 50;
+  const ctrl = new HealthController(readiness);
   return { ctrl, pulse };
 }
 

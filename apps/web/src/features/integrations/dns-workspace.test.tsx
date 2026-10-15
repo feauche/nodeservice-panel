@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -389,5 +389,105 @@ describe('DNS: свой адрес вместо адреса ноды (вари�
     expect(await within(dialog).findByRole('list', { name: 'История записи' })).toHaveTextContent(
       '94.131.110.4 → 94.131.110.5Свой адрес',
     );
+  });
+});
+
+describe('DNS: домены сворачиваются (витрина heartbeat-dns-2026-10, вариант A)', () => {
+  const KEY = 'ns-dns-zones';
+  const AX = 'cloudflare:axelvryn.ru';
+  const zoneButton = (zone: HTMLElement) => within(zone).getByRole('button', { name: 'axelvryn.ru' });
+  const rowInert = (zone: HTMLElement, name: string) =>
+    within(zone)
+      .getByRole('button', { name: `Запись ${name}`, hidden: true })
+      .closest('[inert]');
+
+  it('по умолчанию развёрнуто; свёрнутый домен помнит браузер, расхождение видно на заголовке', async () => {
+    const user = userEvent.setup();
+    const first = renderPage(Page, '/integrations/dns');
+    const zone = await screen.findByRole('region', { name: 'Домен axelvryn.ru' });
+    expect(zoneButton(zone)).toHaveAttribute('aria-expanded', 'true');
+    expect(rowInert(zone, 'de.axelvryn.ru')).toBeNull();
+    await user.click(zoneButton(zone));
+    expect(zoneButton(zone)).toHaveAttribute('aria-expanded', 'false');
+    // Записи свёрнутого домена клавиатурой не выбираются.
+    expect(rowInert(zone, 'de.axelvryn.ru')).not.toBeNull();
+    expect(localStorage.getItem(KEY)).toBe(JSON.stringify([AX]));
+    // Тревога не прячется: «1 отличается» и жёлтая кромка у свёрнутого.
+    expect(within(zone).getByText('1 отличается')).toBeVisible();
+    expect(zoneButton(zone).closest('header')?.className).toContain('var(--ns-warn)');
+    // Второй домен не тронут.
+    const regru = screen.getByRole('region', { name: 'Домен lumaxvds.org' });
+    expect(within(regru).getByRole('button', { name: 'lumaxvds.org' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+
+    // Обновление страницы: домен остаётся свёрнутым.
+    first.unmount();
+    renderPage(Page, '/integrations/dns');
+    const again = await screen.findByRole('region', { name: 'Домен axelvryn.ru' });
+    expect(zoneButton(again)).toHaveAttribute('aria-expanded', 'false');
+    await user.click(zoneButton(again));
+    expect(zoneButton(again)).toHaveAttribute('aria-expanded', 'true');
+    expect(localStorage.getItem(KEY)).toBe('[]');
+  });
+
+  it('поиск раскрывает свёрнутый домен на время, с пометкой, и не меняет запомненное', async () => {
+    localStorage.setItem(KEY, JSON.stringify([AX]));
+    const user = userEvent.setup();
+    renderPage(Page, '/integrations/dns');
+    const zone = await screen.findByRole('region', { name: 'Домен axelvryn.ru' });
+    expect(zoneButton(zone)).toHaveAttribute('aria-expanded', 'false');
+    expect(within(zone).queryByText('раскрыт для поиска')).toBeNull();
+    const search = screen.getByRole('textbox', { name: 'Поиск записей' });
+    await user.type(search, 'Германия');
+    expect(zoneButton(zone)).toHaveAttribute('aria-expanded', 'true');
+    expect(within(zone).getByText('раскрыт для поиска')).toBeVisible();
+    expect(within(zone).getByText('найдено 1')).toBeVisible();
+    expect(rowInert(zone, 'de.axelvryn.ru')).toBeNull();
+    expect(localStorage.getItem(KEY)).toBe(JSON.stringify([AX]));
+    await user.clear(search);
+    expect(zoneButton(zone)).toHaveAttribute('aria-expanded', 'false');
+    expect(within(zone).queryByText('раскрыт для поиска')).toBeNull();
+    expect(within(zone).queryByText(/^найдено/)).toBeNull();
+
+    // Фильтр раскрывает так же; нажатие на раскрытый на время — разворачивает по-настоящему.
+    await user.click(screen.getByRole('button', { name: 'Отличаются1' }));
+    expect(within(zone).getByText('раскрыт для поиска')).toBeVisible();
+    await user.click(zoneButton(zone));
+    expect(zoneButton(zone)).toHaveAttribute('aria-expanded', 'true');
+    expect(within(zone).queryByText('раскрыт для поиска')).toBeNull();
+    expect(localStorage.getItem(KEY)).toBe('[]');
+  });
+
+  it('свернули во время поиска — домен не раскрывается сам и запомнен', async () => {
+    const user = userEvent.setup();
+    renderPage(Page, '/integrations/dns');
+    const zone = await screen.findByRole('region', { name: 'Домен axelvryn.ru' });
+    const search = screen.getByRole('textbox', { name: 'Поиск записей' });
+    await user.type(search, 'axelvryn');
+    await user.click(zoneButton(zone));
+    expect(zoneButton(zone)).toHaveAttribute('aria-expanded', 'false');
+    expect(within(zone).queryByText('раскрыт для поиска')).toBeNull();
+    expect(localStorage.getItem(KEY)).toBe(JSON.stringify([AX]));
+    await user.type(search, '.ru');
+    expect(zoneButton(zone)).toHaveAttribute('aria-expanded', 'false');
+    await user.clear(search);
+    expect(zoneButton(zone)).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('свернули в другой вкладке — здесь тоже', async () => {
+    renderPage(Page, '/integrations/dns');
+    const zone = await screen.findByRole('region', { name: 'Домен axelvryn.ru' });
+    localStorage.setItem(KEY, JSON.stringify([AX, 'cloudflare:старый-домен.ru']));
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: KEY }));
+    });
+    expect(zoneButton(zone)).toHaveAttribute('aria-expanded', 'false');
+    expect(
+      within(screen.getByRole('region', { name: 'Домен lumaxvds.org' })).getByRole('button', {
+        name: 'lumaxvds.org',
+      }),
+    ).toHaveAttribute('aria-expanded', 'true');
   });
 });

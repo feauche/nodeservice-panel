@@ -10,6 +10,7 @@ import { assistantHandlers, seedAssistant } from './assistant-mock';
 import { auditHandlers, mockAudit, seedAudit } from './audit-mock';
 import { backupsHandlers, seedBackups } from './backups-mock';
 import { billingHandlers, seedBilling } from './billing-mock';
+import { heartbeatHandlers, resetHeartbeat } from './heartbeat-mock';
 import { incidentsHandlers, seedIncidents } from './incidents-mock';
 import { knowledgeHandlers, seedKnowledge } from './knowledge-mock';
 import { notificationsHandlers, seedNotifications } from './notifications-mock';
@@ -87,6 +88,7 @@ export function resetMockState(patch: Partial<MockState> = {}): void {
   seedKnowledge();
   seedAssistant();
   resetTelegram();
+  resetHeartbeat();
   mockCustomSites.items = [];
   Object.assign(mockState, {
     setupRequired: false,
@@ -205,6 +207,7 @@ export const handlers = [
   }),
   ...securityHandlers,
   ...telegramHandlers,
+  ...heartbeatHandlers,
   ...providersHandlers,
   ...billingHandlers,
   ...backupsHandlers,

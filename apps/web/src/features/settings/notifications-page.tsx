@@ -1,4 +1,5 @@
 import {
+  heartbeatUrlSchema,
   isValidTelegramProxy,
   parseTelegramUrl,
   TELEGRAM_DESTINATIONS_MAX,
@@ -18,9 +19,11 @@ import { Loader2Icon, PlusIcon, SendIcon, Trash2Icon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
 import { formatAgo } from '@/features/security/security-format';
-import { apiErrorMessage } from '@/lib/api';
+import { apiErrorMessage, isApiError } from '@/lib/api';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { useHeartbeat, useUpdateHeartbeat } from './heartbeat-api';
+import { HeartbeatCard } from './heartbeat-card';
 import {
   LoadError,
   SaveBar,
@@ -135,13 +138,23 @@ export function NotificationsPage() {
   const [results, setResults] = useState<Record<string, { ok: boolean; detail: string; who: string | null }>>(
     {},
   );
+  // Сигнал «панель работает» — своя настройка на сервере, но сохраняется той же кнопкой, что и Telegram.
+  const hb = useHeartbeat();
+  const updateHb = useUpdateHeartbeat();
+  const [hbUrl, setHbUrl] = useState<string | null>(null);
+  const [hbError, setHbError] = useState<string | undefined>();
 
   useEffect(() => {
     if (q.data && !draft) setDraft(fromSettings(q.data));
   }, [q.data, draft]);
+  useEffect(() => {
+    if (hb.data && hbUrl === null) setHbUrl(hb.data.url);
+  }, [hb.data, hbUrl]);
 
   const base = useMemo(() => (q.data ? fromSettings(q.data) : null), [q.data]);
-  const dirty = Boolean(draft && base && !sameDraft(draft, base));
+  const tgDirty = Boolean(draft && base && !sameDraft(draft, base));
+  const hbDirty = hbUrl !== null && hb.data !== undefined && hbUrl.trim() !== hb.data.url;
+  const dirty = tgDirty || hbDirty;
 
   // Ошибка — раньше скелетона: без данных черновика нет, и скелетон крутился бы вечно.
   if (q.isError && !draft)
@@ -156,7 +169,8 @@ export function NotificationsPage() {
   const proxyChanged = draft.proxy.trim() !== (q.data?.proxy ?? '');
   // Маску с *** отправить нельзя: прокси с паролем нужно ввести целиком заново.
   const badProxy = proxyChanged && draft.proxy.trim() !== '' && !isValidTelegramProxy(draft.proxy.trim());
-  const invalid = draft.rows.some(badUrl) || badProxy;
+  const badHeartbeat = hbDirty && !heartbeatUrlSchema.safeParse(hbUrl?.trim() ?? '').success;
+  const invalid = draft.rows.some(badUrl) || badProxy || badHeartbeat;
   const setRows = (rows: Row[]) => setDraft({ ...draft, rows });
   const deliveries = q.data.destinations
     .map((destination) => destination.lastDelivery)
@@ -207,7 +221,25 @@ export function NotificationsPage() {
     }
   };
 
+  const saveHeartbeat = async (): Promise<boolean> => {
+    if (!hbDirty || hbUrl === null) return true;
+    try {
+      const v = await updateHb.mutateAsync({ url: hbUrl.trim() });
+      setHbUrl(v.url);
+      setHbError(undefined);
+      return true;
+    } catch (err) {
+      setHbError(isApiError(err) ? err.fieldMessage('url') : undefined);
+      toast.error(`Сигнал «панель работает» не сохранён: ${apiErrorMessage(err)}`);
+      return false;
+    }
+  };
+
   const save = async () => {
+    if (!tgDirty) {
+      if (await saveHeartbeat()) toast.success('Уведомления сохранены.');
+      return;
+    }
     try {
       const saved = await update.mutateAsync({
         destinations: draft.rows
@@ -224,7 +256,7 @@ export function NotificationsPage() {
       });
       setDraft(fromSettings(saved));
       setResults({});
-      toast.success('Уведомления сохранены.');
+      if (await saveHeartbeat()) toast.success('Уведомления сохранены.');
     } catch (err) {
       toast.error(apiErrorMessage(err));
     }
@@ -641,11 +673,29 @@ export function NotificationsPage() {
           />
         </SettingsRow>
       </SettingsCard>
+      <NotificationGroupHeader
+        number={4}
+        title="Если перестанет работать сама панель"
+        hint="Внешний сервис пришлёт тревогу, если панель замолчит"
+      />
+      <HeartbeatCard
+        query={hb}
+        url={hbUrl ?? ''}
+        onUrl={(v) => {
+          setHbUrl(v);
+          setHbError(undefined);
+        }}
+        fieldError={hbError}
+      />
       <SaveBar
         dirty={dirty}
-        pending={update.isPending}
+        pending={update.isPending || updateHb.isPending}
         onSave={() => void save()}
-        onReset={() => base && setDraft(base)}
+        onReset={() => {
+          if (base) setDraft(base);
+          if (hb.data) setHbUrl(hb.data.url);
+          setHbError(undefined);
+        }}
         error={invalid ? 'Исправьте поле, отмеченное красным.' : undefined}
         note="попадут в Журнал, токены после сохранения скрыты"
       />

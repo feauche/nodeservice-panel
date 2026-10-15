@@ -246,6 +246,8 @@ export const AUDIT_ACTIONS = {
   'settings.assistant.updated': { category: 'settings', label: 'Настройки Ассистента изменены' },
   'settings.snippets.updated': { category: 'settings', label: 'Сниппеты терминала изменены' },
   'settings.custom_sites.updated': { category: 'settings', label: 'Сайты в боковом меню изменены' },
+  'settings.heartbeat.updated': { category: 'settings', label: 'Сигнал «панель жива» изменён' },
+  'settings.heartbeat.test': { category: 'settings', label: 'Проверочный сигнал «панель жива»' },
   'kb.created': { category: 'knowledge', label: 'Статья базы знаний создана' },
   'kb.updated': { category: 'knowledge', label: 'Статья базы знаний изменена' },
   'kb.deleted': { category: 'knowledge', label: 'Статья базы знаний удалена' },

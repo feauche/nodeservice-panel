@@ -10,6 +10,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRightIcon,
+  ChevronDownIcon,
   ClockIcon,
   EllipsisIcon,
   Loader2Icon,
@@ -49,6 +50,7 @@ import { Pill, Segmented, Toggle } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage, request } from '@/lib/api';
 import { plural } from '@/lib/plural';
 import { cn } from '@/lib/utils';
+import { dnsZoneKey, setDnsZoneClosed, useClosedDnsZones } from './dns-zones-store';
 
 type Provider = 'cloudflare' | 'regru';
 const PROVIDERS: Provider[] = ['cloudflare', 'regru'];
@@ -942,10 +944,11 @@ function ConnectionsDialog({
 function ZoneSkeleton({ rows = 4 }: { rows?: number }) {
   return (
     <div aria-hidden="true" className="overflow-hidden rounded-2xl border border-border bg-surface">
-      <div className="flex min-h-14 items-center gap-3 border-b border-border px-[18px] py-3">
+      <div className="flex min-h-14 items-center gap-3 border-b border-border py-3 pr-5 pl-[18px]">
         <Skeleton className="size-[22px] rounded-[6px]" />
         <Skeleton className="h-4 w-36" />
         <Skeleton className="h-5 w-20 rounded-full" />
+        <Skeleton className="ml-auto size-8 rounded-[9px]" />
       </div>
       {Array.from({ length: rows }, (_, i) => (
         <div
@@ -967,6 +970,107 @@ function ZoneSkeleton({ rows = 4 }: { rows?: number }) {
     </div>
   );
 }
+/**
+ * Домен карточкой: заголовок целиком сворачивает и разворачивает записи (витрина heartbeat-dns-2026-10, вариант A —
+ * стрелка справа, как у групп бокового меню). Свёрнутые запоминает браузер (`dns-zones-store`). При поиске или
+ * фильтре свёрнутый домен с найденными записями раскрыт на время — с пометкой, без записи в хранилище.
+ */
+function ZoneCard({
+  name,
+  provider,
+  total,
+  linked,
+  diff,
+  found,
+  open,
+  temporary,
+  onToggle,
+  children,
+}: {
+  name: string;
+  provider: string;
+  total: number;
+  linked: number;
+  diff: number;
+  /** Сколько записей прошло поиск и фильтр; null — ничего не сужено. */
+  found: number | null;
+  open: boolean;
+  temporary: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  const bodyId = useId();
+  return (
+    <section
+      aria-label={`Домен ${name}`}
+      className="overflow-hidden rounded-2xl border border-border bg-surface"
+    >
+      {/* Весь заголовок нажимается: кнопка в h2 растянута на него псевдоэлементом. */}
+      <header
+        className={cn(
+          'group/zone relative flex min-h-14 flex-wrap items-center gap-x-3 gap-y-1 py-3 pr-5 pl-[18px] transition-colors hover:bg-surface-2/55 has-[button:focus-visible]:outline-2 has-[button:focus-visible]:-outline-offset-2 has-[button:focus-visible]:outline-brand',
+          // Черта под раскрытым — тенью, а не рамкой: заголовок 56 px в обоих положениях, ничего не прыгает.
+          open && 'shadow-[inset_0_-1px_0_var(--ns-border)]',
+          // Тревога не прячется: у свёрнутого домена с расхождением — жёлтая кромка.
+          !open && diff > 0 && 'bg-warn/[0.05] shadow-[inset_3px_0_0_var(--ns-warn)]',
+        )}
+      >
+        <img src={providerIcon(provider)} alt="" className="size-[22px] flex-none rounded-[6px]" />
+        <h2 className="font-heading text-[15px] font-semibold break-all">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={bodyId}
+            onClick={onToggle}
+            className="cursor-pointer text-left outline-none after:absolute after:inset-0 after:content-['']"
+          >
+            {name}
+          </button>
+        </h2>
+        <Pill>{PROVIDER_NAME[provider] ?? provider}</Pill>
+        {temporary && <Pill tone="info">раскрыт для поиска</Pill>}
+        {/* На телефоне счётчики — строкой под названием (отступ под значок), стрелка остаётся справа. */}
+        <span className="flex flex-wrap gap-x-3.5 text-[12.5px] text-text-3 max-md:order-last max-md:basis-full max-md:gap-x-2.5 max-md:pl-[34px] max-md:text-[12px] md:ml-auto">
+          {found !== null && <span className="text-brand">найдено {found}</span>}
+          <span>
+            {total} {plural(total, 'запись', 'записи', 'записей')}
+          </span>
+          <span>
+            {linked} {plural(linked, 'связана', 'связаны', 'связаны')} с нодами
+          </span>
+          {diff > 0 && (
+            <span className="text-warn">
+              {diff} {plural(diff, 'отличается', 'отличаются', 'отличаются')}
+            </span>
+          )}
+        </span>
+        <span
+          aria-hidden="true"
+          className="grid size-8 flex-none place-items-center rounded-[9px] text-text-3 transition-colors group-hover/zone:bg-surface-3 group-hover/zone:text-foreground max-md:ml-auto"
+        >
+          <ChevronDownIcon
+            className={cn(
+              'size-4 transition-transform duration-200 motion-reduce:transition-none',
+              !open && '-rotate-90',
+            )}
+          />
+        </span>
+      </header>
+      {/* Записи сворачиваются по высоте за 0,2 с; свёрнутые недоступны с клавиатуры (inert). */}
+      <div
+        id={bodyId}
+        inert={!open}
+        className={cn(
+          'grid transition-[grid-template-rows] duration-200 motion-reduce:transition-none',
+          open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+        )}
+      >
+        <div className="min-h-0 overflow-hidden">{children}</div>
+      </div>
+    </section>
+  );
+}
+
 export function DnsWorkspaceSkeleton() {
   return (
     <div role="status" aria-label="Загрузка доменов и DNS-записей" className="flex flex-col gap-3">
@@ -1020,7 +1124,10 @@ export function DnsWorkspace({
     [connectionsOpen, setConnectionsOpen] = useState(false),
     [pending, setPending] = useState<string | null>(null),
     [refreshing, setRefreshing] = useState(false),
-    [error, setError] = useState('');
+    [error, setError] = useState(''),
+    // Свёрнуты нажатием во время поиска или фильтра: на время сужения не раскрываются сами.
+    [heldShut, setHeldShut] = useState<ReadonlySet<string>>(() => new Set());
+  const closedZones = useClosedDnsZones();
   const data = query.data;
   const records = data?.records ?? [];
   // Пришли из события ноды: запись загружена — открываем её окно один раз и убираем её из адреса.
@@ -1073,6 +1180,11 @@ export function DnsWorkspace({
     return c;
   }, [records]);
   const needle = search.trim().toLowerCase();
+  const narrowed = Boolean(needle) || filter !== 'all';
+  // Сужение снято — свёрнутые на время поиска снова подчиняются только хранилищу.
+  useEffect(() => {
+    if (!narrowed) setHeldShut((prev) => (prev.size ? new Set() : prev));
+  }, [narrowed]);
   const shown = records.filter((r) => {
     const s = recordState(r);
     if (filter === 'linked' && s === 'free') return false;
@@ -1253,36 +1365,32 @@ export function DnsWorkspace({
             zones
               .filter((z) => z.rows.length)
               .map((z) => {
-                const linked = z.all.filter((r) => r.nodes.length).length;
-                const diff = z.all.filter((r) => recordState(r) === 'diff').length;
+                const key = dnsZoneKey(z.provider, z.name);
+                const shut = closedZones.has(key);
+                // Свёрнутый домен с найденными записями при поиске или фильтре раскрыт на время, без записи.
+                const temporary = shut && narrowed && !heldShut.has(key);
+                const toggle = () => {
+                  setDnsZoneClosed(key, !shut);
+                  setHeldShut((prev) => {
+                    const next = new Set(prev);
+                    if (!shut && narrowed) next.add(key);
+                    else next.delete(key);
+                    return next;
+                  });
+                };
                 return (
-                  <section
-                    key={`${z.provider}:${z.name}`}
-                    aria-label={`Домен ${z.name}`}
-                    className="overflow-hidden rounded-2xl border border-border bg-surface"
+                  <ZoneCard
+                    key={key}
+                    name={z.name}
+                    provider={z.provider}
+                    total={z.all.length}
+                    linked={z.all.filter((r) => r.nodes.length).length}
+                    diff={z.all.filter((r) => recordState(r) === 'diff').length}
+                    found={narrowed ? z.rows.length : null}
+                    open={!shut || temporary}
+                    temporary={temporary}
+                    onToggle={toggle}
                   >
-                    <header className="flex min-h-14 flex-wrap items-center gap-3 border-b border-border px-[18px] py-3">
-                      <img
-                        src={providerIcon(z.provider)}
-                        alt=""
-                        className="size-[22px] flex-none rounded-[6px]"
-                      />
-                      <h2 className="font-heading text-[15px] font-semibold break-all">{z.name}</h2>
-                      <Pill>{PROVIDER_NAME[z.provider] ?? z.provider}</Pill>
-                      <span className="ml-auto flex flex-wrap gap-x-3.5 text-[12.5px] text-text-3 max-md:hidden">
-                        <span>
-                          {z.all.length} {plural(z.all.length, 'запись', 'записи', 'записей')}
-                        </span>
-                        <span>
-                          {linked} {plural(linked, 'связана', 'связаны', 'связаны')} с нодами
-                        </span>
-                        {diff > 0 && (
-                          <span className="text-warn">
-                            {diff} {plural(diff, 'отличается', 'отличаются', 'отличаются')}
-                          </span>
-                        )}
-                      </span>
-                    </header>
                     {z.rows.map((r) => (
                       <RecordRow
                         key={r.id}
@@ -1294,7 +1402,7 @@ export function DnsWorkspace({
                         onAuto={(on) => void setAuto(r, on)}
                       />
                     ))}
-                  </section>
+                  </ZoneCard>
                 );
               })
           )}
