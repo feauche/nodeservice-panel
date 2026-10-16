@@ -239,6 +239,8 @@ const KEY_LABELS: Record<string, string> = {
   deleted: 'Удалено',
   enabled: 'Включено',
   billingHistoryPreserved: 'История оплат сохранена',
+  mergedFrom: 'Старая запись панели',
+  movedPayments: 'Перенесено оплат',
   versionCreatedAt: 'Версия от',
   retentionDays: 'Хранение, дней',
   incidents: 'Событий',

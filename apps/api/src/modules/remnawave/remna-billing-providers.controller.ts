@@ -5,6 +5,7 @@ import {
   Controller,
   Get,
   Inject,
+  Optional,
   Param,
   ParseUUIDPipe,
   Post,
@@ -16,7 +17,9 @@ import type { Response } from 'express';
 import { createZodDto } from 'nestjs-zod';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { billingItems, providers } from '../../infra/db/schema/index.js';
+import { SYSTEM_ACTOR } from '../audit/audit.context.js';
 import { Audit } from '../audit/audit.decorator.js';
+import { AuditService } from '../audit/audit.service.js';
 import { ProvidersService } from '../providers/providers.service.js';
 import { RemnaProviderAssetsService } from './remna-provider-assets.service.js';
 import { RemnaProvidersService } from './remna-providers.service.js';
@@ -31,9 +34,10 @@ export class RemnaBillingProvidersController {
     private readonly store: RemnawaveSettingsStore,
     private readonly assets: RemnaProviderAssetsService,
     private readonly legacy: ProvidersService,
+    @Optional() private readonly audit?: AuditService,
   ) {}
   private async project(domain: string, items: RemnaProvider[], complete = true) {
-    await this.db.transaction(async (tx) => {
+    const merged = await this.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`remna-billing:${domain}`}))`);
       const old = await tx.select().from(providers).where(eq(providers.remotePanel, domain));
       for (const p of items) {
@@ -51,11 +55,43 @@ export class RemnaBillingProvidersController {
         if (row) await tx.update(providers).set(values).where(eq(providers.id, row.id));
         else await tx.insert(providers).values({ ...values, remotePanel: domain, remoteUuid: p.uuid });
       }
-      if (complete)
-        for (const row of old)
-          if (!items.some((p) => p.uuid === row.remoteUuid) && !row.archivedAt)
-            await tx.update(providers).set({ archivedAt: new Date() }).where(eq(providers.id, row.id));
+      if (!complete) return [];
+      for (const row of old)
+        if (!items.some((p) => p.uuid === row.remoteUuid) && !row.archivedAt)
+          await tx.update(providers).set({ archivedAt: new Date() }).where(eq(providers.id, row.id));
+      // Провайдер из старого справочника панели (до связи с Remnawave) и он же в Remnawave — в форме
+      // оплаты было два одинаковых пункта. Объединяем по имени: оплаты — на провайдера Remnawave, старую
+      // запись — в архив. Если в Remnawave два провайдера с этим именем, не угадываем и не трогаем.
+      const key = (name: string) => name.trim().toLowerCase().replace(/ё/g, 'е');
+      const live = await tx
+        .select()
+        .from(providers)
+        .where(and(eq(providers.remotePanel, domain), isNull(providers.archivedAt)));
+      const legacy = await tx
+        .select()
+        .from(providers)
+        .where(and(isNull(providers.remotePanel), isNull(providers.archivedAt)));
+      const done: Array<{ from: string; to: { id: string; name: string }; payments: number }> = [];
+      for (const row of legacy) {
+        const [twin, other] = live.filter((p) => key(p.name) === key(row.name));
+        if (!twin || other) continue;
+        const moved = await tx
+          .update(billingItems)
+          .set({ providerId: twin.id })
+          .where(eq(billingItems.providerId, row.id))
+          .returning({ id: billingItems.id });
+        await tx.update(providers).set({ archivedAt: new Date() }).where(eq(providers.id, row.id));
+        done.push({ from: row.name, to: twin, payments: moved.length });
+      }
+      return done;
     });
+    for (const m of merged)
+      await this.audit?.record({
+        action: 'provider.merged',
+        actor: SYSTEM_ACTOR,
+        target: { type: 'provider', id: m.to.id, display: m.to.name },
+        metadata: { mergedFrom: m.from, movedPayments: m.payments },
+      });
   }
   @Get() async list() {
     const credentials = await this.store.credentials();
