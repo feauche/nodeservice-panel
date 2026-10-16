@@ -10,7 +10,6 @@ import { IntegrationConnectionsModule } from '../integrations/integration-connec
 import { KnowledgeModule } from '../knowledge/knowledge.module.js';
 import { NodeMetricsModule } from '../node-metrics/node-metrics.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
-import { ProvidersModule } from '../providers/providers.module.js';
 import { RemnawaveModule } from '../remnawave/remnawave.module.js';
 import { ScenariosModule } from '../scenarios/scenarios.module.js';
 import { SecurityModule } from '../security/security.module.js';
@@ -37,12 +36,11 @@ import { ZvenoProvider } from './zveno.provider.js';
     AuditModule,
     AssistantSettingsModule,
     SettingsModule,
-    // Разделы панели, которые Ассистент читает (только чтение): сценарии, интеграции, провайдеры, Telegram, вход.
+    // Разделы панели, которые Ассистент читает (только чтение): сценарии, интеграции, Telegram, вход.
     ScenariosModule,
     DpiCheckerModule,
     DnsIntegrationModule,
     BsCheckerModule,
-    ProvidersModule,
     NotificationsModule,
     SecurityModule,
   ],

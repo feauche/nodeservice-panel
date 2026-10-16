@@ -9,7 +9,8 @@ import { DnsService } from '../integrations/dns.service.js';
 import { DpiService } from '../integrations/dpi.service.js';
 import { IntegrationsService } from '../integrations/integrations.service.js';
 import { TelegramService } from '../notifications/telegram/telegram.service.js';
-import { ProvidersService } from '../providers/providers.service.js';
+import { RemnaProviderAssetsService } from '../remnawave/remna-provider-assets.service.js';
+import { RemnaProvidersService } from '../remnawave/remna-providers.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ScenariosStore } from '../scenarios/scenarios.store.js';
 import { SecurityService } from '../security/security.service.js';
@@ -33,7 +34,8 @@ export class AssistantPanelReader {
     private readonly bs: BsCheckerService,
     private readonly rentals: BsRentalsService,
     private readonly backups: BackupsService,
-    private readonly providers: ProvidersService,
+    private readonly providers: RemnaProvidersService,
+    private readonly providerAssets: RemnaProviderAssetsService,
     private readonly panelSettings: SettingsService,
     private readonly telegram: TelegramService,
     private readonly security: SecurityService,
@@ -103,7 +105,16 @@ export class AssistantPanelReader {
         list: () => this.backups.list(),
         settings: () => this.backups.getSettings(),
       },
-      providers: () => this.providers.list(),
+      // Провайдеры — из Remnawave, как в «Биллинге»; старого справочника панели больше нет.
+      providers: async () =>
+        Promise.all(
+          (await this.providers.list()).map(async (p) => ({
+            name: p.name,
+            siteUrl: p.loginUrl,
+            note: (await this.providerAssets.dto(p)).note,
+            nodes: p.nodes.map((n) => n.name),
+          })),
+        ),
       sites: () => this.panelSettings.getCustomSites(),
       settings: {
         telegram: () => this.telegram.get(),

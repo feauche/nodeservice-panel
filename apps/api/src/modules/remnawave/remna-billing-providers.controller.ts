@@ -11,7 +11,7 @@ import {
   Post,
   Res,
 } from '@nestjs/common';
-import { createProviderRequestSchema, type RemnaProvider } from '@nodeservice/shared';
+import { createProviderRequestSchema, providerSiteHost, type RemnaProvider } from '@nodeservice/shared';
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import type { Response } from 'express';
 import { createZodDto } from 'nestjs-zod';
@@ -26,6 +26,22 @@ import { RemnaProvidersService } from './remna-providers.service.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
 
 class CreateDto extends createZodDto(createProviderRequestSchema) {}
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+/** Имя без регистра, пробелов и знаков: «Space Core» = «SpaceCore», «Rawi Host» = «RawiHost». */
+const nameKey = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^\p{L}\p{N}]/gu, '');
+/** Домен сайта без поддомена кабинета: billing.spacecore.pro и spacecore.pro — один хостер. */
+function siteKey(url: string): string {
+  const parts = providerSiteHost(url).split('.').filter(Boolean);
+  if (parts.length < 2) return '';
+  const two = parts.slice(-2).join('.');
+  return parts.length > 2 && /^(com|net|org|co|msk|spb)\.[a-z]{2}$/.test(two)
+    ? parts.slice(-3).join('.')
+    : two;
+}
 @Controller('nodes/billing-providers')
 export class RemnaBillingProvidersController {
   constructor(
@@ -37,7 +53,7 @@ export class RemnaBillingProvidersController {
     @Optional() private readonly audit?: AuditService,
   ) {}
   private async project(domain: string, items: RemnaProvider[], complete = true) {
-    const merged = await this.db.transaction(async (tx) => {
+    const cleaned = await this.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`remna-billing:${domain}`}))`);
       const old = await tx.select().from(providers).where(eq(providers.remotePanel, domain));
       for (const p of items) {
@@ -55,43 +71,78 @@ export class RemnaBillingProvidersController {
         if (row) await tx.update(providers).set(values).where(eq(providers.id, row.id));
         else await tx.insert(providers).values({ ...values, remotePanel: domain, remoteUuid: p.uuid });
       }
-      if (!complete) return [];
+      if (!complete) return null;
       for (const row of old)
         if (!items.some((p) => p.uuid === row.remoteUuid) && !row.archivedAt)
           await tx.update(providers).set({ archivedAt: new Date() }).where(eq(providers.id, row.id));
-      // Провайдер из старого справочника панели (до связи с Remnawave) и он же в Remnawave — в форме
-      // оплаты было два одинаковых пункта. Объединяем по имени: оплаты — на провайдера Remnawave, старую
-      // запись — в архив. Если в Remnawave два провайдера с этим именем, не угадываем и не трогаем.
-      const key = (name: string) => name.trim().toLowerCase().replace(/ё/g, 'е');
-      const live = await tx
-        .select()
-        .from(providers)
-        .where(and(eq(providers.remotePanel, domain), isNull(providers.archivedAt)));
-      const legacy = await tx
-        .select()
-        .from(providers)
-        .where(and(isNull(providers.remotePanel), isNull(providers.archivedAt)));
-      const done: Array<{ from: string; to: { id: string; name: string }; payments: number }> = [];
-      for (const row of legacy) {
-        const [twin, other] = live.filter((p) => key(p.name) === key(row.name));
-        if (!twin || other) continue;
-        const moved = await tx
+      return this.dropLegacy(tx, domain);
+    });
+    if (cleaned)
+      await this.audit?.record({
+        action: 'provider.legacy_removed',
+        actor: SYSTEM_ACTOR,
+        target: { type: 'provider', display: 'Старый справочник провайдеров' },
+        metadata: cleaned,
+      });
+  }
+  /**
+   * Старый справочник панели (до связи с Remnawave) больше не источник провайдеров: в «Новой оплате»
+   * он давал второй пункт к тому же хостеру. Двойник в Remnawave (то же имя без регистра и пробелов или
+   * тот же сайт) забирает его оплаты, старая запись удаляется. Без двойника: с оплатами — остаётся в
+   * архиве ради истории (в выбор не попадает), без оплат — удаляется. Двух одинаковых в Remnawave не угадываем.
+   */
+  private async dropLegacy(tx: Tx, domain: string) {
+    const legacy = await tx.select().from(providers).where(isNull(providers.remotePanel));
+    if (legacy.length === 0) return null;
+    const live = await tx
+      .select()
+      .from(providers)
+      .where(and(eq(providers.remotePanel, domain), isNull(providers.archivedAt)));
+    const twinOf = (row: (typeof legacy)[number]) => {
+      const byName = live.filter((p) => nameKey(p.name) === nameKey(row.name));
+      if (byName.length > 0) return byName.length === 1 ? byName[0] : null;
+      const site = siteKey(row.siteUrl);
+      const bySite = site ? live.filter((p) => siteKey(p.siteUrl) === site) : [];
+      return bySite.length === 1 ? bySite[0] : null;
+    };
+    const merged: string[] = [];
+    const kept: string[] = [];
+    let removed = 0;
+    let moved = 0;
+    for (const row of [...legacy].sort((a, b) => a.name.localeCompare(b.name, 'ru'))) {
+      const twin = twinOf(row);
+      if (twin) {
+        const rows = await tx
           .update(billingItems)
           .set({ providerId: twin.id })
           .where(eq(billingItems.providerId, row.id))
           .returning({ id: billingItems.id });
-        await tx.update(providers).set({ archivedAt: new Date() }).where(eq(providers.id, row.id));
-        done.push({ from: row.name, to: twin, payments: moved.length });
+        moved += rows.length;
+        merged.push(`${row.name.trim()} → ${twin.name}`);
       }
-      return done;
-    });
-    for (const m of merged)
-      await this.audit?.record({
-        action: 'provider.merged',
-        actor: SYSTEM_ACTOR,
-        target: { type: 'provider', id: m.to.id, display: m.to.name },
-        metadata: { mergedFrom: m.from, movedPayments: m.payments },
-      });
+      const [used] = twin
+        ? []
+        : await tx
+            .select({ id: billingItems.id })
+            .from(billingItems)
+            .where(eq(billingItems.providerId, row.id))
+            .limit(1);
+      if (used) {
+        if (row.archivedAt) continue;
+        await tx.update(providers).set({ archivedAt: new Date() }).where(eq(providers.id, row.id));
+        kept.push(row.name.trim());
+        continue;
+      }
+      await tx.delete(providers).where(eq(providers.id, row.id));
+      removed++;
+    }
+    if (removed === 0 && kept.length === 0) return null;
+    return {
+      ...(removed ? { removedProviders: removed } : {}),
+      ...(merged.length ? { mergedProviders: merged.join(', ') } : {}),
+      ...(moved ? { movedPayments: moved } : {}),
+      ...(kept.length ? { keptForHistory: kept.join(', ') } : {}),
+    };
   }
   @Get() async list() {
     const credentials = await this.store.credentials();
@@ -108,9 +159,7 @@ export class RemnaBillingProvidersController {
         or(
           and(
             isNull(providers.archivedAt),
-            domain
-              ? or(isNull(providers.remotePanel), eq(providers.remotePanel, domain))
-              : isNull(providers.remotePanel),
+            domain ? eq(providers.remotePanel, domain) : isNull(providers.remotePanel),
           ),
           sql`exists(select 1 from ${billingItems} where ${billingItems.providerId} = ${providers.id})`,
         ),
@@ -122,7 +171,7 @@ export class RemnaBillingProvidersController {
           ? { ...(await this.assets.dto(p, domain ?? undefined)), id: row.id }
           : {
               ...this.legacy.toDto(row),
-              selectable: !row.archivedAt && (!row.remotePanel || row.remotePanel === domain),
+              selectable: !row.archivedAt && row.remotePanel === domain,
             };
       }),
     );

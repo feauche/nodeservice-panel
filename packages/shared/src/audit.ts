@@ -204,6 +204,7 @@ export const AUDIT_ACTIONS = {
   'provider.updated': { category: 'server', label: 'Провайдер изменён' },
   'provider.deleted': { category: 'server', label: 'Провайдер удалён' },
   'provider.merged': { category: 'server', label: 'Провайдер объединён с Remnawave' },
+  'provider.legacy_removed': { category: 'server', label: 'Старые провайдеры панели убраны' },
   'server.maintenance.check': { category: 'server', label: 'Проверка обслуживания сервера' },
   'server.maintenance.apt_upgrade': { category: 'server', label: 'Обновление системы' },
   'server.maintenance.agent_update': { category: 'server', label: 'Обновление агента' },

@@ -52,70 +52,96 @@ beforeAll(async () => {
 });
 afterAll(() => pool.end());
 describe('Remna providers keep stable billing identity', () => {
-  it('merges the legacy twin into the Remnawave provider and coalesces concurrent projection IDs', async () => {
-    // Старый справочник панели и Remnawave с тем же провайдером: в форме оплаты был двойной пункт.
-    const [old] = await db
+  it('removes the old panel directory: twins merge into Remnawave, payments move, the rest leaves the picker', async () => {
+    // До связи с Remnawave провайдеры жили в справочнике панели; те же хостеры есть в Remnawave, часто
+    // под чуть другим именем — в «Новой оплате» было по два пункта.
+    const space = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const legacy = await db
       .insert(schema.providers)
-      .values({ name: 'same NAME ', siteUrl: 'https://legacy.example' })
+      .values([
+        { name: 'same NAME ', siteUrl: 'https://legacy.example' },
+        { name: 'Space Core', siteUrl: 'https://billing.spacecore.example' },
+        { name: 'Old brand', siteUrl: 'https://my.provider.example' },
+        { name: 'Only in panel', siteUrl: 'https://alone.example' },
+        { name: 'Unused', siteUrl: 'https://unused.example' },
+      ])
       .returning();
-    const [alone] = await db
-      .insert(schema.providers)
-      .values({ name: 'Only in panel', siteUrl: 'https://alone.example' })
-      .returning();
-    await db.insert(schema.billingItems).values([bill('Old payment', old.id), bill('Registrar', alone.id)]);
+    const id = (name: string) => legacy.find((p) => p.name === name)?.id ?? '';
+    await db
+      .insert(schema.billingItems)
+      .values([
+        bill('Old payment', id('same NAME ')),
+        bill('Space payment', id('Space Core')),
+        bill('Brand payment', id('Old brand')),
+        bill('Registrar', id('Only in panel')),
+      ]);
+    const before = remote;
+    remote = [
+      ...before,
+      { uuid: space, name: 'SpaceCore', loginUrl: 'https://spacecore.example', faviconLink: null, nodes: [] },
+    ] as typeof remote;
     const [a, b] = await Promise.all([controller.list(), controller.list()]);
-    const local = (await db.select().from(schema.providers)).find((p) => p.remoteUuid === uuid);
-    if (!local) throw new Error('missing projection');
+    const rows = await db.select().from(schema.providers);
+    const local = rows.find((p) => p.remoteUuid === uuid);
+    const spaceRow = rows.find((p) => p.remoteUuid === space);
+    if (!local || !spaceRow) throw new Error('missing projection');
     expect(local.id).not.toBe(uuid);
     for (const r of [a, b]) {
-      expect(r.items.filter((p) => p.name.trim().toLowerCase() === 'same name').map((p) => p.id)).toEqual([
-        local.id,
-      ]);
-      expect(r.items.find((p) => p.id === alone.id)).toMatchObject({ selectable: true });
+      // Выбрать можно только провайдеров Remnawave; старый с оплатой виден лишь в самой оплате.
+      expect(r.items.filter((p) => p.selectable !== false).map((p) => p.id)).toEqual(
+        expect.arrayContaining([local.id, spaceRow.id]),
+      );
+      expect(r.items.filter((p) => p.selectable !== false)).toHaveLength(2);
+      expect(r.items.find((p) => p.id === id('Only in panel'))).toMatchObject({ selectable: false });
     }
-    const [moved] = await db
-      .select()
-      .from(schema.billingItems)
-      .where(eq(schema.billingItems.title, 'Old payment'));
-    expect(moved.providerId).toBe(local.id);
-    const [archived] = await db.select().from(schema.providers).where(eq(schema.providers.id, old.id));
-    expect(archived.archivedAt).not.toBeNull();
+    const payments = await db.select().from(schema.billingItems);
+    const providerOf = (title: string) => payments.find((x) => x.title === title)?.providerId;
+    expect(providerOf('Old payment')).toBe(local.id);
+    expect(providerOf('Brand payment')).toBe(local.id);
+    expect(providerOf('Space payment')).toBe(spaceRow.id);
+    expect(providerOf('Registrar')).toBe(id('Only in panel'));
+    const left = rows.filter((p) => p.remotePanel === null);
+    expect(left.map((p) => p.name)).toEqual(['Only in panel']);
+    expect(left[0].archivedAt).not.toBeNull();
     expect(audit.record).toHaveBeenCalledTimes(1);
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: 'provider.merged',
-        target: { type: 'provider', id: local.id, display: 'Same name' },
-        metadata: { mergedFrom: 'same NAME ', movedPayments: 1 },
+        action: 'provider.legacy_removed',
+        metadata: {
+          removedProviders: 4,
+          mergedProviders: 'Old brand → Same name, same NAME → Same name, Space Core → SpaceCore',
+          movedPayments: 3,
+          keptForHistory: 'Only in panel',
+        },
       }),
     );
     const repo = new ProvidersRepository(db);
     expect(await repo.findById(local.id)).toBeUndefined();
-    expect((await repo.list()).map((p) => p.name)).toEqual(['Only in panel']);
+    expect(await repo.list()).toEqual([]);
+    remote = before;
   });
-  it('does not merge when Remnawave itself has two providers with that name', async () => {
-    const twin = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  it('an old provider with two same-named Remnawave twins keeps its payment and leaves the picker', async () => {
     const [old] = await db
       .insert(schema.providers)
-      .values({ name: 'Twice', siteUrl: 'https://legacy.example' })
+      .values({ name: 'Twice', siteUrl: 'https://twice.example' })
       .returning();
+    await db.insert(schema.billingItems).values(bill('Twice payment', old.id));
     const before = remote;
+    const twin = (u: string) => ({ uuid: u, name: 'Twice', loginUrl: null, faviconLink: null, nodes: [] });
     remote = [
       ...before,
-      { uuid: twin, name: 'Twice', loginUrl: null, faviconLink: null, nodes: [] },
-      {
-        uuid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-        name: 'Twice',
-        loginUrl: null,
-        faviconLink: null,
-        nodes: [],
-      },
+      twin('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+      twin('cccccccc-cccc-4ccc-8ccc-cccccccccccc'),
     ] as typeof remote;
-    await controller.list();
-    const [kept] = await db.select().from(schema.providers).where(eq(schema.providers.id, old.id));
-    expect(kept.archivedAt).toBeNull();
+    const res = await controller.list();
+    expect(res.items.find((p) => p.id === old.id)).toMatchObject({ selectable: false });
+    const [pay] = await db
+      .select()
+      .from(schema.billingItems)
+      .where(eq(schema.billingItems.title, 'Twice payment'));
+    expect(pay.providerId).toBe(old.id);
     remote = before;
     await controller.list();
-    await db.delete(schema.providers).where(eq(schema.providers.id, old.id));
   });
   it('keeps historical FK/name on deletion and separates another panel with the same remote UUID', async () => {
     const [local] = await db.select().from(schema.providers).where(eq(schema.providers.remoteUuid, uuid));
