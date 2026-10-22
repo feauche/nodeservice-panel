@@ -27,6 +27,8 @@ type Step = {
   tone: StepTone;
   value: ReactNode;
   link?: IncidentEvent['link'] | undefined;
+  /** Шаг ждёт вашего действия (кнопка к DNS-записи). Ссылка у шага порта — только отчёт Check-Host. */
+  action?: boolean;
 };
 const STEP_ICON: Record<StepTone, typeof CircleCheckIcon> = {
   ok: CircleCheckIcon,
@@ -109,6 +111,7 @@ export function recoverySteps(inc: Incident, node: RemnawaveNode | undefined): S
   if (dns) {
     const name = dns.action.match(/DNS-запись (\S+)/)?.[1];
     const word = name ? dns.action.replace(/^.*?DNS-запись \S+\s*/, '') : dns.action;
+    const fix = dns.tone === 'warn' || dns.tone === 'crit' ? dns.link : undefined;
     steps.push({
       key: 'dns',
       label: name ? `DNS-запись ${name}` : 'DNS-записи',
@@ -122,7 +125,8 @@ export function recoverySteps(inc: Incident, node: RemnawaveNode | undefined): S
           {dns.tone === 'crit' && dns.detail ? ` · ${dns.detail.split('.')[0] ?? ''}` : ''}
         </>
       ),
-      link: dns.tone === 'warn' || dns.tone === 'crit' ? dns.link : undefined,
+      link: fix,
+      action: Boolean(fix),
     });
   }
   // Связь и онлайн — живые, пока событие открыто; у закрытого — итог.
@@ -183,9 +187,9 @@ export function RecoveryCard({ inc, node }: { inc: Incident; node: RemnawaveNode
   const done = steps.filter((s) => s.tone === 'ok').length;
   const state = resolved
     ? { tone: 'ok' as const, label: 'Готово' }
-    : steps.some((s) => s.tone === 'crit' && s.link)
+    : steps.some((s) => s.tone === 'crit' && s.action)
       ? { tone: 'crit' as const, label: 'Ошибка автозамены' }
-      : steps.some((s) => s.tone === 'warn' && s.link)
+      : steps.some((s) => s.tone === 'warn' && s.action)
         ? { tone: 'warn' as const, label: 'Нужно ваше действие' }
         : { tone: 'info' as const, label: 'Идёт' };
   return (
@@ -206,8 +210,8 @@ export function RecoveryCard({ inc, node }: { inc: Incident; node: RemnawaveNode
               key={s.key}
               className={cn(
                 'grid grid-cols-[26px_minmax(0,190px)_minmax(0,1fr)_auto] items-center gap-3 border-t border-border px-4 py-[11px] text-[12.5px] first:border-t-0 max-sm:grid-cols-[26px_minmax(0,1fr)] max-sm:gap-x-3 max-sm:gap-y-1',
-                s.link && s.tone === 'warn' && 'bg-warn/5',
-                s.link && s.tone === 'crit' && 'bg-crit/5',
+                s.action && s.tone === 'warn' && 'bg-warn/5',
+                s.action && s.tone === 'crit' && 'bg-crit/5',
               )}
             >
               <span className={cn('grid size-6 place-items-center rounded-[8px]', TONE_CHIP[s.tone])}>

@@ -46,6 +46,68 @@ describe('Доступность Check-Host', () => {
     mixed[3] = { ...(mixed[3] as TcpObservation), state: 'failed' };
     expect(classifyTcp(mixed)).toBe('unknown');
   });
+  it('точка без ответа не портит итог: решают ответившие, если их хватает', () => {
+    const point = (node: string, country: string, state: TcpObservation['state']): TcpObservation => ({
+      node,
+      country,
+      city: '',
+      state,
+      error: null,
+    });
+    const ru = (state: TcpObservation['state'], last: TcpObservation['state'] = state) => [
+      point('ru1', 'ru', state),
+      point('ru2', 'ru', state),
+      point('ru3', 'ru', last),
+    ];
+    const foreign = [point('at1', 'at', 'ok'), point('au1', 'au', 'pending'), point('bg1', 'bg', 'ok')];
+    expect(classifyTcp([...ru('ok'), ...foreign])).toBe('reachable');
+    expect(classifyTcp([...ru('failed', 'pending'), ...foreign])).toBe('russia_unreachable');
+    // Ответила одна точка РФ — мало для вывода.
+    expect(classifyTcp([point('ru1', 'ru', 'ok'), ...ru('pending').slice(1), ...foreign])).toBe('unknown');
+  });
+  it('Check-Host: «[null, {message}]» — точка не ответила; ждать её до конца не нужно', async () => {
+    vi.useFakeTimers();
+    const hosts = Object.fromEntries(
+      [
+        ['ru1', 'ru'],
+        ['ru2', 'ru'],
+        ['ru3', 'ru'],
+        ['at1', 'at'],
+        ['au1', 'au'],
+        ['bg1', 'bg'],
+      ].map(([n, cc]) => [`${n}.node.check-host.net`, { location: [cc, cc, cc] }]),
+    );
+    const ok = [{ address: '8.8.8.8', time: 0.05 }];
+    const body: Record<string, unknown> = {
+      '/nodes/hosts': { nodes: hosts },
+      '/check-tcp': {
+        ok: 1,
+        request_id: 'abc1',
+        nodes: Object.fromEntries(Object.entries(hosts).map(([k, v]) => [k, v.location])),
+      },
+      '/check-result/abc1': {
+        ...Object.fromEntries(Object.keys(hosts).map((k) => [k, ok])),
+        'au1.node.check-host.net': [null, { message: 'Connect timeout' }],
+      },
+    };
+    const fetch = vi.fn(async (url: string) => {
+      const path = new URL(url).pathname;
+      return new Response(JSON.stringify(body[path]), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetch);
+    try {
+      const out = new CheckHostService().check('8.8.8.8', 5492);
+      await vi.advanceTimersByTimeAsync(2500);
+      const result = await out;
+      expect(result.verdict).toBe('reachable');
+      expect(result.observations.find((r) => r.node === 'au1.node.check-host.net')?.state).toBe('pending');
+      // Каталог, запуск и один опрос: австралийскую точку не ждали все 30 секунд.
+      expect(fetch).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
   it('отклоняет локальные цели', () => {
     for (const ip of ['127.0.0.1', '10.0.0.1', '192.168.1.1', '::1', '169.254.1.2', 'host.local'])
       expect(publicIp(ip)).toBe(false);

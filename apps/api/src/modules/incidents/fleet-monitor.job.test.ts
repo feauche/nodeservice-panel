@@ -294,6 +294,140 @@ describe('Пороги ресурсов ноды', () => {
       vi.useRealTimers();
     }
   });
+  /** Онлайн вернулся на прежнем адресе; повторная проверка порта даёт `verdict`. */
+  async function recoverWith(verdict: string) {
+    const rows = new Map<string, string>();
+    const db = {
+      query: {
+        appMeta: {
+          findFirst: async (args: { where: never }) => {
+            const value = rows.get(new PgDialect().sqlToQuery(args.where).params[0] as string);
+            return value === undefined ? undefined : { value };
+          },
+        },
+      },
+      insert: () => ({
+        values: (v: { key: string; value: string }) => ({
+          onConflictDoUpdate: async () => {
+            rows.set(v.key, v.value);
+          },
+        }),
+      }),
+    };
+    let at = Date.parse('2026-10-22T10:20:00Z');
+    const node = {
+      uuid: 'nl1',
+      name: 'Нидерланды - 1',
+      address: '45.12.8.77',
+      isDisabled: false,
+      isConnected: true,
+      usersOnline: 210,
+      cpuCount: 4,
+      loadAverage: [0.5, 0.5, 0.5],
+      memoryTotalBytes: null,
+      memoryUsedBytes: null,
+    };
+    const scope = '320e00e73a7d24a9'; // sha256('panel').slice(0, 16)
+    rows.set(
+      `monitor.history.${scope}.nl1`,
+      JSON.stringify({
+        samples: [],
+        lastAt: at - 15_000,
+        dropSeen: 4,
+        baseline: 512,
+        recovered: 0,
+        downSeen: 0,
+        cpuSince: null,
+        memSince: null,
+        address: node.address,
+      }),
+    );
+    const incident = {
+      id: 'inc',
+      nodeUuid: 'nl1',
+      kind: 'node_blocked',
+      status: 'open',
+      timeline: [] as Array<Record<string, unknown>>,
+    };
+    const checkNode = vi.fn(async () => ({
+      verdict,
+      checkedAt: new Date(at).toISOString(),
+      target: `${node.address}:5492`,
+      link: 'https://check-host.net/check-report/abc2',
+      observations: [],
+      error: null,
+    }));
+    const pushed: Array<{ title: string; body: string }> = [];
+    const job = new FleetMonitorJob(
+      db as never,
+      {
+        status: async () => ({
+          connected: true,
+          domain: 'panel',
+          checkedAt: new Date(at).toISOString(),
+          nodes: [{ ...node }],
+        }),
+      } as never,
+      { get: async () => ({ ...MONITORING_DEFAULTS, enabled: true }) } as never,
+      {
+        list: async () => (incident.status === 'open' ? [incident] : []),
+        open: async () => null,
+        appendTimeline: async (_id: string, e: Record<string, unknown>) => {
+          incident.timeline.push(e);
+          return { id: 'inc', title: '' };
+        },
+        update: async (_id: string, patch: { status?: string }) => {
+          if (patch.status) incident.status = patch.status;
+        },
+      } as never,
+      { push: async (n: { title: string; body: string }) => void pushed.push(n) } as never,
+      { checkNode } as never,
+      { incidentsTick: () => undefined } as never,
+      undefined,
+      { typicalOnline: async () => ({ low: 150, high: 300 }) } as never,
+    );
+    vi.useFakeTimers({ now: at, toFake: ['Date'] });
+    try {
+      // Онлайн держится четыре опроса — проверяем порт на нынешнем адресе.
+      for (let i = 0; i < 4; i++) {
+        at += 15_000;
+        vi.setSystemTime(at);
+        await job.run();
+      }
+      await vi.waitFor(() => expect(rows.has(`monitor.tcp.${scope}.nl1`)).toBe(true));
+      await vi.waitFor(() => expect(incident.timeline.some((e) => e.step === 'port')).toBe(true));
+      at += 15_000;
+      vi.setSystemTime(at);
+      await job.run();
+    } finally {
+      vi.useRealTimers();
+    }
+    return { incident, pushed, checkNode };
+  }
+  it('онлайн вернулся, а Check-Host не дал полного результата — событие закрывается по онлайну, а не висит', async () => {
+    const { incident, pushed, checkNode } = await recoverWith('unknown');
+    expect(checkNode).toHaveBeenCalledTimes(1);
+    expect(incident.status).toBe('resolved');
+    expect(incident.timeline.map((e) => [e.step, e.tone, e.action])).toEqual([
+      ['online', 'wait', 'Онлайн возвращается: 210'],
+      ['port', 'warn', 'Порт 5492: нет полного результата проверки'],
+      [
+        'close',
+        'ok',
+        'Нода снова работает: онлайн 210 (обычно около 225). Порт Check-Host проверить не смог — закрыто по онлайну.',
+      ],
+    ]);
+    expect(pushed.at(-1) as unknown).toMatchObject({
+      title: 'Восстановление · Нидерланды - 1',
+      telegram: { recovery: { tcp: null } },
+    });
+  });
+  it('онлайн вернулся, но проверка показала недоступность из РФ — событие остаётся открытым', async () => {
+    const { incident, pushed } = await recoverWith('russia_unreachable');
+    expect(incident.status).toBe('open');
+    expect(incident.timeline.at(-1)).toMatchObject({ step: 'port', tone: 'crit' });
+    expect(pushed).toEqual([]);
+  });
 });
 
 describe('«Восстановление» строками', () => {

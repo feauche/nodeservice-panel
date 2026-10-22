@@ -78,12 +78,16 @@ export const tcpRegions = (port: { observations: TcpObservation[] }) => ({
   ru: port.observations.filter((r) => r.country === 'ru'),
   other: port.observations.filter((r) => r.country !== 'ru'),
 });
-/** Сколько точек ответило: «Ответили 3 из 3», «Не ответили 3 из 3» или «Недостаточно данных». */
+/**
+ * Сколько точек ответило: «Ответили 3 из 3», «Не ответили 2 из 3» или «Недостаточно данных». Точка без ответа
+ * отказом не считается — как в итоге проверки.
+ */
 export function tcpRegionSummary(rows: TcpObservation[]): string {
   const ok = rows.filter((r) => r.state === 'ok').length,
     failed = rows.filter((r) => r.state === 'failed').length;
   if (ok) return `Ответили ${ok} из ${rows.length}`;
-  if (rows.length && failed === rows.length) return `Не ответили ${failed} из ${rows.length}`;
+  if (failed && failed === rows.filter((r) => r.state !== 'pending').length)
+    return `Не ответили ${failed} из ${rows.length}`;
   return 'Недостаточно данных';
 }
 /**

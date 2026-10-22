@@ -71,6 +71,8 @@ type ProbeState = {
   address: string;
   port: number;
   nodePort?: number | null;
+  /** Повторная проверка после возвращения онлайна: её «нет полного результата» уже не держит событие открытым. */
+  recheck?: boolean;
 };
 /** События о доступности ноды: их закрывает возвращение ноды, а не порог ресурса. */
 const TCP_KINDS: IncidentKind[] = ['node_blocked', 'server_down'];
@@ -316,21 +318,22 @@ export class FleetMonitorJob {
               );
             }
             if (st.recovered >= cfg.recoverySamples) {
-              // Событие о доступности закрывает свежая успешная проверка порта именно на нынешнем адресе ноды.
+              // Событие о доступности закрывает свежая проверка порта именно на нынешнем адресе ноды: успешная — или
+              // без полного результата, но сделанная уже после возвращения онлайна. Check-Host не ответил, а
+              // пользователи подключаются: доказательства сбоя нет — закрываем по онлайну, а не ждём часами.
               const probe = await this.read<ProbeState>(`monitor.tcp.${scope}.${node.uuid}`);
-              if (
-                !cfg.checkHostOnDrop ||
-                (probe?.address === node.address &&
-                  probe.report?.verdict === 'reachable' &&
-                  Date.parse(probe.report.checkedAt) > Date.now() - cfg.checkHostCooldownMinutes * 60000)
-              ) {
+              const fresh = probe?.address === node.address ? (probe.report ?? null) : null;
+              const recent =
+                fresh !== null &&
+                Date.parse(fresh.checkedAt) > Date.now() - cfg.checkHostCooldownMinutes * 60000;
+              const unclear = recent && fresh.verdict === 'unknown' && probe?.recheck === true;
+              if (!cfg.checkHostOnDrop || (recent && fresh.verdict === 'reachable') || unclear) {
                 const online = node.usersOnline;
-                const fresh = probe?.address === node.address ? (probe.report ?? null) : null;
                 for (const kind of TCP_KINDS)
                   await this.resolve(
                     node,
                     kind,
-                    (row) => closeSummary(row.timeline, online, goal.usual),
+                    (row) => closeSummary(row.timeline, online, goal.usual, unclear ? 'unclear' : 'ok'),
                     (row) => recoveryFacts(row, online, goal.usual, fresh),
                   );
                 st.baseline = null;
@@ -521,6 +524,7 @@ export class FleetMonitorJob {
             address: node.address,
             port: cfg.checkHostPort,
             nodePort: node.port ?? null,
+            ...(recovery ? { recheck: true } : {}),
           } satisfies ProbeState);
         // Итог повторной проверки — в событие, только когда он изменился: без строки на каждый опрос.
         if (recovery && report !== old?.report && report.verdict !== old?.report?.verdict)
@@ -757,16 +761,23 @@ export class FleetMonitorJob {
 
 /**
  * Итог закрытия события о доступности из его хронологии: что сделали и что вернулось. «Нода снова работает: адрес
- * сменили, DNS-запись обновлена, порт доступен, онлайн 455 (обычно около 500).»
+ * сменили, DNS-запись обновлена, порт доступен, онлайн 455 (обычно около 500).» Порт без полного результата
+ * Check-Host — так и сказано: закрыто по онлайну.
  */
-export function closeSummary(timeline: IncidentEvent[], online: number | null, usual: number | null): string {
+export function closeSummary(
+  timeline: IncidentEvent[],
+  online: number | null,
+  usual: number | null,
+  port: 'ok' | 'unclear' = 'ok',
+): string {
   const facts = [
     timeline.some((e) => e.step === 'address') && 'адрес сменили',
     timeline.some((e) => e.step === 'dns' && e.tone === 'ok') && 'DNS-запись обновлена',
-    'порт доступен',
+    port === 'ok' && 'порт доступен',
     online !== null && `онлайн ${online}${usual !== null ? ` (обычно около ${usual})` : ''}`,
   ].filter(Boolean);
-  return `Нода снова работает: ${facts.join(', ')}.`;
+  const unclear = port === 'unclear' ? ' Порт Check-Host проверить не смог — закрыто по онлайну.' : '';
+  return `Нода снова работает: ${facts.join(', ')}.${unclear}`;
 }
 
 /** Что из события нужно для «Восстановления»: хронология и онлайн при обнаружении. */

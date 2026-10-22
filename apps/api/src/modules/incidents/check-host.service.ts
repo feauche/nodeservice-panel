@@ -42,12 +42,14 @@ export function publicIp(value: string): boolean {
     (a === 198 && (b === 18 || b === 19))
   );
 }
-export function classifyTcp(rows: TcpObservation[]): TcpVerdict {
+export function classifyTcp(all: TcpObservation[]): TcpVerdict {
+  // Точка без ответа — не отказ: решают ответившие, если их хватает (две точки РФ и две другие страны). Раньше одна
+  // молчащая точка Check-Host (австралийская отдаёт «[null, {message}]») делала каждую проверку «нет полного результата».
+  const rows = all.filter((r) => r.state !== 'pending');
   const ru = rows.filter((r) => r.country === 'ru'),
     foreign = rows.filter((r) => r.country !== 'ru');
-  // Two Russian vantage points and two foreign countries; missing results are never failures.
   const enough = ru.length >= 2 && new Set(foreign.map((r) => r.country)).size >= 2;
-  if (!enough || rows.some((r) => r.state === 'pending')) return 'unknown';
+  if (!enough) return 'unknown';
   if (ru.every((r) => r.state === 'failed') && foreign.every((r) => r.state === 'ok'))
     return 'russia_unreachable';
   if (rows.every((r) => r.state === 'failed')) return 'port_unreachable';
@@ -193,6 +195,9 @@ export class CheckHostService {
       for (let attempt = 0; attempt < 12; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 2500));
         const result = await this.json(`/check-result/${start.request_id}`);
+        // null — точка ещё проверяет; массив без результата («[null, {message: 'Connect timeout'}]») — точка
+        // ответила, что проверить не смогла: остаётся «нет ответа», но ждать её дальше незачем.
+        let waiting = false;
         report.observations = Object.entries(nodes).map(([key, meta]) => {
           const items = result[key];
           const leg = Array.isArray(items) ? items[0] : null;
@@ -203,6 +208,7 @@ export class CheckHostService {
               : obj && typeof obj.error === 'string'
                 ? 'failed'
                 : 'pending';
+          if (!Array.isArray(items)) waiting = true;
           return {
             node: key,
             country: meta[0] ?? '',
@@ -211,7 +217,7 @@ export class CheckHostService {
             error: state === 'failed' ? String(obj?.error).slice(0, 200) : null,
           };
         });
-        if (report.observations.length && report.observations.every((r) => r.state !== 'pending')) break;
+        if (report.observations.length && !waiting) break;
       }
       report.verdict = classifyTcp(report.observations);
       report.checkedAt = new Date().toISOString();

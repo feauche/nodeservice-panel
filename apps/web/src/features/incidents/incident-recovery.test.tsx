@@ -1,6 +1,7 @@
 import type { Incident, IncidentEvent, RemnawaveNode } from '@nodeservice/shared';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { recoverySteps } from './incident-recovery';
+import { RecoveryCard, recoverySteps } from './incident-recovery';
 
 const ev = (action: string, extra: Partial<IncidentEvent> = {}): IncidentEvent => ({
   at: '2026-10-12T10:58:00.000Z',
@@ -68,6 +69,24 @@ describe('Шаги восстановления события (вариант B
       ['online', 'Онлайн', 'wait'],
     ]);
     expect(steps[2]?.link).toEqual(dnsLink);
+    expect(steps.filter((s) => s.action).map((s) => s.key)).toEqual(['dns']);
+  });
+  it('Check-Host без полного результата — не «нужно ваше действие»: отчёт есть, но сделать вам нечего', () => {
+    const inc = base([
+      ...moved.slice(0, 2),
+      ev('Порт 5492 на новом адресе: нет полного результата проверки', {
+        step: 'port',
+        tone: 'warn',
+        detail: 'Порт 5492: РФ 0 из 3, другие 0 из 3.',
+        link: { label: 'Отчёт Check-Host', href: 'https://check-host.net/check-report/abc1' },
+      }),
+      ev('DNS-запись de.example.ru обновлена автоматически', { step: 'dns', tone: 'ok' }),
+    ]);
+    const live = { isConnected: true, usersOnline: 611 } as RemnawaveNode;
+    expect(recoverySteps(inc, live).some((s) => s.action)).toBe(false);
+    render(<RecoveryCard inc={inc} node={live} />);
+    expect(screen.getByRole('region', { name: 'Восстановление' })).toHaveTextContent('Идёт');
+    expect(screen.queryByText('Нужно ваше действие')).toBeNull();
   });
   it('онлайн дошёл до порога — шаг зелёный; нет связи — красный', () => {
     const ok = recoverySteps(base(moved), { isConnected: true, usersOnline: 200 } as RemnawaveNode);
