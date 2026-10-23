@@ -33,6 +33,8 @@ else
 fi
 
 LOG="${NODESERVICE_INSTALL_LOG:-/var/log/nodeservice-install.log}"
+# Требования к серверу (infra/README.md, «Требования к серверу»): меньше — предупреждаем в сводке.
+MIN_MEM_MB=768 MIN_DISK_GB=10
 ACME_ROOT=/var/www/nodeservice-acme
 MARK_START='# >>> NodeService — сайт панели (добавлено установщиком; убрать: nodeservice uninstall)'
 MARK_END='# <<< NodeService'
@@ -194,6 +196,14 @@ plural() {
 gb() {
     local tenths=$(( ($1 * 10 + 512) / 1024 ))
     if (( tenths % 10 == 0 )); then printf '%s\n' "$(( tenths / 10 ))"; else printf '%s,%s\n' "$(( tenths / 10 ))" "$(( tenths % 10 ))"; fi
+}
+
+# Свободно на диске, где Docker хранит образы (обычно корневой раздел), в ГБ.
+free_disk_gb() {
+    local dir
+    dir=$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || true)
+    [[ -n $dir && -d $dir ]] || dir=/
+    df -BG --output=avail "$dir" 2>/dev/null | tail -n 1 | tr -dc '0-9' || true
 }
 
 dur() {
@@ -940,7 +950,7 @@ OS_NAME=$( . /etc/os-release 2>/dev/null && printf '%s %s' "${NAME%% *}" "${VERS
 CORES=$(nproc 2>/dev/null || echo 1)
 MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
 SWAP_MB=$(awk '/SwapTotal/ {print int($2/1024)}' /proc/meminfo)
-DISK_GB=$(df -BG --output=avail / 2>/dev/null | tail -n 1 | tr -dc '0-9' || true)
+DISK_GB=$(free_disk_gb)
 # Сборка образа на сервере (pnpm install + vite + nest build): при < 3.5 ГБ RAM+swap падает по OOM.
 NEED_SWAP=0
 (( MEM_MB + SWAP_MB < 3500 )) && [[ ! -f /swapfile ]] && NEED_SWAP=1
@@ -1050,10 +1060,21 @@ fi
 
 # --- Сводка на экран ---
 
-mem_text="$(gb "$MEM_MB") ГБ памяти"
+mem_text="$(gb "$MEM_MB") ГБ памяти" disk_text="свободно ${DISK_GB:-?} ГБ"
 srv_mark=ok
-if (( NEED_SWAP )); then srv_mark=warn; mem_text+=" — мало, добавлю 2 ГБ подкачки"; fi
-row "$srv_mark" "Сервер" "${OS_NAME:-Linux} · $(plural "$CORES" ядро ядра ядер) · $mem_text · свободно ${DISK_GB:-?} ГБ"
+if (( MEM_MB < MIN_MEM_MB )); then
+    srv_mark=warn
+    mem_text+=" — меньше нужного 1 ГБ"
+    (( NEED_SWAP )) && mem_text+=", добавлю 2 ГБ подкачки, но панели может не хватить"
+elif (( NEED_SWAP )); then
+    srv_mark=warn
+    mem_text+=" — мало, добавлю 2 ГБ подкачки"
+fi
+if [[ $DISK_GB =~ ^[0-9]+$ ]] && (( DISK_GB < MIN_DISK_GB )); then
+    srv_mark=warn
+    disk_text+=" — мало, нужно от $MIN_DISK_GB ГБ"
+fi
+row "$srv_mark" "Сервер" "${OS_NAME:-Linux} · $(plural "$CORES" ядро ядра ядер) · $mem_text · $disk_text"
 if [[ -n $DOCKER_VER ]]; then row ok "Docker" "есть, $DOCKER_VER"; else row info "Docker" "нет — поставлю"; fi
 DNS_OK=0
 if [[ $MODE == internal ]]; then
@@ -1358,7 +1379,7 @@ echo
 
 STEP_I=0
 STEP_TOTAL=${#STEPS[@]}
-STEP_RESULT="" STEP_SHORT="" STEP_FAIL="" STEP_WARN=""
+STEP_RESULT="" STEP_SHORT="" STEP_FAIL="" STEP_WARN="" STEP_DETAIL=""
 
 step_line() {
     local i=$1 n=$2 label=$3 right=$4 w left dots n_dots
@@ -1376,7 +1397,7 @@ step_line() {
 run_step() {
     local label=$1 fn=$2 start=$SECONDS tick="" rc=0
     STEP_I=$((STEP_I + 1))
-    STEP_RESULT="" STEP_SHORT="" STEP_FAIL="" STEP_WARN=""
+    STEP_RESULT="" STEP_SHORT="" STEP_FAIL="" STEP_WARN="" STEP_DETAIL=""
     log "--- шаг $STEP_I: $label"
     if [[ -t 1 ]]; then
         (
@@ -1404,7 +1425,10 @@ run_step() {
 fail_step() {
     echo
     say "${R}✗ ${STEP_FAIL:-Шаг не получился.}${N}"
-    if [[ -s $LOG && $LOG != /dev/null ]]; then
+    if [[ -n $STEP_DETAIL ]]; then
+        say "${D}Причина — в журнале ($LOG):${N}" 2
+        printf '  %s\n' "${D}${STEP_DETAIL}${N}"
+    elif [[ -s $LOG && $LOG != /dev/null ]]; then
         say "${D}Последние строки журнала ($LOG):${N}" 2
         tail -n 12 "$LOG" | sed "s/^/  ${D}/; s/\$/${N}/"
     fi
@@ -1616,6 +1640,39 @@ wait_api_healthy() {
     return 1
 }
 
+# Сборка не удалась: по её выводу в журнале (строки после $1) — понятная причина и что сделать вместо хвоста
+# журнала. Виды причин — в build-failure.sh из кода панели (общий с update.sh); без него — как раньше.
+build_failed() {
+    local from=$(($1 + 1)) kind line
+    STEP_SHORT="сборка не удалась" STEP_FAIL="Сборка панели не удалась."
+    [[ -f "$APP_DIR/infra/scripts/build-failure.sh" && $LOG != /dev/null ]] || return 0
+    # shellcheck disable=SC1091
+    . "$APP_DIR/infra/scripts/build-failure.sh"
+    # Вывод этой сборки читаем прямо из журнала, без копии: если кончилось место, копию не записать.
+    kind=$(build_failure_kind <(tail -n +"$from" "$LOG"))
+    if [[ $kind == other ]] && build_disk_low; then kind=disk; fi
+    line=$(build_failure_line <(tail -n +"$from" "$LOG") "$kind")
+    case $kind in
+        memory)
+            STEP_SHORT="не хватило памяти"
+            case $(build_memory_verdict <(tail -n +"$from" "$LOG")) in
+                limit) STEP_FAIL="Сборке панели не хватило памяти, хотя у сервера $(build_memory_text) — этого хватает. Значит, сборке тесно в её собственном пределе (2 ГБ): это ошибка панели, сообщите о ней." ;;
+                cage) STEP_FAIL="Сборку остановила система: не хватило памяти, хотя сервер видит $(build_memory_text). Похоже, у машины или контейнера свой предел памяти меньше этого (например, контейнер LXC в Proxmox) — увеличьте его и запустите установку снова." ;;
+                *) STEP_FAIL="Сборке панели не хватило памяти: у сервера $(build_memory_text). Нужно хотя бы 1 ГБ памяти и 2 ГБ подкачки (подкачку установщик добавляет сам), рекомендуется 2 ГБ памяти. Добавьте серверу памяти и запустите установку снова — сделанное повторно делаться не будет." ;;
+            esac
+            ;;
+        disk)
+            STEP_SHORT="нет места на диске"
+            STEP_FAIL="Во время сборки закончилось место на диске (свободно $(free_disk_gb) ГБ), а для установки нужно от $MIN_DISK_GB ГБ свободного места. Освободите место и запустите установку снова."
+            ;;
+        network)
+            STEP_SHORT="не скачалось"
+            STEP_FAIL="Сборке не удалось скачать нужное из интернета: образ Node с Docker Hub или пакеты npm. Проверьте, что сервер выходит в интернет, и запустите установку снова; если Docker Hub временно ограничил скачивание — через час."
+            ;;
+    esac
+    STEP_DETAIL=$line
+}
+
 step_build() {
     local start=$SECONDS img out
     export APP_COMMIT APP_BUILT_AT
@@ -1625,7 +1682,9 @@ step_build() {
     if [[ -n $img ]] && docker image inspect "$img" >/dev/null 2>&1; then
         log "образ $img уже собран — сборку пропускаю"
     else
-        "${COMPOSE[@]}" build api >>"$LOG" 2>&1 || { STEP_SHORT="сборка не удалась"; STEP_FAIL="Сборка панели не удалась."; return 1; }
+        local mark
+        mark=$(wc -l <"$LOG" 2>/dev/null || echo 0)
+        "${COMPOSE[@]}" build api >>"$LOG" 2>&1 || { build_failed "$mark"; return 1; }
     fi
     # Сменили способ на «рядом с вашим веб-сервером» — свой Caddy больше не нужен.
     if [[ $MODE != bundled && $MODE != port ]]; then docker rm -f nodeservice-caddy-1 >>"$LOG" 2>&1 || true; fi

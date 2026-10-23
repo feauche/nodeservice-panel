@@ -365,6 +365,95 @@ proxy_remove
 check "блок панели убран из Caddy контейнера" hasnt "$(cat "$cf")" "panel.example.com"
 check "Caddy контейнера перезагружен" has "$(cat "$DOCKER_DIR/exec.log")" "exec caddy caddy reload"
 
+# --- Почему не собралась панель (build-failure.sh) ---
+# shellcheck disable=SC1091
+. "$ROOT/infra/scripts/build-failure.sh"
+b="$work/build.log"
+# Как на сервере с 0,9 ГБ: Node упёрся в свой предел памяти, подкачку не тронул (вывод docker build).
+cat >"$b" <<'LOG'
+#17 6.386 $ NODE_ENV=production tsr generate && tsc -b && vite build
+#17 8.393 FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory
+#17 8.393 ----- Native stack trace -----
+#17 8.396  1: 0x90e9bc  [node]
+#17 8.403 Aborted (core dumped)
+#17 8.413 [ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL] web@0.107.0 build: `NODE_ENV=production tsr generate && tsc -b && vite build`
+#17 8.413 Exit status 134
+#17 ERROR: process "/bin/sh -c pnpm --filter web build" did not complete successfully: exit code: 134
+------
+ > [build 2/2] RUN pnpm --filter web build:
+17.53  6: 0xf3dbd2  [node]
+17.73 Aborted (core dumped)
+17.87 Exit status 134
+------
+failed to solve: process "/bin/sh -c pnpm --filter web build" did not complete successfully: exit code: 134
+LOG
+check "сборка: предел памяти Node" eq "$(build_failure_kind "$b")" memory
+check "сборка: строка Node без шага и времени" eq "$(build_failure_line "$b" memory)" \
+    "FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory"
+printf '%s\n' '17.73 Aborted (core dumped)' 'failed to solve: process "/bin/sh -c pnpm build" did not complete successfully: exit code: 134' >"$b"
+check "сборка: только код 134 — тоже память" eq "$(build_failure_kind "$b")" memory
+check "сборка: без строки Node строки нет" eq "$(build_failure_line "$b" memory)" ""
+printf '%s\n' '#17 25.10 Killed' '#17 ERROR: process "/bin/sh -c pnpm build" did not complete successfully: exit code: 137' >"$b"
+check "сборка: ядро убило процесс" eq "$(build_failure_kind "$b")" memory
+check "сборка: строка «Killed»" eq "$(build_failure_line "$b" memory)" Killed
+printf '%s\n' '#9 12.30  ERR_PNPM_ENOSPC  ENOSPC: no space left on device, write' 'failed to solve: exit code: 1' >"$b"
+check "сборка: кончилось место" eq "$(build_failure_kind "$b")" disk
+check "сборка: строка про место" eq "$(build_failure_line "$b" disk)" "ERR_PNPM_ENOSPC  ENOSPC: no space left on device, write"
+printf '%s\n' 'failed to solve: node:24-slim: failed to resolve source metadata for docker.io/library/node:24-slim: dial tcp: lookup registry-1.docker.io: Temporary failure in name resolution' >"$b"
+check "сборка: нет сети до Docker Hub" eq "$(build_failure_kind "$b")" network
+# Повтор скачивания на прошлом шаге сборке не помешал — упала она на ошибке в коде.
+{
+    echo '#12 3.1 WARN GET https://registry.npmjs.org/zod error (ECONNRESET). Will retry in 10 seconds.'
+    echo '#12 DONE 12.0s'
+    echo "#17 9.1 src/app.tsx(3,1): error TS2304: Cannot find name 'x'."
+    echo '#17 ERROR: process "/bin/sh -c pnpm build" did not complete successfully: exit code: 2'
+    echo 'failed to solve: process "/bin/sh -c pnpm build" did not complete successfully: exit code: 2'
+} >"$b"
+check "сборка: ошибка в коде — не сеть" eq "$(build_failure_kind "$b")" other
+check "сборка: ошибка в коде — строки нет" eq "$(build_failure_line "$b" other)" ""
+# Упал сам шаг скачивания пакетов — это сеть.
+printf '%s\n' '#12 30.2  ERR_PNPM_META_FETCH_FAIL  GET https://registry.npmjs.org/zod: request to registry.npmjs.org failed, reason: getaddrinfo EAI_AGAIN' \
+    '#12 ERROR: process "/bin/sh -c pnpm install --frozen-lockfile" did not complete successfully: exit code: 1' >"$b"
+check "сборка: не скачались пакеты npm" eq "$(build_failure_kind "$b")" network
+# Пока шаг сборки падает, параллельный шаг (apt-get образа запуска) пишет сотню своих строк — причина не теряется.
+{
+    echo '#17 8.393 FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory'
+    echo '#17 8.403 Aborted (core dumped)'
+    for i in $(seq 1 120); do echo "#18 5.$i Get:$i http://deb.debian.org/debian bookworm/main arm64 lib$i [10 kB]"; done
+    echo '#17 ERROR: process "/bin/sh -c pnpm build" did not complete successfully: exit code: 134'
+    echo '#18 CANCELED'
+    echo '------'
+    echo ' > [build 2/2] RUN pnpm build:'
+    echo '8.403 Aborted (core dumped)'
+    echo '------'
+    echo 'failed to solve: process "/bin/sh -c pnpm build" did not complete successfully: exit code: 134'
+} >"$b"
+check "сборка: чужие строки параллельного шага не мешают" eq "$(build_failure_line "$b" memory)" \
+    "FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory"
+printf 'MemTotal:         952320 kB\nMemFree:           10240 kB\nSwapTotal:       2097148 kB\n' >"$work/meminfo"
+check "память сервера словами" eq "$(BUILD_MEMINFO="$work/meminfo" build_memory_text)" "0,9 ГБ памяти и 2 ГБ подкачки"
+check "память и подкачка вместе, МБ" eq "$(BUILD_MEMINFO="$work/meminfo" build_memory_total_mb)" 2977
+printf 'MemTotal:        4026532 kB\nSwapTotal:             0 kB\n' >"$work/meminfo"
+check "память сервера словами без подкачки" eq "$(BUILD_MEMINFO="$work/meminfo" build_memory_text)" "3,8 ГБ памяти и 0 ГБ подкачки"
+check "свободное место — число" eq "$([[ $(free_disk_gb) =~ ^[0-9]+$ ]] && echo да)" да
+# Чья нехватка памяти: мало у сервера, предел самой сборки или предел машины/контейнера.
+printf 'MemTotal:         952320 kB\nSwapTotal:       2097148 kB\n' >"$work/meminfo"
+printf '%s\n' '#17 8.393 FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory' >"$b"
+check "память: мало у сервера" eq "$(BUILD_MEMINFO="$work/meminfo" build_memory_verdict "$b")" short
+printf 'MemTotal:       16314320 kB\nSwapTotal:             0 kB\n' >"$work/meminfo"
+check "память: предел сборки — ошибка панели" eq "$(BUILD_MEMINFO="$work/meminfo" build_memory_verdict "$b")" limit
+printf '%s\n' '#17 25.10 Killed' 'failed to solve: did not complete successfully: exit code: 137' >"$b"
+check "память: ядро убило при большой видимой памяти" eq "$(BUILD_MEMINFO="$work/meminfo" build_memory_verdict "$b")" cage
+check "вывод через <(…), без файла" eq "$(build_failure_kind <(cat "$b"))" memory
+# Мало места: в выводе сборки причины не видно — её показывает свободное место.
+cat >"$work/bin/df" <<'SH'
+#!/usr/bin/env bash
+if [[ -n ${DF_AVAIL:-} ]]; then printf ' Avail\n %sG\n' "$DF_AVAIL"; else exec /usr/bin/df "$@"; fi
+SH
+chmod +x "$work/bin/df"
+check "места меньше 2 ГБ" eq "$(DF_AVAIL=1 build_disk_low && echo да)" да
+check "места 30 ГБ — не мало" eq "$(DF_AVAIL=30 build_disk_low || echo нет)" нет
+
 if (( fails > 0 )); then
     printf '\nНе прошло проверок: %s\n' "$fails" >&2
     exit 1

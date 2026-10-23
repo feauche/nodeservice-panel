@@ -16,6 +16,10 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 FROM deps AS build
 COPY . .
+# Предел памяти Node считает по оперативной памяти сервера, подкачку не учитывает: при 1 ГБ это ~500 МБ, а проверке
+# типов интерфейса нужно ~1 ГБ — сборка обрывалась «JavaScript heap out of memory». До 2 ГБ: недостающее на
+# маленьком сервере даёт подкачка (её добавляет установщик). Только для сборки — в образ панели не попадает.
+ENV NODE_OPTIONS=--max-old-space-size=2048
 # Хэш коммита и дата сборки попадают в подсказку у версии панели (в контексте сборки нет .git).
 ARG APP_COMMIT=dev
 ARG APP_BUILT_AT=

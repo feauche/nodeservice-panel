@@ -311,11 +311,34 @@ else
     echo -e "${Y}Тестовый ref без release-образа — локальная сборка api ($after).${N}"
     sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$after/" "$ENV_FILE"
     export APP_COMMIT="$after_full" APP_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" APP_VERSION="$after"
-    if ! "${COMPOSE[@]}" build api; then
+    # Вывод сборки — в память (/dev/shm): если кончилось место на диске, файл там не записать.
+    build_out=$(mktemp -p /dev/shm 2>/dev/null || mktemp)
+    if ! "${COMPOSE[@]}" build api 2>&1 | tee "$build_out"; then
+        # Причина — по выводу сборки и правилам из нового кода (до возврата на старый).
+        fail_hint="Сборка не удалась."
+        if [[ -f "$APP_DIR/infra/scripts/build-failure.sh" ]]; then
+            # shellcheck disable=SC1091
+            . "$APP_DIR/infra/scripts/build-failure.sh"
+            build_kind=$(build_failure_kind "$build_out")
+            if [[ $build_kind == other ]] && build_disk_low; then build_kind=disk; fi
+            case $build_kind in
+                memory)
+                    case $(build_memory_verdict "$build_out") in
+                        limit) fail_hint="Сборке не хватило памяти, хотя у сервера $(build_memory_text) — этого хватает: сборке тесно в её собственном пределе (2 ГБ), это ошибка панели." ;;
+                        cage) fail_hint="Сборку остановила система: не хватило памяти, хотя сервер видит $(build_memory_text) — у машины или контейнера свой предел памяти меньше (например, LXC в Proxmox), увеличьте его." ;;
+                        *) fail_hint="Сборке не хватило памяти: у сервера $(build_memory_text), а нужно хотя бы 1 ГБ памяти и 2 ГБ подкачки — добавьте (infra/README.md, «Требования к серверу»)." ;;
+                    esac
+                    ;;
+                disk) fail_hint="Во время сборки закончилось место на диске — освободите место, нужно от 10 ГБ свободного." ;;
+                network) fail_hint="Сборке не удалось скачать нужное из интернета (Docker Hub или npm) — проверьте сеть и повторите." ;;
+            esac
+        fi
+        rm -f "$build_out"
         sed -i "s/^NODESERVICE_VERSION=.*/NODESERVICE_VERSION=$OLD_VERSION/" "$ENV_FILE"
         git checkout --quiet --detach "$before"
-        die "Сборка не удалась. Старая версия $before продолжает работать, код возвращён на неё."
+        die "$fail_hint Старая версия $before продолжает работать, код возвращён на неё."
     fi
+    rm -f "$build_out"
 fi
 echo -e "${C}==> Перезапуск${N}"
 "${COMPOSE[@]}" up -d --remove-orphans || true
