@@ -300,6 +300,16 @@ check "80 занят контейнером без docker-proxy — тоже з�
 reset_ports
 check "адрес панели без порта 80" eq "$(internal_url 10.10.10.104 80)" "http://10.10.10.104"
 check "адрес панели с портом" eq "$(internal_url 10.10.10.104 8080)" "http://10.10.10.104:8080"
+check "есть внешний адрес — панель только на выбранном" eq "$(internal_bind 10.10.10.104)" "10.10.10.104"
+check "выбран внешний — только на нём" eq "$(internal_bind 203.0.113.7)" "203.0.113.7"
+# Сервер за NAT, как ВМ в Proxmox: сетевая карта и NetBird (wt0), внешнего адреса нет.
+grep -v 203.0.113.7 "$IP_ADDRS" >"$work/ip-addrs-private"
+printf '%s\n' '7: wt0    inet 100.77.12.5/16 brd 100.77.255.255 scope global wt0\       valid_lft forever preferred_lft forever' \
+    >>"$work/ip-addrs-private"
+check "внешнего адреса нет — панель на всех адресах" eq "$(IP_ADDRS="$work/ip-addrs-private" internal_bind 10.10.10.104)" "0.0.0.0"
+check "другие адреса панели — VPN" eq "$(IP_ADDRS="$work/ip-addrs-private" internal_other_urls 10.10.10.104 80)" \
+    "http://100.101.5.9, http://100.77.12.5"
+check "другие адреса — с портом" has "$(IP_ADDRS="$work/ip-addrs-private" internal_other_urls 10.10.10.104 8080)" "http://100.77.12.5:8080"
 check "по внутреннему адресу открывается" bash -c 'NODESERVICE_INSTALL_LIB=1 . "$1"; CURL_MODE=ok verify_internal http://10.10.10.104 2 && [[ $VERIFY_STATE == ok ]]' _ "$ROOT/infra/scripts/install.sh"
 check "по внутреннему адресу никто не слушает" bash -c 'NODESERVICE_INSTALL_LIB=1 . "$1"; ! CURL_MODE=refused verify_internal http://10.10.10.104 2 && [[ $VERIFY_STATE == refused ]]' _ "$ROOT/infra/scripts/install.sh"
 check "по внутреннему адресу отвечает не панель" bash -c 'NODESERVICE_INSTALL_LIB=1 . "$1"; ! CURL_MODE=http verify_internal http://10.10.10.104 2 && [[ $VERIFY_STATE == http && $VERIFY_DETAIL == *502* ]]' _ "$ROOT/infra/scripts/install.sh"

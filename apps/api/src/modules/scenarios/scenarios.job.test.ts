@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renameHost, ScenariosJob, telegramStepLine } from './scenarios.job.js';
+import { hostStep, renameHost, ScenariosJob, telegramStepLine } from './scenarios.job.js';
 
 const node = {
   uuid: '11111111-1111-4111-8111-111111111111',
@@ -36,7 +36,9 @@ function fixture(
     /** Уйдёт ли сообщение в Telegram сейчас (TelegramService.outlook). */
     telegram?: 'send' | 'quiet' | 'off' | 'event_off';
     /** Свои ответы карты Remnawave: по одному на чтение, последний повторяется (например, сбой DNS и затем порядок). */
-    topology?: Array<{ nodeUuids: string[]; addressResolved: boolean }>;
+    topology?: Array<{ nodeUuids: string[]; addressResolved: boolean; inboundUuid?: string }>;
+    /** Ноды карты Remnawave: у кого включены какие инбаунды (профиль Host). */
+    topologyNodes?: Array<{ id: string; name: string; inboundUuids: string[] }>;
     /** Ноды на обслуживании (0.106.0). */
     maintained?: Set<string>;
     /** Ноды открытых волн: нода → волна (0.106.0). */
@@ -120,7 +122,7 @@ function fixture(
           get: async (force?: boolean) => {
             reads.push(Boolean(force));
             const answer = opts.topology?.[Math.min(reads.length - 1, opts.topology.length - 1)];
-            return { hosts: [{ id: 'host', ...answer }] };
+            return { hosts: [{ id: 'host', ...answer }], nodes: opts.topologyNodes ?? [] };
           },
         } as never)
       : links
@@ -865,9 +867,73 @@ describe('Сценарии: реальные правила владения Hos
       expect.objectContaining({
         word: 'не скрыт',
         tone: 'warn',
-        detail: 'у ноды нет своих Host (в Remnawave Host: 1, к этой ноде не привязан ни один)',
+        detail:
+          'у ноды нет своих Host: панель проверила все Host Remnawave (1) — ни один не связан с этой нодой ни адресом, ни профилем',
       }),
     ]);
+  });
+  // Как «LTE #1» у владельца: адрес Host ведёт на промежуточный сервер, а его профиль включён у двух нод.
+  const sharedProfile = {
+    topology: [{ nodeUuids: [], addressResolved: true, inboundUuid: 'inbound' }],
+    topologyNodes: [
+      { id: node.uuid, name: 'Нода', inboundUuids: ['inbound'] },
+      { id: 'youtube', name: 'YouTube Со всех серверов', inboundUuids: ['inbound'] },
+    ],
+  };
+  it('Host на общем профиле без привязки: не трогаем и называем его и вторую ноду профиля', async () => {
+    const f = fixture({ ...domainHost, remark: 'LTE #1' }, undefined, sharedProfile);
+    const run = await fire(f, ['rename_host']);
+    expect(f.calls).toEqual([]);
+    expect(run.failed).toBe(false);
+    expect(run.steps).toEqual([
+      expect.objectContaining({
+        word: 'не изменено',
+        tone: 'warn',
+        detail:
+          'Host «LTE #1» на профиле этой ноды, но профиль включён и у «YouTube Со всех серверов», а адрес Host ведёт не на ноду — панель не знает, чей он. Привяжите его к ноде в сценарии, в блоке «Затронутые Host»',
+      }),
+    ]);
+  });
+  it('тот же Host, привязанный в сценарии к ноде, меняется', async () => {
+    const f = fixture({ ...domainHost, remark: 'LTE #1' }, undefined, sharedProfile);
+    const run = await fire(f, ['hide_host'], { hostBindings: [{ hostUuid: 'host', nodeUuid: node.uuid }] });
+    expect(f.calls).toEqual([{ uuid: 'host', isDisabled: true }]);
+    expect(run.steps).toEqual([expect.objectContaining({ word: 'скрыт', detail: '«LTE #1»' })]);
+  });
+  it('окно сценария: у Host на общем профиле — ноды профиля и причина', async () => {
+    const f = fixture({ ...domainHost, remark: 'LTE #1' }, undefined, sharedProfile);
+    const { hosts } = await f.job.previewHosts();
+    expect(hosts[0]).toMatchObject({
+      nodes: [],
+      profileNodes: [node.uuid, 'youtube'],
+      reason: 'Профиль Host включён у нескольких нод; назначьте ноду вручную',
+    });
+  });
+  it('свои Host изменены, а Host на общем профиле — коротко рядом: не тронут и почему', () => {
+    const step = hostStep('rename_host', 1, {
+      text: '',
+      hidden: [],
+      renamed: [{ from: 'Германия', to: 'Германия ⚠️' }],
+      shared: 0,
+      own: 1,
+      held: 0,
+      scanned: 3,
+      unresolved: 0,
+      unbound: [{ name: 'LTE #1', others: ['YouTube'] }],
+    });
+    expect(step).toMatchObject({
+      tone: 'change',
+      detail:
+        '«Германия» → «Германия ⚠️»; не тронут: «LTE #1» — профиль включён и у «YouTube», привяжите Host к ноде в сценарии',
+    });
+  });
+  it('профиль только у одной ноды — это не «общий профиль»', async () => {
+    const f = fixture({ ...domainHost, remark: 'LTE #1' }, undefined, {
+      ...sharedProfile,
+      topologyNodes: [{ id: node.uuid, name: 'Нода', inboundUuids: ['inbound'] }],
+    });
+    const { hosts } = await f.job.previewHosts();
+    expect(hosts[0]?.profileNodes).toEqual([]);
   });
   it('у ноды нет своих Host — «не скрыт» и почему, жёлтым', async () => {
     const f = fixture({ uuid: 'host', nodes: [node.uuid, 'another'], isDisabled: false, remark: 'Host' });

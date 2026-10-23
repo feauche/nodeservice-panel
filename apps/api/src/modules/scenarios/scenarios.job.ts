@@ -140,19 +140,40 @@ export type HostChange = {
   scanned: number;
   /** Host, чей адрес не разрешился в DNS: чьи они, неизвестно, — их не трогали. */
   unresolved: number;
+  /**
+   * Host на профиле этой ноды, которых панель не связала ни с одной нодой: профиль включён ещё у других нод
+   * (others — их имена), а адрес Host ведёт не на ноду. Их не трогали — чей Host, решает человек привязкой в сценарии.
+   */
+  unbound: Array<{ name: string; others: string[] }>;
 };
 /** До трёх имён — списком, больше — «и ещё N». */
 const someNames = (list: string[]) =>
   list.length <= 3 ? list.join(', ') : `${list.slice(0, 3).join(', ')} и ещё ${list.length - 3}`;
+/**
+ * Host на профиле ноды, которые панель не связала с нодой, — словами: полностью (шаг ничего не сделал) и коротко
+ * (рядом с изменёнными Host). null — таких нет.
+ */
+function unboundHosts(list: HostChange['unbound']) {
+  if (!list.length) return null;
+  const names = someNames(list.map((h) => `«${h.name}»`)),
+    others = someNames([...new Set(list.flatMap((h) => h.others))].map((n) => `«${n}»`)),
+    one = list.length === 1;
+  return {
+    full: `Host ${names} на профиле этой ноды, но профиль включён и у ${others}, а ${one ? 'адрес Host ведёт' : 'адреса Host ведут'} не на ноду — панель не знает, ${one ? 'чей он' : 'чьи они'}. Привяжите ${one ? 'его' : 'их'} к ноде в сценарии, в блоке «Затронутые Host»`,
+    short: `${names} — профиль включён и у ${others}, привяжите ${one ? 'Host' : 'их'} к ноде в сценарии`,
+  };
+}
 /** Шаг «Скрыть Host» или «Изменить имя Host» для журнала: слово-итог и какие Host. */
 export function hostStep(action: 'hide_host' | 'rename_host', n: number, d: HostChange): ScenarioRunStep {
   const shared = d.shared ? `общих Host пропущено: ${d.shared}` : '';
   const hide = action === 'hide_host';
   const done = hide ? d.hidden.map((h) => `«${h}»`) : d.renamed.map((r) => `«${r.from}» → «${r.to}»`);
+  const unbound = unboundHosts(d.unbound);
   if (done.length) {
     const word = hide ? (done.length === 1 ? 'скрыт' : `скрыто ${done.length}`) : 'изменено';
     const unknown = d.unresolved ? `не проверено Host (DNS не ответил): ${d.unresolved}` : '';
-    const detail = [someNames(done), shared, unknown].filter(Boolean).join('; ');
+    const left = unbound ? `${d.unbound.length === 1 ? 'не тронут' : 'не тронуты'}: ${unbound.short}` : '';
+    const detail = [someNames(done), shared, unknown, left].filter(Boolean).join('; ');
     const what = hide
       ? done.length === 1
         ? 'Скрыт Host'
@@ -163,10 +184,12 @@ export function hostStep(action: 'hide_host' | 'rename_host', n: number, d: Host
   const word = hide ? 'не скрыт' : 'не изменено';
   const why = !d.own
     ? d.shared
-      ? `у ноды только общие Host (${d.shared}) — их не трогаем`
-      : d.scanned
-        ? `у ноды нет своих Host (в Remnawave Host: ${d.scanned}, к этой ноде не привязан ни один)`
-        : 'у ноды нет своих Host (в Remnawave нет ни одного Host)'
+      ? `у ноды только общие Host (${d.shared}) — их не трогаем${unbound ? `; ${unbound.full}` : ''}`
+      : unbound
+        ? unbound.full
+        : d.scanned
+          ? `у ноды нет своих Host: панель проверила все Host Remnawave (${d.scanned}) — ни один не связан с этой нодой ни адресом, ни профилем`
+          : 'у ноды нет своих Host (в Remnawave нет ни одного Host)'
     : d.held
       ? 'Host ещё не вернули после прошлого срабатывания'
       : hide
@@ -706,12 +729,44 @@ export class ScenariosJob {
    * поэтому «чей это Host» неизвестно — это не то же самое, что «у ноды нет своих Host».
    */
   private async hostLinks() {
-    if (!this.topology) return { links: new Map<string, string[]>(), unresolved: new Set<string>() };
+    if (!this.topology)
+      return {
+        links: new Map<string, string[]>(),
+        unresolved: new Set<string>(),
+        profiles: new Map<string, string[]>(),
+        names: new Map<string, string>(),
+      };
     const topology = await this.topology.get(true);
+    const nodes = topology.nodes ?? [];
     return {
       links: new Map(topology.hosts.map((h) => [h.id, h.nodeUuids])),
       unresolved: new Set(topology.hosts.filter((h) => h.addressResolved === false).map((h) => h.id)),
+      // Ноды, у которых включён инбаунд Host (его профиль). Больше одной — по профилю не понять, чей Host.
+      profiles: new Map(
+        topology.hosts.map((h) => [
+          h.id,
+          h.inboundUuid
+            ? nodes.filter((n) => n.inboundUuids.includes(h.inboundUuid ?? '')).map((n) => n.id)
+            : [],
+        ]),
+      ),
+      names: new Map(nodes.map((n) => [n.id, n.name])),
     };
+  }
+  /**
+   * Ноды профиля Host, который панель не связала ни с одной нодой: профиль включён у нескольких нод, а адрес Host
+   * ведёт не на ноду (через промежуточный сервер). Пусто — Host связан, профиль у одной ноды или DNS не ответил.
+   */
+  private profileNodes(
+    host: Record<string, unknown>,
+    view: { links: Map<string, string[]>; unresolved: Set<string>; profiles: Map<string, string[]> },
+    rule?: Scenario,
+  ) {
+    const id = String(host.uuid);
+    const serving = view.profiles.get(id) ?? [];
+    return serving.length > 1 && !view.unresolved.has(id) && !this.linkedNodes(host, view.links, rule).length
+      ? serving
+      : [];
   }
   private warmedAt = 0;
   /** Раз в несколько минут читает карту Remnawave в фоне — только чтобы ответы DNS были в памяти; сбой не важен. */
@@ -785,6 +840,7 @@ export class ScenariosJob {
           .filter((h) => typeof h.uuid === 'string')
           .map(async (h) => {
             const nodes = this.linkedNodes(h, links),
+              profileNodes = this.profileNodes(h, view),
               saved = await this.store.read<Ledger>(`scenarios.host.${scope}.${h.uuid}`),
               // Неподтверждённая попытка, после которой Host не изменился, — не владение и не повод для тревоги.
               ledger = saved && (saved.confirmed || !untouched(h, saved.original)) ? saved : null;
@@ -794,6 +850,7 @@ export class ScenariosJob {
               address: String(h.address ?? ''),
               port: typeof h.port === 'number' ? h.port : null,
               nodes,
+              profileNodes,
               bindingSource:
                 links.has(String(h.uuid)) && nodes.length
                   ? 'IP/DNS, UUID ноды или уникальный inbound'
@@ -801,7 +858,9 @@ export class ScenariosJob {
                     ? 'UUID ноды в Host'
                     : view.unresolved.has(String(h.uuid))
                       ? 'DNS не ответил — связь с нодой пока неизвестна'
-                      : 'Требуется ручная привязка',
+                      : profileNodes.length
+                        ? 'Профиль Host включён у нескольких нод — требуется ручная привязка'
+                        : 'Требуется ручная привязка',
               nodeNames: nodes.map((id) => status.nodes.find((n) => n.uuid === id)?.name ?? id),
               disabled: h.isDisabled === true,
               eligible: nodes.length === 1 && !h.isDisabled,
@@ -811,7 +870,9 @@ export class ScenariosJob {
                     ? 'Общий Host: изменение пропускается'
                     : view.unresolved.has(String(h.uuid))
                       ? 'DNS не ответил: связь определится при следующем чтении'
-                      : 'Связь не определена; назначьте ноду вручную'
+                      : profileNodes.length
+                        ? 'Профиль Host включён у нескольких нод; назначьте ноду вручную'
+                        : 'Связь не определена; назначьте ноду вручную'
                   : h.isDisabled
                     ? 'Уже выключен'
                     : 'Может быть скрыт по сценарию',
@@ -971,10 +1032,22 @@ export class ScenariosJob {
       if (patch.isDisabled) hidden.push(previousName(host));
       if (patch.remark) renamed.push({ from: original.remark ?? '', to: patch.remark.trim() });
     }
+    // Host на профиле этой ноды, чей — неизвестно: не трогаем, но называем, чтобы человек привязал его сам.
+    const unbound = hosts.flatMap((host) => {
+      const serving = this.profileNodes(host, view, rule);
+      return serving.includes(node.uuid)
+        ? [
+            {
+              name: previousName(host),
+              others: serving.filter((u) => u !== node.uuid).map((u) => view.names.get(u) ?? u),
+            },
+          ]
+        : [];
+    });
     if (own === 0 && shared === 0 && held === 0) {
       // В журнал сервера — цифры, по которым видно, почему Host не нашлись (на экране панели их не всегда достаточно).
       this.log.warn(
-        `Сценарий «${rule.name}»: у ноды «${node.name}» (${node.address}) Host не найдены — всего Host ${hosts.length}, DNS не ответил для ${unknown.length}`,
+        `Сценарий «${rule.name}»: у ноды «${node.name}» (${node.address}) Host не найдены — всего Host ${hosts.length}, DNS не ответил для ${unknown.length}, на общем профиле без привязки ${unbound.length}`,
       );
       if (unknown.length > 0) {
         // Ничего не определили, а Host с молчащим DNS есть: «нет своих Host» было бы неправдой. Host не тронуты.
@@ -991,7 +1064,17 @@ export class ScenariosJob {
       : 'Скрыто';
     // До трёх Host — по именам, больше — числом: строка уходит и в событие, и в Telegram.
     const text = `${what} Host: ${changed > 0 && changed <= 3 ? names.join(', ') : changed}${shared ? `; общих Host пропущено: ${shared}` : ''}`;
-    return { text, hidden, renamed, shared, own, held, scanned: hosts.length, unresolved: unknown.length };
+    return {
+      text,
+      hidden,
+      renamed,
+      shared,
+      own,
+      held,
+      scanned: hosts.length,
+      unresolved: unknown.length,
+      unbound,
+    };
   }
   /** Обслуживание ноды: какие Host скроются (свои Host ноды, ещё не скрытые) — для окна включения. */
   async maintenancePreview(nodeUuid: string): Promise<NodeMaintenanceHostPreview> {

@@ -253,6 +253,41 @@ describe('Редактор сценария «Если → то»', () => {
     expect(await screen.findByText(/нет права «Изменение Host» — Remnawave отказала/)).toBeVisible();
   });
 
+  it('Host на профиле нескольких нод: какие это ноды и что сделать, вместо «связь не определена»', async () => {
+    server.use(
+      http.get('*/api/scenarios/hosts', () =>
+        HttpResponse.json({
+          hosts: [
+            {
+              uuid: 'h1',
+              name: 'LTE #1',
+              address: 'cdn.example.org',
+              port: 443,
+              nodes: [],
+              nodeNames: [],
+              profileNodes: [NODES[0]?.uuid, NODES[1]?.uuid],
+              bindingSource: 'Профиль Host включён у нескольких нод — требуется ручная привязка',
+              disabled: false,
+              eligible: false,
+              reason: 'Профиль Host включён у нескольких нод; назначьте ноду вручную',
+              ownedBy: null,
+              restoration: null,
+            },
+          ],
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderPage(() => <Harness />, '/scenarios');
+    await screen.findByRole('dialog');
+    await user.click(step('Скрыть Host'));
+    expect(
+      await screen.findByText(
+        /профиль Host включён у нод «Германия - 1», «Турция - 1», а адрес ведёт не на ноду — выберите, чей он/,
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Нода для Host LTE #1' })).toBeInTheDocument();
+  });
   it('удаление — только после подтверждения', async () => {
     const user = userEvent.setup();
     renderPage(() => <Harness withDelete />, '/scenarios');

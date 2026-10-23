@@ -1178,7 +1178,14 @@ export function ScenarioEditor({
                                     ? 'ручная привязка в этом сценарии'
                                     : h.nodes.length > 1
                                       ? 'общий для нескольких нод'
-                                      : 'связь не определена'}
+                                      : h.profileNodes.length > 1
+                                        ? `профиль Host включён у нод ${h.profileNodes
+                                            .slice(0, 3)
+                                            .map((id) => `«${all.find((n) => n.uuid === id)?.name ?? id}»`)
+                                            .join(
+                                              ', ',
+                                            )}${h.profileNodes.length > 3 ? ` и ещё ${h.profileNodes.length - 3}` : ''}, а адрес ведёт не на ноду — выберите, чей он`
+                                        : 'связь не определена'}
                               </p>
                               {!h.automaticNodes.length && (
                                 <Select

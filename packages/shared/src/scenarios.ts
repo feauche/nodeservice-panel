@@ -110,6 +110,8 @@ export const scenarioHostsSchema = z.object({
       port: z.number().nullable(),
       nodes: z.array(z.string()),
       nodeNames: z.array(z.string()),
+      /** Host ни с кем не связан, а его профиль включён у нескольких нод: какие это ноды (чей Host — решает человек). */
+      profileNodes: z.array(z.string()).default([]),
       bindingSource: z.string().default(''),
       disabled: z.boolean(),
       eligible: z.boolean(),

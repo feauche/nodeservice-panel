@@ -18,7 +18,8 @@
 #
 # Без домена, только во внутренней сети (сервер за NAT, вход через VPN или проброс порта по SSH): первым
 # вопросом выберите «только во внутренней сети» — панель встанет на внутренний адрес сервера по http
-# (http://10.10.10.104), без сертификата. Без вопросов: NODESERVICE_YES=1 NODESERVICE_ADDRESS=10.10.10.104
+# (http://10.10.10.104), без сертификата. Нет у сервера адреса из интернета — панель слушает все его адреса и
+# открывается и по адресу VPN (NetBird, Tailscale). Без вопросов: NODESERVICE_YES=1 NODESERVICE_ADDRESS=10.10.10.104
 # [NODESERVICE_PORT=80].
 
 # ============== Функции. Проверяются без установки: NODESERVICE_INSTALL_LIB=1 source install.sh ==============
@@ -376,6 +377,31 @@ internal_port() {
 # Адрес панели во внутренней сети: http://адрес, порт — если не 80.
 internal_url() {
     if [[ $2 == 80 ]]; then printf 'http://%s\n' "$1"; else printf 'http://%s:%s\n' "$1" "$2"; fi
+}
+
+# Где панель слушает во внутренней сети ($1 — выбранный адрес). У сервера нет ни одного внешнего адреса — на всех
+# (0.0.0.0): тогда она открывается и по адресам VPN (NetBird, Tailscale, WireGuard), в том числе подключённых
+# после установки, и не зависит от того, успел ли адрес VPN появиться к запуску Docker. Есть внешний адрес (или
+# выбран внешний) — только на выбранном: иначе панель без шифрования окажется открыта из интернета.
+internal_bind() {
+    local a
+    if is_private_ipv4 "$1"; then
+        while read -r a; do
+            [[ -z $a ]] || is_private_ipv4 "$a" || { printf '%s\n' "$1"; return 0; }
+        done <<<"$(local_ipv4s | cut -f2)"
+        printf '0.0.0.0\n'
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
+# Другие адреса сервера, на которых откроется панель, слушающая все адреса: «http://a, http://b» или пусто.
+internal_other_urls() {
+    local addr=$1 port=$2 a out=""
+    while read -r a; do
+        [[ -n $a && $a != "$addr" ]] && is_private_ipv4 "$a" && out+="${out:+, }$(internal_url "$a" "$port")"
+    done <<<"$(local_ipv4s | cut -f2)"
+    printf '%s\n' "$out"
 }
 
 # Открыть адрес панели во внутренней сети ($1 — http://адрес[:порт]) так же, как браузер.
@@ -822,7 +848,7 @@ printf '\n%s %s\n\n' "${A}◆ NodeService${N}" "${D}— установка па�
 # Как открывать панель. ACCESS: domain — по домену из интернета (https, сертификат); internal — только во
 # внутренней сети по адресу сервера (http, без домена и сертификата). $1 — пункт по умолчанию, $2 — прежний
 # внутренний адрес (переезд). Без вопросов: NODESERVICE_ADDRESS — внутренняя сеть, NODESERVICE_DOMAIN — домен.
-ACCESS=domain INTERNAL_ADDR="" INTERNAL_PORT="" PANEL_URL="" PORT_MOVED=""
+ACCESS=domain INTERNAL_ADDR="" INTERNAL_BIND="" INTERNAL_PORT="" PANEL_URL="" PORT_MOVED=""
 ask_access() {
     local def=$1 addrs addr a public=0 private="" n
     addrs=$(local_ipv4s | cut -f2)
@@ -863,9 +889,10 @@ ask_access() {
         [[ -z ${NODESERVICE_YES:-} ]] || die "Адрес панели не подошёл: «$INTERNAL_ADDR». Я ничего не менял."
         addr=""
     done
-    # Адрес VPN (Tailscale, WireGuard): после перезагрузки он появляется позже Docker, и панель может не встать.
+    # Адрес VPN (NetBird, Tailscale, WireGuard): после перезагрузки он появляется позже Docker, и панель, слушающая
+    # только его, может не встать. Слушает все адреса (у сервера нет внешнего) — этой беды нет.
     a=$(local_ipv4s | awk -F'\t' -v ip="$INTERNAL_ADDR" '$2 == ip { print $1; exit }')
-    if [[ $a =~ ^(tailscale|wg|tun|zt|ts) ]]; then
+    if [[ $a =~ ^(tailscale|wg|wt|tun|zt|ts) && $(internal_bind "$INTERNAL_ADDR") != 0.0.0.0 ]]; then
         say "${Y}!${N} Это адрес VPN ($a): после перезагрузки сервера он появляется позже Docker, и панель может не запуститься сама. Тогда выполните: nodeservice start. Надёжнее — адрес сетевой карты сервера."
     fi
     if ! is_private_ipv4 "$INTERNAL_ADDR"; then
@@ -875,7 +902,7 @@ ask_access() {
     fi
 }
 
-RESTORE_ENV="" RERUN=0 INSTALLED_VERSION=""
+RESTORE_ENV="" RERUN=0 INSTALLED_VERSION="" PREV_BIND=""
 if [[ -n "$RESTORE_FILE" ]]; then
     [[ -f "$RESTORE_FILE" ]] || die "Файл бэкапа не найден: $RESTORE_FILE"
     RESTORE_FILE=$(readlink -f "$RESTORE_FILE")
@@ -906,6 +933,8 @@ if [[ -n "$RESTORE_FILE" ]]; then
     if grep -qxE 'PANEL_PROXY=internal' "$RESTORE_ENV" || is_ipv4 "$old_domain"; then
         access_def=2
         old_bind=$(grep -E '^PANEL_LOCAL_BIND=' "$RESTORE_ENV" | cut -d= -f2- || true)
+        # Слушала все адреса (0.0.0.0) — её адрес записан в «домене».
+        [[ $old_bind == 0.0.0.0 ]] && old_bind=""
         old_bind=${old_bind:-$old_domain}
         old_domain=""
     fi
@@ -923,7 +952,10 @@ elif [[ -f "$ENV_FILE" ]]; then
     INSTALLED_VERSION=$(env_get NODESERVICE_VERSION)
     if [[ $(env_get PANEL_PROXY) == internal ]]; then
         ACCESS=internal
-        INTERNAL_ADDR=$(env_get PANEL_LOCAL_BIND)
+        # Адрес панели — в «домене»; PANEL_LOCAL_BIND — где слушает: тот же адрес или все (0.0.0.0).
+        PREV_BIND=$(env_get PANEL_LOCAL_BIND)
+        INTERNAL_ADDR=$PREV_BIND
+        [[ -z $INTERNAL_ADDR || $INTERNAL_ADDR == 0.0.0.0 ]] && INTERNAL_ADDR=$PANEL_DOMAIN
     fi
     say "Найдена установка: ${B}$PANEL_DOMAIN${N}${INSTALLED_VERSION:+, версия ${INSTALLED_VERSION#v}}."
 else
@@ -1056,6 +1088,7 @@ if [[ $MODE == internal ]]; then
         INTERNAL_PORT=$(internal_port) || die "Нет свободного порта для панели: заняты 80 и 8080–8099. Я ничего не менял."
     fi
     PANEL_URL=$(internal_url "$INTERNAL_ADDR" "$INTERNAL_PORT")
+    INTERNAL_BIND=$(internal_bind "$INTERNAL_ADDR")
 fi
 
 # --- Сводка на экран ---
@@ -1078,7 +1111,9 @@ row "$srv_mark" "Сервер" "${OS_NAME:-Linux} · $(plural "$CORES" ядро 
 if [[ -n $DOCKER_VER ]]; then row ok "Docker" "есть, $DOCKER_VER"; else row info "Docker" "нет — поставлю"; fi
 DNS_OK=0
 if [[ $MODE == internal ]]; then
-    if is_private_ipv4 "$INTERNAL_ADDR"; then
+    if [[ $INTERNAL_BIND == 0.0.0.0 ]]; then
+        row ok "Адрес" "$PANEL_URL — только внутренняя сеть, из интернета не открыть; откроется и по адресу VPN"
+    elif is_private_ipv4 "$INTERNAL_ADDR"; then
         row ok "Адрес" "$PANEL_URL — только внутренняя сеть, из интернета не открыть"
     else
         row warn "Адрес" "$PANEL_URL — внешний адрес, без шифрования"
@@ -1162,6 +1197,13 @@ case $MODE in
             say "Это повторный запуск: обновлю код и перезапущу панель. Данные и настройки сохраню, адрес прежний: $PANEL_URL."
         else
             say "Панель будет работать только во внутренней сети: ${B}$PANEL_URL${N}. Домен и сертификат не нужны. Уведомления в Telegram, Remnawave и проверки работают как обычно — панель сама выходит в интернет."
+        fi
+        if [[ $INTERNAL_BIND == 0.0.0.0 && ( $RERUN == 0 || $PREV_BIND != 0.0.0.0 ) ]]; then
+            now=""
+            (( RERUN )) && now="теперь "
+            say "Адреса из интернета у сервера нет, поэтому панель ${now}ответит на всех его адресах — и по адресу VPN (NetBird, Tailscale, WireGuard), если он есть или появится."
+        elif (( RERUN )) && [[ $PREV_BIND == 0.0.0.0 ]]; then
+            say "${Y}!${N} У сервера появился адрес из интернета — панель будет отвечать только на $INTERNAL_ADDR, чтобы не открыться всему интернету."
         fi
         ;;
     nginx)
@@ -1320,7 +1362,11 @@ case $MODE in
         STEPS+=("Сертификат|step_cert_wait")
         ;;
     internal)
-        PLAN+=("Соберу и запущу панель (3–8 минут) — слушает только адрес $INTERNAL_ADDR, порт $INTERNAL_PORT")
+        if [[ $INTERNAL_BIND == 0.0.0.0 ]]; then
+            PLAN+=("Соберу и запущу панель (3–8 минут) — порт $INTERNAL_PORT на всех адресах сервера (они все внутренние)")
+        else
+            PLAN+=("Соберу и запущу панель (3–8 минут) — слушает только адрес $INTERNAL_ADDR, порт $INTERNAL_PORT")
+        fi
         STEPS+=("Сборка и запуск панели|step_build")
         ;;
     port)
@@ -1570,8 +1616,8 @@ write_proxy_env() {
     env_set PANEL_PROXY "$MODE"
     case $MODE in
         internal)
-            # compose.internal.yaml: api на внутреннем адресе, адрес панели — http.
-            env_set PANEL_LOCAL_BIND "$INTERNAL_ADDR"
+            # compose.internal.yaml: api на внутреннем адресе (или на всех — у сервера нет внешнего), адрес панели — http.
+            env_set PANEL_LOCAL_BIND "$INTERNAL_BIND"
             env_set PANEL_LOCAL_PORT "$INTERNAL_PORT"
             env_set PANEL_PUBLIC_URL "$PANEL_URL"
             ;;
@@ -1609,7 +1655,9 @@ write_proxy_env() {
 open_firewall() {
     (( UFW_ACTIVE )) || return 0
     if [[ $MODE == internal ]]; then
-        ufw allow proto tcp to "$INTERNAL_ADDR" port "$INTERNAL_PORT" comment 'nodeservice internal' >>"$LOG" 2>&1 || true
+        local to=$INTERNAL_BIND
+        [[ $to == 0.0.0.0 ]] && to=any
+        ufw allow proto tcp to "$to" port "$INTERNAL_PORT" comment 'nodeservice internal' >>"$LOG" 2>&1 || true
         return 0
     fi
     local https=$PANEL_HTTPS_PORT
@@ -1697,7 +1745,9 @@ step_build() {
     fi
     if [[ $MODE == internal ]] && grep -qiE 'address already in use|port is already allocated' <<<"$out"; then
         STEP_SHORT="порт занят"
-        STEP_FAIL="Панель не запустилась: порт $INTERNAL_PORT на $INTERNAL_ADDR занят другой программой. Освободите его или запустите установку снова — она подберёт свободный порт."
+        local where=" на $INTERNAL_BIND"
+        [[ $INTERNAL_BIND == 0.0.0.0 ]] && where=""
+        STEP_FAIL="Панель не запустилась: порт $INTERNAL_PORT$where занят другой программой. Освободите его или запустите установку снова — она подберёт свободный порт."
         return 1
     fi
     if ! wait_api_healthy; then
@@ -1984,7 +2034,13 @@ if (( CERT_PENDING )); then
     say "Запускать установку заново не нужно." 2
 elif [[ $MODE == internal ]]; then
     say "${G}✓ Готово.${N} Панель открывается во внутренней сети: ${A}$PANEL_URL${N}"
-    say "Снаружи — через VPN в эту сеть или проброс порта по SSH, например:" 2
+    if [[ $INTERNAL_BIND == 0.0.0.0 ]]; then
+        others=$(internal_other_urls "$INTERNAL_ADDR" "$INTERNAL_PORT")
+        [[ -n $others ]] && say "Она отвечает и на других адресах сервера: $others" 2
+        say "Снаружи — через VPN (NetBird, Tailscale, WireGuard): поставьте его на сервер и на свой компьютер и откройте адрес сервера в VPN, http://адрес. Или пробросом порта по SSH, например:" 2
+    else
+        say "Снаружи — через VPN в эту сеть или проброс порта по SSH, например:" 2
+    fi
     say "${B}ssh -L 8080:$INTERNAL_ADDR:$INTERNAL_PORT root@сервер-с-доступом-в-сеть${N}" 4
     say "и откройте http://localhost:8080 (в Termius — то же пробросом порта)." 2
 else
