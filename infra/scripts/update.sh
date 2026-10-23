@@ -111,6 +111,24 @@ cleanup_old_images() {
     return 0
 }
 
+# Скачать код и метки выпусков; текст ошибки git — в FETCH_ERROR. --force: метку, перенесённую на GitHub
+# (выпуск переделан), git без него не обновляет и роняет весь fetch — «would clobber existing tag».
+fetch_code() {
+    # Сообщения git — по-английски: по ним fetch_failure_kind узнаёт отказ в доступе, а перевод его спрятал бы.
+    FETCH_ERROR=$(LC_ALL=C git fetch --all --tags --force --prune --quiet 2>&1)
+}
+
+# Почему git fetch не удался, по его тексту: access — GitHub не пустил (закрытый репозиторий, ключ не
+# подошёл), other — всё прочее (сеть, метки). Ключ просим только при access: 22.10.2026 перенесённая метка
+# v0.106.3 была принята за «репозиторий стал приватным», и сервер перевели на ключ, которого нет на GitHub.
+fetch_failure_kind() {
+    if grep -qiE 'could not read Username|Authentication failed|Repository not found|Permission denied \(publickey|returned error: 40[13]' <<<"${1:-}"; then
+        printf 'access\n'
+    else
+        printf 'other\n'
+    fi
+}
+
 # Проверка функций без обновления: `NODESERVICE_UPDATE_LIB=1 source update.sh` — только определения выше,
 # без настроек оболочки и переменных (COMPOSE для cleanup_old_images тогда задаёт сам проверяющий).
 if [[ -n "${NODESERVICE_UPDATE_LIB:-}" ]]; then return 0 2>/dev/null || exit 0; fi
@@ -133,6 +151,7 @@ die() { echo -e "${R}[-] $1${N}" >&2; exit 1; }
 
 DEPLOY_KEY="/root/.ssh/nodeservice_deploy"
 REPO_SSH="${NODESERVICE_REPO_SSH:-git@github.com:feauche/nodeservice-panel.git}"
+REPO_HTTPS="${NODESERVICE_REPO_HTTPS:-https://github.com/feauche/nodeservice-panel.git}"
 export GIT_TERMINAL_PROMPT=0
 [[ -f "$DEPLOY_KEY" ]] && export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 
@@ -173,12 +192,23 @@ fi
 before=$(git rev-parse --short HEAD)
 OLD_VERSION=$(sed -n 's/^NODESERVICE_VERSION=//p' "$ENV_FILE" | head -n 1)
 [[ -n "$OLD_VERSION" ]] || OLD_VERSION="$before"
-if ! git fetch --all --tags --prune --quiet; then
-    if [[ "$(git remote get-url origin)" == https://* ]]; then
+if ! fetch_code; then
+    origin=$(git remote get-url origin)
+    if [[ $(fetch_failure_kind "$FETCH_ERROR") != access ]]; then
+        printf '%s\n' "$FETCH_ERROR" >&2
+        die "git fetch не удался — проверь сеть до GitHub (ответ git выше)."
+    elif [[ "$origin" != https://* ]] && git ls-remote --quiet "$REPO_HTTPS" >/dev/null 2>&1; then
+        # Ключ не подошёл, а репозиторий открыт: сервер когда-то перевели на ключ зря — обычная ссылка.
+        echo -e "${Y}Ключ доступа не подошёл, но репозиторий открыт — скачиваю по обычной ссылке.${N}"
+        git remote set-url origin "$REPO_HTTPS"
+        fetch_code || { printf '%s\n' "$FETCH_ERROR" >&2; die "git fetch не удался — проверь сеть до GitHub (ответ git выше)."; }
+    elif [[ "$origin" == https://* ]] && ! git ls-remote --quiet "$origin" >/dev/null 2>&1; then
+        # Ключ — только если репозиторий и правда не открывается без него (а не GitHub ответил 403 на один запрос).
         switch_to_deploy_key
-        git fetch --all --tags --prune --quiet || die "git fetch не удался и по deploy-ключу — проверь, что ключ добавлен."
+        fetch_code || { printf '%s\n' "$FETCH_ERROR" >&2; die "git fetch не удался и по deploy-ключу — проверь, что ключ добавлен."; }
     else
-        die "git fetch не удался — проверь сеть и deploy-ключ."
+        printf '%s\n' "$FETCH_ERROR" >&2
+        die "git fetch не удался — проверь сеть до GitHub и deploy-ключ (ответ git выше)."
     fi
 fi
 # Обычное обновление не берёт промежуточный commit из main: только прошедший все
@@ -331,7 +361,21 @@ panel_port=$(sed -n 's/^PANEL_HTTPS_PORT=//p' "$ENV_FILE" | head -n 1)
 panel_port=${panel_port:-443}
 panel_url="https://$panel_domain"
 [[ "$panel_port" != 443 ]] && panel_url+=":$panel_port"
-if [[ -n "$panel_domain" ]]; then
+# Панель только во внутренней сети: адрес http://внутренний-адрес[:порт], без сертификата — открываем его.
+internal_url=$(sed -n 's/^PANEL_PUBLIC_URL=//p' "$ENV_FILE" | head -n 1)
+if [[ "$(sed -n 's/^PANEL_PROXY=//p' "$ENV_FILE" | head -n 1)" == internal && -n "$internal_url" ]]; then
+    http_ok=0
+    for _ in $(seq 1 20); do
+        if curl -fsS --max-time 8 "$internal_url/api/health/live" 2>/dev/null | grep -q '"status":"ok"'; then
+            http_ok=1
+            break
+        fi
+        sleep 3
+    done
+    if (( http_ok == 0 )); then
+        echo -e "${Y}Панель запущена, но $internal_url не открывается с этого сервера — проверьте: nodeservice status${N}"
+    fi
+elif [[ -n "$panel_domain" ]]; then
     https_ok=0
     for _ in $(seq 1 20); do
         for via in server dns; do

@@ -2,6 +2,7 @@ import { CheckIcon, CopyIcon, RotateCwIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import { useTheme } from '@/features/theme/use-theme';
+import { copyText } from '@/lib/clipboard';
 import { buildErrorReport, explainError } from './error-report';
 
 interface Props {
@@ -23,13 +24,10 @@ export function ErrorScreen({ error, reset }: Props) {
   const report = buildErrorReport(error, { path, theme });
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(report);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* буфер недоступен — отчёт виден в деталях ниже */
-    }
+    // Не скопировалось и через запасной путь — отчёт виден в деталях ниже.
+    if (!(await copyText(report))) return;
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const btn =

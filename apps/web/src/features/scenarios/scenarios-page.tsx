@@ -7,7 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useNodes } from '@/features/nodes/nodes-api';
 import { Segmented, Toggle } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
-import { cn } from '@/lib/utils';
+import { cn, randomId } from '@/lib/utils';
 import { type EditorTab, ScenarioEditor, STEPS } from './scenario-editor';
 import { OUTCOME_DOT, RunStrip, RunsPanel, when } from './scenario-journal';
 import { conditionsPhrase, scopePhrase } from './scenario-text';
@@ -17,7 +17,7 @@ import { useSaveScenarios, useScenarioOverview, useScenarios } from './scenarios
 export type ScenariosSearch = { open?: string; tab?: EditorTab; node?: string; create?: 1 };
 
 const make = (over: Partial<Scenario> = {}): Scenario => ({
-  id: crypto.randomUUID(),
+  id: randomId(),
   name: 'Новый сценарий',
   enabled: false,
   scope: 'all',
@@ -514,7 +514,7 @@ export function ScenariosPage({
                   setEditing({
                     draft: {
                       ...editing.draft,
-                      id: crypto.randomUUID(),
+                      id: randomId(),
                       name: `${editing.draft.name} (копия)`,
                       enabled: false,
                     },

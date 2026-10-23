@@ -42,7 +42,7 @@ import { Input } from '@/components/ui/input';
 import { RowsSkeleton } from '@/components/ui/loading-state';
 import { NavGroupLabel } from '@/components/ui/nav-group-label';
 import { apiErrorMessage } from '@/lib/api';
-import { cn } from '@/lib/utils';
+import { cn, randomId } from '@/lib/utils';
 import { useCustomSites, useUpdateCustomSites } from './settings-api';
 
 type Mode = 'rail' | 'drawer';
@@ -85,7 +85,7 @@ function SitesDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
 
   const add = () => {
     if (rows.length >= CUSTOM_SITES_MAX) return;
-    setRows((current) => [...current, { id: crypto.randomUUID(), name: '', url: '' }]);
+    setRows((current) => [...current, { id: randomId(), name: '', url: '' }]);
   };
 
   const remove = (id: string) => {

@@ -37,7 +37,7 @@ import { useNodes } from '@/features/nodes/nodes-api';
 import { Pill, Segmented, Toggle } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
 import { plural } from '@/lib/plural';
-import { cn } from '@/lib/utils';
+import { cn, randomId } from '@/lib/utils';
 import { DpiTools } from './dpi-tools';
 
 type Workspace = z.infer<typeof dpiWorkspaceSchema>;
@@ -594,7 +594,7 @@ function NewCheckDialog({
   const [manual, setManual] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [requestId] = useState(() => crypto.randomUUID());
+  const [requestId] = useState(() => randomId());
   const popIds = popsFor(data, mode, manual);
   const ready =
     Boolean(node) &&

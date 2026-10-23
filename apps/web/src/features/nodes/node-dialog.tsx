@@ -30,6 +30,7 @@ import { NodeScenarios } from '@/features/scenarios/node-scenarios';
 import { useMonitoring } from '@/features/settings/settings-api';
 import { Pill, Segmented } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 import { mbitText } from '@/lib/units';
 import { cn } from '@/lib/utils';
 import { ChannelLimitDialog } from './channel-limit-dialog';
@@ -136,14 +137,11 @@ function CopyField({ title, value, copy = false }: { title: string; value: strin
             type="button"
             aria-label={`Копировать: ${title}`}
             className="grid size-8 flex-none cursor-pointer place-items-center rounded-[9px] text-text-3 transition-colors hover:bg-surface-2 hover:text-brand focus-visible:outline-2 focus-visible:outline-brand"
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(value);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1800);
-              } catch {
-                // Буфер обмена недоступен (не HTTPS или запрет браузера): значение видно и так.
-              }
+            onClick={async (e) => {
+              // Не скопировалось и через запасной путь — значение видно и так.
+              if (!(await copyText(value, e.currentTarget))) return;
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1800);
             }}
           >
             {copied ? (

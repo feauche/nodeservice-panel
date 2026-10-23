@@ -17,7 +17,7 @@ import { nodeOption } from '@/features/nodes/node-option';
 import { Pill } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
 import { plural } from '@/lib/plural';
-import { cn } from '@/lib/utils';
+import { cn, randomId } from '@/lib/utils';
 
 type Tool = 'rkn' | 'noisy' | 'probe';
 type ProbePrice = { fixed: number; perGb: number } | null;
@@ -126,7 +126,7 @@ function ToolDialog({
   const [rknFor, setRknFor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [requestId] = useState(() => crypto.randomUUID());
+  const [requestId] = useState(() => randomId());
   const rkn = useQuery({
     queryKey: ['dpi-rkn', rknFor],
     queryFn: ({ signal }) => api.get(`/integrations/dpi/tools/rkn/${rknFor}`, dpiRknSchema, signal),

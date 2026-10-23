@@ -68,6 +68,12 @@ case "${CURL_MODE:-ok}" in
   http) printf '<html>502</html>' >"$out"; printf '502' ;;
 esac
 SH
+# Адреса сервера: «ip -4 -o addr show scope global» — строки из файла IP_ADDRS.
+cat >"$work/bin/ip" <<'SH'
+#!/usr/bin/env bash
+[[ -f "${IP_ADDRS:-}" ]] && cat "$IP_ADDRS"
+exit 0
+SH
 chmod +x "$work/bin/"*
 
 # shellcheck disable=SC1091
@@ -111,6 +117,8 @@ printf 'caddy\tcaddy:2.9\tabc\n' >"$DOCKER_DIR/publish-443-tcp"
 check "Caddy в контейнере (docker-proxy)" eq "$(port_holder tcp 443)" "caddy-docker|контейнер caddy (Caddy)|caddy|caddy:2.9"
 printf 'nodeservice-caddy-1\tcaddy:2.11-alpine\tdef\n' >"$DOCKER_DIR/publish-443-tcp"
 check "свой Caddy панели" eq "$(holder_kind "$(port_holder tcp 443)")" own
+printf 'nodeservice-api-1\tghcr.io/feauche/nodeservice-api:v0.107.0\tmno\n' >"$DOCKER_DIR/publish-443-tcp"
+check "api панели на порту (внутренняя сеть) — тоже сама панель" eq "$(holder_kind "$(port_holder tcp 443)")" own
 reset_ports
 printf 'nginx\tnginx:1.27\tghi\n' >"$DOCKER_DIR/publish-80-tcp"
 check "проброс без docker-proxy: nginx в контейнере — чужой" eq "$(port_holder tcp 80)" "other|контейнер nginx|nginx|nginx:1.27"
@@ -266,6 +274,44 @@ check "сертификата нет — tls" bash -c 'NODESERVICE_INSTALL_LIB=1
 check "никто не слушает — refused" bash -c 'NODESERVICE_INSTALL_LIB=1 . "$1"; ! CURL_MODE=refused verify_panel panel.example.com 443 2 && [[ $VERIFY_STATE == refused ]]' _ "$ROOT/infra/scripts/install.sh"
 check "отвечает не панель — http" bash -c 'NODESERVICE_INSTALL_LIB=1 . "$1"; ! CURL_MODE=http verify_panel panel.example.com 443 2 && [[ $VERIFY_STATE == http && $VERIFY_DETAIL == *502* ]]' _ "$ROOT/infra/scripts/install.sh"
 
+# --- Внутренняя сеть ---
+export IP_ADDRS="$work/ip-addrs"
+cat >"$IP_ADDRS" <<'EOF'
+2: eth0    inet 203.0.113.7/24 brd 203.0.113.255 scope global eth0\       valid_lft forever preferred_lft forever
+3: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0\       valid_lft forever preferred_lft forever
+4: br-1a2b3c4d5e6f    inet 172.18.0.1/16 brd 172.18.255.255 scope global br-1a2b3c4d5e6f\       valid_lft forever preferred_lft forever
+5: ens19    inet 10.10.10.104/24 brd 10.10.10.255 scope global ens19\       valid_lft forever preferred_lft forever
+6: tailscale0    inet 100.101.5.9/32 scope global tailscale0\       valid_lft forever preferred_lft forever
+EOF
+check "адреса сервера без сетей Docker" eq "$(local_ipv4s | cut -f2 | paste -sd' ' -)" "203.0.113.7 10.10.10.104 100.101.5.9"
+check "внутренний адрес по умолчанию — первый внутренний" eq "$(default_internal_addr)" "10.10.10.104"
+check "при переезде — прежний, если он есть у сервера" eq "$(default_internal_addr 100.101.5.9)" "100.101.5.9"
+check "прежнего адреса у сервера нет — первый внутренний" eq "$(default_internal_addr 10.0.0.9)" "10.10.10.104"
+check "внутренние адреса" bash -c 'NODESERVICE_INSTALL_LIB=1 . "$1"; for a in 10.10.10.104 192.168.1.5 172.16.0.1 172.31.9.9 100.64.0.1; do is_private_ipv4 $a || exit 1; done' _ "$ROOT/infra/scripts/install.sh"
+check "внешние и неверные — не внутренние" bash -c 'NODESERVICE_INSTALL_LIB=1 . "$1"; for a in 203.0.113.7 172.32.0.1 100.128.0.1 8.8.8.8 10.10.10 10.10.10.300 abc; do is_private_ipv4 $a && exit 1; done; exit 0' _ "$ROOT/infra/scripts/install.sh"
+check "адрес IPv4" bash -c 'NODESERVICE_INSTALL_LIB=1 . "$1"; is_ipv4 203.0.113.7 && ! is_ipv4 256.1.1.1 && ! is_ipv4 1.2.3 && ! is_ipv4 "1.2.3.4; id"' _ "$ROOT/infra/scripts/install.sh"
+reset_ports
+check "порт 80 свободен — панель на 80" eq "$(internal_port)" 80
+listen tcp 80 0.0.0.0:80 nginx 1500
+check "80 занят — первый свободный с 8080" eq "$(internal_port)" 8080
+reset_ports
+printf 'proxy\tnginx:1.27\tjkl\n' >"$DOCKER_DIR/publish-80-tcp"
+check "80 занят контейнером без docker-proxy — тоже занят" eq "$(internal_port)" 8080
+reset_ports
+check "адрес панели без порта 80" eq "$(internal_url 10.10.10.104 80)" "http://10.10.10.104"
+check "адрес панели с портом" eq "$(internal_url 10.10.10.104 8080)" "http://10.10.10.104:8080"
+check "по внутреннему адресу открывается" bash -c 'NODESERVICE_INSTALL_LIB=1 . "$1"; CURL_MODE=ok verify_internal http://10.10.10.104 2 && [[ $VERIFY_STATE == ok ]]' _ "$ROOT/infra/scripts/install.sh"
+check "по внутреннему адресу никто не слушает" bash -c 'NODESERVICE_INSTALL_LIB=1 . "$1"; ! CURL_MODE=refused verify_internal http://10.10.10.104 2 && [[ $VERIFY_STATE == refused ]]' _ "$ROOT/infra/scripts/install.sh"
+check "по внутреннему адресу отвечает не панель" bash -c 'NODESERVICE_INSTALL_LIB=1 . "$1"; ! CURL_MODE=http verify_internal http://10.10.10.104 2 && [[ $VERIFY_STATE == http && $VERIFY_DETAIL == *502* ]]' _ "$ROOT/infra/scripts/install.sh"
+printf '2\n' >"$work/answer"
+check "выбор: «2» — второй пункт" eq "$(NS_TTY="$work/answer" choose "Как будете открывать панель?" 1 "по домену" "во внутренней сети" 2>/dev/null)" 2
+printf '\n' >"$work/answer"
+check "выбор: Enter — пункт по умолчанию" eq "$(NS_TTY="$work/answer" choose "Как?" 1 "по домену" "во внутренней сети" 2>/dev/null)" 1
+# Каждый вопрос открывает «терминал» заново: из канала (/dev/stdin) каждый раз читается следующая строка.
+check "выбор: неверный номер — спросить снова" eq "$(printf '7\n2\n' | NS_TTY=/dev/stdin timeout 10 bash -c 'NODESERVICE_INSTALL_LIB=1 . "$1"; choose "Как?" 1 "по домену" "во внутренней сети"' _ "$ROOT/infra/scripts/install.sh" 2>"$work/choose.err")" 2
+check "выбор: подсказка про номер" has "$(cat "$work/choose.err")" "Введите номер от 1 до 2"
+check "выбор без вопросов — по умолчанию" eq "$(NODESERVICE_YES=1 choose "Как?" 2 "по домену" "во внутренней сети" 2>/dev/null)" 2
+
 # --- Вывод ---
 check "русское число" eq "$(plural 2 ядро ядра ядер), $(plural 5 ядро ядра ядер), $(plural 21 ядро ядра ядер), $(plural 12 ядро ядра ядер)" \
     "2 ядра, 5 ядер, 21 ядро, 12 ядер"
@@ -299,6 +345,10 @@ check "ваш nginx или Caddy — оверлей с портом" has "${COMP
 printf 'PANEL_DOMAIN=panel.example.com\nPANEL_PROXY_NETWORK=remnawave-network\n' >"$work/.env"
 nodeservice_compose /opt/nodeservice "$work/.env"
 check "Caddy в контейнере — оверлей с сетью" has "${COMPOSE[*]}" "-f /opt/nodeservice/infra/compose.docker-proxy.yaml"
+printf 'PANEL_DOMAIN=10.10.10.104\nPANEL_PROXY=internal\nPANEL_LOCAL_BIND=10.10.10.104\nPANEL_LOCAL_PORT=80\n' >"$work/.env"
+nodeservice_compose /opt/nodeservice "$work/.env"
+check "внутренняя сеть — свой оверлей" has "${COMPOSE[*]}" "-f /opt/nodeservice/infra/compose.internal.yaml"
+check "внутренняя сеть — не оверлей nginx" hasnt "${COMPOSE[*]}" "compose.host-proxy.yaml"
 
 # --- Удаление сайта панели из nginx ---
 site="$work/nginx/sites-available/nodeservice"

@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { copyText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
 import { usePanelRelease } from './panel-release-api';
 
@@ -64,8 +65,8 @@ export function PanelVersion({
     .filter(Boolean)
     .join(' ');
 
-  const copy = async (kind: 'update' | 'commit', value: string) => {
-    await navigator.clipboard?.writeText(value);
+  const copy = async (kind: 'update' | 'commit', value: string, near?: Element) => {
+    if (!(await copyText(value, near))) return;
     setCopied(kind);
     window.setTimeout(() => setCopied(null), 1_500);
   };
@@ -162,7 +163,7 @@ export function PanelVersion({
                 className="flex-none"
                 title="Скопировать хэш сборки"
                 aria-label="Скопировать хэш сборки"
-                onClick={() => void copy('commit', commit)}
+                onClick={(e) => void copy('commit', commit, e.currentTarget)}
               >
                 {copied === 'commit' ? <CheckIcon /> : <CopyIcon />}
               </Button>
@@ -195,7 +196,7 @@ export function PanelVersion({
                     type="button"
                     size="sm"
                     variant="outline"
-                    onClick={() => void copy('update', UPDATE_COMMAND)}
+                    onClick={(e) => void copy('update', UPDATE_COMMAND, e.currentTarget)}
                   >
                     {copied === 'update' ? <CheckIcon /> : <CopyIcon />}
                     {copied === 'update' ? 'Скопировано' : 'Копировать'}

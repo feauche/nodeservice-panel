@@ -4,6 +4,7 @@ import nginx from 'highlight.js/lib/languages/nginx';
 import { CheckIcon, CopyIcon } from 'lucide-react';
 import { createContext, Fragment, type ReactNode, useContext, useState } from 'react';
 import { CountryFlag } from '@/components/country-flag';
+import { copyText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
 
 /** Ячейки строки markdown-таблицы: делим по «|», отбрасываем крайние пустые от обрамляющих труб. */
@@ -84,14 +85,10 @@ function CodeBlock({ code, lang, copyable }: { code: string; lang: string; copya
   }
   const label = LANG_LABEL[detected] ?? (detected || raw || 'txt');
 
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1_500);
-    } catch {
-      // В небезопасном контексте браузер может запретить Clipboard API.
-    }
+  const copy = async (near?: Element) => {
+    if (!(await copyText(code, near))) return;
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1_500);
   };
 
   return (
@@ -103,7 +100,7 @@ function CodeBlock({ code, lang, copyable }: { code: string; lang: string; copya
         {copyable && (
           <button
             type="button"
-            onClick={() => void copy()}
+            onClick={(e) => void copy(e.currentTarget)}
             aria-label={copied ? 'Код скопирован' : 'Скопировать код'}
             className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-[6px] border border-white/10 bg-white/[0.07] px-2 text-[10.5px] font-semibold text-text-2 transition-colors hover:bg-white/[0.12] hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand"
           >

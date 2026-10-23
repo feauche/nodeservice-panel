@@ -32,7 +32,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useIncidents } from '@/features/incidents/incidents-api';
 import { apiErrorMessage } from '@/lib/api';
-import { cn } from '@/lib/utils';
+import { cn, randomId } from '@/lib/utils';
 import { NodeCard } from './node-card';
 import {
   layoutToSortableGroups,
@@ -655,7 +655,7 @@ export function NodeInventory({
           variant="outline"
           disabled={locked}
           className="h-10 shrink-0 rounded-[10px] text-[12px]"
-          onClick={() => setEditing({ id: crypto.randomUUID(), name: '' })}
+          onClick={() => setEditing({ id: randomId(), name: '' })}
         >
           <FolderPlusIcon className="size-3.5" />
           Новая папка

@@ -11,6 +11,7 @@ import { CheckIcon, ChevronDownIcon, CopyIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { JarvisIcon } from '@/components/jarvis-icon';
+import { copyText } from '@/lib/clipboard';
 import { toast } from '@/lib/notify';
 
 import { capFirst, cn } from '@/lib/utils';
@@ -180,8 +181,11 @@ export function AuditDetails({ entry }: { entry: AuditEntry }) {
   const rows = changeRows(entry);
   const metadata = metadataRows(entry.metadata);
   const [copied, setCopied] = useState(false);
-  const copyReport = async () => {
-    await navigator.clipboard.writeText(buildAuditReport(entry));
+  const copyReport = async (near?: Element) => {
+    if (!(await copyText(buildAuditReport(entry), near))) {
+      toast.error('Не удалось скопировать. Выделите текст и скопируйте вручную.');
+      return;
+    }
     toast.success('Отчёт по записи скопирован.');
     setCopied(true);
     setTimeout(() => setCopied(false), 1_600);
@@ -191,7 +195,7 @@ export function AuditDetails({ entry }: { entry: AuditEntry }) {
       {/* На уровне первой строки деталей, у правого края — без своей полосы. */}
       <button
         type="button"
-        onClick={() => void copyReport()}
+        onClick={(e) => void copyReport(e.currentTarget)}
         className="absolute top-0 right-0 inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] border border-border bg-surface-2 px-2.5 text-[11.5px] font-medium text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand"
       >
         {copied ? (

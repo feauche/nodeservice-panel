@@ -2,7 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
 import type { NextFunction, Request, Response } from 'express';
-import helmet from 'helmet';
+import helmet, { type HelmetOptions } from 'helmet';
 
 import type { Env } from '../../config/env.schema.js';
 import { AnonAuditLimiter } from '../../modules/auth/anon-audit.limiter.js';
@@ -17,13 +17,7 @@ export function setupHttp(app: NestExpressApplication): void {
 
   app.set('trust proxy', config.get('TRUST_PROXY'));
   app.disable('x-powered-by');
-  app.use(
-    helmet({
-      // CSP для SPA настраивается на этапе 11 (hash для inline-скрипта темы); пока — без CSP.
-      contentSecurityPolicy: false,
-      crossOriginEmbedderPolicy: false,
-    }),
-  );
+  app.use(helmet(helmetOptions(config.get('PUBLIC_URL'))));
   app.use(cookieParser());
   // Все мутирующие запросы к API — только с CSRF-токеном (GET/HEAD/OPTIONS пропускаются).
   // Отказы пишутся в Журнал через общий предел записей от запросов без входа.
@@ -35,6 +29,18 @@ export function setupHttp(app: NestExpressApplication): void {
     shouldApplyCsrf(req.path) ? csrf(req, res, next) : next(),
   );
   app.setGlobalPrefix('api');
+}
+
+/** Заголовки безопасности helmet по адресу панели. */
+export function helmetOptions(publicUrl: string): HelmetOptions {
+  return {
+    // CSP для SPA настраивается на этапе 11 (hash для inline-скрипта темы); пока — без CSP.
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    // Панель во внутренней сети открывают по http: там браузер этот заголовок не принимает и на каждой
+    // странице пишет ошибку в консоль. На https он остаётся.
+    crossOriginOpenerPolicy: publicUrl.startsWith('https://'),
+  };
 }
 
 /** Express сопоставляет маршруты без учёта регистра; защита обязана делать так же. */

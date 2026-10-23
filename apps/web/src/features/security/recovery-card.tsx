@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Skeleton } from '@/components/ui/skeleton';
 import { Pill, RowButton, SettingsCard, SettingsRow } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 import { toast } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useRegenerateRecoveryCodes, useSecurityOverview, useViewRecoveryCodes } from './security-api';
@@ -179,9 +180,12 @@ export function RecoveryCodesDialog({
         <div className={cn('mt-1 flex flex-wrap justify-center gap-2', legacy && 'hidden')}>
           <RowButton
             disabled={unused.length === 0}
-            onClick={() => {
-              void navigator.clipboard?.writeText(text);
-              toast.success('Коды скопированы.');
+            onClick={(e) => {
+              void copyText(text, e.currentTarget).then((ok) =>
+                ok
+                  ? toast.success('Коды скопированы.')
+                  : toast.error('Не удалось скопировать. Выделите текст и скопируйте вручную.'),
+              );
             }}
           >
             <CopyIcon className="size-3.5" aria-hidden="true" />

@@ -47,9 +47,10 @@ import { useNodes } from '@/features/nodes/nodes-api';
 import { formatAgo } from '@/features/security/security-format';
 import { Pill, Segmented, Toggle } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 import { plural } from '@/lib/plural';
 import { explainProbeError } from '@/lib/probe-error';
-import { cn } from '@/lib/utils';
+import { cn, randomId } from '@/lib/utils';
 
 type Tone = 'ok' | 'warn' | 'crit' | 'muted' | 'info';
 const WS_STATE: Record<string, [string, Tone]> = {
@@ -402,8 +403,9 @@ function CopyRow({
       <button
         type="button"
         aria-label={`Скопировать: ${label}`}
-        onClick={() => {
-          void navigator.clipboard?.writeText(value).then(() => {
+        onClick={(e) => {
+          void copyText(value, e.currentTarget).then((ok) => {
+            if (!ok) return;
             setDone(true);
             setTimeout(() => setDone(false), 1500);
           });
@@ -426,8 +428,9 @@ function CodeBlock({ label, code }: { label: string; code: string | null | undef
         <button
           type="button"
           aria-label={`Скопировать: ${label}`}
-          onClick={() => {
-            void navigator.clipboard?.writeText(code).then(() => {
+          onClick={(e) => {
+            void copyText(code, e.currentTarget).then((ok) => {
+              if (!ok) return;
               setDone(true);
               setTimeout(() => setDone(false), 1500);
             });
@@ -576,7 +579,7 @@ function WsConnectDialog({ ws, onClose }: { ws: BsWs; onClose: () => void }) {
 }
 
 type Row<T> = T & { rowId: string };
-const withId = <T,>(list: T[]): Array<Row<T>> => list.map((t) => ({ ...t, rowId: crypto.randomUUID() }));
+const withId = <T,>(list: T[]): Array<Row<T>> => list.map((t) => ({ ...t, rowId: randomId() }));
 
 /** Число из поля: только цифры; пусто — null. */
 const digits = (v: string) => v.replace(/\D/g, '');

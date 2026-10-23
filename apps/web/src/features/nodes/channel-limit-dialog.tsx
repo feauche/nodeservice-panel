@@ -19,6 +19,7 @@ import {
   type ChannelSpeed,
   parseChannelSpeed,
 } from '@/lib/channel-speed';
+import { copyText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
 
 /** «Мбит/с» без переноса по косой черте. */
@@ -38,15 +39,12 @@ function CommandBox({ command, what }: { command: string; what: string }) {
       <button
         type="button"
         aria-label={`Копировать: ${what}`}
-        onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(command);
-            setCopied(true);
-            clearTimeout(timer.current);
-            timer.current = setTimeout(() => setCopied(false), 1800);
-          } catch {
-            // Буфер обмена недоступен (не HTTPS или запрет браузера): команда видна, её можно выделить руками.
-          }
+        onClick={async (e) => {
+          // Не скопировалось и через запасной путь — команда видна, её можно выделить руками.
+          if (!(await copyText(command, e.currentTarget))) return;
+          setCopied(true);
+          clearTimeout(timer.current);
+          timer.current = setTimeout(() => setCopied(false), 1800);
         }}
         className={cn(
           'inline-flex h-8 flex-none cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border border-border bg-surface px-2.5 text-[12px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand max-sm:self-end',

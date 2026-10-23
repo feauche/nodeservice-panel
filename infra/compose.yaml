@@ -27,8 +27,10 @@ services:
       PANEL_DOMAIN: ${PANEL_DOMAIN:?PANEL_DOMAIN не задан}
       PANEL_SITE: ${PANEL_DOMAIN}${PANEL_URL_PORT:-}
       PANEL_PROTOCOLS: ${PANEL_PROTOCOLS:-h1 h2 h3}
-      # Caddy: `email` без значения — ошибка парсинга Caddyfile, поэтому переменная обязательна.
-      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL не задан}
+      # Caddy: `email` без значения — ошибка парсинга Caddyfile. Установщик пишет почту при установке с доменом;
+      # во внутренней сети (compose.internal.yaml) Caddy не запускается и почты нет, а обязательная
+      # переменная остановила бы compose и там: он проверяет весь файл, даже выключенные сервисы.
+      ACME_EMAIL: ${ACME_EMAIL:-}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

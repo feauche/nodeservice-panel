@@ -85,6 +85,35 @@ if extract_backup_name '$(touch /tmp/nodeservice-backup-injected)' >/dev/null 2>
 fi
 [[ ! -e /tmp/nodeservice-backup-injected ]]
 
+# Почему git fetch не удался: ключ просим только при отказе в доступе, а не при любой ошибке.
+failure_kind() {
+    NODESERVICE_UPDATE_LIB=1 bash -c 'source "$1/infra/scripts/update.sh"; fetch_failure_kind "$2"' _ "$ROOT" "$1"
+}
+[[ "$(failure_kind "fatal: could not read Username for 'https://github.com': terminal prompts disabled")" == access ]]
+[[ "$(failure_kind 'git@github.com: Permission denied (publickey).')" == access ]]
+[[ "$(failure_kind 'remote: Repository not found.')" == access ]]
+[[ "$(failure_kind ' ! [rejected]        v0.106.3   -> v0.106.3  (would clobber existing tag)')" == other ]]
+[[ "$(failure_kind 'fatal: unable to access: Could not resolve host: github.com')" == other ]]
+grep -Fq 'LC_ALL=C git fetch' "$ROOT/infra/scripts/update.sh"
+
+# Метку перенесли на GitHub (выпуск переделан): сервер, скачавший её раньше, обновляется без ошибки.
+if command -v git >/dev/null; then
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+    git init -q -b main "$TMP/origin"
+    git -C "$TMP/origin" commit -q --allow-empty -m first
+    git -C "$TMP/origin" tag v1.0.0
+    git clone -q "$TMP/origin" "$TMP/server"
+    git -C "$TMP/origin" commit -q --allow-empty -m second
+    git -C "$TMP/origin" tag -f v1.0.0 >/dev/null
+    moved=$(git -C "$TMP/origin" rev-parse v1.0.0)
+    if git -C "$TMP/server" fetch --all --tags --prune --quiet 2>/dev/null; then
+        echo "git без --force обновил перенесённую метку — проверка больше не воспроизводит ошибку" >&2
+        exit 1
+    fi
+    (cd "$TMP/server" && NODESERVICE_UPDATE_LIB=1 bash -c 'source "$1/infra/scripts/update.sh"; fetch_code' _ "$ROOT")
+    [[ "$(git -C "$TMP/server" rev-parse v1.0.0)" == "$moved" ]]
+fi
+
 bash -n "$ROOT/infra/scripts/install.sh" "$ROOT/infra/scripts/update.sh" "$ROOT/infra/scripts/nodeservice"
 grep -Fq 'docker pull "$release_image"' "$ROOT/infra/scripts/update.sh"
 grep -Fq 'org.opencontainers.image.revision' "$ROOT/infra/scripts/update.sh"

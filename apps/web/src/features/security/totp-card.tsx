@@ -6,6 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { OtpField } from '@/features/auth/components/otp-field';
 import { Pill, RowButton, SettingsCard, SettingsRow } from '@/features/settings/settings-ui';
 import { apiErrorMessage, isApiError } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 import { toast } from '@/lib/notify';
 import { RecoveryCodesDialog } from './recovery-card';
 import { useSecurityOverview, useTotpConfirm, useTotpReissue } from './security-api';
@@ -174,9 +175,12 @@ function TotpReissueDialog({
                 </code>
                 <RowButton
                   className="mt-2"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(data.totpSecret);
-                    toast.success('Ключ скопирован.');
+                  onClick={(e) => {
+                    void copyText(data.totpSecret, e.currentTarget).then((ok) =>
+                      ok
+                        ? toast.success('Ключ скопирован.')
+                        : toast.error('Не удалось скопировать. Выделите текст и скопируйте вручную.'),
+                    );
                   }}
                 >
                   <CopyIcon className="size-3.5" aria-hidden="true" />

@@ -15,6 +15,11 @@
 # Повторный запуск безопасен: .env и данные не трогает, собранный образ той же версии не пересобирает.
 #
 # Без вопросов (ответы по умолчанию): NODESERVICE_YES=1 NODESERVICE_DOMAIN=домен [NODESERVICE_EMAIL=почта]
+#
+# Без домена, только во внутренней сети (сервер за NAT, вход через VPN или проброс порта по SSH): первым
+# вопросом выберите «только во внутренней сети» — панель встанет на внутренний адрес сервера по http
+# (http://10.10.10.104), без сертификата. Без вопросов: NODESERVICE_YES=1 NODESERVICE_ADDRESS=10.10.10.104
+# [NODESERVICE_PORT=80].
 
 # ============== Функции. Проверяются без установки: NODESERVICE_INSTALL_LIB=1 source install.sh ==============
 
@@ -150,6 +155,33 @@ ask() {
     printf '%s' "${a:-$d}"
 }
 
+# Выбор из пунктов: печатает номер выбранного. $1 — вопрос, $2 — номер по умолчанию, дальше — пункты.
+# Вопрос и пункты — в stderr: номер читают через $(…). При NODESERVICE_YES=1 — номер по умолчанию.
+choose() {
+    local q=$1 def=$2 a i=0 item
+    shift 2
+    say "${C}?${N} $q" >&2
+    for item in "$@"; do
+        i=$((i + 1))
+        wrap_words "$i — $item" 2 "" 6 >&2
+    done
+    while true; do
+        wrap_words "Номер [$def]:" 2 prompt >&2
+        if [[ -n ${NODESERVICE_YES:-} ]]; then
+            a=""
+            printf '%s\n' "$def" >&2
+        else
+            read -r a <"${NS_TTY:-/dev/tty}" || a=""
+        fi
+        a=${a:-$def}
+        if [[ $a =~ ^[0-9]+$ ]] && (( a >= 1 && a <= $# )); then
+            printf '%s\n' "$a"
+            return 0
+        fi
+        say "${Y}Введите номер от 1 до $#.${N}" 2 >&2
+    done
+}
+
 # Русское число: 1 ядро, 2 ядра, 5 ядер.
 plural() {
     local n=$1 n10=$(( $1 % 10 )) n100=$(( $1 % 100 ))
@@ -229,7 +261,7 @@ classify_process() {
 
 classify_container() {
     local name=$1 image=${2,,}
-    if [[ $name == nodeservice-caddy-* || $name == nodeservice_caddy_* ]]; then
+    if [[ $name == nodeservice-caddy-* || $name == nodeservice_caddy_* || $name == nodeservice-api-* || $name == nodeservice_api_* ]]; then
         printf 'own|панель NodeService|%s|%s\n' "$name" "$2"
         return
     fi
@@ -279,6 +311,93 @@ free_port() {
         printf '%s\n' "$p"
         return 0
     done
+    return 1
+}
+
+# --- Внутренняя сеть: панель без домена, только по внутреннему адресу ---
+
+# Адреса IPv4 сервера, кроме сетей Docker: «интерфейс<TAB>адрес» по строке.
+local_ipv4s() {
+    ip -4 -o addr show scope global 2>/dev/null |
+        awk '{ split($4, a, "/"); print $2 "\t" a[1] }' |
+        grep -vE '^(docker[0-9]*|br-[0-9a-f]+|veth[^[:space:]]*)[[:space:]]' || true
+}
+
+# Адрес IPv4: четыре числа 0–255.
+is_ipv4() {
+    local IFS=. n
+    [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    for n in $1; do (( 10#$n <= 255 )) || return 1; done
+}
+
+# Внутренний адрес: 10.*, 172.16–31.*, 192.168.*, 100.64–127.* (Tailscale, NAT провайдера).
+is_private_ipv4() {
+    is_ipv4 "$1" || return 1
+    [[ $1 =~ ^10\. || $1 =~ ^192\.168\. || $1 =~ ^172\.(1[6-9]|2[0-9]|3[01])\. ||
+        $1 =~ ^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\. ]]
+}
+
+# Внутренний адрес по умолчанию: прежний ($1), если он ещё есть у сервера, иначе первый внутренний.
+default_internal_addr() {
+    local addrs a
+    addrs=$(local_ipv4s | cut -f2)
+    if [[ -n ${1:-} ]] && grep -qxF "$1" <<<"$addrs"; then
+        printf '%s\n' "$1"
+        return 0
+    fi
+    while read -r a; do
+        if [[ -n $a ]] && is_private_ipv4 "$a"; then
+            printf '%s\n' "$a"
+            return 0
+        fi
+    done <<<"$addrs"
+    return 0
+}
+
+# Порт панели во внутренней сети: 80, если свободен, иначе первый свободный из 8080–8099.
+internal_port() {
+    if [[ $(holder_kind "$(port_holder tcp 80)") == free ]]; then
+        printf '80\n'
+        return 0
+    fi
+    free_port 8080 8099
+}
+
+# Адрес панели во внутренней сети: http://адрес, порт — если не 80.
+internal_url() {
+    if [[ $2 == 80 ]]; then printf 'http://%s\n' "$1"; else printf 'http://%s:%s\n' "$1" "$2"; fi
+}
+
+# Открыть адрес панели во внутренней сети ($1 — http://адрес[:порт]) так же, как браузер.
+# VERIFY_STATE: ok, refused (никто не слушает), http (отвечает не панель), timeout, other.
+verify_internal() {
+    local url=$1 tries=${2:-6} i rc code body
+    body=$(mktemp)
+    VERIFY_STATE=timeout
+    VERIFY_DETAIL=""
+    for (( i = 1; i <= tries; i++ )); do
+        rc=0
+        code=$(curl -sS --max-time 8 -o "$body" -w '%{http_code}' "$url/api/health/live" 2>"$body.err") || rc=$?
+        case $rc in
+            0)
+                if [[ $code == 200 ]] && grep -q '"status":"ok"' "$body"; then
+                    VERIFY_STATE=ok
+                    rm -f "$body" "$body.err"
+                    return 0
+                fi
+                VERIFY_STATE=http
+                VERIFY_DETAIL="код ответа $code"
+                ;;
+            7) VERIFY_STATE=refused ;;
+            28) VERIFY_STATE=timeout ;;
+            *)
+                VERIFY_STATE=other
+                VERIFY_DETAIL=$(head -c 200 "$body.err")
+                ;;
+        esac
+        (( i < tries )) && sleep "${NODESERVICE_VERIFY_PAUSE:-5}"
+    done
+    rm -f "$body" "$body.err"
     return 1
 }
 
@@ -634,7 +753,8 @@ latest_release_tag() {
 # NODESERVICE_REF=main оставляет явный тестовый режим; NODESERVICE_BRANCH сохранён для старых команд.
 checkout_source_ref() {
     local ref="$SOURCE_REF" target=""
-    git -C "$APP_DIR" fetch --quiet --tags origin || return 1
+    # --force: метку, перенесённую на GitHub (выпуск переделан), без него git не обновляет и падает.
+    git -C "$APP_DIR" fetch --quiet --tags --force origin || return 1
     if [[ "$ref" == "latest" ]]; then
         ref=${RELEASE_TAG:-$(latest_release_tag)} || return 1
     fi
@@ -669,7 +789,7 @@ RESTORE_FILE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --restore) RESTORE_FILE="${2:-}"; shift 2 ;;
-        -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "Неизвестный параметр: $1 (поддерживается --restore <файл бэкапа>)" >&2; exit 1 ;;
     esac
 done
@@ -687,7 +807,63 @@ CODE_REF=""
 
 printf '\n%s %s\n\n' "${A}◆ NodeService${N}" "${D}— установка панели${RELEASE_TAG:+ · ${RELEASE_TAG#v}}${N}"
 
-# --- Параметры: домен и почта (повторный запуск — из .env, переезд — из копии) ---
+# --- Параметры: способ открытия, домен и почта или внутренний адрес (повторный запуск — из .env, переезд — из копии) ---
+
+# Как открывать панель. ACCESS: domain — по домену из интернета (https, сертификат); internal — только во
+# внутренней сети по адресу сервера (http, без домена и сертификата). $1 — пункт по умолчанию, $2 — прежний
+# внутренний адрес (переезд). Без вопросов: NODESERVICE_ADDRESS — внутренняя сеть, NODESERVICE_DOMAIN — домен.
+ACCESS=domain INTERNAL_ADDR="" INTERNAL_PORT="" PANEL_URL="" PORT_MOVED=""
+ask_access() {
+    local def=$1 addrs addr a public=0 private="" n
+    addrs=$(local_ipv4s | cut -f2)
+    addr=${NODESERVICE_ADDRESS:-$(default_internal_addr "${2:-}")}
+    if [[ -n ${NODESERVICE_ADDRESS:-} ]]; then
+        ACCESS=internal
+    elif [[ -n ${NODESERVICE_DOMAIN:-} ]]; then
+        ACCESS=domain
+        return 0
+    else
+        while read -r a; do
+            [[ -n $a ]] || continue
+            if is_private_ipv4 "$a"; then private+="${private:+, }$a"; else public=1; fi
+        done <<<"$addrs"
+        if (( ! public )) && [[ -n $private ]]; then
+            say "${D}У сервера только внутренние адреса ($private) — если панель нужна только внутри сети, выберите 2.${N}"
+        fi
+        n=$(choose "Как будете открывать панель?" "$def" \
+            "по домену из интернета: https://panel.example.com — сертификат панель получит сама" \
+            "только во внутренней сети: http://${addr:-10.0.0.2} — без домена и сертификата; снаружи — через VPN или проброс порта по SSH")
+        echo
+        if [[ $n == 1 ]]; then
+            ACCESS=domain
+            return 0
+        fi
+        ACCESS=internal
+    fi
+    while true; do
+        INTERNAL_ADDR=$(ask "Адрес панели во внутренней сети" "$addr")
+        if ! is_ipv4 "$INTERNAL_ADDR"; then
+            say "${Y}«$INTERNAL_ADDR» — не адрес IPv4. Пример: 10.10.10.104${N}"
+        elif ! grep -qxF "$INTERNAL_ADDR" <<<"$addrs"; then
+            a=$(grep . <<<"$addrs" | paste -sd, - | sed 's/,/, /g' || true)
+            say "${Y}Адреса $INTERNAL_ADDR нет у этого сервера.${N} Его адреса: ${a:-не нашёл ни одного}."
+        else
+            break
+        fi
+        [[ -z ${NODESERVICE_YES:-} ]] || die "Адрес панели не подошёл: «$INTERNAL_ADDR». Я ничего не менял."
+        addr=""
+    done
+    # Адрес VPN (Tailscale, WireGuard): после перезагрузки он появляется позже Docker, и панель может не встать.
+    a=$(local_ipv4s | awk -F'\t' -v ip="$INTERNAL_ADDR" '$2 == ip { print $1; exit }')
+    if [[ $a =~ ^(tailscale|wg|tun|zt|ts) ]]; then
+        say "${Y}!${N} Это адрес VPN ($a): после перезагрузки сервера он появляется позже Docker, и панель может не запуститься сама. Тогда выполните: nodeservice start. Надёжнее — адрес сетевой карты сервера."
+    fi
+    if ! is_private_ipv4 "$INTERNAL_ADDR"; then
+        yesno "Адрес $INTERNAL_ADDR — внешний: панель будет открыта из интернета без шифрования. Всё равно поставить?" n \
+            "Для внешнего адреса надёжнее установка по домену — с сертификатом." ||
+            die "Установка отменена — я ничего не менял."
+    fi
+}
 
 RESTORE_ENV="" RERUN=0 INSTALLED_VERSION=""
 if [[ -n "$RESTORE_FILE" ]]; then
@@ -711,23 +887,47 @@ if [[ -n "$RESTORE_FILE" ]]; then
     tar -C "$RESTORE_WORK" -xzf "$RESTORE_FILE" env meta 2>/dev/null || die "Это не бэкап панели (ожидается nodeservice-backup-*.tar.gz от nodeservice backup)."
     RESTORE_ENV="$RESTORE_WORK/env"
     [[ -f "$RESTORE_WORK/meta" ]] && { say "Копия:"; sed 's/^/     /' "$RESTORE_WORK/meta"; echo; }
-    # Домен по умолчанию — прежний: закладки и ссылки на панель продолжат открываться.
+    # Способ, домен или адрес по умолчанию — прежние: закладки и ссылки на панель продолжат открываться.
     old_domain=$(grep -E '^PANEL_DOMAIN=' "$RESTORE_ENV" | cut -d= -f2- || true)
     old_email=$(grep -E '^ACME_EMAIL=' "$RESTORE_ENV" | cut -d= -f2- || true)
-    PANEL_DOMAIN=$(ask "Домен панели (по умолчанию — прежний)" "${NODESERVICE_DOMAIN:-${old_domain:-}}")
-    [[ "$PANEL_DOMAIN" =~ ^[a-z0-9.-]+\.[a-z]{2,}$ ]] || die "Некорректный домен: «$PANEL_DOMAIN»."
-    [[ -n "$old_domain" && "$PANEL_DOMAIN" != "$old_domain" ]] && warn "Домен меняется: старые закладки и ссылки на панель перестанут открываться."
-    ACME_EMAIL=$(ask "Почта для сертификатов" "${NODESERVICE_EMAIL:-${old_email:-admin@${PANEL_DOMAIN#*.}}}")
+    # Панель стояла во внутренней сети: «домен» в копии — её внутренний адрес (копия из панели способ не
+    # хранит, консольная — хранит PANEL_PROXY).
+    old_bind="" access_def=1
+    if grep -qxE 'PANEL_PROXY=internal' "$RESTORE_ENV" || is_ipv4 "$old_domain"; then
+        access_def=2
+        old_bind=$(grep -E '^PANEL_LOCAL_BIND=' "$RESTORE_ENV" | cut -d= -f2- || true)
+        old_bind=${old_bind:-$old_domain}
+        old_domain=""
+    fi
+    ask_access "$access_def" "$old_bind"
+    if [[ $ACCESS == domain ]]; then
+        PANEL_DOMAIN=$(ask "Домен панели (по умолчанию — прежний)" "${NODESERVICE_DOMAIN:-${old_domain:-}}")
+        [[ "$PANEL_DOMAIN" =~ ^[a-z0-9.-]+\.[a-z]{2,}$ ]] || die "Некорректный домен: «$PANEL_DOMAIN»."
+        [[ -n "$old_domain" && "$PANEL_DOMAIN" != "$old_domain" ]] && warn "Домен меняется: старые закладки и ссылки на панель перестанут открываться."
+        ACME_EMAIL=$(ask "Почта для сертификатов" "${NODESERVICE_EMAIL:-${old_email:-admin@${PANEL_DOMAIN#*.}}}")
+    fi
 elif [[ -f "$ENV_FILE" ]]; then
     RERUN=1
     PANEL_DOMAIN=$(env_get PANEL_DOMAIN)
     ACME_EMAIL=$(env_get ACME_EMAIL)
     INSTALLED_VERSION=$(env_get NODESERVICE_VERSION)
+    if [[ $(env_get PANEL_PROXY) == internal ]]; then
+        ACCESS=internal
+        INTERNAL_ADDR=$(env_get PANEL_LOCAL_BIND)
+    fi
     say "Найдена установка: ${B}$PANEL_DOMAIN${N}${INSTALLED_VERSION:+, версия ${INSTALLED_VERSION#v}}."
 else
-    PANEL_DOMAIN=$(ask "Домен панели (A-запись должна указывать на этот сервер)" "${NODESERVICE_DOMAIN:-}")
-    [[ "$PANEL_DOMAIN" =~ ^[a-z0-9.-]+\.[a-z]{2,}$ ]] || die "Некорректный домен: «$PANEL_DOMAIN». Пример: panel.example.com"
-    ACME_EMAIL=$(ask "Почта для сертификатов" "${NODESERVICE_EMAIL:-admin@${PANEL_DOMAIN#*.}}")
+    ask_access 1
+    if [[ $ACCESS == domain ]]; then
+        PANEL_DOMAIN=$(ask "Домен панели (A-запись должна указывать на этот сервер)" "${NODESERVICE_DOMAIN:-}")
+        [[ "$PANEL_DOMAIN" =~ ^[a-z0-9.-]+\.[a-z]{2,}$ ]] || die "Некорректный домен: «$PANEL_DOMAIN». Пример: panel.example.com"
+        ACME_EMAIL=$(ask "Почта для сертификатов" "${NODESERVICE_EMAIL:-admin@${PANEL_DOMAIN#*.}}")
+    fi
+fi
+# Во внутренней сети домена нет: «домен» панели — её внутренний адрес, почта для сертификатов не нужна.
+if [[ $ACCESS == internal ]]; then
+    PANEL_DOMAIN=$INTERNAL_ADDR
+    ACME_EMAIL=""
 fi
 echo
 
@@ -806,7 +1006,9 @@ is_free "$K443" && F443=1
 # Веб-сервер держит 443 — или 80, когда 443 свободен.
 web_on() { [[ $K443 == "$1" ]] || { [[ $K80 == "$1" ]] && (( F443 )); }; }
 
-if (( F80 && F443 )); then
+if [[ $ACCESS == internal ]]; then
+    MODE=internal
+elif (( F80 && F443 )); then
     MODE=bundled
 elif web_on nginx; then
     MODE=nginx
@@ -824,6 +1026,27 @@ else
 fi
 # UDP 443 занят (Hysteria2 и т. п.), а TCP свободен: свой Caddy работает без HTTP/3.
 if [[ $MODE == bundled ]] && ! is_free "$K443U"; then H3_OFF=1; fi
+# Порт во внутренней сети: при повторном запуске — прежний (его держит сама панель), иначе 80 или свободный.
+if [[ $MODE == internal ]]; then
+    if (( RERUN )) && [[ $PREV_MODE == internal && -n $(env_get PANEL_LOCAL_PORT) ]]; then
+        INTERNAL_PORT=$(env_get PANEL_LOCAL_PORT)
+        h=$(port_holder tcp "$INTERNAL_PORT")
+        if ! is_free "$(holder_kind "$h")"; then
+            # Пока панель стояла, прежний порт заняла другая программа — панель переезжает на свободный.
+            PORT_MOVED="$INTERNAL_PORT|$(holder_label "$h")"
+            INTERNAL_PORT=$(internal_port) || die "Порт $INTERNAL_PORT занят ($(holder_label "$h")), а других свободных нет: 80 и 8080–8099. Я ничего не менял."
+        fi
+    elif [[ -n ${NODESERVICE_PORT:-} ]]; then
+        [[ $NODESERVICE_PORT =~ ^[0-9]+$ ]] && (( NODESERVICE_PORT >= 1 && NODESERVICE_PORT <= 65535 )) ||
+            die "Порт «$NODESERVICE_PORT» — не число от 1 до 65535. Я ничего не менял."
+        h=$(port_holder tcp "$NODESERVICE_PORT")
+        [[ $(holder_kind "$h") == free ]] || die "Порт $NODESERVICE_PORT занят: $(holder_label "$h"). Я ничего не менял."
+        INTERNAL_PORT=$NODESERVICE_PORT
+    else
+        INTERNAL_PORT=$(internal_port) || die "Нет свободного порта для панели: заняты 80 и 8080–8099. Я ничего не менял."
+    fi
+    PANEL_URL=$(internal_url "$INTERNAL_ADDR" "$INTERNAL_PORT")
+fi
 
 # --- Сводка на экран ---
 
@@ -833,7 +1056,22 @@ if (( NEED_SWAP )); then srv_mark=warn; mem_text+=" — мало, добавлю
 row "$srv_mark" "Сервер" "${OS_NAME:-Linux} · $(plural "$CORES" ядро ядра ядер) · $mem_text · свободно ${DISK_GB:-?} ГБ"
 if [[ -n $DOCKER_VER ]]; then row ok "Docker" "есть, $DOCKER_VER"; else row info "Docker" "нет — поставлю"; fi
 DNS_OK=0
-if [[ -n $PUBLIC_IP && " $RESOLVED " == *" $PUBLIC_IP "* ]]; then
+if [[ $MODE == internal ]]; then
+    if is_private_ipv4 "$INTERNAL_ADDR"; then
+        row ok "Адрес" "$PANEL_URL — только внутренняя сеть, из интернета не открыть"
+    else
+        row warn "Адрес" "$PANEL_URL — внешний адрес, без шифрования"
+    fi
+    if [[ -n $PORT_MOVED ]]; then
+        row busy "Порт ${PORT_MOVED%%|*}" "занят: ${PORT_MOVED#*|} — панель переедет на $INTERNAL_PORT"
+        row ok "Порт $INTERNAL_PORT" "свободен"
+    elif [[ $(holder_kind "$(port_holder tcp "$INTERNAL_PORT")") == own ]]; then
+        row ok "Порт $INTERNAL_PORT" "занят самой панелью — так и должно быть"
+    else
+        (( INTERNAL_PORT == 80 )) || [[ $(holder_kind "$H80") == free ]] || row busy "Порт 80" "занят: $(holder_label "$H80")"
+        row ok "Порт $INTERNAL_PORT" "свободен"
+    fi
+elif [[ -n $PUBLIC_IP && " $RESOLVED " == *" $PUBLIC_IP "* ]]; then
     DNS_OK=1
     row ok "Домен" "$PANEL_DOMAIN → $PUBLIC_IP, это этот сервер"
 elif [[ -z $RESOLVED ]]; then
@@ -850,16 +1088,18 @@ port_row() {
         *) row busy "$key" "занят: $(holder_label "$h")" ;;
     esac
 }
-port_row "$H80" "Порт 80"
-port_row "$H443" "Порт 443"
-port_row "$H443U" "443 UDP"
-if [[ -n $NGINX_VER ]]; then
+if [[ $MODE != internal ]]; then
+    port_row "$H80" "Порт 80"
+    port_row "$H443" "Порт 443"
+    port_row "$H443U" "443 UDP"
+fi
+if [[ $MODE != internal && -n $NGINX_VER ]]; then
     row info "nginx" "$NGINX_VER · $(systemctl is-active --quiet nginx 2>/dev/null && echo работает || echo остановлен) · $(sites_text "$NGINX_SITES")"
 fi
-if [[ -n $CADDY_VER ]]; then
+if [[ $MODE != internal && -n $CADDY_VER ]]; then
     row info "Caddy" "$CADDY_VER · $(systemctl is-active --quiet caddy 2>/dev/null && echo работает || echo остановлен) · $(sites_text "$CADDY_SITES")"
 fi
-if [[ -n $DC_NAME ]]; then
+if [[ $MODE != internal && -n $DC_NAME ]]; then
     row info "Caddy" "в контейнере $DC_NAME · $(sites_text "$DC_SITES")"
 fi
 case $MODE in
@@ -893,6 +1133,15 @@ case $MODE in
             say "Порты свободны — панель поставит свой веб-сервер и сама получит сертификат. Осталось только подтвердить начало."
         fi
         (( H3_OFF )) && say "UDP 443 занят — панель будет работать без HTTP/3, на скорость это почти не влияет."
+        ;;
+    internal)
+        if (( RERUN )) && [[ -n $PORT_MOVED ]]; then
+            say "Это повторный запуск: обновлю код и перезапущу панель. Данные и настройки сохраню. Прежний порт ${PORT_MOVED%%|*} занят — новый адрес панели: ${B}$PANEL_URL${N}."
+        elif (( RERUN )); then
+            say "Это повторный запуск: обновлю код и перезапущу панель. Данные и настройки сохраню, адрес прежний: $PANEL_URL."
+        else
+            say "Панель будет работать только во внутренней сети: ${B}$PANEL_URL${N}. Домен и сертификат не нужны. Уведомления в Telegram, Remnawave и проверки работают как обычно — панель сама выходит в интернет."
+        fi
         ;;
     nginx)
         if ! command -v nginx >/dev/null; then stop_install "Порты держит nginx в необычной установке — его настройки не найти. Поставьте панель на отдельный сервер."; fi
@@ -1029,7 +1278,7 @@ case $MODE in
 esac
 URL_SUFFIX=""
 (( PANEL_HTTPS_PORT != 443 )) && URL_SUFFIX=":$PANEL_HTTPS_PORT"
-PANEL_URL="https://$PANEL_DOMAIN$URL_SUFFIX"
+[[ $MODE == internal ]] || PANEL_URL="https://$PANEL_DOMAIN$URL_SUFFIX"
 
 PLAN=()
 STEPS=()
@@ -1048,6 +1297,10 @@ case $MODE in
         STEPS+=("Сборка и запуск панели|step_build")
         [[ $K443 == own ]] || PLAN+=("Получу сертификат для $PANEL_DOMAIN, продление — само")
         STEPS+=("Сертификат|step_cert_wait")
+        ;;
+    internal)
+        PLAN+=("Соберу и запущу панель (3–8 минут) — слушает только адрес $INTERNAL_ADDR, порт $INTERNAL_PORT")
+        STEPS+=("Сборка и запуск панели|step_build")
         ;;
     port)
         PLAN+=("Соберу и запущу панель (3–8 минут) с её веб-сервером на портах 80 и $PANEL_HTTPS_PORT — VPN не трогаю")
@@ -1088,7 +1341,7 @@ case $MODE in
         ;;
 esac
 PLAN+=("Проверю, что $PANEL_URL открывает панель")
-STEPS+=("Проверка https|step_verify")
+if [[ $MODE == internal ]]; then STEPS+=("Проверка адреса|step_verify"); else STEPS+=("Проверка https|step_verify"); fi
 if [[ -n $RESTORE_FILE ]]; then
     PLAN+=("Восстановлю данные из копии")
     STEPS+=("Восстановление данных|step_restore")
@@ -1235,6 +1488,8 @@ step_code() {
 envval() { grep -E "^$2=" "$1" 2>/dev/null | head -1 | cut -d= -f2- || true; }
 
 write_env() {
+    # Во внутренней сети почты для сертификатов нет — и строки в .env тоже.
+    local email_line=${ACME_EMAIL:+ACME_EMAIL=$ACME_EMAIL}
     if [[ -n "$RESTORE_ENV" ]]; then
         # Секреты — из бэкапа (иначе TOTP, доступы к серверам и ключ панели не расшифровать),
         # домен/e-mail — что выбрали выше, версия кода — текущая.
@@ -1243,7 +1498,7 @@ write_env() {
 # Восстановлено install.sh --restore $(date -u +%Y-%m-%dT%H:%MZ) из $(basename "$RESTORE_FILE"). Не коммитить.
 # Бэкапь вместе с БД — без ENCRYPTION_KEY зашифрованные секреты не восстановить.
 PANEL_DOMAIN=${PANEL_DOMAIN}
-ACME_EMAIL=${ACME_EMAIL}
+${email_line}
 NODESERVICE_VERSION=$(git -C "$APP_DIR" rev-parse --short HEAD)
 POSTGRES_PASSWORD=$(envval "$RESTORE_ENV" POSTGRES_PASSWORD)
 APP_SECRET=$(envval "$RESTORE_ENV" APP_SECRET)
@@ -1266,7 +1521,7 @@ ENV
 # Сгенерировано install.sh $(date -u +%Y-%m-%dT%H:%MZ). Не коммитить. Бэкапь вместе с БД —
 # без ENCRYPTION_KEY зашифрованные секреты (TOTP, доступы к серверам) не восстановить.
 PANEL_DOMAIN=${PANEL_DOMAIN}
-ACME_EMAIL=${ACME_EMAIL}
+${email_line}
 NODESERVICE_VERSION=$(git -C "$APP_DIR" rev-parse --short HEAD)
 POSTGRES_PASSWORD=$(openssl rand -hex 24)
 APP_SECRET=$(openssl rand -hex 32)
@@ -1284,11 +1539,18 @@ ENV
 write_proxy_env() {
     local k
     for k in PANEL_PROXY PANEL_LOCAL_PORT PANEL_LOCAL_BIND PANEL_PROXY_NETWORK PANEL_PROXY_FILE PANEL_PROXY_LINK \
-        PANEL_PROXY_CADDYFILE PANEL_PROXY_CONTAINER PANEL_PROXY_INNER PANEL_HTTPS_PORT PANEL_URL_PORT PANEL_PROTOCOLS PANEL_H3_PORT; do
+        PANEL_PROXY_CADDYFILE PANEL_PROXY_CONTAINER PANEL_PROXY_INNER PANEL_HTTPS_PORT PANEL_URL_PORT PANEL_PROTOCOLS PANEL_H3_PORT \
+        PANEL_PUBLIC_URL; do
         env_unset "$k"
     done
     env_set PANEL_PROXY "$MODE"
     case $MODE in
+        internal)
+            # compose.internal.yaml: api на внутреннем адресе, адрес панели — http.
+            env_set PANEL_LOCAL_BIND "$INTERNAL_ADDR"
+            env_set PANEL_LOCAL_PORT "$INTERNAL_PORT"
+            env_set PANEL_PUBLIC_URL "$PANEL_URL"
+            ;;
         bundled)
             if (( H3_OFF )); then env_set PANEL_PROTOCOLS "h1 h2"; env_set PANEL_H3_PORT 0; fi
             ;;
@@ -1322,6 +1584,10 @@ write_proxy_env() {
 
 open_firewall() {
     (( UFW_ACTIVE )) || return 0
+    if [[ $MODE == internal ]]; then
+        ufw allow proto tcp to "$INTERNAL_ADDR" port "$INTERNAL_PORT" comment 'nodeservice internal' >>"$LOG" 2>&1 || true
+        return 0
+    fi
     local https=$PANEL_HTTPS_PORT
     {
         ufw allow 80/tcp comment 'nodeservice http'
@@ -1365,6 +1631,16 @@ step_build() {
     if [[ $MODE != bundled && $MODE != port ]]; then docker rm -f nodeservice-caddy-1 >>"$LOG" 2>&1 || true; fi
     out=$("${COMPOSE[@]}" up -d --remove-orphans 2>&1) || true
     printf '%s\n' "$out" >>"$LOG"
+    if [[ $MODE == internal ]] && grep -qiE 'cannot assign requested address' <<<"$out"; then
+        STEP_SHORT="нет адреса"
+        STEP_FAIL="Адреса $INTERNAL_ADDR нет у этого сервера — он сменился? Поправьте PANEL_LOCAL_BIND и PANEL_PUBLIC_URL в $ENV_FILE и запустите установку снова."
+        return 1
+    fi
+    if [[ $MODE == internal ]] && grep -qiE 'address already in use|port is already allocated' <<<"$out"; then
+        STEP_SHORT="порт занят"
+        STEP_FAIL="Панель не запустилась: порт $INTERNAL_PORT на $INTERNAL_ADDR занят другой программой. Освободите его или запустите установку снова — она подберёт свободный порт."
+        return 1
+    fi
     if ! wait_api_healthy; then
         STEP_SHORT="не запустилась"
         STEP_FAIL="Панель собралась, но не запустилась (статус: $(docker inspect -f '{{.State.Health.Status}}' nodeservice-api-1 2>/dev/null || echo нет))."
@@ -1553,6 +1829,18 @@ step_cert_wait() {
 }
 
 step_verify() {
+    if [[ $MODE == internal ]]; then
+        if verify_internal "$PANEL_URL" "${NODESERVICE_VERIFY_TRIES:-6}"; then
+            STEP_RESULT="открывается"
+            return 0
+        fi
+        case $VERIFY_STATE in
+            refused) STEP_SHORT="никто не отвечает"; STEP_FAIL="По адресу $PANEL_URL никто не отвечает — панель не запустилась." ;;
+            http) STEP_SHORT="отвечает не панель"; STEP_FAIL="По адресу $PANEL_URL отвечает не панель ($VERIFY_DETAIL)." ;;
+            *) STEP_SHORT="не открывается"; STEP_FAIL="$PANEL_URL не открывается: ${VERIFY_DETAIL:-нет ответа}." ;;
+        esac
+        return 1
+    fi
     if verify_panel "$PANEL_DOMAIN" "$PANEL_HTTPS_PORT" "${NODESERVICE_VERIFY_TRIES:-6}"; then
         STEP_RESULT="открывается"
         [[ -n $CERT_END ]] || CERT_END=$(tls_enddate "$PANEL_DOMAIN" "$PANEL_HTTPS_PORT" || true)
@@ -1635,6 +1923,11 @@ if (( CERT_PENDING )); then
         say "Сертификат выпускается дольше обычного. Обычно это занимает до пары минут; проверить позже: nodeservice status." 2
     fi
     say "Запускать установку заново не нужно." 2
+elif [[ $MODE == internal ]]; then
+    say "${G}✓ Готово.${N} Панель открывается во внутренней сети: ${A}$PANEL_URL${N}"
+    say "Снаружи — через VPN в эту сеть или проброс порта по SSH, например:" 2
+    say "${B}ssh -L 8080:$INTERNAL_ADDR:$INTERNAL_PORT root@сервер-с-доступом-в-сеть${N}" 4
+    say "и откройте http://localhost:8080 (в Termius — то же пробросом порта)." 2
 else
     say "${G}✓ Готово.${N} Панель открывается: ${A}$PANEL_URL${N}"
     [[ -n $CERT_END ]] && say "Сертификат до $(ru_date "$CERT_END"), продление — само." 2
@@ -1642,7 +1935,8 @@ fi
 echo
 if [[ -n $RESTORE_FILE ]]; then
     say "Данные восстановлены — вход прежним паролем и кодом из приложения." 2
-    say "Если домен переехал, переключите A-запись $PANEL_DOMAIN на этот сервер — сертификат выпустится сам." 2
+    [[ $MODE == internal ]] ||
+        say "Если домен переехал, переключите A-запись $PANEL_DOMAIN на этот сервер — сертификат выпустится сам." 2
 elif [[ -n $TOKEN ]]; then
     say "Токен первого запуска (одноразовый):" 2
     say "${B}$TOKEN${N}" 2

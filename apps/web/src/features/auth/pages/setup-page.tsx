@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { apiErrorMessage, isApiError } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 import { toast } from '@/lib/notify';
 import { AuthHeading, AuthShell } from '../components/auth-shell';
 import { CtaButton, GhostButton } from '../components/cta-button';
@@ -206,13 +207,12 @@ function Step1({ initial, onDone }: Step1Props) {
 function useCopy() {
   const [copied, setCopied] = useState(false);
   const copy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1400);
-    } catch {
+    if (!(await copyText(text))) {
       toast.error('Не удалось скопировать. Выделите текст и скопируйте вручную.');
+      return;
     }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1400);
   };
   return { copied, copy };
 }
