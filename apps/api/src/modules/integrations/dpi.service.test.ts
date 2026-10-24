@@ -201,3 +201,60 @@ describe('DPI Checker: расписание не выключается из-з�
     });
   });
 });
+
+describe('DPI Checker: список проверок — свежие первыми', () => {
+  const at = (n: number) => new Date(Date.UTC(2026, 9, 1) + n * 60_000).toISOString();
+  function fixture(total: number, oldestFirst: boolean) {
+    const all = Array.from({ length: total }, (_, n) => ({ id: n + 1, status: 'failed', created_at: at(n) }));
+    if (!oldestFirst) all.reverse();
+    const requests: string[] = [];
+    const service = new DpiService(
+      {} as never,
+      {
+        providerRequest: async (_provider: string, path: string) => {
+          if (path.startsWith('/pops')) return [];
+          requests.push(path);
+          const query = new URL(path, 'http://dpi.test').searchParams;
+          const offset = Number(query.get('offset'));
+          return { checks: all.slice(offset, offset + Number(query.get('limit'))) };
+        },
+      } as never,
+      {} as never,
+    );
+    const internals = service as unknown as {
+      read: () => Promise<null>;
+      load: (session: unknown) => Promise<{ checks: { id: string }[] }>;
+    };
+    internals.read = async () => null;
+    const load = () => internals.load({ identity: 'id', credentials: {} });
+    return { all, requests, load };
+  }
+  const page = (offset: number) => `/checks?kind=check&limit=100&offset=${offset}`;
+
+  it('новые первыми — хватает одной страницы', async () => {
+    const f = fixture(250, false);
+    const { checks } = await f.load();
+    expect(checks).toHaveLength(100);
+    expect(checks.slice(0, 3).map((c) => c.id)).toEqual(['250', '249', '248']);
+    expect(f.requests).toEqual([page(0)]);
+  });
+
+  it('от старых к новым — дочитывает до конца, свежие сверху; в следующий раз — с запомненного места', async () => {
+    const f = fixture(250, true);
+    const first = await f.load();
+    expect(first.checks).toHaveLength(100);
+    expect([first.checks[0]?.id, first.checks.at(-1)?.id]).toEqual(['250', '151']);
+    f.requests.length = 0;
+    f.all.push({ id: 251, status: 'failed', created_at: at(250) });
+    const second = await f.load();
+    expect(second.checks[0]?.id).toBe('251');
+    expect(f.requests).toEqual([page(0), page(100), page(200)]);
+  });
+
+  it('меньше сотни — одна страница, порядок по времени запуска', async () => {
+    const f = fixture(3, true);
+    const { checks } = await f.load();
+    expect(checks.map((c) => c.id)).toEqual(['3', '2', '1']);
+    expect(f.requests).toEqual([page(0)]);
+  });
+});

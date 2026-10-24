@@ -18,6 +18,9 @@ export function list(v: unknown): Record<string, unknown>[] {
     if (Array.isArray(o[key])) return (o[key] as unknown[]).map(obj);
   return [];
 }
+/** Проверок на странице списка — больше DPI Checker не отдаёт. */
+const PAGE = 100;
+const createdMs = (c: Record<string, unknown>) => Date.parse(String(c.created_at ?? c.createdAt ?? '')) || 0;
 const number = (v: unknown) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
 export type DpiSchedule = {
   enabled: boolean;
@@ -124,6 +127,8 @@ export class DpiService {
   private cache: { identity: string; at: number; data: Awaited<ReturnType<DpiService['load']>> } | null =
     null;
   private balanceAt = 0;
+  /** Где в списке DPI Checker начинается последняя неполная страница — если он идёт от старых к новым. */
+  private checksTail = new Map<string, number>();
   private extras: {
     at: number;
     prices: { ipPop: number; ipResource: number; vpnPop: number; vpnResource: number } | null;
@@ -204,13 +209,39 @@ export class DpiService {
   private request(session: IntegrationSession, path: string, method = 'GET', body?: unknown, key?: string) {
     return this.integrations.providerRequest('dpi', path, method, body, key, session);
   }
+  /**
+   * Последние 100 проверок, свежие первыми. Порядок списка DPI Checker не описывает: если он идёт от старых к новым,
+   * свежие лежат в конце — дочитываем до конца (с запомненного места, не больше 20 страниц за раз), иначе после сотой
+   * проверки новые переставали бы попадать в панель.
+   */
+  private async recentChecks(session: IntegrationSession) {
+    const page = async (offset: number) =>
+      list(await this.request(session, `/checks?kind=check&limit=${PAGE}&offset=${offset}`));
+    const newest = (items: Record<string, unknown>[]) => items.sort((a, b) => createdMs(b) - createdMs(a));
+    const first = await page(0);
+    if (first.length < PAGE || createdMs(first[0] ?? {}) >= createdMs(first[PAGE - 1] ?? {}))
+      return newest(first);
+    let offset = this.checksTail.get(session.identity) ?? PAGE;
+    let last = offset === PAGE ? first : await page(offset - PAGE);
+    // Проверок стало меньше, чем помнили, — идём с начала.
+    if (last.length < PAGE) [offset, last] = [PAGE, first];
+    for (let n = 0; n < 20; n++) {
+      const next = await page(offset);
+      if (next.length < PAGE) {
+        last = [...last, ...next];
+        break;
+      }
+      [last, offset] = [next, offset + PAGE];
+    }
+    this.checksTail.set(session.identity, offset);
+    return newest(last.slice(-PAGE));
+  }
   private async load(session: IntegrationSession) {
-    const [checks, pops] = await Promise.all([
-      this.request(session, '/checks?kind=check&limit=100&offset=0'),
+    const [items, pops] = await Promise.all([
+      this.recentChecks(session),
       this.request(session, '/pops?location=russia&healthy=true'),
     ]);
     const refs = (await this.read(`dpi.node-checks.${session.identity}`)) ?? {};
-    const items = list(checks);
     // Готовые проверки без точек — подробности один раз (кэш); идущие — каждый раз: в них ход проверки.
     let running = 0;
     for (let i = 0; i < items.length; i += 5)

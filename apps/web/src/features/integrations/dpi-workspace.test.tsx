@@ -12,6 +12,7 @@ import { DpiWorkspace } from './dpi-workspace';
 const US = 'a1111111-1111-4111-8111-111111111111';
 const TR = 'b2222222-2222-4222-8222-222222222222';
 const DE = 'c3333333-3333-4333-8333-333333333333';
+const PL = 'd4444444-4444-4444-8444-444444444444';
 const point = (location: string, state: 'ok' | 'fail' | 'unknown', reason: string | null, extra = {}) => ({
   location,
   popId: null,
@@ -53,6 +54,8 @@ const checks = [
     ],
   }),
   check('9601', [TR, 'Турция - 1'], {
+    createdAt: new Date(Date.now() - 26 * 3_600_000).toISOString(),
+    completedAt: new Date(Date.now() - 26 * 3_600_000 + 60_000).toISOString(),
     total: 1,
     success: 1,
     results: [point('Омск МТС', 'ok', 'Сертификат другого имени — для Reality это норма', { tls: '5 из 5' })],
@@ -139,6 +142,7 @@ beforeEach(() => {
         stats: null,
         cert: null,
         nodes: [
+          [PL, 'Польша - 1', 'PL'],
           [DE, 'Германия - 1', 'DE'],
           [TR, 'Турция - 1', 'TR'],
           [US, 'США - 1', 'US'],
@@ -161,16 +165,18 @@ beforeEach(() => {
 });
 
 describe('DPI Checker (вариант A): итог по нодам', () => {
-  it('баланс с «хватит на», ноды с итогом: недоступные наверху, точка без связи не в счёт', async () => {
+  it('баланс с «хватит на», ноды с итогом: свежая проверка наверху, точка без связи не в счёт', async () => {
     renderPage(Page, '/integrations/dpi');
     const nodes = await screen.findByRole('region', { name: 'Ноды' });
     expect(screen.getByText('≈ 146 проверок IP')).toBeVisible();
     const rows = within(nodes).getAllByRole('button', { name: /^Проверить / });
-    // Недоступная «США - 1» — первой, идущая «Германия - 1» — следом, доступная «Турция - 1» — после них.
+    // Только что запущенная «Германия - 1» — первой, «США - 1» (час назад) — следом, «Турция - 1» (вчера) — после них;
+    // непроверенная «Польша - 1» — внизу, хотя в Remnawave она первая.
     expect(rows.map((b) => b.getAttribute('aria-label'))).toEqual([
-      'Проверить США - 1',
       'Проверить Германия - 1',
+      'Проверить США - 1',
       'Проверить Турция - 1',
+      'Проверить Польша - 1',
     ]);
     expect(nodes).toHaveTextContent('0 из 2 открывается · без связи 1');
     expect(nodes).toHaveTextContent('Недоступна');
@@ -218,10 +224,10 @@ describe('DPI Checker (вариант A): итог по нодам', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Расписание проверок' });
     await user.click(within(dialog).getByRole('switch', { name: 'Проверять по расписанию' }));
     await user.click(within(dialog).getByRole('button', { name: 'Выбрать все' }));
-    expect(dialog).toHaveTextContent('За запуск ≈ 0,12 $, за сутки ≈ 2,88 $.');
+    expect(dialog).toHaveTextContent('За запуск ≈ 0,16 $, за сутки ≈ 3,84 $.');
     await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
     await waitFor(() => expect(schedule).toMatchObject({ enabled: true, minutes: 60, pops: [] }));
-    expect((schedule as { nodes: string[] }).nodes).toHaveLength(3);
+    expect((schedule as { nodes: string[] }).nodes).toHaveLength(4);
     await user.click(screen.getByRole('button', { name: 'Проверить адрес' }));
     const rkn = await screen.findByRole('dialog', { name: 'Реестр РКН' });
     await user.click(within(rkn).getByRole('combobox', { name: 'Нода' }));

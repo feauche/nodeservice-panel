@@ -1010,15 +1010,15 @@ export function DpiWorkspace({
     const c = lastByNode.get(n.uuid);
     return c && verdict(c).tone === 'crit' && c.status === 'completed';
   });
-  // Проверенные — наверху: сначала недоступные, потом частично, потом доступные; непроверенные — как в Remnawave.
-  const rank = (n: RemnawaveNode) => {
+  // Наверху — ноды с самой свежей проверкой; непроверенные — внизу, как в Remnawave.
+  const lastAt = (n: RemnawaveNode) => {
     const c = lastByNode.get(n.uuid);
-    return c ? ({ crit: 0, warn: 1, info: 2, ok: 3, muted: 4 } as const)[verdict(c).tone] : 5;
+    return c ? Date.parse(c.createdAt) || 0 : -1;
   };
   const visibleNodes = nodes
     .filter((n) => n.name.toLowerCase().includes(search.trim().toLowerCase()))
     .map((n, i) => ({ n, i }))
-    .sort((a, b) => rank(a.n) - rank(b.n) || a.i - b.i)
+    .sort((a, b) => lastAt(b.n) - lastAt(a.n) || a.i - b.i)
     .map(({ n }) => n);
   return (
     <div className="flex flex-col gap-3">
