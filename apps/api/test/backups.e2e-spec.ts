@@ -47,6 +47,7 @@ import {
   BACKUP_TOOLS,
   type BackupTools,
   checkRestoredDatabase,
+  cryptoFromEnv,
   PgBackupTools,
   swapDatabases,
 } from '../src/modules/backups/backup-tools.js';
@@ -69,13 +70,16 @@ const asRoot = process.getuid?.() === 0;
 /** Вместо pg_dump/pg_restore: «дамп» — файл с подписью PGDMP, восстановление — только запоминаем. */
 class FakeTools implements BackupTools {
   restored: string[] = [];
+  /** Каким ключом проверялась база при каждой проверке: не задан — ключом панели, null — без шифротекстов. */
+  verifiedWith: Array<CryptoService | null | undefined> = [];
   async check() {
     return { ok: true, reason: null };
   }
   async dump(out: string) {
     writeFileSync(out, 'PGDMP fake dump TABLE users');
   }
-  async verify(dump: string) {
+  async verify(dump: string, crypto?: CryptoService | null) {
+    this.verifiedWith.push(crypto);
     return existsSync(dump);
   }
   async restore(dump: string) {
@@ -608,6 +612,8 @@ describe('резервные копии e2e', () => {
     const same = await uploadArchive({ ...dump, meta: `format=2\npanel=0.1.0\nkeys_sha256=${keyPrint()}\n` });
     expect(await inspect(same)).toMatchObject({ compatible: true, sameKeys: true, problem: null });
     expect((await inspect(same)).warning ?? null).toBeNull();
+    // Своя копия — база проверяется ключом этой панели.
+    expect(tools.verifiedWith.at(-1)).toBeUndefined();
 
     const other = await uploadArchive({
       ...dump,
@@ -616,16 +622,40 @@ describe('резервные копии e2e', () => {
     const otherInfo = await inspect(other);
     expect(otherInfo).toMatchObject({ compatible: false, sameKeys: false });
     expect(otherInfo.problem).toContain('самих ключей в ней нет');
+    // Ключей той установки нет — шифротексты проверить нечем, проверяется только сама база.
+    expect(tools.verifiedWith.at(-1)).toBeNull();
 
+    const foreignKey = '12'.repeat(32);
     const foreign = await uploadArchive({
       ...dump,
       meta: 'format=1\n',
-      env: `ENCRYPTION_KEY=${'12'.repeat(32)}\nAPP_SECRET=${'34'.repeat(32)}\nPASSWORD_PEPPER=${'56'.repeat(32)}\n`,
+      env: `ENCRYPTION_KEY=${foreignKey}\nAPP_SECRET=${'34'.repeat(32)}\nPASSWORD_PEPPER=${'56'.repeat(32)}\n`,
     });
     const foreignInfo = await inspect(foreign);
     expect(foreignInfo).toMatchObject({ compatible: false, sameKeys: false, contents: { env: true } });
     expect(foreignInfo.problem).toContain('Копия от другой установки');
+    // Готовая команда с именем этой копии — переписывать ничего не нужно.
+    expect(foreignInfo.problem).toContain(`nodeservice restore ${foreign}`);
+    // База копии проверяется ключом из самой копии: ключом этой панели секрет кода входа той установки
+    // не расшифровать, и целая копия выглядела бы повреждённой.
+    const usedKey = tools.verifiedWith.at(-1);
+    const values: Record<string, unknown> = {
+      ENCRYPTION_KEY: foreignKey,
+      ENCRYPTION_KEY_VERSION: 1,
+      APP_SECRET: 'x'.repeat(64),
+    };
+    const thatInstall = new CryptoService({ get: (k: string) => values[k] } as unknown as ConfigService);
+    expect(usedKey?.decrypt(thatInstall.encrypt('секрет кода'))).toBe('секрет кода');
     await restore(foreign).expect(409);
+
+    // Та же копия, но база в ней и правда не разворачивается — тогда «повреждена».
+    const orig = tools.verify;
+    tools.verify = async () => false;
+    try {
+      expect((await inspect(foreign)).problem).toBe('База в архиве не читается — копия повреждена.');
+    } finally {
+      tools.verify = orig;
+    }
     for (const n of [same, other, foreign])
       await agent.delete(`/api/backups/${n}`).set(CSRF_HEADER, csrf).expect(204);
   });
@@ -672,6 +702,13 @@ describe('резервные копии e2e', () => {
         get: (k: string) => (k === 'ENCRYPTION_KEY' ? 'ab'.repeat(32) : config.get(k)),
       } as unknown as ConfigService);
       expect(await checkRestoredDatabase(client, foreign)).toBe(false);
+      // Ключ, взятый из .env копии (так проверяется копия от другой установки), читает её базу.
+      const fromCopy = cryptoFromEnv({
+        ENCRYPTION_KEY: String(config.get('ENCRYPTION_KEY')),
+        ENCRYPTION_KEY_VERSION: String(config.get('ENCRYPTION_KEY_VERSION')),
+      });
+      expect(fromCopy).not.toBeNull();
+      expect(await checkRestoredDatabase(client, fromCopy as CryptoService)).toBe(true);
     } finally {
       await client.end();
     }

@@ -4,9 +4,11 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { Logger } from '@nestjs/common';
+import type { ConfigService } from '@nestjs/config';
 import pg from 'pg';
 
 import { CryptoService } from '../../common/crypto/crypto.service.js';
+import type { Env } from '../../config/env.schema.js';
 import { BackupToolError } from './backup-errors.js';
 
 /**
@@ -17,8 +19,11 @@ export interface BackupTools {
   /** Можно ли делать копии: в образе есть pg_dump нужной версии. */
   check(): Promise<{ ok: boolean; reason: string | null }>;
   dump(out: string): Promise<void>;
-  /** Дамп полностью разворачивается во временную БД; обязательные данные и шифротексты читаются. */
-  verify(dump: string): Promise<boolean>;
+  /**
+   * Дамп полностью разворачивается во временную БД; обязательные данные и шифротексты читаются. Шифротексты
+   * читаются ключом crypto; не задан — ключом этой панели, null — шифротексты не проверяются.
+   */
+  verify(dump: string, crypto?: CryptoService | null): Promise<boolean>;
   /**
    * Развернуть дамп вместо текущей базы: во временную базу, потом подмена имён; прежняя база остаётся
    * как nodeservice_pre_restore_<время>. Ошибка на любом шаге — текущая база не тронута, временная удалена.
@@ -250,6 +255,29 @@ export async function checkRestoredDatabase(client: pg.ClientBase, crypto?: Cryp
   return true;
 }
 
+/**
+ * Ключ шифрования из .env копии — им проверяется база копии от другой установки: ключом этой панели секрет
+ * кода входа той установки не расшифровать, и целая копия выглядела бы повреждённой. Ключа нет или он
+ * негодный — null.
+ */
+export function cryptoFromEnv(env: Record<string, string | undefined>): CryptoService | null {
+  const key = env.ENCRYPTION_KEY ?? '';
+  // Версии ключа в старых .env нет — тогда она 1, как и в самой панели.
+  const version = Number(env.ENCRYPTION_KEY_VERSION || 1);
+  if (!/^[0-9a-f]{64}$/i.test(key) || !Number.isInteger(version) || version < 1) return null;
+  const values: Record<string, unknown> = {
+    ENCRYPTION_KEY: key,
+    ENCRYPTION_KEY_VERSION: version,
+    APP_SECRET: env.APP_SECRET ?? '',
+    PASSWORD_PEPPER: env.PASSWORD_PEPPER || undefined,
+  };
+  try {
+    return new CryptoService({ get: (k: string) => values[k] } as unknown as ConfigService<Env, true>);
+  } catch {
+    return null;
+  }
+}
+
 export class PgBackupTools implements BackupTools {
   private readonly log = new Logger('BackupTools');
 
@@ -282,7 +310,7 @@ export class PgBackupTools implements BackupTools {
     if (r.code !== 0) throw new BackupToolError('dump', failureText(r));
   }
 
-  async verify(dump: string): Promise<boolean> {
+  async verify(dump: string, crypto: CryptoService | null | undefined = this.crypto): Promise<boolean> {
     const url = new URL(this.databaseUrl);
     const dbName = decodeURIComponent(url.pathname.slice(1)) || 'nodeservice';
     const suffix = `${Date.now()}_${process.pid}`;
@@ -308,7 +336,7 @@ export class PgBackupTools implements BackupTools {
         return false;
       }
       const valid = await withAdmin(target.toString(), (client) =>
-        checkRestoredDatabase(client, this.crypto),
+        checkRestoredDatabase(client, crypto ?? undefined),
       );
       if (!valid)
         this.log.warn(

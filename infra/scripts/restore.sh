@@ -11,6 +11,7 @@
 #   3. api перезапускается с новым .env, миграции применяет сам при старте; сессии сбрасываются.
 #
 #   nodeservice restore <файл> [--yes]      --yes — без вопросов (для install.sh --restore)
+#   <файл> — путь или имя копии из списка панели (ищется в папке копий $APP_DIR/backups).
 set -euo pipefail
 APP_DIR="${NODESERVICE_DIR:-/opt/nodeservice}"
 ENV_FILE="$APP_DIR/infra/.env"
@@ -33,6 +34,10 @@ while [[ $# -gt 0 ]]; do
         *) f="$1"; shift ;;
     esac
 done
+# Имя копии без пути — как его называет панель: ищем в папке копий.
+if [[ -n "$f" && ! -e "$f" && "$f" != */* && -f "$APP_DIR/backups/$f" ]]; then
+    f="$APP_DIR/backups/$f"
+fi
 [[ -n "$f" && -f "$f" ]] || die "Укажи файл бэкапа: nodeservice restore $APP_DIR/backups/nodeservice-backup-<время>.tar.gz"
 f=$(readlink -f "$f")
 [[ -f "$ENV_FILE" ]] || die "Панель не установлена в $APP_DIR — на чистом сервере: install.sh --restore $f"

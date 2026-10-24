@@ -61,7 +61,7 @@ import { TelegramService } from '../notifications/telegram/telegram.service.js';
 import { decryptFile, encryptFile, isEncrypted } from './backup-crypto.js';
 import { BackupError, BackupToolError, explainBackupError, rawErrorText } from './backup-errors.js';
 import { BackupSettingsStore, type StoredBackupSettings } from './backup-settings.store.js';
-import { BACKUP_TOOLS, type BackupTools, failureText, run } from './backup-tools.js';
+import { BACKUP_TOOLS, type BackupTools, cryptoFromEnv, failureText, run } from './backup-tools.js';
 import {
   backupName,
   envValues,
@@ -1007,8 +1007,10 @@ export class BackupsService implements OnModuleInit {
         () => false,
       );
       let sameKeys: boolean | null = null;
+      let copyEnv: Record<string, string> | null = null;
       if (hasEnv) {
         const env = envValues(await readFile(join(work, 'env'), 'utf8'));
+        copyEnv = env;
         // Версия ключа по умолчанию — 1: в старых .env её нет.
         const norm = (k: string, v: string | undefined) =>
           k === 'ENCRYPTION_KEY_VERSION' ? v || '1' : (v ?? '');
@@ -1019,14 +1021,24 @@ export class BackupsService implements OnModuleInit {
       else if (meta.keys_sha256) sameKeys = meta.keys_sha256 === this.keyPrint;
       const version = meta.panel ?? null;
       const newer = version ? versionLess(SHARED_VERSION, version) : false;
-      const readable = await this.tools.verify(join(work, 'db.dump'));
+      // Копия другой установки: шифротексты её базы проверяем её же ключом — ключом этой панели они не
+      // расшифруются, и целая копия выглядела бы повреждённой. Ключей той установки в копии нет — проверяем
+      // только саму базу: восстановить такую копию всё равно нельзя, и об этом скажет сообщение ниже.
+      const dumpPath = join(work, 'db.dump');
+      let readable: boolean;
+      if (sameKeys !== false) readable = await this.tools.verify(dumpPath);
+      else if (copyEnv) {
+        const copyCrypto = cryptoFromEnv(copyEnv);
+        readable = copyCrypto !== null && (await this.tools.verify(dumpPath, copyCrypto));
+      } else readable = await this.tools.verify(dumpPath, null);
       const problemText = !readable
         ? 'База в архиве не читается — копия повреждена.'
         : newer
           ? `Копия от более новой версии панели (${version}) — сначала обновите панель.`
           : sameKeys === false
             ? hasEnv
-              ? 'Копия от другой установки (другие ключи шифрования). Её восстанавливают через консоль: nodeservice restore <файл> — там ключи переносятся вместе с базой.'
+              ? // Команда — в конце и без точки: её копируют целиком. Имя без пути консоль ищет в папке копий.
+                `Копия от другой установки (другие ключи шифрования) — панель не может заменить свои ключи. Восстановите её с консоли сервера, ключи перенесутся вместе с базой: nodeservice restore ${name}`
               : 'Копия от другой установки (другие ключи шифрования), а самих ключей в ней нет. Без ключей той установки её не восстановить — ни из панели, ни из консоли сервера.'
             : null;
       return {

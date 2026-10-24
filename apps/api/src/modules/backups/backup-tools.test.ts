@@ -2,9 +2,12 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { ConfigService } from '@nestjs/config';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { PgBackupTools, packArgs } from './backup-tools.js';
+import { CryptoService } from '../../common/crypto/crypto.service.js';
+import type { Env } from '../../config/env.schema.js';
+import { cryptoFromEnv, PgBackupTools, packArgs } from './backup-tools.js';
 
 describe('упаковка дополнительных путей', () => {
   it('пути идут только после «--»: путь, похожий на параметр, параметром не становится', () => {
@@ -102,5 +105,39 @@ describe.skipIf(process.getuid?.() === 0)('«Проверить пути»', () 
   it('без особого права (как в разработке) закрытая папка честно «нет доступа»', async () => {
     const tools = new PgBackupTools('postgres://u:p@localhost/db');
     expect(await tools.probePath('/closed/scripts', root)).toEqual({ state: 'denied', size: null });
+  });
+});
+
+describe('ключ из копии другой установки', () => {
+  const key = 'ab'.repeat(32);
+  const secret = 'JBSWY3DPEHPK3PXP';
+  /** Панель той установки: ею зашифрован секрет кода входа в базе копии. */
+  const install = (version = 1) => {
+    const values: Record<string, unknown> = {
+      ENCRYPTION_KEY: key,
+      ENCRYPTION_KEY_VERSION: version,
+      APP_SECRET: 'x'.repeat(64),
+    };
+    return new CryptoService({ get: (k: string) => values[k] } as unknown as ConfigService<Env, true>);
+  };
+
+  it('шифротекст той установки читается ключом из .env копии, чужим — нет', () => {
+    const stored = install().encrypt(secret);
+    expect(cryptoFromEnv({ ENCRYPTION_KEY: key, APP_SECRET: 'y'.repeat(64) })?.decrypt(stored)).toBe(secret);
+    const other = cryptoFromEnv({ ENCRYPTION_KEY: 'cd'.repeat(32), APP_SECRET: 'y'.repeat(64) });
+    expect(() => other?.decrypt(stored)).toThrow();
+  });
+
+  it('версия ключа — из .env копии; в старых .env её нет — 1', () => {
+    expect(
+      cryptoFromEnv({ ENCRYPTION_KEY: key, ENCRYPTION_KEY_VERSION: '2' })?.decrypt(install(2).encrypt('s')),
+    ).toBe('s');
+    expect(cryptoFromEnv({ ENCRYPTION_KEY: key })?.decrypt(install(1).encrypt('s'))).toBe('s');
+  });
+
+  it('ключа нет или он негодный — проверять нечем', () => {
+    expect(cryptoFromEnv({})).toBeNull();
+    expect(cryptoFromEnv({ ENCRYPTION_KEY: 'ab'.repeat(16) })).toBeNull();
+    expect(cryptoFromEnv({ ENCRYPTION_KEY: key, ENCRYPTION_KEY_VERSION: 'x' })).toBeNull();
   });
 });
