@@ -99,8 +99,22 @@ function fixture(
   const events = { append: vi.fn() },
     notify = { push: vi.fn(), telegramOutlook: vi.fn(async () => opts.telegram ?? 'send') },
     tcp = { checkNode: vi.fn() };
+  /** Текст запроса drizzle: по нему подмена отличает чтение учёта Host от чтения событий. */
+  const sqlText = (q: unknown) =>
+    ((q as { queryChunks?: Array<{ value?: unknown }> })?.queryChunks ?? [])
+      .map((c) => (Array.isArray(c?.value) ? c.value.join('') : ''))
+      .join('');
   const job = new ScenariosJob(
-    { execute: async () => ({ rows: incidentRows }) } as never,
+    {
+      execute: async (q: unknown) =>
+        sqlText(q).includes('FROM app_meta')
+          ? {
+              rows: [...data]
+                .filter(([k]) => k.startsWith('scenarios.host.scope.'))
+                .map(([key, v]) => ({ key, value: JSON.stringify(v) })),
+            }
+          : { rows: incidentRows },
+    } as never,
     store as never,
     { status: async () => current } as never,
     { credentials: async () => ({ domain: 'panel.test', apiKey: 'secret' }) } as never,
@@ -727,9 +741,9 @@ describe('Сценарии: реальные правила владения Hos
             action: 'hide_host',
             n: 2,
             tone: 'change',
-            word: 'скрыт',
+            word: 'отключён',
             detail: '«Host»',
-            text: 'Скрыт Host: «Host»',
+            text: 'Отключён Host: «Host»',
           },
           { action: 'notify', n: 3, tone: 'info', word: 'отправлено', text: 'Уведомление в Telegram' },
         ],
@@ -753,7 +767,7 @@ describe('Сценарии: реальные правила владения Hos
     expect(f.incidents.note).toHaveBeenCalledTimes(1);
     expect(f.incidents.note).toHaveBeenCalledWith(
       'inc-1',
-      'Сценарий «Скрыть при потере связи»: записано в событие «Нода не на связи»; Скрыт Host: «Host»',
+      'Сценарий «Скрыть при потере связи»: записано в событие «Нода не на связи»; Отключён Host: «Host»',
       'applied',
     );
   });
@@ -802,7 +816,7 @@ describe('Сценарии: реальные правила владения Hos
     const f = fixture();
     const run = await fire(f, ['hide_host', 'rename_host']);
     expect(run.steps).toEqual([
-      expect.objectContaining({ action: 'hide_host', n: 1, word: 'скрыт', detail: '«Host»' }),
+      expect.objectContaining({ action: 'hide_host', n: 1, word: 'отключён', detail: '«Host»' }),
       expect.objectContaining({ action: 'rename_host', n: 2, word: 'изменено', detail: '«Host» → «Host ⚠️»' }),
     ]);
   });
@@ -820,7 +834,7 @@ describe('Сценарии: реальные правила владения Hos
     const f = fixture(domainHost, undefined, { topology: [UNRESOLVED, RESOLVED] });
     const run = await fire(f, ['hide_host']);
     expect(f.calls).toEqual([{ uuid: 'host', isDisabled: true }]);
-    expect(run.steps).toEqual([expect.objectContaining({ word: 'скрыт', detail: '«США»' })]);
+    expect(run.steps).toEqual([expect.objectContaining({ word: 'отключён', detail: '«США»' })]);
     // Шаг читает связи принудительно (прогрев DNS в фоне — обычным чтением): сбой DNS в момент падения ноды не
     // должен держаться всю минуту ожидания сценария.
     expect(f.reads.filter(Boolean).length).toBeGreaterThanOrEqual(2);
@@ -865,7 +879,7 @@ describe('Сценарии: реальные правила владения Hos
     expect(run.failed).toBe(false);
     expect(run.steps).toEqual([
       expect.objectContaining({
-        word: 'не скрыт',
+        word: 'не отключён',
         tone: 'warn',
         detail:
           'у ноды нет своих Host: панель проверила все Host Remnawave (1) — ни один не связан с этой нодой ни адресом, ни профилем',
@@ -898,7 +912,7 @@ describe('Сценарии: реальные правила владения Hos
     const f = fixture({ ...domainHost, remark: 'LTE #1' }, undefined, sharedProfile);
     const run = await fire(f, ['hide_host'], { hostBindings: [{ hostUuid: 'host', nodeUuid: node.uuid }] });
     expect(f.calls).toEqual([{ uuid: 'host', isDisabled: true }]);
-    expect(run.steps).toEqual([expect.objectContaining({ word: 'скрыт', detail: '«LTE #1»' })]);
+    expect(run.steps).toEqual([expect.objectContaining({ word: 'отключён', detail: '«LTE #1»' })]);
   });
   it('окно сценария: у Host на общем профиле — ноды профиля и причина', async () => {
     const f = fixture({ ...domainHost, remark: 'LTE #1' }, undefined, sharedProfile);
@@ -935,12 +949,12 @@ describe('Сценарии: реальные правила владения Hos
     const { hosts } = await f.job.previewHosts();
     expect(hosts[0]?.profileNodes).toEqual([]);
   });
-  it('у ноды нет своих Host — «не скрыт» и почему, жёлтым', async () => {
+  it('у ноды нет своих Host — «не отключён» и почему, жёлтым', async () => {
     const f = fixture({ uuid: 'host', nodes: [node.uuid, 'another'], isDisabled: false, remark: 'Host' });
     const run = await fire(f, ['hide_host']);
     expect(run.steps).toEqual([
       expect.objectContaining({
-        word: 'не скрыт',
+        word: 'не отключён',
         tone: 'warn',
         detail: 'у ноды только общие Host (1) — их не трогаем',
       }),
@@ -1166,5 +1180,142 @@ describe('строка шага в сообщении Telegram', () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+describe('Host, отключённые сценарием: метка у ноды и «Вернуть Host сейчас»', () => {
+  async function disable(f: ReturnType<typeof fixture>) {
+    vi.useFakeTimers();
+    const start = Date.parse('2026-10-24T09:00:00Z');
+    f.setRules([{ ...rule, holdMinutes: 1, actions: ['hide_host'] } as never]);
+    for (let i = 0; i <= 2; i++) {
+      vi.setSystemTime(start + i * 60000);
+      f.current.checkedAt = new Date().toISOString();
+      await f.job.run();
+    }
+    vi.useRealTimers();
+    expect(f.getHost().isDisabled).toBe(true);
+  }
+  it('сценарий отключил Host — у ноды метка: какой Host, каким сценарием и когда', async () => {
+    const f = fixture({
+      uuid: 'host',
+      nodes: [node.uuid],
+      isDisabled: false,
+      updatedAt: 'v1',
+      remark: 'Host',
+      address: 'de.example.com',
+    });
+    await disable(f);
+    const { items } = await f.job.disabledHosts();
+    expect(items).toEqual([
+      {
+        nodeUuid: node.uuid,
+        hosts: [{ uuid: 'host', name: 'Host', address: 'de.example.com' }],
+        rules: [{ id: rule.id, name: rule.name }],
+        at: expect.any(Number),
+        autoRestore: true,
+      },
+    ]);
+  });
+  it('запись до 0.108.0 без имени — имя берётся из Remnawave, времени нет', async () => {
+    const f = fixture({
+      uuid: 'host',
+      nodes: [node.uuid],
+      isDisabled: true,
+      updatedAt: 'v2',
+      remark: 'Host',
+    });
+    f.data.set('scenarios.host.scope.host', {
+      ruleId: rule.id,
+      nodeUuid: node.uuid,
+      hostUuid: 'host',
+      afterHash: null,
+      confirmed: true,
+      hasVersion: false,
+      restored: false,
+      original: { isDisabled: false },
+      after: { isDisabled: true },
+    });
+    const { items } = await f.job.disabledHosts();
+    expect(items[0]).toMatchObject({ hosts: [{ uuid: 'host', name: 'Host', address: null }], at: null });
+  });
+  it('обслуживание, только новое имя и уже возвращённые Host метку не дают', async () => {
+    const f = fixture();
+    const base = { nodeUuid: node.uuid, afterHash: null, confirmed: true, hasVersion: false, original: {} };
+    f.data.set('scenarios.host.scope.a', {
+      ...base,
+      hostUuid: 'a',
+      ruleId: 'maintenance',
+      restored: false,
+      after: { isDisabled: true },
+    });
+    f.data.set('scenarios.host.scope.b', {
+      ...base,
+      hostUuid: 'b',
+      ruleId: rule.id,
+      restored: false,
+      after: { remark: 'x' },
+    });
+    f.data.set('scenarios.host.scope.c', {
+      ...base,
+      hostUuid: 'c',
+      ruleId: rule.id,
+      restored: true,
+      after: { isDisabled: true },
+    });
+    expect(await f.job.disabledHosts()).toEqual({ items: [] });
+  });
+  it('«Вернуть Host сейчас»: Host включается, метка уходит, журнал и событие ноды — с записью', async () => {
+    const f = fixture();
+    await disable(f);
+    f.data.set(`scenarios.state.scope.${rule.id}.${node.uuid}`, { lastRun: 1, pendingRestore: true });
+    const before = f.store.addRun.mock.calls.length;
+    const result = await f.job.restoreNow(node.uuid);
+    expect(result).toEqual({ restored: ['Host'], failed: [] });
+    expect(f.calls.at(-1)).toEqual({ uuid: 'host', isDisabled: false });
+    expect(f.getHost().isDisabled).toBe(false);
+    expect(await f.job.disabledHosts()).toEqual({ items: [] });
+    // Ждать восстановления ноды сценарию больше незачем — плитка «Host помечен сейчас» не врёт.
+    expect(f.data.get(`scenarios.state.scope.${rule.id}.${node.uuid}`)).toMatchObject({
+      pendingRestore: false,
+    });
+    expect(f.store.addRun.mock.calls.length).toBe(before + 1);
+    expect(f.store.addRun.mock.calls.at(-1)?.[1]).toMatchObject({
+      kind: 'restore',
+      title: 'Host вернули вручную',
+      failed: false,
+    });
+    expect(f.events.append).toHaveBeenLastCalledWith(
+      'panel.test',
+      expect.objectContaining({ summary: 'Host вернули вручную из окна ноды: «Host»' }),
+    );
+  });
+  it('Host изменили вручную после сценария — не трогаем, говорим словами', async () => {
+    const f = fixture();
+    await disable(f);
+    f.setHost({ ...f.getHost(), remark: 'Переименовал сам', updatedAt: 'v9' });
+    const calls = f.calls.length;
+    const result = await f.job.restoreNow(node.uuid);
+    expect(result).toEqual({
+      restored: [],
+      failed: ['«Переименовал сам»: после сценария его изменили вручную — проверьте его в Remnawave'],
+    });
+    expect(f.calls.length).toBe(calls);
+  });
+  it('Remnawave не ответила — запись остаётся, вернуть можно той же кнопкой позже', async () => {
+    const f = fixture();
+    await disable(f);
+    const fetchOk = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) =>
+        init?.method === 'PATCH' ? new Response('{}', { status: 502 }) : fetchOk(url, init),
+      ),
+    );
+    const result = await f.job.restoreNow(node.uuid);
+    expect(result.restored).toEqual([]);
+    expect(result.failed[0]).toMatch(/^«Host»: .*Повторите позже\.$/);
+    expect(f.data.get('scenarios.host.scope.host')).toMatchObject({ restored: false });
+    expect((await f.job.disabledHosts()).items).toHaveLength(1);
   });
 });

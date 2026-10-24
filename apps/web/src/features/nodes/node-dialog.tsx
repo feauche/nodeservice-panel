@@ -27,6 +27,7 @@ import { plural } from '@/features/overview/overview-format';
 import { ProviderSelect } from '@/features/providers/provider-select';
 import { ProvidersSourceContext } from '@/features/providers/providers-api';
 import { NodeScenarios } from '@/features/scenarios/node-scenarios';
+import { useNodeDisabledHosts } from '@/features/scenarios/scenarios-api';
 import { useMonitoring } from '@/features/settings/settings-api';
 import { Pill, Segmented } from '@/features/settings/settings-ui';
 import { apiErrorMessage } from '@/lib/api';
@@ -34,6 +35,7 @@ import { copyText } from '@/lib/clipboard';
 import { mbitText } from '@/lib/units';
 import { cn } from '@/lib/utils';
 import { ChannelLimitDialog } from './channel-limit-dialog';
+import { HostsOffBadge, HostsOffCard } from './hosts-off';
 import { MaintenanceBadge, MaintenanceCard, MaintenanceDialog, maintenanceUntil } from './maintenance';
 import { useEndMaintenance } from './maintenance-api';
 import {
@@ -191,7 +193,8 @@ export function NodeDialog({
     [providerDirty, setProviderDirty] = useState(false),
     [channelHelp, setChannelHelp] = useState(false),
     [maintenanceOpen, setMaintenanceOpen] = useState(false),
-    endMaintenance = useEndMaintenance(node.uuid);
+    endMaintenance = useEndMaintenance(node.uuid),
+    hostsOff = useNodeDisabledHosts(node.uuid);
   const maintenance = node.maintenance ?? null;
   useEffect(() => {
     if (query.data && !dirty) setForm(query.data);
@@ -317,6 +320,7 @@ export function NodeDialog({
   const pills = (
     <>
       {maintenance && <MaintenanceBadge m={maintenance} long />}
+      {hostsOff && <HostsOffBadge info={hostsOff} />}
       {/* Лежащая нода на обслуживании — не авария: состояние без красного. */}
       <Pill tone={stale || maintenance ? 'muted' : state.tone}>{stale ? 'Старый снимок' : state.label}</Pill>
       {whitelist && <WhitelistBadge />}
@@ -481,6 +485,7 @@ export function NodeDialog({
             )}
             {tab === 'metrics' ? (
               <>
+                {hostsOff && <HostsOffCard info={hostsOff} domain={domain} />}
                 {!node.isConnected && node.lastStatusMessage && (
                   <p className="rounded-[10px] bg-crit-soft px-3.5 py-2.5 text-[12.5px] text-crit">
                     {node.lastStatusMessage}

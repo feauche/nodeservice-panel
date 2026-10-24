@@ -1,9 +1,10 @@
-import type { RemnawaveNode } from '@nodeservice/shared';
+import type { RemnawaveNode, ScenarioDisabledHosts } from '@nodeservice/shared';
 import { ArrowDownIcon, ArrowUpIcon, ShieldCheckIcon, UsersIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { CountryFlag } from '@/components/country-flag';
 import { mbitText, toMbit } from '@/lib/units';
 import { cn } from '@/lib/utils';
+import { HostsOffBadge } from './hosts-off';
 import { MaintenanceBadge, maintenanceUntil } from './maintenance';
 import { RemnaProviderIcon } from './remna-providers-page';
 
@@ -107,12 +108,15 @@ export function NodeCard({
   onClick,
   stale,
   incident,
+  hostsOff,
 }: {
   node: RemnawaveNode;
   onClick: () => void;
   stale: boolean;
   /** Открытое событие ноды: короткое название и важность. */
   incident?: { title: string; tone: 'crit' | 'warn' } | null;
+  /** Host ноды, отключённые сценарием: метка «Host отключён · N». */
+  hostsOff?: ScenarioDisabledHosts['items'][number] | null;
 }) {
   const state = nodeState(node),
     maintenance = node.maintenance ?? null,
@@ -162,6 +166,7 @@ export function NodeCard({
             </span>
           )}
           {maintenance && <MaintenanceBadge m={maintenance} />}
+          {hostsOff && <HostsOffBadge info={hostsOff} />}
           {node.whitelist && <WhitelistBadge />}
         </span>
         <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[11.5px] text-text-3">

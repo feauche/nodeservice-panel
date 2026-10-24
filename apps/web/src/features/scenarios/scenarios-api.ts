@@ -1,6 +1,9 @@
 import {
   type RunTone,
   type Scenario,
+  type ScenarioDisabledHosts,
+  scenarioDisabledHostsSchema,
+  scenarioHostsRestoreSchema,
   scenarioJournalSchema,
   scenarioOverviewSchema,
   scenarioRunsSchema,
@@ -13,6 +16,32 @@ export function useScenarios() {
     queryKey: ['scenarios'],
     queryFn: ({ signal }) => api.get('/scenarios', scenariosSchema, signal),
     staleTime: 15000,
+  });
+}
+/**
+ * Host, которые сейчас держат отключёнными сценарии, по нодам — для метки «Host отключён» и блока в окне ноды.
+ * Обновляется с тем же шагом, что список нод.
+ */
+export function useDisabledHosts() {
+  return useQuery({
+    queryKey: ['scenarios', 'disabled'],
+    queryFn: ({ signal }) => api.get('/scenarios/disabled', scenarioDisabledHostsSchema, signal),
+    refetchInterval: 15_000,
+    staleTime: 10_000,
+  });
+}
+/** Отключённые сценариями Host одной ноды или null. */
+export function useNodeDisabledHosts(nodeUuid: string): ScenarioDisabledHosts['items'][number] | null {
+  return useDisabledHosts().data?.items.find((i) => i.nodeUuid === nodeUuid) ?? null;
+}
+/** «Вернуть Host сейчас» из окна ноды. */
+export function useRestoreHostsNow(nodeUuid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post(`/scenarios/disabled/${nodeUuid}/restore`, {}, scenarioHostsRestoreSchema),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['scenarios'] });
+    },
   });
 }
 export function useSaveScenarios() {

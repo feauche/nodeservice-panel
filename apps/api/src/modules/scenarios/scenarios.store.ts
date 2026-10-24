@@ -10,7 +10,7 @@ function legacyTone(text: string): ScenarioRun['steps'][number]['tone'] {
   if (text === 'TCP доступен' || /возвращён после|уже в исходном/.test(text)) return 'ok';
   if (text.startsWith('TCP: недостаточно')) return 'warn';
   if (/^(Записано в событие|Событие сохранено|Открытого события)/.test(text)) return 'info';
-  if (/^(Изменено|Скрыто)/.test(text)) return 'change';
+  if (/^(Изменено|Скрыто|Отключено)/.test(text)) return 'change';
   return 'crit';
 }
 

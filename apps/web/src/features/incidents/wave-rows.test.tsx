@@ -72,7 +72,7 @@ const wave = (status: 'open' | 'resolved', ups: Array<number | null> = [null, nu
           member('Германия - 2 (hy2)', 'n2', 'i2', 4, ups[1] ?? null),
           member('Польша - 2 (hy2)', 'n3', 'i3', 7, ups[2] ?? null),
         ],
-        skipped: [{ ruleId: 'r1', ruleName: 'Скрыть Host', nodeUuid: 'n1' }],
+        skipped: [{ ruleId: 'r1', ruleName: 'Отключить Host', nodeUuid: 'n1' }],
       },
     },
   });
@@ -168,7 +168,7 @@ describe('волна в «Событиях»', () => {
     expect(screen.getByText('Ноды провайдера · Aeza')).toBeVisible();
     expect(screen.getByText('Турция - 1').closest('li')).toHaveTextContent('работала');
     expect(
-      screen.getByText(/Сценарии с исключением «нода в волне» пропустили 1 срабатывание: «Скрыть Host»/),
+      screen.getByText(/Сценарии с исключением «нода в волне» пропустили 1 срабатывание: «Отключить Host»/),
     ).toBeVisible();
   });
 });

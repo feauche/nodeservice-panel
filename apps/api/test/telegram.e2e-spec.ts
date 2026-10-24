@@ -330,7 +330,7 @@ describe('telegram e2e', () => {
     await service.dispatch({
       event: 'scenario',
       title: 'Сценарий: Резерв',
-      body: 'Условие: Нода потеряла связь И TCP недоступен\n\n🔴 TCP: не отвечает\n✅ Скрыт Host: «Германия»',
+      body: 'Условие: Нода потеряла связь И TCP недоступен\n\n🔴 TCP: не отвечает\n✅ Отключён Host: «Германия»',
       link: { to: '/scenarios', label: 'Открыть сценарии' },
       ports: {
         verdict: 'port_unreachable',

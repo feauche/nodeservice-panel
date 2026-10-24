@@ -86,7 +86,7 @@ describe('Обслуживание ноды: включение', () => {
     expect(t.audit.extend.mock.calls[0]?.[0].metadata.term).toBe('до выключения');
   });
 
-  it('Remnawave не дала скрыть Host — обслуживание всё равно включено, причина словами', async () => {
+  it('Remnawave не дала отключить Host — обслуживание всё равно включено, причина словами', async () => {
     const t = setup({
       hide: async () => {
         throw new Error('Нет права «Изменение Host»');
@@ -94,7 +94,11 @@ describe('Обслуживание ноды: включение', () => {
     });
     const m = await t.service.start(NODE.uuid, { minutes: 30, reason: '', hideHosts: true });
     expect(t.records.has(NODE.uuid)).toBe(true);
-    expect(m.hosts).toEqual({ hidden: [], shared: 0, error: 'Host не скрыты: Нет права «Изменение Host»' });
+    expect(m.hosts).toEqual({
+      hidden: [],
+      shared: 0,
+      error: 'Host не отключены: Нет права «Изменение Host»',
+    });
   });
 
   it('повторное включение идущего: срок и причина новые, начало прежнее, Host второй раз не скрываются', async () => {
@@ -146,7 +150,7 @@ describe('Обслуживание ноды: продление и оконча�
     });
   });
 
-  it('срок вышел — заканчивается само от имени панели; Host без «Скрыть Host» не трогаются', async () => {
+  it('срок вышел — заканчивается само от имени панели; Host без «Отключить Host» не трогаются', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(Date.parse('2026-10-15T09:00:00.000Z'));
     const t = setup();

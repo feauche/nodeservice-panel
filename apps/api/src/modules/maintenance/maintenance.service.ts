@@ -79,7 +79,7 @@ export class NodeMaintenanceService {
       try {
         hosts = await this.scenarios.hideForMaintenance(node);
       } catch (e) {
-        hosts = { hidden: [], shared: 0, error: `Host не скрыты: ${message(e)}` };
+        hosts = { hidden: [], shared: 0, error: `Host не отключены: ${message(e)}` };
       }
       m = await this.store.put(domain, { ...m, hosts });
     }

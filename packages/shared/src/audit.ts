@@ -279,6 +279,7 @@ export const AUDIT_ACTIONS = {
   'incident.node_maintenance.start': { category: 'server', label: 'Обслуживание ноды включено' },
   'incident.node_maintenance.extend': { category: 'server', label: 'Обслуживание ноды продлено' },
   'incident.node_maintenance.end': { category: 'server', label: 'Обслуживание ноды закончено' },
+  'incident.node_hosts.restored': { category: 'server', label: 'Host ноды возвращены вручную' },
   'incident.node_maintenance.expired': {
     category: 'server',
     label: 'Обслуживание ноды закончилось по сроку',

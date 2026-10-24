@@ -188,9 +188,9 @@ const KEY_LABELS: Record<string, string> = {
   // Обслуживание ноды (0.106.0)
   term: 'Срок',
   until: 'До',
-  hideHosts: 'Скрыть Host',
-  hiddenHosts: 'Скрыты Host',
-  hostsError: 'Host не скрыты',
+  hideHosts: 'Отключить Host',
+  hiddenHosts: 'Отключены Host',
+  hostsError: 'Host не отключены',
   closedEvents: 'Закрыто событий',
   restoredHosts: 'Возвращены Host',
   hostsFailed: 'Host не вернули',

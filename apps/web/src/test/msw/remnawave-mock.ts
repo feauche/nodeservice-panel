@@ -5,6 +5,7 @@ import {
   type RemnawaveCert,
   type RemnawaveNode,
   type RemnawaveStats,
+  type ScenarioDisabledHosts,
 } from '@nodeservice/shared';
 import { HttpResponse, http } from 'msw';
 
@@ -36,8 +37,12 @@ export const mockRemnawave: {
 if (typeof window !== 'undefined')
   (window as unknown as { __nsMockRemnawave: typeof mockRemnawave }).__nsMockRemnawave = mockRemnawave;
 
+/** Host, отключённые сценариями (0.108.0): метка «Host отключён» и блок с возвратом в окне ноды. */
+export const mockDisabledHosts: ScenarioDisabledHosts = { items: [] };
+
 export function seedRemnawave(): void {
   for (const key of Object.keys(mockMaintenanceHosts)) delete mockMaintenanceHosts[key];
+  mockDisabledHosts.items = [];
   Object.assign(mockRemnawave, {
     connected: false,
     domain: null,
@@ -62,6 +67,12 @@ export const mockMaintenanceHosts: Record<
 
 /** Обслуживание нод (0.106.0): включить, продлить, закончить — меняет ноду в mockRemnawave. */
 export const maintenanceHandlers = [
+  http.get('/api/scenarios/disabled', () => HttpResponse.json(mockDisabledHosts)),
+  http.post('/api/scenarios/disabled/:uuid/restore', ({ params }) => {
+    const item = mockDisabledHosts.items.find((i) => i.nodeUuid === params.uuid);
+    mockDisabledHosts.items = mockDisabledHosts.items.filter((i) => i.nodeUuid !== params.uuid);
+    return HttpResponse.json({ restored: item?.hosts.map((h) => h.name ?? 'Host') ?? [], failed: [] });
+  }),
   http.get('/api/nodes/:uuid/maintenance/hosts', ({ params }) =>
     HttpResponse.json(
       mockMaintenanceHosts[String(params.uuid)] ?? { hosts: [], shared: 0, alreadyHidden: 0 },

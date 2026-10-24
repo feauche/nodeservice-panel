@@ -90,7 +90,7 @@ export function MaintenanceCard({ node, m }: { node: RemnawaveNode; m: NodeMaint
       )}
       <p className="m-0 text-[12.5px] leading-relaxed text-text-2">
         {m.reason ? `«${m.reason}». ` : ''}Тревоги, сценарии и автозамена DNS по ноде молчат.
-        {hosts && hosts.hidden.length > 0 && ` Host скрыты: ${hosts.hidden.length}.`}
+        {hosts && hosts.hidden.length > 0 && ` Host отключены: ${hosts.hidden.length}.`}
       </p>
       {hosts?.error && (
         <p className="m-0 flex items-start gap-1.5 text-[12px] leading-snug text-warn">
@@ -149,7 +149,7 @@ const QUIET = [
   'Автозамена DNS ждёт',
 ];
 
-/** Что скроется при «Скрыть Host»: список Host ноды или почему скрывать нечего. */
+/** Что отключится при «Отключить Host»: список Host ноды или почему отключать нечего. */
 function HostsPreview({ uuid }: { uuid: string }) {
   const q = useMaintenanceHosts(uuid, true);
   if (q.isPending)
@@ -170,14 +170,14 @@ function HostsPreview({ uuid }: { uuid: string }) {
   const { hosts, shared, alreadyHidden } = q.data;
   const notes = [
     shared > 0 && `общих Host нескольких нод не трогаем: ${shared}`,
-    alreadyHidden > 0 && `уже скрыты: ${alreadyHidden}`,
+    alreadyHidden > 0 && `уже отключены: ${alreadyHidden}`,
   ].filter(Boolean);
   return (
     <div className="mt-2.5 border-t border-border pt-1">
       {hosts.length === 0 ? (
-        <p className="mt-1.5 text-[12.5px] text-text-3">У ноды нет своих Host, которые можно скрыть.</p>
+        <p className="mt-1.5 text-[12.5px] text-text-3">У ноды нет своих Host, которые можно отключить.</p>
       ) : (
-        <ul aria-label="Host, которые скроются" className="m-0 flex list-none flex-col p-0">
+        <ul aria-label="Host, которые отключатся" className="m-0 flex list-none flex-col p-0">
           {hosts.map((h) => (
             <li key={h.uuid} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 pt-1.5 text-[12.5px]">
               <span className="min-w-0 break-words">{h.name}</span>
@@ -281,7 +281,7 @@ export function MaintenanceDialog({ node, onClose }: { node: RemnawaveNode; onCl
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
                 <label htmlFor="mt-hide" className="block cursor-pointer text-[13.5px] font-semibold">
-                  Скрыть Host на это время
+                  Отключить Host на это время
                 </label>
                 <p className="mt-0.5 text-[12.5px] leading-snug text-text-3">
                   Клиенты не попадут на ноду, пока вы с ней работаете. Когда обслуживание закончится, панель
@@ -321,7 +321,7 @@ export function MaintenanceDialog({ node, onClose }: { node: RemnawaveNode; onCl
         <div className={dialogFoot}>
           <p className="min-w-0 flex-1 text-[12px] leading-snug text-text-3 max-sm:hidden">
             {DURATIONS.find((d) => d.key === minutes)?.foot}
-            {hideHosts ? ', Host скроются' : ''}
+            {hideHosts ? ', Host отключатся' : ''}
           </p>
           <div className="flex gap-2 max-sm:flex-col">
             <DialogSecondaryButton disabled={busy} onClick={onClose} className={footButton}>

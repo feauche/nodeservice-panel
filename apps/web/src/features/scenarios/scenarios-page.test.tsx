@@ -296,10 +296,10 @@ describe('Сценарии: плитки, строки, журнал и окно
     serve([], []);
     const user = userEvent.setup();
     renderPage(() => <ScenariosPage />, '/scenarios');
-    await user.click(await screen.findByRole('button', { name: /Нода потеряла связь — скрыть Host/ }));
+    await user.click(await screen.findByRole('button', { name: /Нода потеряла связь — отключить Host/ }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByRole('textbox', { name: 'Название' })).toHaveValue(
-      'Нода потеряла связь — скрыть Host',
+      'Нода потеряла связь — отключить Host',
     );
   });
 });

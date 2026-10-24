@@ -45,7 +45,7 @@ const running = (minutesLeft: number | null, extra: Partial<NodeMaintenance> = {
 });
 
 describe('окно «Обслуживание ноды»', () => {
-  it('по умолчанию час; видно, что замолчит; «Скрыть Host» показывает, какие Host скроются', async () => {
+  it('по умолчанию час; видно, что замолчит; «Скрыть Host» показывает, какие Host отключатся', async () => {
     const user = userEvent.setup();
     seed();
     mockMaintenanceHosts[NODE.uuid] = {
@@ -64,9 +64,9 @@ describe('окно «Обслуживание ноды»', () => {
       'Автозамена DNS ждёт',
     ])
       expect(dialog).toHaveTextContent(text);
-    expect(within(dialog).queryByRole('list', { name: 'Host, которые скроются' })).toBeNull();
+    expect(within(dialog).queryByRole('list', { name: 'Host, которые отключатся' })).toBeNull();
     await user.click(within(dialog).getByRole('switch'));
-    const list = await within(dialog).findByRole('list', { name: 'Host, которые скроются' });
+    const list = await within(dialog).findByRole('list', { name: 'Host, которые отключатся' });
     expect(list).toHaveTextContent('Германия');
     expect(list).toHaveTextContent('de.axelvryn.ru:443');
     expect(dialog).toHaveTextContent('общих Host нескольких нод не трогаем: 1');
@@ -110,7 +110,7 @@ describe('карточка идущего обслуживания', () => {
     const card = screen.getByRole('region', { name: 'Обслуживание ноды' });
     expect(card).toHaveTextContent('Осталось 47 мин');
     expect(card).toHaveTextContent('«Обновляю ядро».');
-    expect(card).toHaveTextContent('Host скрыты: 2.');
+    expect(card).toHaveTextContent('Host отключены: 2.');
     const before = Date.parse(m.until ?? '');
     await user.click(within(card).getByRole('button', { name: '+1 час' }));
     await waitFor(() =>

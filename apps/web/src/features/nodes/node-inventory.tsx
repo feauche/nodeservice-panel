@@ -1,4 +1,4 @@
-import type { NodeLayout, RemnawaveNode } from '@nodeservice/shared';
+import type { NodeLayout, RemnawaveNode, ScenarioDisabledHosts } from '@nodeservice/shared';
 import {
   ChevronRightIcon,
   FolderIcon,
@@ -31,6 +31,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useIncidents } from '@/features/incidents/incidents-api';
+import { useDisabledHosts } from '@/features/scenarios/scenarios-api';
 import { apiErrorMessage } from '@/lib/api';
 import { cn, randomId } from '@/lib/utils';
 import { NodeCard } from './node-card';
@@ -64,6 +65,8 @@ type NodeIncident = { title: string; tone: 'crit' | 'warn' };
 type NodeTreeContextValue = {
   nodes: Map<string, RemnawaveNode>;
   incidents: Map<string, NodeIncident>;
+  /** Host, отключённые сценарием, по нодам — метка «Host отключён». */
+  hostsOff: Map<string, ScenarioDisabledHosts['items'][number]>;
   folders: NodeLayout['folders'];
   stale: boolean;
   /** Раскладка не загрузилась: перетаскивать и менять папки нельзя. */
@@ -363,6 +366,7 @@ const NodeTreeItem = forwardRef<HTMLDivElement, TreeItemComponentProps<NodeTreeD
                 node={node}
                 stale={context.stale}
                 incident={context.incidents.get(node.uuid) ?? null}
+                hostsOff={context.hostsOff.get(node.uuid) ?? null}
                 onClick={() => context.onSelect(node.uuid)}
               />
               {ghost && (
@@ -439,6 +443,7 @@ export function NodeInventory({
   const query = useNodeLayout();
   const save = useSaveNodeLayout();
   const incidents = useIncidents('open');
+  const disabledHosts = useDisabledHosts();
   const layout = query.data ?? empty;
   const [draft, setDraft] = useState<NodeLayout | null>(null);
   const [error, setError] = useState('');
@@ -457,6 +462,10 @@ export function NodeInventory({
   allNodesRef.current = allNodes;
   const visible = useMemo(() => new Set(nodes.map((node) => node.uuid)), [nodes]);
   const nodeMap = useMemo(() => new Map(allNodes.map((node) => [node.uuid, node])), [allNodes]);
+  const hostsOffMap = useMemo(
+    () => new Map((disabledHosts.data?.items ?? []).map((i) => [i.nodeUuid, i])),
+    [disabledHosts.data],
+  );
   const incidentMap = useMemo(() => {
     const map = new Map<string, NodeIncident>();
     for (const i of incidents.data?.items ?? []) {
@@ -617,6 +626,7 @@ export function NodeInventory({
     () => ({
       nodes: nodeMap,
       incidents: incidentMap,
+      hostsOff: hostsOffMap,
       folders: value.folders,
       stale,
       locked,
@@ -633,6 +643,7 @@ export function NodeInventory({
     [
       nodeMap,
       incidentMap,
+      hostsOffMap,
       value.folders,
       stale,
       locked,

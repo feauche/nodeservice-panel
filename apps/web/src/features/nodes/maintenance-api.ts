@@ -16,7 +16,7 @@ function useRefresh() {
   };
 }
 
-/** Какие Host скроются при включении обслуживания — только когда галочка «Скрыть Host» включена. */
+/** Какие Host отключатся при включении обслуживания — только когда галочка «Отключить Host» включена. */
 export function useMaintenanceHosts(uuid: string, enabled: boolean) {
   return useQuery({
     queryKey: ['nodes', 'maintenance-hosts', uuid],

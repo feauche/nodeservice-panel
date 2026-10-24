@@ -106,7 +106,7 @@ export const requiredPermissions: Array<{
   {
     scope: HOSTS_UPDATE_SCOPE,
     label: 'Изменение Host',
-    why: 'Шаги сценария «Скрыть Host» и «Изменить имя Host»',
+    why: 'Шаги сценария «Отключить Host» и «Изменить имя Host»',
     when: 'Проверится при срабатывании сценария',
   },
 ];

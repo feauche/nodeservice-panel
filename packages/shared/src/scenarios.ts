@@ -98,7 +98,7 @@ export const scenarioActionLabels = {
   check_tcp: 'Проверить TCP',
   record_event: 'Записать событие',
   notify: 'Уведомить в Telegram',
-  hide_host: 'Скрыть Host',
+  hide_host: 'Отключить Host',
   rename_host: 'Изменить имя Host',
 };
 export const scenarioHostsSchema = z.object({
@@ -121,6 +121,35 @@ export const scenarioHostsSchema = z.object({
     }),
   ),
 });
+
+/**
+ * Host, которые сейчас держат отключёнными сценарии (не обслуживание), — по нодам: метка «Host отключён» у ноды и
+ * блок с возвратом в её окне (витрина reference-pack-2026-10, раздел 1 — C).
+ */
+export const scenarioDisabledHostsSchema = z.object({
+  items: z.array(
+    z.object({
+      nodeUuid: z.string(),
+      /** Имени и адреса нет только у записей до 0.108.0, когда Remnawave не ответила. */
+      hosts: z.array(
+        z.object({ uuid: z.string(), name: z.string().nullable(), address: z.string().nullable() }),
+      ),
+      /** Сценарии, которые отключили Host этой ноды. */
+      rules: z.array(z.object({ id: z.string(), name: z.string() })),
+      /** Когда отключили (самый поздний Host), мс; null — запись до 0.108.0, времени в ней нет. */
+      at: z.number().nullable(),
+      /** Вернут ли сценарии Host сами, когда нода восстановится (у всех включён возврат). */
+      autoRestore: z.boolean(),
+    }),
+  ),
+});
+export type ScenarioDisabledHosts = z.infer<typeof scenarioDisabledHostsSchema>;
+/** «Вернуть Host сейчас»: имена возвращённых и, словами, что вернуть не вышло. */
+export const scenarioHostsRestoreSchema = z.object({
+  restored: z.array(z.string()),
+  failed: z.array(z.string()),
+});
+export type ScenarioHostsRestore = z.infer<typeof scenarioHostsRestoreSchema>;
 
 /** Spaces around the replacement/inserted fragment are part of the actual Host remark. */
 /**

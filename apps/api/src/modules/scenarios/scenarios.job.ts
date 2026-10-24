@@ -8,6 +8,8 @@ import {
   type NodeMaintenanceHosts,
   type RemnawaveNode,
   type Scenario,
+  type ScenarioDisabledHosts,
+  type ScenarioHostsRestore,
   type ScenarioRunStep,
   scenarioConditionLabel,
   scenarioConditionMatches,
@@ -58,7 +60,14 @@ type Ledger = {
   original?: { isDisabled?: boolean; remark?: string };
   /** Что поставил сценарий: по этим полям видно, меняли ли Host вручную после него. */
   after?: { isDisabled?: boolean; remark?: string };
+  /** Когда изменили, имя и адрес Host до изменения — для метки «Host отключён» у ноды (с 0.108.0). */
+  at?: number;
+  name?: string;
+  address?: string;
 };
+/** Адрес Host для учёта: строка или ничего. */
+const hostAddress = (host: Record<string, unknown>) =>
+  typeof host.address === 'string' ? host.address : undefined;
 const stable = (x: unknown): unknown =>
   Array.isArray(x)
     ? x.map(stable)
@@ -170,18 +179,18 @@ export function hostStep(action: 'hide_host' | 'rename_host', n: number, d: Host
   const done = hide ? d.hidden.map((h) => `«${h}»`) : d.renamed.map((r) => `«${r.from}» → «${r.to}»`);
   const unbound = unboundHosts(d.unbound);
   if (done.length) {
-    const word = hide ? (done.length === 1 ? 'скрыт' : `скрыто ${done.length}`) : 'изменено';
+    const word = hide ? (done.length === 1 ? 'отключён' : `отключено ${done.length}`) : 'изменено';
     const unknown = d.unresolved ? `не проверено Host (DNS не ответил): ${d.unresolved}` : '';
     const left = unbound ? `${d.unbound.length === 1 ? 'не тронут' : 'не тронуты'}: ${unbound.short}` : '';
     const detail = [someNames(done), shared, unknown, left].filter(Boolean).join('; ');
     const what = hide
       ? done.length === 1
-        ? 'Скрыт Host'
-        : `Скрыто Host (${done.length})`
+        ? 'Отключён Host'
+        : `Отключено Host (${done.length})`
       : 'Изменено имя Host';
     return { action, n, tone: 'change', word, detail, text: `${what}: ${detail}` };
   }
-  const word = hide ? 'не скрыт' : 'не изменено';
+  const word = hide ? 'не отключён' : 'не изменено';
   const why = !d.own
     ? d.shared
       ? `у ноды только общие Host (${d.shared}) — их не трогаем${unbound ? `; ${unbound.full}` : ''}`
@@ -193,7 +202,7 @@ export function hostStep(action: 'hide_host' | 'rename_host', n: number, d: Host
     : d.held
       ? 'Host ещё не вернули после прошлого срабатывания'
       : hide
-        ? 'Host уже скрыт'
+        ? 'Host уже отключён'
         : 'метка уже есть в имени';
   return {
     action,
@@ -201,7 +210,7 @@ export function hostStep(action: 'hide_host' | 'rename_host', n: number, d: Host
     tone: d.own ? 'info' : 'warn',
     word,
     detail: why,
-    text: `${hide ? 'Host не скрыт' : 'Имя Host не изменено'}: ${why}`,
+    text: `${hide ? 'Host не отключён' : 'Имя Host не изменено'}: ${why}`,
   };
 }
 /**
@@ -271,7 +280,7 @@ const TCP_MARK: Record<TcpCheckReport['verdict'], string> = {
 /** Что не вышло — подпись строки ❌ для каждого шага. */
 const FAILED_LABEL: Partial<Record<NonNullable<ScenarioRunStep['action']>, string>> = {
   record_event: 'Запись в событие не вышла',
-  hide_host: 'Host не скрыт',
+  hide_host: 'Host не отключён',
   rename_host: 'Имя Host не изменено',
 };
 /**
@@ -875,12 +884,12 @@ export class ScenariosJob {
                         : 'Связь не определена; назначьте ноду вручную'
                   : h.isDisabled
                     ? 'Уже выключен'
-                    : 'Может быть скрыт по сценарию',
+                    : 'Может быть отключён по сценарию',
               ownedBy: ledger && !ledger.restored ? ledger.ruleId : null,
               restoration:
                 ledger && !ledger.restored
                   ? ledger.ruleId === MAINTENANCE_OWNER
-                    ? 'Скрыт на время обслуживания ноды — вернётся после него'
+                    ? 'Отключён на время обслуживания ноды — вернётся после него'
                     : !ledger.confirmed
                       ? 'Результат изменения не подтверждён — требуется ручная проверка'
                       : !stillOurs(h, ledger)
@@ -957,6 +966,9 @@ export class ScenariosJob {
         hasVersion: false,
         restored: false,
         original,
+        at: Date.now(),
+        name: previousName(host),
+        ...(hostAddress(host) ? { address: hostAddress(host) as string } : {}),
       };
       const current = await this.remna.status();
       const currentRules = await this.store.list(panel);
@@ -1059,9 +1071,9 @@ export class ScenariosJob {
     }
     const what = rule.actions.includes('rename_host')
       ? rule.actions.includes('hide_host')
-        ? 'Изменено и скрыто'
+        ? 'Изменено и отключено'
         : 'Изменено имя'
-      : 'Скрыто';
+      : 'Отключено';
     // До трёх Host — по именам, больше — числом: строка уходит и в событие, и в Telegram.
     const text = `${what} Host: ${changed > 0 && changed <= 3 ? names.join(', ') : changed}${shared ? `; общих Host пропущено: ${shared}` : ''}`;
     return {
@@ -1095,7 +1107,7 @@ export class ScenariosJob {
    */
   async hideForMaintenance(node: RemnawaveNode): Promise<NodeMaintenanceHosts> {
     const c = await this.credentials.credentials();
-    if (!c) return { hidden: [], shared: 0, error: 'Remnawave не подключена — Host не скрыты.' };
+    if (!c) return { hidden: [], shared: 0, error: 'Remnawave не подключена — Host не отключены.' };
     const scope = this.store.scope(c.domain);
     const { hosts, view, unknown } = await this.readHosts(c.domain, c.apiKey, node);
     const hidden: string[] = [],
@@ -1124,6 +1136,9 @@ export class ScenariosJob {
         hasVersion: false,
         restored: false,
         original: { isDisabled: false },
+        at: Date.now(),
+        name: previousName(host),
+        ...(hostAddress(host) ? { address: hostAddress(host) as string } : {}),
       };
       await this.store.write(key, ledger);
       try {
@@ -1149,7 +1164,7 @@ export class ScenariosJob {
       hidden.push(previousName(host));
     }
     const error = failed.length
-      ? `Не скрыты: ${someNames(failed)}`
+      ? `Не отключены: ${someNames(failed)}`
       : own === 0 && shared === 0 && unknown.length > 0
         ? `Не удалось определить Host ноды: DNS не ответил для ${unknown.length} из ${hosts.length} Host. Host не тронуты.`
         : null;
@@ -1184,7 +1199,7 @@ export class ScenariosJob {
       }
       if (!ledger.confirmed) {
         await release();
-        failed.push(`«${name}»: скрытие не подтвердилось — проверьте Host в Remnawave`);
+        failed.push(`«${name}»: отключение не подтвердилось — проверьте Host в Remnawave`);
         continue;
       }
       if (!stillOurs(host, ledger)) {
@@ -1208,6 +1223,216 @@ export class ScenariosJob {
       else restored.push(previousName(after));
     }
     return { restored, failed };
+  }
+  /** Записи учёта Host этого подключения: ключ и сама запись. */
+  private async ledgers(panel: string): Promise<Array<{ key: string; ledger: Ledger }>> {
+    const rows = await this.db.execute(
+      sql`SELECT key, value FROM app_meta WHERE key LIKE ${`scenarios.host.${this.store.scope(panel)}.%`}`,
+    );
+    return rows.rows.flatMap((r) => {
+      try {
+        return [{ key: String(r.key), ledger: JSON.parse(String(r.value)) as Ledger }];
+      } catch {
+        return [];
+      }
+    });
+  }
+  private hostNamesCache: {
+    panel: string;
+    at: number;
+    map: Map<string, { name: string; address: string | null }>;
+  } | null = null;
+  /** Имена и адреса Host из Remnawave — не чаще раза в 5 минут: нужны только записям до 0.108.0, где их нет. */
+  private async hostNames(panel: string) {
+    const cached = this.hostNamesCache;
+    if (cached?.panel === panel && Date.now() - cached.at < 5 * 60_000) return cached.map;
+    const c = await this.credentials.credentials();
+    if (!c || c.domain !== panel) return new Map<string, { name: string; address: string | null }>();
+    try {
+      const map = new Map(
+        (await this.hosts(panel, c.apiKey))
+          .filter((h) => typeof h.uuid === 'string')
+          .map((h) => [String(h.uuid), { name: previousName(h), address: hostAddress(h) ?? null }]),
+      );
+      this.hostNamesCache = { panel, at: Date.now(), map };
+      return map;
+    } catch {
+      return new Map<string, { name: string; address: string | null }>();
+    }
+  }
+  /**
+   * Host, которые сейчас держат отключёнными сценарии (обслуживание — нет: у него своя метка), по нодам. Из учёта в
+   * базе, без обращения к Remnawave: годится для списка нод, который обновляется каждые 15 секунд.
+   */
+  async disabledHosts(): Promise<ScenarioDisabledHosts> {
+    const panel = (await this.remna.status()).domain;
+    if (!panel) return { items: [] };
+    const held = (await this.ledgers(panel))
+      .map((x) => x.ledger)
+      .filter(
+        (l) => !l.restored && l.confirmed && l.after?.isDisabled === true && l.ruleId !== MAINTENANCE_OWNER,
+      );
+    if (held.length === 0) return { items: [] };
+    const [rules, names] = await Promise.all([
+      this.store.list(panel),
+      held.some((l) => !l.name) ? this.hostNames(panel) : Promise.resolve(new Map()),
+    ]);
+    const byNode = new Map<string, ScenarioDisabledHosts['items'][number]>();
+    for (const l of held) {
+      const item = byNode.get(l.nodeUuid) ?? {
+        nodeUuid: l.nodeUuid,
+        hosts: [],
+        rules: [],
+        at: null,
+        autoRestore: true,
+      };
+      const known = names.get(l.hostUuid);
+      item.hosts.push({
+        uuid: l.hostUuid,
+        name: l.name ?? known?.name ?? null,
+        address: l.address ?? known?.address ?? null,
+      });
+      const rule = rules.find((r) => r.id === l.ruleId);
+      if (!item.rules.some((r) => r.id === l.ruleId))
+        item.rules.push({ id: l.ruleId, name: rule?.name ?? 'удалённый сценарий' });
+      if (!rule?.autoRestore) item.autoRestore = false;
+      if (l.at && (item.at === null || l.at > item.at)) item.at = l.at;
+      byNode.set(l.nodeUuid, item);
+    }
+    return { items: [...byNode.values()] };
+  }
+  /** Работа с учётом Host без прохода сценариев: проход ждёт её, она — его (не дольше 30 секунд). */
+  private async exclusive<T>(work: () => Promise<T>): Promise<T> {
+    for (let i = 0; this.busy && i < 300; i++) await this.pause(100);
+    if (this.busy) throw new Error('Сценарии сейчас заняты — повторите через минуту.');
+    this.busy = true;
+    try {
+      return await work();
+    } finally {
+      this.busy = false;
+    }
+  }
+  /**
+   * «Вернуть Host сейчас» из окна ноды: вернуть Host, которые держат изменёнными сценарии, не дожидаясь восстановления
+   * ноды — владелец решил сам. Проверки те же, что у возврата после восстановления: Host, изменённый вручную после
+   * сценария, не трогаем. Отметка «вернуть после восстановления» у этих сценариев снимается.
+   */
+  async restoreNow(nodeUuid: string): Promise<ScenarioHostsRestore> {
+    return this.exclusive(async () => {
+      const [c, status] = await Promise.all([this.credentials.credentials(), this.remna.status()]);
+      if (!c || !status.domain || c.domain !== status.domain) throw new Error('Подключите Remnawave.');
+      const panel = c.domain,
+        scope = this.store.scope(panel);
+      const mine = (await this.ledgers(panel)).filter(
+        ({ ledger }) =>
+          ledger.nodeUuid === nodeUuid && !ledger.restored && ledger.ruleId !== MAINTENANCE_OWNER,
+      );
+      const restored: string[] = [],
+        failed: string[] = [];
+      if (mine.length === 0) return { restored, failed };
+      const hosts = await this.hosts(panel, c.apiKey);
+      /** По сценариям: что вернули и что нет — для журнала срабатываний. */
+      const perRule = new Map<string, { ok: string[]; bad: string[] }>();
+      for (const { key, ledger } of mine) {
+        const host = hosts.find((h) => h.uuid === ledger.hostUuid);
+        const name = host ? previousName(host) : (ledger.name ?? 'Host');
+        const log = perRule.get(ledger.ruleId) ?? { ok: [], bad: [] };
+        perRule.set(ledger.ruleId, log);
+        const done = (ok: boolean, text: string) => {
+          (ok ? restored : failed).push(text);
+          (ok ? log.ok : log.bad).push(text);
+        };
+        const release = async () => {
+          ledger.restored = true;
+          await this.store.write(key, ledger);
+        };
+        if (!host) {
+          await release();
+          done(false, `«${name}»: такого Host в Remnawave больше нет`);
+          continue;
+        }
+        if (untouched(host, ledger.original)) {
+          // Уже как до сценария (вернули вручную или изменение так и не применилось) — возвращать нечего.
+          await release();
+          if (ledger.confirmed) done(true, name);
+          continue;
+        }
+        if (!ledger.confirmed) {
+          await release();
+          done(false, `«${name}»: изменение сценария не подтвердилось — проверьте Host в Remnawave`);
+          continue;
+        }
+        if (!stillOurs(host, ledger)) {
+          await release();
+          done(false, `«${name}»: после сценария его изменили вручную — проверьте его в Remnawave`);
+          continue;
+        }
+        const back = ledger.original ?? { isDisabled: false };
+        try {
+          await this.patchHost(c, { uuid: host.uuid, ...keepDisabled(host), ...back });
+        } catch (e) {
+          // Без ответа Remnawave итог неизвестен — запись остаётся, повторить можно той же кнопкой.
+          const unknown = !(e instanceof RemnawaveApiError) || e.status === null || e.status >= 500;
+          if (!unknown) await release();
+          done(
+            false,
+            `«${name}»: ${lowerFirst(e instanceof Error ? e.message : 'Remnawave не ответила')}${unknown ? ' Повторите позже.' : ' Верните его в Remnawave сами.'}`,
+          );
+          continue;
+        }
+        const after = (await this.hosts(panel, c.apiKey)).find((h) => h.uuid === host.uuid);
+        await release();
+        if (!after || Object.entries(back).some(([k, value]) => !sameHostValue(k, after[k], value)))
+          done(false, `«${name}»: возврат не подтверждён — проверьте его в Remnawave`);
+        else done(true, previousName(after));
+      }
+      const rules = await this.store.list(panel);
+      const node = status.nodes.find((n) => n.uuid === nodeUuid);
+      const left = await this.ledgers(panel);
+      for (const [ruleId, log] of perRule) {
+        // Все Host этого сценария на ноде возвращены — ждать восстановления ноды ему больше незачем.
+        if (
+          !left.some(
+            ({ ledger }) => ledger.ruleId === ruleId && ledger.nodeUuid === nodeUuid && !ledger.restored,
+          )
+        ) {
+          const stateKey = `scenarios.state.${scope}.${ruleId}.${nodeUuid}`;
+          const state = await this.store.read<{ pendingRestore?: boolean }>(stateKey);
+          if (state?.pendingRestore) await this.store.write(stateKey, { ...state, pendingRestore: false });
+        }
+        const rule = rules.find((r) => r.id === ruleId);
+        if (!rule || !node || (log.ok.length === 0 && log.bad.length === 0)) continue;
+        const text = [
+          log.ok.length
+            ? `Host вернули вручную из окна ноды: ${log.ok.map((n) => `«${n}»`).join(', ')}`
+            : null,
+          log.bad.length ? `не вернули: ${log.bad.join('; ')}` : null,
+        ]
+          .filter(Boolean)
+          .join('; ');
+        await this.event(panel, rule, node, text);
+        await this.store.addRun(panel, {
+          id: randomUUID(),
+          ruleId,
+          ruleName: rule.name,
+          t: Date.now(),
+          nodeUuid,
+          nodeName: node.name,
+          kind: 'restore',
+          title: log.bad.length ? 'Host вернули вручную не все' : 'Host вернули вручную',
+          steps: [
+            {
+              text,
+              tone: log.bad.length ? 'crit' : 'ok',
+              word: log.bad.length ? 'не все' : 'вернули',
+              detail: [...log.ok.map((n) => `«${n}»`), ...log.bad].join('; '),
+            },
+          ],
+          failed: log.bad.length > 0,
+        });
+      }
+      return { restored, failed };
+    });
   }
   /**
    * После восстановления ноды: вернуть Host, которые менял этот сценарий, или сказать в событии ноды, почему

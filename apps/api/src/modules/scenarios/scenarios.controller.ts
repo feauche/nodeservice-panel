@@ -1,4 +1,16 @@
-import { BadRequestException, Body, Controller, Get, Inject, Put, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Inject,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Put,
+  Query,
+} from '@nestjs/common';
 import {
   journalPage,
   scenarioJournalQuerySchema,
@@ -9,6 +21,7 @@ import { createZodDto } from 'nestjs-zod';
 import { DEFAULT_TIME_ZONE, panelTimeZone } from '../../common/panel-time-zone.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { Audit } from '../audit/audit.decorator.js';
+import { AuditService } from '../audit/audit.service.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { ScenariosJob } from './scenarios.job.js';
 import { ScenariosStore } from './scenarios.store.js';
@@ -24,6 +37,7 @@ export class ScenariosController {
     private remna: RemnawaveService,
     private job: ScenariosJob,
     @Inject(DB) private db: Db,
+    private audit: AuditService,
   ) {}
   @Get() async get() {
     const st = await this.remna.status();
@@ -56,6 +70,27 @@ export class ScenariosController {
       panelTimeZone(this.db),
     ]);
     return scenarioOverview(rules, runs, marked, Date.now(), timeZone ?? DEFAULT_TIME_ZONE);
+  }
+  /** Host, которые сейчас держат отключёнными сценарии, по нодам: метка «Host отключён» и блок в окне ноды. */
+  @Get('disabled') disabled() {
+    return this.job.disabledHosts();
+  }
+  /** «Вернуть Host сейчас» из окна ноды — не дожидаясь, пока нода восстановится. */
+  @Audit('incident.node_hosts.restored')
+  @Post('disabled/:uuid/restore')
+  @HttpCode(200)
+  async restoreNow(@Param('uuid', new ParseUUIDPipe()) uuid: string) {
+    const node = (await this.remna.status()).nodes.find((n) => n.uuid === uuid);
+    try {
+      const result = await this.job.restoreNow(uuid);
+      this.audit.extend({
+        target: { type: 'node', id: uuid, display: node?.name ?? uuid },
+        metadata: { restoredHosts: result.restored, hostsFailed: result.failed },
+      });
+      return result;
+    } catch (e) {
+      throw new BadRequestException(e instanceof Error ? e.message : 'Host не вернули.');
+    }
   }
   @Get('hosts') async hosts() {
     try {

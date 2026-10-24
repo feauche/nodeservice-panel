@@ -118,7 +118,7 @@ export const STEPS: Record<Action, { title: string; hint: string; icon: typeof R
     icon: ClipboardListIcon,
   },
   hide_host: {
-    title: 'Скрыть Host',
+    title: 'Отключить Host',
     hint: 'Host этой ноды выключается в Remnawave, клиенты уходят на другие ноды.',
     icon: EyeOffIcon,
   },
@@ -450,10 +450,10 @@ export function ScenarioEditor({
           : !hosts.data
             ? '… Host'
             : !ownHost
-              ? `🟠 ${rename ? 'Имя Host не изменено' : 'Host не скрыт'}: у ноды нет своих Host`
+              ? `🟠 ${rename ? 'Имя Host не изменено' : 'Host не отключён'}: у ноды нет своих Host`
               : rename
                 ? `✅ Имя Host: «${ownHost.name}» → «${formatScenarioHostName(ownHost.name, draft.renameMode, draft.renameText.trim() || '…')}»`
-                : `✅ Скрыт Host: «${ownHost.name}»`,
+                : `✅ Отключён Host: «${ownHost.name}»`,
     );
   const tableCell = 'border border-[#2b3a4c] px-2 py-1';
   const kicker = 'text-[11px] font-semibold tracking-[0.1em] text-text-3 uppercase';

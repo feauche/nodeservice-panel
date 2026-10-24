@@ -103,13 +103,13 @@ describe('Редактор сценария «Если → то»', () => {
     await screen.findByRole('dialog');
     expect(step('Проверить TCP')).toHaveAttribute('aria-checked', 'true');
     await user.click(step('Уведомить в Telegram'));
-    await user.click(step('Скрыть Host'));
-    expect(step('Скрыть Host')).toHaveAttribute('aria-checked', 'true');
+    await user.click(step('Отключить Host'));
+    expect(step('Отключить Host')).toHaveAttribute('aria-checked', 'true');
     expect(reading()).toHaveTextContent(
-      '1) проверить TCP, 2) записать событие, 3) скрыть Host, 4) уведомить в Telegram',
+      '1) проверить TCP, 2) записать событие, 3) отключить Host, 4) уведомить в Telegram',
     );
     await user.click(step('Проверить TCP'));
-    expect(reading()).toHaveTextContent('1) записать событие, 2) скрыть Host, 3) уведомить в Telegram');
+    expect(reading()).toHaveTextContent('1) записать событие, 2) отключить Host, 3) уведомить в Telegram');
     // Переставлять можно только включённые шаги, Telegram — никогда.
     expect(screen.getByRole('button', { name: 'Переставить шаг «Записать событие»' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Переставить шаг «Проверить TCP»' })).toBeNull();
@@ -280,7 +280,7 @@ describe('Редактор сценария «Если → то»', () => {
     const user = userEvent.setup();
     renderPage(() => <Harness />, '/scenarios');
     await screen.findByRole('dialog');
-    await user.click(step('Скрыть Host'));
+    await user.click(step('Отключить Host'));
     expect(
       await screen.findByText(
         /профиль Host включён у нод «Германия - 1», «Турция - 1», а адрес ведёт не на ноду — выберите, чей он/,
