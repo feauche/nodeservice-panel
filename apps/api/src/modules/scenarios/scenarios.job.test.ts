@@ -45,6 +45,8 @@ function fixture(
     inWave?: Map<string, string>;
     /** DPI Checker для шага «Проверить VPN по ключу». */
     dpi?: Record<string, unknown>;
+    /** Запасные IP для шага «Переключить на запасной IP». */
+    reserve?: Record<string, unknown>;
   } = {},
 ) {
   const data = new Map<string, unknown>();
@@ -154,6 +156,7 @@ function fixture(
       : undefined,
     opts.inWave ? (wave as never) : undefined,
     opts.dpi as never,
+    opts.reserve as never,
   );
   return {
     job,
@@ -1472,5 +1475,101 @@ describe('Шаг «Проверить VPN по ключу» (DPI Checker)', () =
       word: 'не проверили',
     });
     expect(dpiVerdict({ status: 'pending', success: null, total: 10, unknown: 0 })).toBeNull();
+  });
+});
+
+describe('Шаг «Переключить на запасной IP»', () => {
+  const START = Date.parse('2026-10-24T08:00:00Z');
+  const switchRule = { ...rule, actions: ['switch_ip', 'notify'], switchEveryHours: 24, switchDns: true };
+  async function fire(reserve: Record<string, unknown>) {
+    vi.useFakeTimers();
+    const f = fixture(undefined, undefined, { reserve });
+    f.setRules([switchRule as never]);
+    for (let i = 0; i <= 6; i++) {
+      vi.setSystemTime(START + i * 60000);
+      f.current.checkedAt = new Date().toISOString();
+      await f.job.run();
+    }
+    const run = (
+      f.store.addRun.mock.calls[0] as unknown as [string, { steps: Array<Record<string, unknown>> }]
+    )[1];
+    return { f, step: run.steps[0], push: f.notify.push };
+  }
+  const plan = (ok: boolean[]) => ({
+    from: '177.3.216.253',
+    to: '177.3.216.31',
+    blocked: null,
+    dnsNote: null,
+    steps: [
+      { kind: 'node', title: 'Адрес ноды в Remnawave', detail: '', ok: ok[0], error: null },
+      {
+        kind: 'dns',
+        title: 'de.example.com · Cloudflare',
+        detail: '',
+        ok: ok[1],
+        error: ok[1] ? null : 'нет доступа',
+      },
+    ],
+  });
+
+  it('переключила на первый рабочий — изменение в журнале и строка ✅ в Telegram; DNS — как задано', async () => {
+    const failover = vi.fn(async () => ({ switched: true, plan: plan([true, true]), nodeName: 'Нода' }));
+    const { step, push } = await fire({
+      get: async () => ({ items: [], auto: false, lastSwitch: null }),
+      failover,
+    });
+    expect(failover).toHaveBeenCalledWith(node.uuid, 'scenario', { dns: true });
+    expect(step).toMatchObject({
+      action: 'switch_ip',
+      tone: 'change',
+      word: 'переключена',
+      detail: '177.3.216.253 → 177.3.216.31 · DNS: 1',
+      failed: false,
+    });
+    expect(push.mock.calls[0]?.[0].body).toContain(
+      '✅ Нода переключена на запасной IP: 177.3.216.253 → 177.3.216.31',
+    );
+  });
+
+  it('DNS не вышел — замечание с тем, что не вышло', async () => {
+    const failover = vi.fn(async () => ({ switched: true, plan: plan([true, false]), nodeName: 'Нода' }));
+    const { step } = await fire({
+      get: async () => ({ items: [], auto: false, lastSwitch: null }),
+      failover,
+    });
+    expect(step).toMatchObject({
+      tone: 'warn',
+      detail: '177.3.216.253 → 177.3.216.31 · DNS: 0 · не вышло: de.example.com · Cloudflare',
+    });
+  });
+
+  it('переключали недавно — не трогает; запасные не отвечают — говорит почему', async () => {
+    const failover = vi.fn();
+    const recent = await fire({
+      get: async () => ({
+        items: [],
+        auto: false,
+        lastSwitch: { at: new Date(START - 3 * 3_600_000).toISOString(), from: 'a', to: 'b', by: 'auto' },
+      }),
+      failover,
+    });
+    expect(failover).not.toHaveBeenCalled();
+    expect(recent.step).toMatchObject({
+      word: 'не переключали',
+      detail: 'переключали 3 ч назад — не чаще раза в сутки на ноду',
+    });
+    const none = await fire({
+      get: async () => ({ items: [], auto: false, lastSwitch: null }),
+      failover: async () => ({
+        switched: false,
+        reason: 'запасные не отвечают: 88.198.10.4 — порт закрыт',
+        tried: [],
+      }),
+    });
+    expect(none.step).toMatchObject({
+      tone: 'warn',
+      word: 'не переключена',
+      detail: 'запасные не отвечают: 88.198.10.4 — порт закрыт',
+    });
   });
 });

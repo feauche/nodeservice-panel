@@ -3,6 +3,89 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it, vi } from 'vitest';
 import { dnsManualLink, FleetMonitorJob, recoveryFacts } from './fleet-monitor.job.js';
 
+describe('Перегрузка канала (процент от «Лимита канала»)', () => {
+  async function run(opts: {
+    enabled?: boolean;
+    channelMbps?: number | null;
+    channelWarningPercent?: number | null;
+    rx?: number;
+    tx?: number;
+  }) {
+    const open = vi.fn(async () => null);
+    const db = {
+      query: { appMeta: { findFirst: async () => null } },
+      insert: () => ({ values: () => ({ onConflictDoUpdate: async () => undefined }) }),
+    };
+    const cfg = {
+      ...MONITORING_DEFAULTS,
+      enabled: true,
+      cpuEnabled: false,
+      memoryEnabled: false,
+      channelEnabled: opts.enabled ?? true,
+      channelPercent: 90,
+      resourceDurationMinutes: 0,
+    };
+    const node = {
+      uuid: 'node',
+      name: 'Германия - 1',
+      isDisabled: false,
+      isConnected: true,
+      usersOnline: 1204,
+      // 930 Мбит/с исходящего — 116 250 000 байт в секунду.
+      rxBytesPerSec: opts.rx ?? 40_000_000,
+      txBytesPerSec: opts.tx ?? 116_250_000,
+    };
+    const job = new FleetMonitorJob(
+      db as never,
+      {
+        status: async () => ({
+          connected: true,
+          domain: 'panel',
+          checkedAt: new Date().toISOString(),
+          nodes: [node],
+        }),
+      } as never,
+      { get: async () => cfg } as never,
+      { list: async () => [], open } as never,
+      {} as never,
+      {} as never,
+      { incidentsTick: () => undefined } as never,
+      {
+        forMonitoring: async () => ({
+          channelMbps: opts.channelMbps === undefined ? 1000 : opts.channelMbps,
+          channelWarningPercent: opts.channelWarningPercent ?? null,
+        }),
+      } as never,
+    );
+    await job.run();
+    return open.mock.calls.map(([i]) => {
+      const incident = i as { kind: string; title: string; detail: string; severity: string };
+      // Числа с разделителем тысяч — неразрывный пробел, как в остальных текстах панели.
+      return { ...incident, detail: incident.detail.replaceAll('\u00a0', ' ') };
+    });
+  }
+  it('выше порога — событие «Канал перегружен»: сторона, процент, Мбит/с из лимита, онлайн', async () => {
+    const [incident] = await run({});
+    expect(incident).toMatchObject({ kind: 'channel_high', title: 'Канал перегружен', severity: 'warn' });
+    expect(incident?.detail).toBe(
+      'Исходящий трафик — 93 % лимита канала (930 из 1 000 Мбит/с, порог 90 %) дольше 0 мин. Онлайн 1 204. Источник: Remnawave.',
+    );
+  });
+  it('по умолчанию выключено — события нет', async () => {
+    expect(MONITORING_DEFAULTS.channelEnabled).toBe(false);
+    expect(await run({ enabled: false })).toEqual([]);
+  });
+  it('нода без «Лимита канала» не проверяется', async () => {
+    expect(await run({ channelMbps: null })).toEqual([]);
+  });
+  it('свой порог ноды важнее общего', async () => {
+    expect(await run({ channelWarningPercent: 95 })).toEqual([]);
+    expect((await run({ tx: 50_000_000, rx: 120_000_000, channelWarningPercent: 80 }))[0]?.detail).toMatch(
+      /^Входящий трафик — 96 % лимита канала \(960 из 1 000 Мбит\/с, порог 80 %\)/,
+    );
+  });
+});
+
 describe('Пороги ресурсов ноды', () => {
   async function run(loadWarningPerCore: number | null, memoryWarningPercent: number | null, enabled = true) {
     const open = vi.fn(async () => null);

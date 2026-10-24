@@ -26,6 +26,8 @@ export const INCIDENT_KINDS = [
   'node_down',
   'cpu_high',
   'mem_high',
+  // Канал перегружен (0.110.0): трафик выше порога от «Лимита канала» ноды.
+  'channel_high',
   'disk_high',
   'node_blocked',
   // Волна (0.106.0): общее событие для нод одного провайдера (или страны), упавших почти одновременно.
@@ -46,6 +48,7 @@ export const INCIDENT_KIND_META: Record<
   node_down: { label: 'Контейнер ноды не запущен', component: 'Нода', severity: 'crit' },
   cpu_high: { label: 'Высокая нагрузка на CPU', component: 'CPU', severity: 'warn' },
   mem_high: { label: 'Память на пределе', component: 'Память', severity: 'warn' },
+  channel_high: { label: 'Канал перегружен', component: 'Канал', severity: 'warn' },
   disk_high: { label: 'Диск заполняется', component: 'Диск', severity: 'warn' },
   node_blocked: { label: 'Похоже на блокировку', component: 'Блокировка', severity: 'crit' },
   wave: { label: 'Волна', component: 'Провайдер', severity: 'crit' },
@@ -221,6 +224,8 @@ export const INCIDENT_CHAINS: Record<IncidentKind, ActionKey[]> = {
   disk_high: ['free_disk', 'apt_clean', 'disk_inspect', 'tmp_clean'],
   cpu_high: ['restart_node', 'reboot'],
   mem_high: ['restart_node', 'reboot'],
+  // Перезапуск ноды канал не освободит: клиентов просто станет больше, чем канал везёт.
+  channel_high: [],
   agent_offline: ['agent_reinstall', 'agent_logs'],
   ssh_down: [],
   // Сервер не отвечает целиком (агент и порт SSH): панели нечего сделать — смотреть у хостера, это T3 вручную.

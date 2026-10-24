@@ -52,6 +52,7 @@ import { useNodeMetrics } from './node-metrics';
 import { NodeTcpCheck } from './node-tcp-check';
 import { useAssignNodeProvider, useNodePreferences, useNodes, useSaveNodePreferences } from './nodes-api';
 import { RemnaProviderIcon } from './remna-providers-page';
+import { ReserveIpsCard } from './reserve-ips';
 
 const TABS = [
   ['metrics', 'Метрики', ActivityIcon],
@@ -649,6 +650,7 @@ export function NodeDialog({
                   Ключ API хранится зашифрованным. Изменить его можно в «Настроить подключение» на странице
                   «Ноды».
                 </p>
+                <ReserveIpsCard node={node} />
               </>
             ) : tab === 'scenarios' ? (
               <NodeScenarios uuid={node.uuid} />
@@ -764,7 +766,8 @@ export function NodeDialog({
                         }
                       />
                       <p className="mt-2 text-[12px] text-text-3">
-                        Нужен для вкладки «Ёмкость»: сколько ещё выдержит нода. Пусто — лимит неизвестен.
+                        Нужен для вкладки «Ёмкость» (сколько ещё выдержит нода) и для слежения за каналом.
+                        Пусто — лимит неизвестен.
                       </p>
                       {channelHelp && (
                         <ChannelLimitDialog
@@ -779,10 +782,10 @@ export function NodeDialog({
                   </div>
                   <SettingsCard title="Предупреждения о нагрузке" optional>
                     <p className="-mt-1 mb-3 text-[12px] text-text-3">
-                      Пустое поле — общий порог из «Мониторинга нод». При устойчивом превышении мониторинг
+                      Пустое поле — общий порог из «Настройки → События». При устойчивом превышении мониторинг
                       создаст событие, если предупреждения включены.
                     </p>
-                    <div className="grid gap-3.5 sm:grid-cols-2">
+                    <div className="grid gap-3.5 sm:grid-cols-3">
                       {(
                         [
                           [
@@ -793,6 +796,13 @@ export function NodeDialog({
                             20,
                           ],
                           ['memoryWarningPercent', 'Память выше, %', monitoring.data?.memoryPercent, 1, 100],
+                          [
+                            'channelWarningPercent',
+                            'Канал выше, % лимита',
+                            monitoring.data?.channelPercent,
+                            10,
+                            100,
+                          ],
                         ] as const
                       ).map(([key, title, common, min, max]) => (
                         <div key={key}>
@@ -817,7 +827,12 @@ export function NodeDialog({
                     </div>
                     <p className="mt-2.5 text-[12px] text-text-3">
                       Нагрузка на ядро — средняя за минуту, делённая на число ядер, как в строке ноды: 1,0 —
-                      ядро занято полностью. Процента процессора Remnawave не отдаёт.
+                      ядро занято полностью. Процента процессора Remnawave не отдаёт. Канал — больший из
+                      входящего и исходящего трафика в процентах от «Лимита канала» выше; без лимита не
+                      проверяется.
+                      {monitoring.data && !monitoring.data.channelEnabled && (
+                        <> Слежение за каналом сейчас выключено в «Настройки → События».</>
+                      )}
                     </p>
                   </SettingsCard>
                   <SettingsCard title="Заметка" optional>

@@ -161,6 +161,22 @@ describe('Редактор сценария «Если → то»', () => {
     ).toBeVisible();
   });
 
+  it('шаг «Переключить на запасной IP»: откуда адреса, «Не чаще» и DNS сохраняются', async () => {
+    const user = userEvent.setup();
+    renderPage(() => <Harness />, '/scenarios');
+    await screen.findByRole('dialog');
+    await user.click(step('Переключить на запасной IP'));
+    expect(reading()).toHaveTextContent('3) переключить на запасной IP');
+    expect(screen.getByText(/Адреса — из окна ноды → «Подключение» → «Запасные IP»/)).toBeVisible();
+    await user.click(screen.getByRole('combobox', { name: 'Переключать не чаще' }));
+    await user.click(await screen.findByRole('option', { name: 'Раз в 12 часов на ноду' }));
+    await user.click(screen.getByRole('combobox', { name: 'DNS при переключении' }));
+    await user.click(await screen.findByRole('option', { name: 'Не трогать DNS' }));
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    expect(saved).toMatchObject({ switchEveryHours: 12, switchDns: false });
+    expect(saved?.actions).toContain('switch_ip');
+  });
+
   it('время можно стереть и ввести заново; причина недоступного сохранения — словами', async () => {
     const user = userEvent.setup();
     renderPage(() => <Harness />, '/scenarios');

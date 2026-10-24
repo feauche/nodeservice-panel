@@ -30,6 +30,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import {
   ArrowDownIcon,
+  ArrowLeftRightIcon,
   BellIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -107,6 +108,7 @@ export function changesOf(a: Scenario, b: Scenario): string[] {
     out.push(`пауза ${b.cooldownMinutes} → ${a.cooldownMinutes} мин`);
   if (a.dpiEveryMinutes !== b.dpiEveryMinutes || a.dpiDailyUsd !== b.dpiDailyUsd)
     out.push('пределы проверки VPN');
+  if (a.switchEveryHours !== b.switchEveryHours || a.switchDns !== b.switchDns) out.push('переключение IP');
   if ((a.except ?? []).join() !== (b.except ?? []).join()) out.push('исключение');
   return out;
 }
@@ -133,6 +135,11 @@ export const STEPS: Record<Action, { title: string; hint: string; icon: typeof R
     hint: 'Host этой ноды выключается в Remnawave, клиенты уходят на другие ноды.',
     icon: EyeOffIcon,
   },
+  switch_ip: {
+    title: 'Переключить на запасной IP',
+    hint: 'Нода переедет на первый рабочий запасной адрес из её окна: Remnawave, Host с этим IP и записи DNS.',
+    icon: ArrowLeftRightIcon,
+  },
   rename_host: {
     title: 'Изменить имя Host',
     hint: 'Клиенты видят в списке подключений, что нода временно не работает.',
@@ -144,7 +151,21 @@ export const STEPS: Record<Action, { title: string; hint: string; icon: typeof R
     icon: BellIcon,
   },
 };
-const ORDERABLE: Action[] = ['check_tcp', 'check_dpi', 'record_event', 'hide_host', 'rename_host'];
+const ORDERABLE: Action[] = [
+  'check_tcp',
+  'check_dpi',
+  'record_event',
+  'switch_ip',
+  'hide_host',
+  'rename_host',
+];
+/** «Не чаще» у переключения на запасной IP: на ноду. */
+const SWITCH_EVERY: Array<[number, string]> = [
+  [6, 'Раз в 6 часов'],
+  [12, 'Раз в 12 часов'],
+  [24, 'Раз в сутки'],
+  [48, 'Раз в 2 суток'],
+];
 /** «Не чаще» у проверки VPN: на ноду, по всем сценариям. */
 const DPI_EVERY: Array<[number, string]> = [
   [30, 'Раз в 30 минут'],
@@ -497,15 +518,17 @@ export function ScenarioEditor({
         ? '🔴 TCP: недоступен из РФ'
         : a === 'check_dpi'
           ? '⏳ VPN по ключу: проверка запущена, итог — отдельным сообщением'
-          : a === 'record_event'
-            ? `✅ Записано в событие «${conditions.includes('offline') ? 'Нода не на связи' : '…'}»`
-            : !hosts.data
-              ? '… Host'
-              : !ownHost
-                ? `🟠 ${rename ? 'Имя Host не изменено' : 'Host не отключён'}: у ноды нет своих Host`
-                : rename
-                  ? `✅ Имя Host: «${ownHost.name}» → «${formatScenarioHostName(ownHost.name, draft.renameMode, draft.renameText.trim() || '…')}»`
-                  : `✅ Отключён Host: «${ownHost.name}»`,
+          : a === 'switch_ip'
+            ? '✅ Нода переключена на запасной IP: 177.3.216.253 → 177.3.216.31'
+            : a === 'record_event'
+              ? `✅ Записано в событие «${conditions.includes('offline') ? 'Нода не на связи' : '…'}»`
+              : !hosts.data
+                ? '… Host'
+                : !ownHost
+                  ? `🟠 ${rename ? 'Имя Host не изменено' : 'Host не отключён'}: у ноды нет своих Host`
+                  : rename
+                    ? `✅ Имя Host: «${ownHost.name}» → «${formatScenarioHostName(ownHost.name, draft.renameMode, draft.renameText.trim() || '…')}»`
+                    : `✅ Отключён Host: «${ownHost.name}»`,
     );
   const tableCell = 'border border-[#2b3a4c] px-2 py-1';
   const kicker = 'text-[11px] font-semibold tracking-[0.1em] text-text-3 uppercase';
@@ -1082,6 +1105,60 @@ export function ScenarioEditor({
                                     сообщением. Предел {usd(draft.dpiDailyUsd)} в сутки — на этот сценарий:
                                     исчерпан — шаг пропускается и пишет почему.
                                   </span>
+                                </>
+                              )}
+                              {action === 'switch_ip' && (
+                                <>
+                                  <Note>
+                                    Адреса — из окна ноды → «Подключение» → «Запасные IP». Проверяются в
+                                    момент срабатывания через Check-Host: берётся первый, который отвечает. Ни
+                                    один не отвечает — ничего не меняется, причина будет в событии ноды.
+                                  </Note>
+                                  <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+                                    <div className="min-w-0">
+                                      <span className="mb-1.5 block text-[12.5px] font-medium text-text-2">
+                                        Не чаще
+                                      </span>
+                                      <Select
+                                        value={String(draft.switchEveryHours)}
+                                        onValueChange={(v) => change({ switchEveryHours: Number(v) })}
+                                      >
+                                        <SelectTrigger
+                                          aria-label="Переключать не чаще"
+                                          className="h-10 w-full"
+                                        >
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {SWITCH_EVERY.map(([v, t]) => (
+                                            <SelectItem key={v} value={String(v)}>
+                                              {t} на ноду
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                    <div className="min-w-0">
+                                      <span className="mb-1.5 block text-[12.5px] font-medium text-text-2">
+                                        DNS
+                                      </span>
+                                      <Select
+                                        value={draft.switchDns ? 'yes' : 'no'}
+                                        onValueChange={(v) => change({ switchDns: v === 'yes' })}
+                                      >
+                                        <SelectTrigger
+                                          aria-label="DNS при переключении"
+                                          className="h-10 w-full"
+                                        >
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="yes">Обновить записи с этим IP</SelectItem>
+                                          <SelectItem value="no">Не трогать DNS</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  </div>
                                 </>
                               )}
                               {action === 'rename_host' && (

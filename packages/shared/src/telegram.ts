@@ -116,7 +116,7 @@ export const TELEGRAM_EVENTS_DEFAULT: TelegramEvents = {
 export const TELEGRAM_KIND_GROUPS: ReadonlyArray<{ title: string; keys: readonly IncidentKind[] }> = [
   { title: 'Связь', keys: ['server_down', 'agent_offline', 'ssh_down'] },
   { title: 'Нода', keys: ['node_down', 'node_blocked', 'wave'] },
-  { title: 'Ресурсы', keys: ['cpu_high', 'mem_high', 'disk_high'] },
+  { title: 'Ресурсы', keys: ['cpu_high', 'mem_high', 'channel_high', 'disk_high'] },
 ];
 export const TELEGRAM_KIND_LABELS: Record<IncidentKind, string> = {
   agent_offline: 'Агент не в сети',
@@ -126,6 +126,7 @@ export const TELEGRAM_KIND_LABELS: Record<IncidentKind, string> = {
   node_blocked: 'Падение онлайна или ограничение из РФ',
   cpu_high: 'Нагрузка на процессор',
   mem_high: 'Память на пределе',
+  channel_high: 'Канал перегружен',
   disk_high: 'Диск заполняется',
   wave: 'Волна — сбой нескольких нод одного провайдера',
 };
@@ -138,6 +139,7 @@ export const TELEGRAM_KIND_HINTS: Record<IncidentKind, string> = {
     'Онлайн устойчиво упал относительно исходного уровня или TCP-порт недоступен только из РФ. Точная причина блокировки не доказана.',
   cpu_high: 'Загрузка держится выше порога дольше времени реакции.',
   mem_high: 'Занятость памяти держится выше порога.',
+  channel_high: 'Трафик ноды держится выше порога от «Лимита канала».',
   disk_high: 'Заполнение диска держится выше порога.',
   wave: 'За несколько минут упали 2 и больше ноды одного провайдера: одно сообщение вместо отдельного по каждой ноде.',
 };

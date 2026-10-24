@@ -11,7 +11,15 @@ import { apiErrorMessage } from '@/lib/api';
 import { SettingsCard, SettingsCardSkeleton, SettingsRow, Toggle } from './settings-ui';
 import { useTelegramSettings, useUpdateTelegram } from './telegram-api';
 
-const kinds: IncidentKind[] = ['node_down', 'node_blocked', 'server_down', 'wave', 'cpu_high', 'mem_high'];
+const kinds: IncidentKind[] = [
+  'node_down',
+  'node_blocked',
+  'server_down',
+  'wave',
+  'cpu_high',
+  'mem_high',
+  'channel_high',
+];
 const events: TelegramEvent[] = ['incident_crit', 'incident_warn', 'resolved', 'reminder'];
 type Draft = {
   kinds: Partial<Record<IncidentKind, boolean>>;

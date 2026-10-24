@@ -31,6 +31,7 @@ import { NodeMetricsModule } from './modules/node-metrics/node-metrics.module.js
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { ProvidersModule } from './modules/providers/providers.module.js';
 import { RemnawaveModule } from './modules/remnawave/remnawave.module.js';
+import { ReserveIpsModule } from './modules/reserve-ips/reserve-ips.module.js';
 import { ScenariosModule } from './modules/scenarios/scenarios.module.js';
 import { SecurityModule } from './modules/security/security.module.js';
 import { SettingsModule } from './modules/settings/settings.module.js';
@@ -38,6 +39,7 @@ import { SettingsModule } from './modules/settings/settings.module.js';
 @Module({
   imports: [
     ScenariosModule,
+    ReserveIpsModule,
     NodeMaintenanceModule,
     NodeEventsModule,
     NodeMetricsModule,

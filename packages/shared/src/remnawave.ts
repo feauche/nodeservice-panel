@@ -329,8 +329,17 @@ export const nodePreferencesSchema = z.object({
   /** Свой порог нагрузки на ядро (средняя за минуту на одно ядро, как в строке ноды); null — общий из «Мониторинга нод». */
   loadWarningPerCore: z.number().min(0.1).max(20).nullable().default(null),
   memoryWarningPercent: z.number().int().min(1).max(100).nullable().default(null),
+  /** Свой порог канала, % от «Лимита канала»; null — общий из «Мониторинга нод». */
+  channelWarningPercent: z.number().int().min(10).max(100).nullable().default(null),
 });
 export type NodePreferences = z.infer<typeof nodePreferencesSchema>;
+/** Для «Следить за каналом»: сколько включённых нод с заданным «Лимитом канала» и у каких его нет. */
+export const nodeChannelCoverageSchema = z.object({
+  total: z.number().int().nonnegative(),
+  withLimit: z.number().int().nonnegative(),
+  missing: z.array(z.object({ uuid: z.string(), name: z.string() })),
+});
+export type NodeChannelCoverage = z.infer<typeof nodeChannelCoverageSchema>;
 
 const providerWebUrl = z.url().refine((value) => {
   return /^https?:\/\//i.test(value) && !value.split('/')[2]?.includes('@');

@@ -35,6 +35,8 @@ const make = (over: Partial<Scenario> = {}): Scenario => ({
   cooldownMinutes: 30,
   dpiEveryMinutes: 120,
   dpiDailyUsd: 1,
+  switchEveryHours: 24,
+  switchDns: true,
   except: [],
   ...over,
 });

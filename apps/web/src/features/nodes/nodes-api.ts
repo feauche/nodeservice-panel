@@ -1,6 +1,7 @@
 import {
   type NodeLayout,
   type NodePreferences,
+  nodeChannelCoverageSchema,
   nodeLayoutSchema,
   nodePreferencesSchema,
   type RemnaProviderUpdate,
@@ -65,7 +66,15 @@ export function useSaveNodePreferences(uuid: string) {
     onSuccess: (data) => {
       client.setQueryData(['nodes', 'preferences', uuid], data);
       void client.invalidateQueries({ queryKey: key });
+      void client.invalidateQueries({ queryKey: ['nodes', 'channel-coverage'] });
     },
+  });
+}
+/** Сколько нод с «Лимитом канала»: без него канал ноды не проверяется («Мониторинг нод» → «Следить за каналом»). */
+export function useChannelCoverage() {
+  return useQuery({
+    queryKey: ['nodes', 'channel-coverage'],
+    queryFn: ({ signal }) => api.get('/nodes/channel-coverage', nodeChannelCoverageSchema, signal),
   });
 }
 export function useRemnaProviders() {

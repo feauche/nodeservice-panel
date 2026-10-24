@@ -12,7 +12,7 @@ import {
   Put,
 } from '@nestjs/common';
 import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { nodeLayoutSchema, nodePreferencesSchema } from '@nodeservice/shared';
+import { type NodeChannelCoverage, nodeLayoutSchema, nodePreferencesSchema } from '@nodeservice/shared';
 import { createZodDto } from 'nestjs-zod';
 import { CheckHostService } from '../incidents/check-host.service.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
@@ -68,6 +68,16 @@ export class NodesController {
   }
   @Put('layout') layoutSet(@Body() body: LayoutDto) {
     return this.layout.set(body);
+  }
+
+  /** Сколько включённых нод с «Лимитом канала»: без него канал ноды не проверяется. */
+  @Get('channel-coverage')
+  async channelCoverage(): Promise<NodeChannelCoverage> {
+    const status = await this.remnawave.status();
+    const nodes = status.nodes.filter((n) => !n.isDisabled);
+    const limited = await this.preferences.channelLimits(status.domain);
+    const missing = nodes.filter((n) => !limited.has(n.uuid)).map((n) => ({ uuid: n.uuid, name: n.name }));
+    return { total: nodes.length, withLimit: nodes.length - missing.length, missing };
   }
 
   @Get(':uuid/preferences')

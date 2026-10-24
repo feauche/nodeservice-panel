@@ -35,6 +35,7 @@ import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { getJson, RemnawaveApiError } from '../remnawave/remnawave-client.js';
 import { RemnawaveSettingsStore } from '../remnawave/remnawave-settings.store.js';
 import { RemnawaveTopologyService } from '../remnawave/remnawave-topology.service.js';
+import { ReserveIpsService } from '../reserve-ips/reserve-ips.service.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
 import { ScenariosStore } from './scenarios.store.js';
 
@@ -276,6 +277,9 @@ const ago = (ms: number) => {
   const min = Math.max(1, Math.round(ms / 60_000));
   return min < 60 ? `${min} мин назад` : `${Math.round(min / 60)} ч назад`;
 };
+/** «не чаще раза в сутки» — частота переключения словами. */
+const everyHours = (h: number) =>
+  h === 24 ? 'раза в сутки' : h % 24 === 0 ? `раза в ${h / 24} сут` : `раза в ${h} ч`;
 /** «не чаще раза в 2 ч» — частота шага словами. */
 const every = (min: number) =>
   min % 60
@@ -410,6 +414,7 @@ export class ScenariosJob {
     @Optional() private maintenance?: NodeMaintenanceStore,
     @Optional() private wave?: WaveService,
     @Optional() private dpi?: DpiService,
+    @Optional() private reserve?: ReserveIpsService,
   ) {}
   /** Ноды на обслуживании (0.106.0): сценарии их пропускают, сбой ловят заново после окончания. */
   private async maintained(panel: string | null): Promise<Set<string>> {
@@ -458,6 +463,48 @@ export class ScenariosJob {
   // Сценарии смотрят свежий снимок раз в 5 секунд: без нового снимка проход почти ничего не стоит.
   @Interval(5000) async tick() {
     if (process.env.NODE_ENV !== 'test') await this.run();
+  }
+  /**
+   * Шаг «Переключить на запасной IP»: адреса — из окна ноды («Подключение» → «Запасные IP»), проверяются в момент
+   * срабатывания, берётся первый, который отвечает. Не чаще раза в N часов на ноду. Не вышло — замечание, не ошибка:
+   * остальные шаги выполняются.
+   */
+  private async switchStep(rule: Scenario, node: RemnawaveNode): Promise<ScenarioRunStep> {
+    const base = { action: 'switch_ip' as const, n: rule.actions.indexOf('switch_ip') + 1, failed: false };
+    const not = (detail: string, tone: ScenarioRunStep['tone'] = 'warn', word = 'не переключена') => ({
+      ...base,
+      tone,
+      word,
+      detail,
+      text: `Нода не переключена на запасной IP: ${detail}`,
+    });
+    if (!this.reserve) return not('запасные IP недоступны');
+    try {
+      const reserve = await this.reserve.get(node.uuid);
+      const last = reserve.lastSwitch ? Date.parse(reserve.lastSwitch.at) : 0;
+      if (Date.now() - last < rule.switchEveryHours * 3_600_000)
+        return not(
+          `переключали ${ago(Date.now() - last)} — не чаще ${everyHours(rule.switchEveryHours)} на ноду`,
+          'info',
+          'не переключали',
+        );
+      const r = await this.reserve.failover(node.uuid, 'scenario', { dns: rule.switchDns });
+      if (!r.switched) return not(r.reason);
+      const failed = r.plan.steps.filter((s) => s.ok === false);
+      const dns = r.plan.steps.filter((s) => s.kind === 'dns' && s.ok).length;
+      const detail = `${r.plan.from} → ${r.plan.to}${rule.switchDns ? ` · DNS: ${dns}` : ''}${
+        failed.length ? ` · не вышло: ${failed.map((s) => s.title).join(', ')}` : ''
+      }`;
+      return {
+        ...base,
+        tone: failed.length ? 'warn' : 'change',
+        word: 'переключена',
+        detail,
+        text: `Нода переключена на запасной IP: ${detail}`,
+      };
+    } catch (e) {
+      return not(e instanceof Error ? e.message : 'переключение не выполнено');
+    }
   }
   private following = false;
   @Interval(30000) async followDpiTick() {
@@ -842,6 +889,7 @@ export class ScenariosJob {
                         },
                   );
                 }
+                if (action === 'switch_ip') steps.push(await this.switchStep(rule, node));
                 if (action === 'hide_host' || action === 'rename_host') {
                   const change = await this.hideHosts(panel, scope, rule, node);
                   for (const a of hostActions) steps.push(hostStep(a, n(a), change));

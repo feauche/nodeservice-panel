@@ -13,6 +13,27 @@ export function memoryPercent(node: RemnawaveNode): number | null {
     ? Math.min(100, (used / total) * 100)
     : null;
 }
+/**
+ * Загрузка канала ноды: больший из входящего и исходящего трафика в процентах от «Лимита канала». Лимит не задан,
+ * нода не на связи или Remnawave не прислала скорость — null (не ноль и не перегрузка).
+ */
+export function channelLoad(
+  node: RemnawaveNode,
+  limitMbps: number | null | undefined,
+): { percent: number; mbps: number; direction: 'входящий' | 'исходящий' } | null {
+  const rx = node.rxBytesPerSec,
+    tx = node.txBytesPerSec;
+  if (!limitMbps || limitMbps <= 0 || !node.isConnected) return null;
+  if (typeof rx !== 'number' && typeof tx !== 'number') return null;
+  const inbound = typeof rx === 'number' && rx > 0 ? rx : 0,
+    outbound = typeof tx === 'number' && tx > 0 ? tx : 0;
+  const mbps = (Math.max(inbound, outbound) * 8) / 1_000_000;
+  return {
+    percent: (mbps / limitMbps) * 100,
+    mbps,
+    direction: outbound >= inbound ? 'исходящий' : 'входящий',
+  };
+}
 export function dropDetected(online: number, baseline: number | null, cfg: MonitoringSettings): boolean {
   return (
     baseline !== null &&

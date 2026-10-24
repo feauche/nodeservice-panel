@@ -1,6 +1,7 @@
 import {
   NODE_MAINTENANCE_EXTEND_MINUTES,
   type NodeMaintenance,
+  type NodeReserve,
   nodeMaintenanceStartSchema,
   type RemnawaveCert,
   type RemnawaveNode,
@@ -39,10 +40,20 @@ if (typeof window !== 'undefined')
 
 /** Host, отключённые сценариями (0.108.0): метка «Host отключён» и блок с возвратом в окне ноды. */
 export const mockDisabledHosts: ScenarioDisabledHosts = { items: [] };
+/** Ноды с «Лимитом канала» (0.110.0): «Какие ноды проверяются» у «Следить за каналом». */
+export const mockChannelLimits = new Set<string>();
+/** Запасные IP нод (0.111.0): нода → список; переключение меняет адрес ноды в mockRemnawave. */
+export const mockReserve: Record<string, NodeReserve> = {};
+const reserveOf = (uuid: string): NodeReserve => {
+  mockReserve[uuid] ??= { items: [], auto: false, lastSwitch: null };
+  return mockReserve[uuid];
+};
 
 export function seedRemnawave(): void {
   for (const key of Object.keys(mockMaintenanceHosts)) delete mockMaintenanceHosts[key];
   mockDisabledHosts.items = [];
+  mockChannelLimits.clear();
+  for (const key of Object.keys(mockReserve)) delete mockReserve[key];
   Object.assign(mockRemnawave, {
     connected: false,
     domain: null,
@@ -67,6 +78,99 @@ export const mockMaintenanceHosts: Record<
 
 /** Обслуживание нод (0.106.0): включить, продлить, закончить — меняет ноду в mockRemnawave. */
 export const maintenanceHandlers = [
+  http.get('/api/nodes/:uuid/reserve', ({ params }) => HttpResponse.json(reserveOf(String(params.uuid)))),
+  http.post('/api/nodes/:uuid/reserve', async ({ params, request }) => {
+    const { ip } = (await request.json()) as { ip: string };
+    const r = reserveOf(String(params.uuid));
+    r.items.push({
+      ip: ip.trim(),
+      wasPrimaryUntil: null,
+      check: {
+        at: new Date().toISOString(),
+        ok: true,
+        verdict: 'reachable',
+        text: 'Отвечает · из РФ 9 из 9, из других стран 6 из 6',
+      },
+    });
+    return HttpResponse.json(r);
+  }),
+  http.post('/api/nodes/:uuid/reserve/:ip/check', ({ params }) =>
+    HttpResponse.json(reserveOf(String(params.uuid))),
+  ),
+  http.delete('/api/nodes/:uuid/reserve/:ip', ({ params }) => {
+    const r = reserveOf(String(params.uuid));
+    r.items = r.items.filter((i) => i.ip !== String(params.ip));
+    return HttpResponse.json(r);
+  }),
+  http.put('/api/nodes/:uuid/reserve/auto', async ({ params, request }) => {
+    const r = reserveOf(String(params.uuid));
+    r.auto = ((await request.json()) as { auto: boolean }).auto;
+    return HttpResponse.json(r);
+  }),
+  http.put('/api/nodes/:uuid/reserve/order', async ({ params, request }) => {
+    const r = reserveOf(String(params.uuid));
+    const { ips } = (await request.json()) as { ips: string[] };
+    r.items = ips.map((ip) => r.items.find((i) => i.ip === ip)).filter((i) => i !== undefined);
+    return HttpResponse.json(r);
+  }),
+  http.get('/api/nodes/:uuid/reserve/plan', ({ params, request }) => {
+    const node = mockRemnawave.nodes.find((n) => n.uuid === params.uuid);
+    const to = new URL(request.url).searchParams.get('to') ?? '';
+    const from = node?.address ?? '';
+    return HttpResponse.json({
+      from,
+      to,
+      blocked: null,
+      dnsNote: null,
+      steps: [
+        { kind: 'node', title: 'Адрес ноды в Remnawave', detail: `${from} → ${to}`, ok: null, error: null },
+        {
+          kind: 'dns',
+          title: 'de.example.com · Cloudflare',
+          detail: `A ${from} → ${to}`,
+          ok: null,
+          error: null,
+        },
+      ],
+    });
+  }),
+  http.post('/api/nodes/:uuid/reserve/switch', async ({ params, request }) => {
+    const { to } = (await request.json()) as { to: string };
+    const node = mockRemnawave.nodes.find((n) => n.uuid === params.uuid);
+    const from = node?.address ?? '';
+    if (node) node.address = to;
+    const r = reserveOf(String(params.uuid));
+    const at = new Date().toISOString();
+    r.items = [...r.items.filter((i) => i.ip !== to), { ip: from, check: null, wasPrimaryUntil: at }];
+    r.lastSwitch = { at, from, to, by: 'manual' };
+    return HttpResponse.json({
+      nodeName: node?.name ?? '',
+      reserve: r,
+      plan: {
+        from,
+        to,
+        blocked: null,
+        dnsNote: null,
+        steps: [
+          { kind: 'node', title: 'Адрес ноды в Remnawave', detail: `${from} → ${to}`, ok: true, error: null },
+          {
+            kind: 'dns',
+            title: 'de.example.com · Cloudflare',
+            detail: `A ${from} → ${to}`,
+            ok: true,
+            error: null,
+          },
+        ],
+      },
+    });
+  }),
+  http.get('/api/nodes/channel-coverage', () => {
+    const nodes = mockRemnawave.nodes.filter((n) => !n.isDisabled);
+    const missing = nodes
+      .filter((n) => !mockChannelLimits.has(n.uuid))
+      .map((n) => ({ uuid: n.uuid, name: n.name }));
+    return HttpResponse.json({ total: nodes.length, withLimit: nodes.length - missing.length, missing });
+  }),
   http.get('/api/scenarios/disabled', () => HttpResponse.json(mockDisabledHosts)),
   http.post('/api/scenarios/disabled/:uuid/restore', ({ params }) => {
     const item = mockDisabledHosts.items.find((i) => i.nodeUuid === params.uuid);

@@ -18,9 +18,11 @@ export const scenarioSchema = z
     conditionMode: z.enum(['all', 'any']).default('all'),
     holdMinutes: z.number().int().min(1).max(60).default(1),
     actions: z
-      .array(z.enum(['check_tcp', 'check_dpi', 'record_event', 'notify', 'hide_host', 'rename_host']))
+      .array(
+        z.enum(['check_tcp', 'check_dpi', 'record_event', 'notify', 'hide_host', 'rename_host', 'switch_ip']),
+      )
       .min(1)
-      .max(6),
+      .max(7),
     renameMode: z.enum(['replace', 'prepend', 'append']).default('append'),
     renameText: z.string().trim().max(200).default(''),
     autoRestore: z.boolean().default(true),
@@ -31,6 +33,12 @@ export const scenarioSchema = z
      */
     dpiEveryMinutes: z.number().int().min(30).max(1440).default(120),
     dpiDailyUsd: z.number().min(0.05).max(100).default(1),
+    /**
+     * Шаг «Переключить на запасной IP» (0.111.0, витрина reference-pack-2026-10, раздел 4 — A): адреса — из окна ноды,
+     * не чаще раза в столько часов на ноду; DNS — менять ли записи со старым IP.
+     */
+    switchEveryHours: z.number().int().min(1).max(168).default(24),
+    switchDns: z.boolean().default(true),
     /** Исключения (0.106.0): когда сценарию не срабатывать. «wave» — нода входит в открытую волну. */
     except: z
       .array(z.enum(['wave']))
@@ -65,7 +73,9 @@ export const scenarioRunStepSchema = z.object({
    * С 0.94.0 — для журнала: шаг сценария и его номер в момент срабатывания, слово-итог («доступен», «не вышло»)
    * и подробности после него. У записей до 0.94.0 их нет — журнал показывает `text`.
    */
-  action: z.enum(['check_tcp', 'check_dpi', 'record_event', 'notify', 'hide_host', 'rename_host']).optional(),
+  action: z
+    .enum(['check_tcp', 'check_dpi', 'record_event', 'notify', 'hide_host', 'rename_host', 'switch_ip'])
+    .optional(),
   n: z.number().int().min(1).optional(),
   word: z.string().optional(),
   detail: z.string().optional(),
@@ -107,6 +117,7 @@ export const scenarioActionLabels = {
   notify: 'Уведомить в Telegram',
   hide_host: 'Отключить Host',
   rename_host: 'Изменить имя Host',
+  switch_ip: 'Переключить на запасной IP',
 };
 export const scenarioHostsSchema = z.object({
   hosts: z.array(

@@ -414,6 +414,7 @@ describe('Обзор, «Ёмкость»', () => {
       note: 'заметка',
       loadWarningPerCore: 1.8,
       memoryWarningPercent: null,
+      channelWarningPercent: null,
     });
   });
   it('«Отмена» закрывает окно лимита без сохранения', async () => {

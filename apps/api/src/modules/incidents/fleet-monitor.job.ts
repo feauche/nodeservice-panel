@@ -24,6 +24,7 @@ import { RemnawaveService } from '../remnawave/remnawave.service.js';
 import { MonitoringStore } from '../settings/monitoring.store.js';
 import { CheckHostService, describeTcp, type TcpReport } from './check-host.service.js';
 import {
+  channelLoad,
   dropDetected,
   loadPerCore,
   memoryPercent,
@@ -46,6 +47,9 @@ type State = {
   /** С какого замера нагрузка или память ниже порога с запасом: закрываем, только если так держится. */
   cpuBelow?: number | null;
   memBelow?: number | null;
+  /** Канал (0.110.0): с какого замера выше порога и с какого ниже с запасом. */
+  chanSince?: number | null;
+  chanBelow?: number | null;
   /** Адрес ноды в прошлом снимке: событие следит за нодой, а смена адреса — шаг в событии. */
   address?: string;
   /** Нода была не на связи подтверждённо: при возвращении — строка «Нода снова на связи» в открытых событиях. */
@@ -396,6 +400,23 @@ export class FleetMonitorJob {
         );
         st.memSince = memory.since;
         st.memBelow = memory.below;
+        // Канал — в процентах от «Лимита канала» ноды; ноды без лимита не проверяются.
+        const channel = channelLoad(node, thresholds?.channelMbps);
+        const chan = await this.resource(
+          node,
+          'channel_high',
+          channel?.percent ?? null,
+          cfg.channelEnabled,
+          thresholds?.channelWarningPercent ?? cfg.channelPercent,
+          { since: st.chanSince ?? null, below: st.chanBelow ?? null },
+          stamp,
+          cfg,
+          channel && thresholds?.channelMbps
+            ? { mbps: channel.mbps, limit: thresholds.channelMbps, direction: channel.direction }
+            : undefined,
+        );
+        st.chanSince = chan.since;
+        st.chanBelow = chan.below;
         st.lastAt = stamp;
         await this.write(key, st);
       }
@@ -454,32 +475,40 @@ export class FleetMonitorJob {
     track: { since: number | null; below: number | null },
     at: number,
     cfg: MonitoringSettings,
+    /** Канал: сколько Мбит/с, из какого лимита и в какую сторону — для текста события. */
+    channel?: { mbps: number; limit: number; direction: 'входящий' | 'исходящий' },
   ): Promise<{ since: number | null; below: number | null }> {
     if (!enabled || value === null) return { since: null, below: null };
     const cpu = kind === 'cpu_high',
-      hold = cfg.resourceDurationMinutes * 60000;
+      hold = cfg.resourceDurationMinutes * 60000,
+      minutes = cfg.resourceDurationMinutes;
+    const mbit = (v: number) => Math.round(v).toLocaleString('ru-RU');
     if (value >= threshold) {
       const start = track.since ?? at;
       if (at - start >= hold)
         await this.open(
           node,
           kind,
-          cpu ? 'Высокая нагрузка на процессор' : 'Высокая занятость памяти',
+          cpu ? 'Высокая нагрузка на процессор' : channel ? 'Канал перегружен' : 'Высокая занятость памяти',
           cpu
-            ? `Нагрузка на ядро — ${perCoreText(value)} (порог ${perCoreText(threshold)}, ядер: ${node.cpuCount}) держится дольше ${cfg.resourceDurationMinutes} мин. Источник: Remnawave.`
-            : `Занято ${Math.round(value)} % памяти (порог ${threshold} %) дольше ${cfg.resourceDurationMinutes} мин. Источник: Remnawave.`,
+            ? `Нагрузка на ядро — ${perCoreText(value)} (порог ${perCoreText(threshold)}, ядер: ${node.cpuCount}) держится дольше ${minutes} мин. Источник: Remnawave.`
+            : channel
+              ? `${channel.direction === 'исходящий' ? 'Исходящий' : 'Входящий'} трафик — ${Math.round(value)} % лимита канала (${mbit(channel.mbps)} из ${mbit(channel.limit)} Мбит/с, порог ${threshold} %) дольше ${minutes} мин.${typeof node.usersOnline === 'number' ? ` Онлайн ${node.usersOnline.toLocaleString('ru-RU')}.` : ''} Источник: Remnawave.`
+              : `Занято ${Math.round(value)} % памяти (порог ${threshold} %) дольше ${minutes} мин. Источник: Remnawave.`,
         );
       return { since: start, below: null };
     }
-    // Закрываем с запасом и не сразу, чтобы событие не мигало у порога: память — на 5 %, нагрузка — на десятую
-    // часть порога, и держится так столько же минут, сколько ждали превышения.
+    // Закрываем с запасом и не сразу, чтобы событие не мигало у порога: память и канал — на 5 %, нагрузка — на
+    // десятую часть порога, и держится так столько же минут, сколько ждали превышения.
     if (value <= (cpu ? threshold * 0.9 : threshold - 5)) {
       const below = track.below ?? at;
       if (at - below >= hold)
         await this.resolve(node, kind, () =>
           cpu
-            ? `Нагрузка на ядро ниже порога с запасом дольше ${cfg.resourceDurationMinutes} мин: ${perCoreText(value)}.`
-            : `Память ниже порога с запасом дольше ${cfg.resourceDurationMinutes} мин: занято ${Math.round(value)} %.`,
+            ? `Нагрузка на ядро ниже порога с запасом дольше ${minutes} мин: ${perCoreText(value)}.`
+            : channel
+              ? `Канал ниже порога с запасом дольше ${minutes} мин: ${Math.round(value)} % лимита.`
+              : `Память ниже порога с запасом дольше ${minutes} мин: занято ${Math.round(value)} %.`,
         );
       return { since: null, below };
     }
@@ -597,7 +626,7 @@ export class FleetMonitorJob {
       serverName: node.name,
       ...(diagnostics ? { diagnostics } : {}),
       kind,
-      severity: kind === 'cpu_high' || kind === 'mem_high' ? 'warn' : 'crit',
+      severity: kind === 'cpu_high' || kind === 'mem_high' || kind === 'channel_high' ? 'warn' : 'crit',
       title,
       detail,
       timeline: [

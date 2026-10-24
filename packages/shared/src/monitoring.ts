@@ -20,6 +20,12 @@ export const monitoringSettingsSchema = z.object({
   loadPerCore: z.number().min(0.5).max(10),
   memoryEnabled: z.boolean(),
   memoryPercent: integer(50, 100),
+  /**
+   * Перегрузка канала (0.110.0, витрина reference-pack-2026-10, раздел 3 — A): больший из входящего и исходящего
+   * трафика в процентах от «Лимита канала» ноды. По умолчанию выключено; ноды без лимита не проверяются.
+   */
+  channelEnabled: z.boolean(),
+  channelPercent: integer(50, 100),
   resourceDurationMinutes: integer(1, 60),
   checkHostEnabled: z.boolean(),
   checkHostHours: integer(1, 168),
@@ -54,6 +60,8 @@ export const MONITORING_DEFAULTS: MonitoringSettings = {
   loadPerCore: 1.5,
   memoryEnabled: true,
   memoryPercent: 90,
+  channelEnabled: false,
+  channelPercent: 90,
   resourceDurationMinutes: 2,
   checkHostEnabled: true,
   checkHostHours: 24,

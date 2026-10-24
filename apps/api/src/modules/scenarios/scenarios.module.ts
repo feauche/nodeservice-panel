@@ -4,6 +4,7 @@ import { IncidentsModule } from '../incidents/incidents.module.js';
 import { DpiCheckerModule } from '../integrations/dpi.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { RemnawaveModule } from '../remnawave/remnawave.module.js';
+import { ReserveIpsModule } from '../reserve-ips/reserve-ips.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { ScenariosController } from './scenarios.controller.js';
 import { ScenariosJob } from './scenarios.job.js';
@@ -16,6 +17,7 @@ import { ScenariosStore } from './scenarios.store.js';
     NotificationsModule,
     IncidentsModule,
     DpiCheckerModule,
+    ReserveIpsModule,
   ],
   providers: [ScenariosStore, ScenariosJob],
   controllers: [ScenariosController],

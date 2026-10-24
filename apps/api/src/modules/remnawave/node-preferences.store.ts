@@ -38,9 +38,9 @@ export class NodePreferencesStore {
       return nodePreferencesSchema.parse({});
     }
   }
-  /** Ноды с отметкой «Сервер белого списка» для текущего подключения — одним запросом, для списка нод и Ассистента. */
-  async whitelisted(domain: string | null): Promise<Set<string>> {
-    const out = new Set<string>();
+  /** Настройки всех нод текущего подключения одним запросом: нода → разобранная запись (повреждённые пропущены). */
+  private async all(domain: string | null): Promise<Map<string, Record<string, unknown>>> {
+    const out = new Map<string, Record<string, unknown>>();
     if (!domain) return out;
     const head = `${prefix}${domain}:`;
     // В LIKE знаки % и _ — подстановочные: в адресе панели их экранируем, чтобы не задеть чужие ключи.
@@ -51,11 +51,24 @@ export class NodePreferencesStore {
       .where(like(appMeta.key, pattern));
     for (const row of rows) {
       try {
-        if (JSON.parse(row.value)?.whitelist === true) out.add(row.key.slice(head.length));
+        out.set(row.key.slice(head.length), JSON.parse(row.value) ?? {});
       } catch {
-        // Повреждённая запись настроек ноды не должна прятать остальные отметки.
+        // Повреждённая запись настроек ноды не должна прятать остальные.
       }
     }
+    return out;
+  }
+  /** Ноды с отметкой «Сервер белого списка» для текущего подключения — одним запросом, для списка нод и Ассистента. */
+  async whitelisted(domain: string | null): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const [uuid, value] of await this.all(domain)) if (value.whitelist === true) out.add(uuid);
+    return out;
+  }
+  /** Ноды с заданным «Лимитом канала» — для «Следить за каналом» в «Мониторинге нод». */
+  async channelLimits(domain: string | null): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const [uuid, value] of await this.all(domain))
+      if (typeof value.channelMbps === 'number' && value.channelMbps > 0) out.add(uuid);
     return out;
   }
   async set(uuid: string, value: NodePreferences) {

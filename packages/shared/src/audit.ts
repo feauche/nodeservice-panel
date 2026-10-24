@@ -281,6 +281,13 @@ export const AUDIT_ACTIONS = {
   'incident.deleted': { category: 'server', label: 'Событие удалено' },
   'incident.resolved.deleted': { category: 'server', label: 'Решённые инциденты удалены' },
   'incident.node_maintenance.start': { category: 'server', label: 'Обслуживание ноды включено' },
+  'incident.node_reserve.added': { category: 'server', label: 'Запасной IP ноды добавлен' },
+  'incident.node_reserve.removed': { category: 'server', label: 'Запасной IP ноды убран' },
+  'incident.node_reserve.auto_changed': {
+    category: 'server',
+    label: 'Переключение ноды на запасной IP «само» переключено',
+  },
+  'incident.node_reserve.switched': { category: 'server', label: 'Нода переключена на запасной IP' },
   'incident.node_maintenance.extend': { category: 'server', label: 'Обслуживание ноды продлено' },
   'incident.node_maintenance.end': { category: 'server', label: 'Обслуживание ноды закончено' },
   'incident.node_hosts.restored': { category: 'server', label: 'Host ноды возвращены вручную' },

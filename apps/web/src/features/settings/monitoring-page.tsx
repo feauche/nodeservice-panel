@@ -4,14 +4,18 @@ import {
   monitoringSettingsUpdateSchema,
 } from '@nodeservice/shared';
 import { useCallback, useEffect, useState } from 'react';
+import { Skeleton } from '@/components/ui/skeleton';
 import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard';
+import { useChannelCoverage } from '@/features/nodes/nodes-api';
 import { apiErrorMessage } from '@/lib/api';
 import { toast } from '@/lib/notify';
+import { plural } from '@/lib/plural';
 import { IncidentTelegramCard, useIncidentTelegramDraft } from './monitoring-telegram-card';
 import { useMonitoring, useUpdateMonitoring } from './settings-api';
 import {
   BarButton,
   NumberField,
+  Pill,
   RowButton,
   SaveBar,
   SectionHeader,
@@ -21,6 +25,40 @@ import {
   Toggle,
 } from './settings-ui';
 import { WaveGroups } from './wave-groups';
+
+/** «Какие ноды проверяются»: канал — только у нод с «Лимитом канала»; без лимита — по именам. */
+function ChannelCoverage() {
+  const query = useChannelCoverage();
+  const d = query.data;
+  const names = d?.missing.map((n) => n.name) ?? [];
+  return (
+    <SettingsRow
+      label="Какие ноды проверяются"
+      hint={
+        <>
+          Только ноды с заданным «Лимитом канала» — окно ноды → «Настройки» → «Канал». Остальные пропускаются,
+          пока лимит не задан.
+          {names.length > 0 &&
+            ` Без лимита: ${names.slice(0, 5).join(', ')}${names.length > 5 ? ` и ещё ${names.length - 5}` : ''}.`}
+        </>
+      }
+    >
+      {query.isPending ? (
+        <Skeleton className="h-6 w-28 rounded-full" />
+      ) : !d ? (
+        <Pill>Не узнать</Pill>
+      ) : !d.total ? (
+        <Pill>Нод нет</Pill>
+      ) : (
+        <Pill tone={d.withLimit === d.total ? 'ok' : 'warn'}>
+          {d.withLimit === d.total
+            ? `Все ноды · ${d.total}`
+            : `${d.withLimit} из ${d.total} ${plural(d.total, 'ноды', 'нод', 'нод')}`}
+        </Pill>
+      )}
+    </SettingsRow>
+  );
+}
 
 type Key = keyof MonitoringSettings;
 type Field = {
@@ -32,6 +70,8 @@ type Field = {
   max?: number;
   /** Дробное число (нагрузка на ядро): в поле с запятой, на сервер — числом. */
   decimal?: boolean;
+  /** Строка сразу после поля: «Какие ноды проверяются» — после порога канала. */
+  after?: 'channelCoverage';
 };
 const sections: Record<
   'checks' | 'incidents',
@@ -200,7 +240,7 @@ const sections: Record<
     },
     {
       title: 'Ресурсы нод',
-      hint: 'Нагрузка процессора и память из Remnawave. Отсутствующая метрика не считается нулём или перегрузкой.',
+      hint: 'Нагрузка процессора, память и канал из Remnawave. Отсутствующая метрика не считается нулём или перегрузкой.',
       fields: [
         {
           key: 'cpuEnabled',
@@ -230,9 +270,23 @@ const sections: Record<
           max: 100,
         },
         {
+          key: 'channelEnabled',
+          label: 'Следить за каналом',
+          hint: 'По умолчанию выключено. Канал занят под завязку — клиенты жалуются «тормозит», хотя нода не падала.',
+        },
+        {
+          key: 'channelPercent',
+          label: 'Порог канала',
+          hint: 'Процент от «Лимита канала» ноды — его задают в окне ноды. Считается больший из входящего и исходящего трафика; при восстановлении — запас 5\u00a0%.',
+          unit: '% лимита',
+          min: 50,
+          max: 100,
+          after: 'channelCoverage',
+        },
+        {
           key: 'resourceDurationMinutes',
           label: 'Длительность превышения',
-          hint: 'Событие — только если перегрузка держится столько минут подряд; закрывается, когда столько же держится ниже порога с запасом. По умолчанию 2.',
+          hint: 'Событие — только если перегрузка держится столько минут подряд; закрывается, когда столько же держится ниже порога с запасом. Общая для процессора, памяти и канала. По умолчанию 2.',
           unit: 'мин',
           min: 1,
           max: 60,
@@ -345,7 +399,7 @@ export function MonitoringPage({ section }: { section: 'checks' | 'incidents' })
       {draft &&
         sections[section].map((s) => (
           <SettingsCard key={s.title} title={s.title} hint={s.hint}>
-            {s.fields.map((f) => (
+            {s.fields.flatMap((f) => [
               <SettingsRow key={f.key} label={f.label} hint={f.hint} htmlFor={`monitor-${f.key}`}>
                 {typeof draft[f.key] === 'boolean' ? (
                   <Toggle
@@ -365,8 +419,9 @@ export function MonitoringPage({ section }: { section: 'checks' | 'incidents' })
                     onChange={(v) => setDraft({ ...draft, [f.key]: v })}
                   />
                 )}
-              </SettingsRow>
-            ))}
+              </SettingsRow>,
+              ...(f.after === 'channelCoverage' ? [<ChannelCoverage key="channel-coverage" />] : []),
+            ])}
             {s.extra === 'waveGroups' && (
               <WaveGroups
                 minNodes={Number(draft.waveMinNodes) || 2}
