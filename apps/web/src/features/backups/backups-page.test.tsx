@@ -556,6 +556,42 @@ describe('BackupsPage', () => {
       expect(within(dialog).getByText(WARNING)).toBeInTheDocument();
     });
 
+    it('копия со старой панели (другие ключи): окно объясняет перенос, вход — нынешний, кнопка работает', async () => {
+      server.use(
+        http.post('/api/backups/:name/inspect', async ({ request }) => {
+          const body = (await request.json()) as { password?: string };
+          const it = mockBackups.items[0] as BackupItem;
+          const open = body.password === MOCK_BACKUP_PASSWORD;
+          return HttpResponse.json({
+            name: it.name,
+            createdAt: it.createdAt,
+            version: '0.106.3',
+            domain: 'old.example.com',
+            encrypted: it.encrypted,
+            needsPassword: !open,
+            contents: { dbBytes: 1000, env: true, metrics: false, paths: 0 },
+            sameKeys: false,
+            foreign: open,
+            compatible: open,
+            problem: open ? null : 'Копия защищена паролем — введите его.',
+            warning: null,
+          });
+        }),
+      );
+      renderPage(BackupsPage, '/settings/backups');
+      const user = userEvent.setup();
+      const dialog = await openRestore(user);
+      expect(within(dialog).getByText(/Панель перенесёт её к себе/)).toHaveTextContent(
+        /Копия от другой установки.*зашифрует своими ключами, а вход оставит нынешний/,
+      );
+      // Пароль и код старой панели не нужны — вместо оговорки про вход «на момент копии».
+      expect(within(dialog).queryByText(/Вход — по паролю и коду 2FA, которые действовали/)).toBeNull();
+      expect(within(dialog).getByText(/Вход — как сейчас/)).toBeInTheDocument();
+      expect(within(dialog).getByText(/Старую панель после переноса остановите/)).toBeInTheDocument();
+      await user.type(within(dialog).getByLabelText(/Для подтверждения введите/), 'ВОССТАНОВИТЬ');
+      expect(within(dialog).getByRole('button', { name: 'Восстановить' })).toBeEnabled();
+    });
+
     it('до подтверждения сказано: вход — по паролю и коду 2FA на момент копии, с её датой', async () => {
       renderPage(BackupsPage, '/settings/backups');
       const user = userEvent.setup();

@@ -18,7 +18,7 @@ export class BackupError extends Error {
 }
 
 /** На каком шаге сорвалось: от него зависит текст, когда причина не распознана. */
-export type BackupStep = 'dump' | 'prepare' | 'restore' | 'swap' | 'pack' | 'files';
+export type BackupStep = 'dump' | 'prepare' | 'restore' | 'adopt' | 'swap' | 'pack' | 'files';
 
 /** Сбой программы или базы: её вывод — в лог, владельцу — перевод (explainBackupError). */
 export class BackupToolError extends Error {
@@ -86,6 +86,7 @@ const UNKNOWN: Record<BackupStep, string> = {
   dump: 'Не удалось выгрузить базу данных.',
   prepare: 'Не удалось подготовить временную базу для восстановления.',
   restore: 'База из копии не развернулась. Возможно, копия повреждена или сделана другой версией панели.',
+  adopt: 'Не удалось перенести копию другой установки: зашифровать её данные ключами этой панели.',
   swap: 'Не удалось подменить базу данных восстановленной.',
   pack: 'Не удалось собрать архив.',
   files: 'Не удалось упаковать дополнительные файлы и папки.',

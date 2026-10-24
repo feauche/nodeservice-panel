@@ -40,6 +40,7 @@ import {
 } from '@nodeservice/shared';
 import { ClsService } from 'nestjs-cls';
 
+import type { CryptoService } from '../../common/crypto/crypto.service.js';
 import { problem } from '../../common/filters/problem-details.filter.js';
 import { zoneLabel } from '../../common/local-time.js';
 import { DEFAULT_TIME_ZONE, panelTimeZone } from '../../common/panel-time-zone.js';
@@ -1026,20 +1027,20 @@ export class BackupsService implements OnModuleInit {
       // только саму базу: восстановить такую копию всё равно нельзя, и об этом скажет сообщение ниже.
       const dumpPath = join(work, 'db.dump');
       let readable: boolean;
+      let copyCrypto: CryptoService | null = null;
       if (sameKeys !== false) readable = await this.tools.verify(dumpPath);
       else if (copyEnv) {
-        const copyCrypto = cryptoFromEnv(copyEnv);
+        copyCrypto = cryptoFromEnv(copyEnv);
         readable = copyCrypto !== null && (await this.tools.verify(dumpPath, copyCrypto));
       } else readable = await this.tools.verify(dumpPath, null);
+      // Копия другой установки с её ключами — переносится: данные панель зашифрует своими ключами.
+      const foreign = sameKeys === false && copyCrypto !== null;
       const problemText = !readable
         ? 'База в архиве не читается — копия повреждена.'
         : newer
           ? `Копия от более новой версии панели (${version}) — сначала обновите панель.`
-          : sameKeys === false
-            ? hasEnv
-              ? // Команда — в конце и без точки: её копируют целиком. Имя без пути консоль ищет в папке копий.
-                `Копия от другой установки (другие ключи шифрования) — панель не может заменить свои ключи. Восстановите её с консоли сервера, ключи перенесутся вместе с базой: nodeservice restore ${name}`
-              : 'Копия от другой установки (другие ключи шифрования), а самих ключей в ней нет. Без ключей той установки её не восстановить — ни из панели, ни из консоли сервера.'
+          : sameKeys === false && !foreign
+            ? 'Копия от другой установки (другие ключи шифрования), а самих ключей в ней нет. Без ключей той установки её не восстановить — ни из панели, ни из консоли сервера.'
             : null;
       return {
         name,
@@ -1050,6 +1051,7 @@ export class BackupsService implements OnModuleInit {
         needsPassword: false,
         contents: { dbBytes: dump.size, env: hasEnv, metrics, paths: Number(meta.paths ?? 0) || 0 },
         sameKeys,
+        foreign,
         compatible: problemText === null,
         problem: problemText,
         // Совместимой вслепую копию не объявляем: на этой установке она подойдёт, на другой — нет,
@@ -1087,7 +1089,15 @@ export class BackupsService implements OnModuleInit {
       this.runState = { stage: 'db', startedAt: this.runState.startedAt, mode: 'restore', lastError: null };
       const { work } = await this.unpack(name, password);
       try {
-        await this.tools.restore(join(work, 'db.dump'));
+        // Копия другой установки — с её ключом из архива: до подмены панель перешифрует данные своим.
+        let adoptFrom: CryptoService | undefined;
+        if (info.foreign) {
+          const env = envValues(await readFile(join(work, 'env'), 'utf8').catch(() => ''));
+          adoptFrom = cryptoFromEnv(env) ?? undefined;
+          if (!adoptFrom)
+            throw new BackupError('Ключи шифрования в копии не читаются — перенести её нельзя.');
+        }
+        await this.tools.restore(join(work, 'db.dump'), adoptFrom);
       } finally {
         await rm(work, { recursive: true, force: true }).catch(() => undefined);
       }
@@ -1115,10 +1125,16 @@ export class BackupsService implements OnModuleInit {
         severity: 'warn',
         ...(actor ? { actor: { type: 'admin', id: null, display: actor } } : {}),
         target: { type: 'backup', id: name, display: name },
-        metadata: { createdAt: info.createdAt, version: info.version },
+        metadata: {
+          createdAt: info.createdAt,
+          version: info.version,
+          ...(info.foreign ? { foreign: true } : {}),
+        },
       })
       .catch(() => undefined);
-    this.log.warn(`Панель восстановлена из ${name} — перезапуск`);
+    this.log.warn(
+      `Панель ${info.foreign ? 'перенесена с другой установки' : 'восстановлена'} из ${name} — перезапуск`,
+    );
     // Панель выходит сама, минуя обработчики остановки: отметку штатной остановки ставим здесь, иначе после
     // перезапуска она сообщила бы, что упала.
     await this.lifecycle.markStopped().catch(() => undefined);

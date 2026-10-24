@@ -27,6 +27,7 @@ import {
   CSRF_HEADER,
 } from '@nodeservice/shared';
 import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import type { Redis } from 'ioredis';
 import { generate } from 'otplib';
 import pg from 'pg';
@@ -38,9 +39,11 @@ import { CryptoService } from '../src/common/crypto/crypto.service.js';
 import { setupHttp } from '../src/common/http/setup-http.js';
 import { createPool, DB, type Db } from '../src/infra/db/db.module.js';
 import { runMigrations } from '../src/infra/db/migrate.js';
+import * as schema from '../src/infra/db/schema/index.js';
 import { VALKEY } from '../src/infra/valkey/valkey.module.js';
 import { AuditRepository } from '../src/modules/audit/audit.repository.js';
 import { SetupService } from '../src/modules/auth/setup.service.js';
+import { adoptForeignCopy } from '../src/modules/backups/backup-adopt.js';
 import { decryptFile } from '../src/modules/backups/backup-crypto.js';
 import { BackupToolError } from '../src/modules/backups/backup-errors.js';
 import {
@@ -82,8 +85,11 @@ class FakeTools implements BackupTools {
     this.verifiedWith.push(crypto);
     return existsSync(dump);
   }
-  async restore(dump: string) {
+  /** Ключ копии другой установки при каждом восстановлении: undefined — своя копия, без переноса. */
+  adoptedFrom: Array<CryptoService | undefined> = [];
+  async restore(dump: string, adoptFrom?: CryptoService) {
     this.restored.push(dump);
+    this.adoptedFrom.push(adoptFrom);
   }
   async packPaths(_paths: string[], _root: string, out: string) {
     const d = mkdtempSync(join(tmpdir(), 'ns-extra-'));
@@ -632,10 +638,14 @@ describe('резервные копии e2e', () => {
       env: `ENCRYPTION_KEY=${foreignKey}\nAPP_SECRET=${'34'.repeat(32)}\nPASSWORD_PEPPER=${'56'.repeat(32)}\n`,
     });
     const foreignInfo = await inspect(foreign);
-    expect(foreignInfo).toMatchObject({ compatible: false, sameKeys: false, contents: { env: true } });
-    expect(foreignInfo.problem).toContain('Копия от другой установки');
-    // Готовая команда с именем этой копии — переписывать ничего не нужно.
-    expect(foreignInfo.problem).toContain(`nodeservice restore ${foreign}`);
+    // Копия другой установки со своими ключами (например, со старой панели) переносится из панели.
+    expect(foreignInfo).toMatchObject({
+      compatible: true,
+      foreign: true,
+      sameKeys: false,
+      problem: null,
+      contents: { env: true },
+    });
     // База копии проверяется ключом из самой копии: ключом этой панели секрет кода входа той установки
     // не расшифровать, и целая копия выглядела бы повреждённой.
     const usedKey = tools.verifiedWith.at(-1);
@@ -646,7 +656,16 @@ describe('резервные копии e2e', () => {
     };
     const thatInstall = new CryptoService({ get: (k: string) => values[k] } as unknown as ConfigService);
     expect(usedKey?.decrypt(thatInstall.encrypt('секрет кода'))).toBe('секрет кода');
-    await restore(foreign).expect(409);
+    // Восстановление получает ключ копии — с ним данные перешифровываются ключом этой панели.
+    const restoredBefore = tools.restored.length;
+    await sleep(1100);
+    await restore(foreign).expect(202);
+    expect(tools.restored).toHaveLength(restoredBefore + 1);
+    expect(tools.adoptedFrom.at(-1)?.decrypt(thatInstall.encrypt('ключ Remnawave'))).toBe('ключ Remnawave');
+    // Своя копия — без переноса.
+    await sleep(1100);
+    await restore(same).expect(202);
+    expect(tools.adoptedFrom.at(-1)).toBeUndefined();
 
     // Та же копия, но база в ней и правда не разворачивается — тогда «повреждена».
     const orig = tools.verify;
@@ -1053,5 +1072,138 @@ describe('подмена базы при восстановлении (наст�
     await expect(new PgBackupTools(urlOf(cur)).restore(join(tmpdir(), 'нет-такого.dump'))).rejects.toThrow();
     expect(await databases()).toEqual([cur]);
     expect(await markOf(cur)).toBe('прежняя');
+  });
+});
+
+describe('перенос копии другой установки (настоящий Postgres, свои базы)', () => {
+  const base = new URL(process.env.DATABASE_URL as string);
+  const name = decodeURIComponent(base.pathname.slice(1));
+  /** «Старая панель» — развёрнутая копия, и «новая» — рабочая база этой установки. */
+  const copyDb = `${name}_adopt_copy`;
+  const currentDb = `${name}_adopt_current`;
+  const urlOf = (db: string) => {
+    const u = new URL(base.toString());
+    u.pathname = `/${db}`;
+    return u.toString();
+  };
+  const withClient = async <T>(db: string, fn: (c: pg.Client) => Promise<T>): Promise<T> => {
+    const c = new pg.Client({ connectionString: urlOf(db) });
+    await c.connect();
+    try {
+      return await fn(c);
+    } finally {
+      await c.end();
+    }
+  };
+  const keyed = (key: string) => {
+    const values: Record<string, unknown> = {
+      ENCRYPTION_KEY: key,
+      ENCRYPTION_KEY_VERSION: 1,
+      APP_SECRET: 'x'.repeat(64),
+    };
+    return new CryptoService({ get: (k: string) => values[k] } as unknown as ConfigService);
+  };
+  const old = keyed('ab'.repeat(32));
+  const mine = keyed('cd'.repeat(32));
+  const drop = async () => {
+    for (const db of [copyDb, currentDb])
+      await withClient('postgres', (c) => c.query(`drop database if exists "${db}" with (force)`));
+  };
+  /** Пустая база со схемой панели после всех миграций. */
+  const migrated = async (db: string) => {
+    await withClient('postgres', (c) => c.query(`create database "${db}"`));
+    const pool = createPool(urlOf(db));
+    try {
+      await runMigrations(drizzle(pool, { schema, casing: 'snake_case' }) as unknown as Db);
+    } finally {
+      await pool.end();
+    }
+  };
+  const user = (c: pg.Client, login: string, totp: string) =>
+    c
+      .query<{ id: string }>(
+        `insert into users (login, password_hash, totp_secret_enc, totp_confirmed_at)
+         values ($1, $2, $3, now()) returning id`,
+        [login, `$argon2id$v=19$m=19456,t=2,p=1$${login}`, totp],
+      )
+      .then((r) => r.rows[0]?.id as string);
+
+  beforeAll(async () => {
+    await drop();
+    await migrated(copyDb);
+    await migrated(currentDb);
+  }, 60_000);
+  afterAll(drop);
+
+  it('данные копии — ключом этой панели, вход — нынешний; рабочая база не меняется', async () => {
+    const stranger = keyed('ef'.repeat(32)).encrypt('чужое');
+    await withClient(copyDb, async (c) => {
+      const id = await user(c, 'old-admin', old.encrypt('СТАРЫЙ-КОД'));
+      await c.query(
+        `insert into recovery_codes (user_id, code_hash, code_enc) values ($1, '$argon2id$old', $2)`,
+        [id, old.encrypt('OLD1-OLD1')],
+      );
+      await c.query(
+        `insert into app_meta (key, value) values ('settings.remnawave', $1), ('settings.x', $2)`,
+        [
+          JSON.stringify({ baseUrl: 'https://remna.example.com', apiKeyEnc: old.encrypt('ключ Remnawave') }),
+          JSON.stringify({ tokenEnc: stranger }),
+        ],
+      );
+      // Журнал действий база менять не даёт (только добавлять записи) — перенос его не трогает.
+      await c.query(
+        `insert into audit_log (actor_type, actor_display, action, category, result, severity, source, metadata)
+         values ('system', 'система', 'x.test', 'system', 'ok', 'info', 'auto', $1::jsonb)`,
+        [JSON.stringify({ secretEnc: old.encrypt('из журнала') })],
+      );
+    });
+    const currentId = await withClient(currentDb, async (c) => {
+      const id = await user(c, 'admin', mine.encrypt('НОВЫЙ-КОД'));
+      for (const code of ['NEW1-NEW1', 'NEW2-NEW2'])
+        await c.query(
+          `insert into recovery_codes (user_id, code_hash, code_enc) values ($1, '$argon2id$new', $2)`,
+          [id, mine.encrypt(code)],
+        );
+      await c.query(
+        `insert into trusted_devices (user_id, token_hash, expires_at) values ($1, 'hash', now() + interval '1 day')`,
+        [id],
+      );
+      return id;
+    });
+
+    const result = await withClient(copyDb, (copy) =>
+      withClient(currentDb, (current) => adoptForeignCopy(copy, current, old, mine)),
+    );
+    // Ключ Remnawave; чужой шифротекст оставлен как был.
+    expect(result).toEqual({ reencrypted: 1, unreadable: 1 });
+
+    await withClient(copyDb, async (c) => {
+      const users = (await c.query('select id, login, totp_secret_enc from users')).rows;
+      expect(users).toHaveLength(1);
+      expect(users[0]).toMatchObject({ id: currentId, login: 'admin' });
+      expect(mine.decrypt(users[0].totp_secret_enc)).toBe('НОВЫЙ-КОД');
+      const codes = (await c.query('select code_enc from recovery_codes order by code_enc')).rows;
+      expect(codes.map((r) => mine.decrypt(r.code_enc)).sort()).toEqual(['NEW1-NEW1', 'NEW2-NEW2']);
+      expect((await c.query('select count(*)::int as n from trusted_devices')).rows[0]?.n).toBe(1);
+      const meta = new Map(
+        (await c.query<{ key: string; value: string }>('select key, value from app_meta')).rows.map((r) => [
+          r.key,
+          JSON.parse(r.value),
+        ]),
+      );
+      expect(meta.get('settings.remnawave').baseUrl).toBe('https://remna.example.com');
+      expect(mine.decrypt(meta.get('settings.remnawave').apiKeyEnc)).toBe('ключ Remnawave');
+      expect(meta.get('settings.x').tokenEnc).toBe(stranger);
+      const audit = (await c.query(`select metadata from audit_log where action = 'x.test'`)).rows[0];
+      expect(old.decrypt(audit.metadata.secretEnc)).toBe('из журнала');
+      // Проверка, которая идёт перед подменой базы: ключом этой панели — проходит, ключом копии — уже нет.
+      expect(await checkRestoredDatabase(c, mine)).toBe(true);
+      expect(await checkRestoredDatabase(c, old)).toBe(false);
+    });
+    // Рабочая база при переносе только читается.
+    await withClient(currentDb, async (c) => {
+      expect((await c.query('select login from users')).rows).toEqual([{ login: 'admin' }]);
+      expect((await c.query('select count(*)::int as n from recovery_codes')).rows[0]?.n).toBe(2);
+    });
   });
 });

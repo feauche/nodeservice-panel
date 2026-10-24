@@ -9,7 +9,8 @@ import pg from 'pg';
 
 import { CryptoService } from '../../common/crypto/crypto.service.js';
 import type { Env } from '../../config/env.schema.js';
-import { BackupToolError } from './backup-errors.js';
+import { adoptForeignCopy } from './backup-adopt.js';
+import { type BackupStep, BackupToolError } from './backup-errors.js';
 
 /**
  * Инструменты копии: база данных (pg_dump / pg_restore), упаковка и чтение путей сервера панели.
@@ -27,8 +28,10 @@ export interface BackupTools {
   /**
    * Развернуть дамп вместо текущей базы: во временную базу, потом подмена имён; прежняя база остаётся
    * как nodeservice_pre_restore_<время>. Ошибка на любом шаге — текущая база не тронута, временная удалена.
+   * adoptFrom — ключ копии от другой установки: до подмены её данные перешифровываются ключом этой панели,
+   * а вход остаётся нынешний (backup-adopt.ts).
    */
-  restore(dump: string): Promise<void>;
+  restore(dump: string, adoptFrom?: CryptoService): Promise<void>;
   /** Упаковать пути сервера панели (относительно hostRoot) в tar.gz; нечитаемые и отсутствующие — пропуск. */
   packPaths(paths: string[], hostRoot: string, out: string): Promise<void>;
   /** Что лежит по пути и сколько весит (байты). */
@@ -117,7 +120,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const TERMINATE_EVERY_MS = 100;
 
 /** Сбой команды базы: код и текст Postgres — в лог, владельцу — перевод. */
-function dbError(step: 'prepare' | 'swap', err: unknown): BackupToolError {
+function dbError(step: BackupStep, err: unknown): BackupToolError {
   if (err instanceof BackupToolError) return err;
   const code = (err as { code?: unknown }).code;
   const text = err instanceof Error ? err.message : String(err);
@@ -357,7 +360,7 @@ export class PgBackupTools implements BackupTools {
     }
   }
 
-  async restore(dump: string): Promise<void> {
+  async restore(dump: string, adoptFrom?: CryptoService): Promise<void> {
     const url = new URL(this.databaseUrl);
     const dbName = decodeURIComponent(url.pathname.slice(1)) || 'nodeservice';
     const ts = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
@@ -400,6 +403,7 @@ export class PgBackupTools implements BackupTools {
         dump,
       ]);
       if (r.code !== 0) throw new BackupToolError('restore', failureText(r));
+      if (adoptFrom) await this.adopt(target.toString(), adoptFrom);
       await swapDatabases(adminUrl, { current: dbName, temp, keep });
     } catch (err) {
       // Что бы ни сорвалось, временная база не остаётся. Если подмена всё же состоялась, базы с таким
@@ -413,6 +417,27 @@ export class PgBackupTools implements BackupTools {
     // восстановлением: у них то же начало имени).
     const old = await named(`${dbName}_pre_restore_`).catch(() => [] as string[]);
     for (const name of old) if (name !== keep) await drop(name, false).catch(() => undefined);
+  }
+
+  /**
+   * Копия другой установки во временной базе — к этой панели: данные ключом панели, вход нынешний. После —
+   * та же проверка, что у любой копии: администратор есть, секрет его кода входа читается ключом панели.
+   */
+  private async adopt(tempUrl: string, from: CryptoService): Promise<void> {
+    const to = this.crypto;
+    if (!to) throw new BackupToolError('adopt', 'нет ключа шифрования панели');
+    try {
+      const done = await withAdmin(tempUrl, (copy) =>
+        withAdmin(this.databaseUrl, (current) => adoptForeignCopy(copy, current, from, to)),
+      );
+      if (!(await withAdmin(tempUrl, (copy) => checkRestoredDatabase(copy, to))))
+        throw new Error('после переноса база не прошла проверку: нет администратора или его код не читается');
+      this.log.log(
+        `Копия другой установки перенесена: перешифровано ${done.reencrypted}, ключ копии не прочитал ${done.unreadable}.`,
+      );
+    } catch (err) {
+      throw dbError('adopt', err);
+    }
   }
 
   async packPaths(paths: string[], hostRoot: string, out: string): Promise<void> {
