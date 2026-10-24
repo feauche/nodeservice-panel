@@ -23,6 +23,7 @@ import {
 } from './remnawave-client.js';
 import { RemnawaveSettingsStore } from './remnawave-settings.store.js';
 import { expandSnippets, type RemnawaveSnippet, snippetRefs } from './remnawave-snippets.js';
+import { matchLinks, type SubscriptionEntry } from './subscription-keys.js';
 
 /** Remnawave не отвечает столько подряд — сообщение в Telegram и колокольчик. */
 const REMNAWAVE_OUTAGE_NOTIFY_MS = 2 * 60_000;
@@ -180,6 +181,59 @@ export class RemnawaveService {
     } catch (err) {
       this.log.warn(`Подключения ноды ${nodeUuid}: ${err instanceof Error ? err.message : err}`);
       return { items: [], primary: null, failed: true };
+    }
+  }
+
+  /**
+   * Ключи подписки пользователя по Host — только чтение (проверка VPN по ключу в DPI Checker). Ссылки — те же, что
+   * получает клиент; Host каждой — из «сырой» подписки. Нет такого пользователя — found: false; сбой — Error по-русски.
+   */
+  async subscriptionKeys(username: string): Promise<
+    | { found: false }
+    | {
+        found: true;
+        user: { username: string; active: boolean; status: string; expiresAt: string | null };
+        entries: SubscriptionEntry[];
+      }
+  > {
+    const creds = await this.store.credentials();
+    if (!creds) throw new Error('Remnawave не подключена.');
+    const io = readIo(creds);
+    try {
+      const sub = (await io.get(`/api/subscriptions/by-username/${encodeURIComponent(username)}`)) as
+        | Record<string, unknown>
+        | undefined;
+      const user = (sub?.user ?? {}) as Record<string, unknown>;
+      if (!sub || sub.isFound === false || !text(user.shortUuid)) return { found: false };
+      const raw = (await io.get(
+        `/api/subscriptions/by-short-uuid/${encodeURIComponent(text(user.shortUuid))}/raw`,
+      )) as Record<string, unknown> | undefined;
+      const configs = records(raw?.resolvedProxyConfigs).map((c) => ({
+        hostUuid: text((c.metadata as Record<string, unknown> | undefined)?.uuid),
+        address: text(c.address),
+        port: typeof c.port === 'number' ? c.port : 0,
+        remark: text(c.finalRemark),
+        protocol: text(c.protocol),
+      }));
+      const links = Array.isArray(sub.links)
+        ? sub.links.filter((l): l is string => typeof l === 'string')
+        : [];
+      return {
+        found: true,
+        user: {
+          username: text(user.username) || username,
+          active: user.isActive !== false,
+          status: text(user.userStatus),
+          expiresAt: text(user.expiresAt) || null,
+        },
+        entries: matchLinks(
+          configs.filter((c) => c.hostUuid && c.address && c.port),
+          links,
+        ),
+      };
+    } catch (err) {
+      if (err instanceof RemnawaveApiError && err.status === 404) return { found: false };
+      throw new Error(readError(err, 'подписки пользователей', 'subscriptions:read'));
     }
   }
 

@@ -18,13 +18,19 @@ export const scenarioSchema = z
     conditionMode: z.enum(['all', 'any']).default('all'),
     holdMinutes: z.number().int().min(1).max(60).default(1),
     actions: z
-      .array(z.enum(['check_tcp', 'record_event', 'notify', 'hide_host', 'rename_host']))
+      .array(z.enum(['check_tcp', 'check_dpi', 'record_event', 'notify', 'hide_host', 'rename_host']))
       .min(1)
-      .max(5),
+      .max(6),
     renameMode: z.enum(['replace', 'prepend', 'append']).default('append'),
     renameText: z.string().trim().max(200).default(''),
     autoRestore: z.boolean().default(true),
     cooldownMinutes: z.number().int().min(5).max(1440).default(30),
+    /**
+     * Шаг «Проверить VPN по ключу» (DPI Checker, платно; витрина reference-pack-2026-10, раздел 2 — A): не чаще раза в
+     * столько минут на ноду и не дороже стольких долларов в сутки на сценарий.
+     */
+    dpiEveryMinutes: z.number().int().min(30).max(1440).default(120),
+    dpiDailyUsd: z.number().min(0.05).max(100).default(1),
     /** Исключения (0.106.0): когда сценарию не срабатывать. «wave» — нода входит в открытую волну. */
     except: z
       .array(z.enum(['wave']))
@@ -59,7 +65,7 @@ export const scenarioRunStepSchema = z.object({
    * С 0.94.0 — для журнала: шаг сценария и его номер в момент срабатывания, слово-итог («доступен», «не вышло»)
    * и подробности после него. У записей до 0.94.0 их нет — журнал показывает `text`.
    */
-  action: z.enum(['check_tcp', 'record_event', 'notify', 'hide_host', 'rename_host']).optional(),
+  action: z.enum(['check_tcp', 'check_dpi', 'record_event', 'notify', 'hide_host', 'rename_host']).optional(),
   n: z.number().int().min(1).optional(),
   word: z.string().optional(),
   detail: z.string().optional(),
@@ -96,6 +102,7 @@ export const scenarioLabels = {
 };
 export const scenarioActionLabels = {
   check_tcp: 'Проверить TCP',
+  check_dpi: 'Проверить VPN по ключу',
   record_event: 'Записать событие',
   notify: 'Уведомить в Telegram',
   hide_host: 'Отключить Host',

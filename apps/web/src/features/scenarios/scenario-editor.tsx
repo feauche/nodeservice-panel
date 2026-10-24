@@ -17,6 +17,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import {
   formatScenarioHostName,
+  integrationsStatusSchema,
   type Scenario,
   type ScenarioOverview,
   scenarioConditionDescriptions,
@@ -39,6 +40,7 @@ import {
   EyeOffIcon,
   GitBranchIcon,
   GripVerticalIcon,
+  KeyRoundIcon,
   ListChecksIcon,
   LockIcon,
   PlayIcon,
@@ -68,6 +70,8 @@ import { Input } from '@/components/ui/input';
 import { RowsSkeleton } from '@/components/ui/loading-state';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useDpiKeyUser } from '@/features/integrations/dpi-key-user';
+import { usd } from '@/features/integrations/dpi-workspace';
 import { useNodes, useRemnaPermissions } from '@/features/nodes/nodes-api';
 import { plural } from '@/features/overview/overview-format';
 import { useMonitoring } from '@/features/settings/settings-api';
@@ -101,6 +105,8 @@ export function changesOf(a: Scenario, b: Scenario): string[] {
   if (JSON.stringify(a.hostBindings) !== JSON.stringify(b.hostBindings)) out.push('привязка Host');
   if (a.cooldownMinutes !== b.cooldownMinutes)
     out.push(`пауза ${b.cooldownMinutes} → ${a.cooldownMinutes} мин`);
+  if (a.dpiEveryMinutes !== b.dpiEveryMinutes || a.dpiDailyUsd !== b.dpiDailyUsd)
+    out.push('пределы проверки VPN');
   if ((a.except ?? []).join() !== (b.except ?? []).join()) out.push('исключение');
   return out;
 }
@@ -111,6 +117,11 @@ export const STEPS: Record<Action, { title: string; hint: string; icon: typeof R
     title: 'Проверить TCP',
     hint: 'Check-Host проверит порт ноды из России и других стран. Бесплатно.',
     icon: RadarIcon,
+  },
+  check_dpi: {
+    title: 'Проверить VPN по ключу',
+    hint: 'DPI Checker подключится к ноде по ключу из России, как клиент. Платно — с баланса DPI Checker.',
+    icon: KeyRoundIcon,
   },
   record_event: {
     title: 'Записать событие',
@@ -133,7 +144,16 @@ export const STEPS: Record<Action, { title: string; hint: string; icon: typeof R
     icon: BellIcon,
   },
 };
-const ORDERABLE: Action[] = ['check_tcp', 'record_event', 'hide_host', 'rename_host'];
+const ORDERABLE: Action[] = ['check_tcp', 'check_dpi', 'record_event', 'hide_host', 'rename_host'];
+/** «Не чаще» у проверки VPN: на ноду, по всем сценариям. */
+const DPI_EVERY: Array<[number, string]> = [
+  [30, 'Раз в 30 минут'],
+  [60, 'Раз в час'],
+  [120, 'Раз в 2 часа'],
+  [360, 'Раз в 6 часов'],
+  [720, 'Раз в 12 часов'],
+  [1440, 'Раз в сутки'],
+];
 const CHIP =
   'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-border-2 bg-surface px-2.5 text-[13px] font-semibold whitespace-nowrap transition-colors hover:border-ai/50 focus-visible:outline-2 focus-visible:outline-ai [&_svg]:size-3.5 [&_svg]:text-text-3';
 
@@ -319,6 +339,7 @@ export function ScenarioEditor({
   const [search, setSearch] = useState('');
   const [holdInput, setHoldInput] = useState(String(draft.holdMinutes));
   const [cooldownInput, setCooldownInput] = useState(String(draft.cooldownMinutes));
+  const [dpiUsdInput, setDpiUsdInput] = useState(String(draft.dpiDailyUsd).replace('.', ','));
   const [deleting, setDeleting] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [tab, setTab] = useState<EditorTab>(original ? initialTab : 'rule');
@@ -336,6 +357,29 @@ export function ScenarioEditor({
   const conditions = scenarioConditions(draft);
   const all = nodes.data?.nodes ?? [];
   const hostStep = draft.actions.some((a) => a === 'hide_host' || a === 'rename_host');
+  // Шаг «Проверить VPN по ключу»: подключён ли DPI Checker и откуда возьмётся ключ — до сохранения.
+  const dpiStep = draft.actions.includes('check_dpi');
+  const integrations = useQuery({
+    queryKey: ['integrations'],
+    queryFn: ({ signal }) => api.get('/integrations', integrationsStatusSchema, signal),
+    enabled: dpiStep,
+  });
+  const keyUser = useDpiKeyUser(dpiStep);
+  const dpiConnected = integrations.data?.items.find((i) => i.provider === 'dpi')?.connected;
+  const dpiState =
+    integrations.isPending || keyUser.isPending
+      ? null
+      : dpiConnected === false
+        ? { tone: 'warn' as const, text: 'DPI Checker не подключён — шаг не выполнится.' }
+        : !keyUser.data?.username
+          ? {
+              tone: 'warn' as const,
+              text: 'Не задан пользователь для ключей — шаг не выполнится. Задайте его в «DPI Checker → Подключение».',
+            }
+          : {
+              tone: 'muted' as const,
+              text: `Ключ — из подписки «${keyUser.data.username}», заново перед каждой проверкой.`,
+            };
   const hosts = useQuery({
     queryKey: ['scenario-hosts'],
     queryFn: ({ signal }) => api.get('/scenarios/hosts', scenarioHostsSchema, signal),
@@ -378,6 +422,10 @@ export function ScenarioEditor({
 
   const timeValid = (v: string, min: number, max: number) =>
     v.trim() !== '' && Number.isInteger(Number(v)) && Number(v) >= min && Number(v) <= max;
+  const usdValid = (v: string) => {
+    const n = Number(v.replace(',', '.'));
+    return v.trim() !== '' && Number.isFinite(n) && n >= 0.05 && n <= 100;
+  };
   // Почему «Сохранить» недоступна — коротко рядом с кнопкой, а не молча.
   const blocker =
     draft.name.trim().length < 2
@@ -392,7 +440,9 @@ export function ScenarioEditor({
               ? 'Время — от 1 до 60 мин'
               : !timeValid(cooldownInput, 5, 1440)
                 ? 'Пауза — от 5 до 1440 мин'
-                : null;
+                : dpiStep && !usdValid(dpiUsdInput)
+                  ? 'Предел в сутки — от 0,05 до 100 $'
+                  : null;
 
   const allowedNodes = all.filter((n) => draft.scope === 'all' || draft.nodes.includes(n.uuid));
   const targets = (hosts.data?.hosts ?? [])
@@ -445,15 +495,17 @@ export function ScenarioEditor({
     .map((a) =>
       a === 'check_tcp'
         ? '🔴 TCP: недоступен из РФ'
-        : a === 'record_event'
-          ? `✅ Записано в событие «${conditions.includes('offline') ? 'Нода не на связи' : '…'}»`
-          : !hosts.data
-            ? '… Host'
-            : !ownHost
-              ? `🟠 ${rename ? 'Имя Host не изменено' : 'Host не отключён'}: у ноды нет своих Host`
-              : rename
-                ? `✅ Имя Host: «${ownHost.name}» → «${formatScenarioHostName(ownHost.name, draft.renameMode, draft.renameText.trim() || '…')}»`
-                : `✅ Отключён Host: «${ownHost.name}»`,
+        : a === 'check_dpi'
+          ? '⏳ VPN по ключу: проверка запущена, итог — отдельным сообщением'
+          : a === 'record_event'
+            ? `✅ Записано в событие «${conditions.includes('offline') ? 'Нода не на связи' : '…'}»`
+            : !hosts.data
+              ? '… Host'
+              : !ownHost
+                ? `🟠 ${rename ? 'Имя Host не изменено' : 'Host не отключён'}: у ноды нет своих Host`
+                : rename
+                  ? `✅ Имя Host: «${ownHost.name}» → «${formatScenarioHostName(ownHost.name, draft.renameMode, draft.renameText.trim() || '…')}»`
+                  : `✅ Отключён Host: «${ownHost.name}»`,
     );
   const tableCell = 'border border-[#2b3a4c] px-2 py-1';
   const kicker = 'text-[11px] font-semibold tracking-[0.1em] text-text-3 uppercase';
@@ -962,6 +1014,76 @@ export function ScenarioEditor({
                                     TCP-проверки выключены в «Мониторинге нод» — шаг не выполнится.
                                   </Note>
                                 ))}
+                              {action === 'check_dpi' && (
+                                <>
+                                  {dpiState && (
+                                    <Note tone={dpiState.tone}>
+                                      {dpiState.text}{' '}
+                                      <Link to="/integrations/dpi" className="text-brand hover:underline">
+                                        DPI Checker →
+                                      </Link>
+                                    </Note>
+                                  )}
+                                  <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+                                    <div className="min-w-0">
+                                      <span className="mb-1.5 block text-[12.5px] font-medium text-text-2">
+                                        Не чаще
+                                      </span>
+                                      <Select
+                                        value={String(draft.dpiEveryMinutes)}
+                                        onValueChange={(v) => change({ dpiEveryMinutes: Number(v) })}
+                                      >
+                                        <SelectTrigger aria-label="Не чаще" className="h-10 w-full">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {DPI_EVERY.map(([v, t]) => (
+                                            <SelectItem key={v} value={String(v)}>
+                                              {t} на ноду
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                    <div className="min-w-0">
+                                      <label
+                                        htmlFor="scenario-dpi-usd"
+                                        className="mb-1.5 block text-[12.5px] font-medium text-text-2"
+                                      >
+                                        Не больше в сутки
+                                      </label>
+                                      <span className="relative block">
+                                        <Input
+                                          id="scenario-dpi-usd"
+                                          inputMode="decimal"
+                                          aria-invalid={!usdValid(dpiUsdInput)}
+                                          className="h-10 w-full pr-8"
+                                          value={dpiUsdInput}
+                                          onChange={(e) => {
+                                            setDpiUsdInput(e.target.value);
+                                            if (usdValid(e.target.value))
+                                              change({
+                                                dpiDailyUsd: Number(e.target.value.replace(',', '.')),
+                                              });
+                                          }}
+                                        />
+                                        <span
+                                          className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-[13px] text-text-3"
+                                          aria-hidden="true"
+                                        >
+                                          $
+                                        </span>
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <span className="block text-[12px] leading-snug text-text-3">
+                                    Итог — в событии ноды и в «Срабатываниях», когда проверка закончится
+                                    (обычно 2–5 минут); со шагом «Уведомить в Telegram» — и отдельным
+                                    сообщением. Предел {usd(draft.dpiDailyUsd)} в сутки — на этот сценарий:
+                                    исчерпан — шаг пропускается и пишет почему.
+                                  </span>
+                                </>
+                              )}
                               {action === 'rename_host' && (
                                 <>
                                   <Segmented<Scenario['renameMode']>

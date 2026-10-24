@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, HttpException, Inject, Injectable, Optional } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
+import type { DpiKeyPreview, DpiKeyUser } from '@nodeservice/shared';
 import { eq, sql } from 'drizzle-orm';
 import { errorText } from '../../common/filters/problem-details.filter.js';
 import { DB, type Db } from '../../infra/db/db.module.js';
@@ -8,6 +9,8 @@ import { appMeta } from '../../infra/db/schema/index.js';
 import { NodeEventsStore } from '../node-events/node-events.store.js';
 import { NodeMaintenanceStore } from '../remnawave/node-maintenance.store.js';
 import { RemnawaveService } from '../remnawave/remnawave.service.js';
+import { RemnawaveTopologyService } from '../remnawave/remnawave-topology.service.js';
+import { maskKey, nodeKey } from '../remnawave/subscription-keys.js';
 import { type IntegrationSession, IntegrationsService } from './integrations.service.js';
 export const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -18,6 +21,8 @@ export function list(v: unknown): Record<string, unknown>[] {
     if (Array.isArray(o[key])) return (o[key] as unknown[]).map(obj);
   return [];
 }
+/** Служебный пользователь Remnawave для ключей проверки VPN (раздел 2 витрины reference-pack-2026-10). */
+const KEY_USER = 'dpi.key-user';
 /** Проверок на странице списка — больше DPI Checker не отдаёт. */
 const PAGE = 100;
 const createdMs = (c: Record<string, unknown>) => Date.parse(String(c.created_at ?? c.createdAt ?? '')) || 0;
@@ -141,6 +146,7 @@ export class DpiService {
     private remna: RemnawaveService,
     @Optional() private timeline?: NodeEventsStore,
     @Optional() private maintenance?: NodeMaintenanceStore,
+    @Optional() private topology?: RemnawaveTopologyService,
   ) {}
   private async read(key: string) {
     const row = await this.db.query.appMeta.findFirst({ where: eq(appMeta.key, key) });
@@ -444,6 +450,84 @@ export class DpiService {
     if (refs?.[id]) await this.recordEvent(result, refs[id], session.identity);
     return { ...result, node: refs?.[id] ?? null };
   }
+  /** Служебный пользователь Remnawave, из подписки которого панель берёт ключ VLESS для проверки VPN. */
+  private async keyUsername(): Promise<string | null> {
+    const saved = await this.read(KEY_USER);
+    return typeof saved?.username === 'string' && saved.username ? saved.username : null;
+  }
+  /** Подписка пользователя и Host нод: свежие при каждой проверке — ключ всегда тот, что получит клиент. */
+  private async keySource(username: string) {
+    if (!this.topology) throw new BadRequestException('Карта Remnawave недоступна.');
+    let sub: Awaited<ReturnType<RemnawaveService['subscriptionKeys']>>;
+    try {
+      sub = await this.remna.subscriptionKeys(username);
+    } catch (err) {
+      throw new BadRequestException(err instanceof Error ? err.message : 'Remnawave не ответила.');
+    }
+    if (!sub.found) throw new BadRequestException(`Пользователя «${username}» нет в Remnawave.`);
+    if (!sub.user.active)
+      throw new BadRequestException(
+        `Пользователь «${username}» не активен в Remnawave (истёк срок, отключён или кончился трафик) — его ключи не подключатся.`,
+      );
+    const topology = await this.topology.get();
+    return { entries: sub.entries, hosts: topology.hosts };
+  }
+  /** Что с ключами по нодам: какой Host возьмётся или почему ключа нет. Ошибка пользователя — в error. */
+  async keyUser(): Promise<DpiKeyUser> {
+    const username = await this.keyUsername();
+    if (!username) return { username: null, error: null, nodes: [] };
+    const status = await this.remna.status();
+    try {
+      const { entries, hosts } = await this.keySource(username);
+      return {
+        username,
+        error: null,
+        nodes: status.nodes
+          .filter((n) => !n.isDisabled)
+          .map((n) => {
+            const k = nodeKey(n.uuid, hosts, entries, username);
+            return {
+              uuid: n.uuid,
+              name: n.name,
+              host: k.ok ? k.host.name : null,
+              reason: k.ok ? null : k.reason,
+            };
+          }),
+      };
+    } catch (err) {
+      return { username, error: errorText(err), nodes: [] };
+    }
+  }
+  /** Сохраняет пользователя для ключей; null — снова вставлять ключ вручную. Возвращает, что с ключами по нодам. */
+  async setKeyUser(username: string | null) {
+    const before = await this.keyUsername();
+    await this.write(KEY_USER, { username });
+    return { before, result: await this.keyUser() };
+  }
+  /** Ключ VLESS ноды из подписки служебного пользователя — заново перед каждой проверкой. */
+  private async keyFor(nodeUuid: string) {
+    const username = await this.keyUsername();
+    if (!username)
+      throw new BadRequestException(
+        'Вставьте ключ VLESS или укажите пользователя для ключей в «Подключении» DPI Checker.',
+      );
+    const { entries, hosts } = await this.keySource(username);
+    const k = nodeKey(nodeUuid, hosts, entries, username);
+    if (!k.ok) throw new BadRequestException(k.reason);
+    return { username, ...k };
+  }
+  /** Какой ключ возьмётся для ноды — для окна проверки; сам ключ в браузер не уходит. */
+  async keyPreview(nodeUuid: string): Promise<DpiKeyPreview> {
+    const k = await this.keyFor(nodeUuid);
+    return {
+      username: k.username,
+      host: k.host.name,
+      address: k.host.address,
+      port: k.host.port,
+      shared: k.shared,
+      preview: maskKey(k.link),
+    };
+  }
   /** Тело запуска и оценки: адрес ноды (IP) или ключ (VLESS), точки — выбранные или «оптимальные» сервиса. */
   private async payload(
     session: IntegrationSession,
@@ -458,7 +542,9 @@ export class DpiService {
       pops = Array.isArray(p.pop_ids) ? p.pop_ids.map(Number) : list(p).map((x) => Number(x.id));
     }
     if (!pops.length) throw new BadRequestException('Нет доступных точек проверки.');
-    if (body.kind === 'vpn' && !body.key?.startsWith('vless://'))
+    // Ключ не вставлен — берётся из подписки служебного пользователя.
+    const key = body.kind === 'vpn' ? body.key?.trim() || (await this.keyFor(node.uuid)).link : null;
+    if (body.kind === 'vpn' && !key?.startsWith('vless://'))
       throw new BadRequestException('Для VPN-проверки вставьте VLESS-ключ.');
     return {
       node,
@@ -466,7 +552,7 @@ export class DpiService {
       payload: {
         location: 'russia',
         pop_ids: pops,
-        ...(body.kind === 'ip' ? { resources: [node.address] } : { keys: [body.key] }),
+        ...(body.kind === 'ip' ? { resources: [node.address] } : { keys: [key] }),
       },
     };
   }

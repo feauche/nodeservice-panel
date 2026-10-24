@@ -1,3 +1,4 @@
+import { HttpResponse, http } from 'msw';
 import { setupWorker } from 'msw/browser';
 import { mockAssistant } from '@/test/msw/assistant-mock';
 import { handlers, resetMockState } from '@/test/msw/handlers';
@@ -25,5 +26,7 @@ export async function startMockWorker(): Promise<void> {
   // Для снимков: ноды Remnawave и Host, отключённые сценарием (метка «Host отключён»).
   Object.assign(window, { __nsMockRemnawave: mockRemnawave, __nsMockDisabledHosts: mockDisabledHosts });
   const worker = setupWorker(...handlers);
+  // Для снимков: свои ответы прямо со страницы — __nsMockWorker.use(__nsMsw.http.get(…)).
+  Object.assign(window, { __nsMockWorker: worker, __nsMsw: { http, HttpResponse } });
   await worker.start({ onUnhandledRequest: 'bypass', quiet: false });
 }

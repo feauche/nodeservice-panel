@@ -118,6 +118,49 @@ describe('Редактор сценария «Если → то»', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it('шаг «Проверить VPN по ключу»: откуда ключ, «Не чаще» и «Не больше в сутки»; неверный предел не сохранить', async () => {
+    let keyUser: string | null = null;
+    server.use(
+      http.get('*/api/integrations/dpi/key-user', () =>
+        HttpResponse.json({ username: keyUser, error: null, nodes: [] }),
+      ),
+    );
+    const user = userEvent.setup();
+    const { unmount } = renderPage(() => <Harness />, '/scenarios');
+    await screen.findByRole('dialog');
+    await user.click(step('Проверить VPN по ключу'));
+    expect(reading()).toHaveTextContent('3) проверить VPN по ключу');
+    expect(await screen.findByText(/DPI Checker не подключён — шаг не выполнится\./)).toBeVisible();
+    await user.click(screen.getByRole('combobox', { name: 'Не чаще' }));
+    await user.click(await screen.findByRole('option', { name: 'Раз в 6 часов на ноду' }));
+    const usd = screen.getByLabelText('Не больше в сутки');
+    expect(usd).toHaveValue('1');
+    await user.clear(usd);
+    await user.type(usd, '0,01');
+    expect(screen.getByText('Предел в сутки — от 0,05 до 100 $')).toBeVisible();
+    await user.clear(usd);
+    await user.type(usd, '0,5');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    expect(saved).toMatchObject({ dpiEveryMinutes: 360, dpiDailyUsd: 0.5 });
+    expect(saved?.actions).toContain('check_dpi');
+    unmount();
+    // DPI Checker подключён, пользователь для ключей задан — откуда возьмётся ключ.
+    keyUser = 'nodeservice-check';
+    server.use(
+      http.get('*/api/integrations', () =>
+        HttpResponse.json({
+          items: [{ provider: 'dpi', connected: true, checkedAt: null, domains: [], balance: '5' }],
+        }),
+      ),
+    );
+    renderPage(() => <Harness />, '/scenarios');
+    await screen.findByRole('dialog');
+    await user.click(step('Проверить VPN по ключу'));
+    expect(
+      await screen.findByText(/Ключ — из подписки «nodeservice-check», заново перед каждой проверкой\./),
+    ).toBeVisible();
+  });
+
   it('время можно стереть и ввести заново; причина недоступного сохранения — словами', async () => {
     const user = userEvent.setup();
     renderPage(() => <Harness />, '/scenarios');

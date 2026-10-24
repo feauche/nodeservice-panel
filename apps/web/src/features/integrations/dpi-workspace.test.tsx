@@ -7,6 +7,7 @@ import { useAuthStore } from '@/features/auth/store';
 import { mockMe, resetMockState } from '@/test/msw/handlers';
 import { server } from '@/test/msw/server';
 import { renderPage } from '@/test/render';
+import { DpiKeyUserCard } from './dpi-key-user';
 import { DpiWorkspace } from './dpi-workspace';
 
 const US = 'a1111111-1111-4111-8111-111111111111';
@@ -72,6 +73,12 @@ const checks = [
 let started: unknown = null;
 let cancelled = false;
 let schedule: unknown = null;
+let keyUser: { username: string | null; error: string | null; nodes: unknown[] } = {
+  username: null,
+  error: null,
+  nodes: [],
+};
+let savedKeyUser: unknown = null;
 
 function Page() {
   return (
@@ -87,7 +94,31 @@ beforeEach(() => {
   started = null;
   cancelled = false;
   schedule = null;
+  keyUser = { username: null, error: null, nodes: [] };
+  savedKeyUser = null;
   server.use(
+    http.get('*/api/integrations/dpi/key-user', () => HttpResponse.json(keyUser)),
+    http.put('*/api/integrations/dpi/key-user', async ({ request }) => {
+      savedKeyUser = await request.json();
+      return HttpResponse.json(keyUser);
+    }),
+    http.get('*/api/integrations/dpi/key/:node', ({ params }) =>
+      params.node === US
+        ? HttpResponse.json(
+            {
+              detail: 'Host ноды нет в подписке «nodeservice-check» — дайте пользователю сквад с этой нодой.',
+            },
+            { status: 400 },
+          )
+        : HttpResponse.json({
+            username: 'nodeservice-check',
+            host: '🇹🇷 Турция',
+            address: 'tr.example.com',
+            port: 443,
+            shared: false,
+            preview: 'vless://3f9a…c21e@tr.example.com:443?security=reality&type=tcp#Турция',
+          }),
+    ),
     http.get('*/api/integrations/dpi/overview', () =>
       HttpResponse.json({
         checks,
@@ -235,5 +266,85 @@ describe('DPI Checker (вариант A): итог по нодам', () => {
     await user.click(within(rkn).getByRole('button', { name: 'Проверить адрес' }));
     expect(await within(rkn).findByText('Адрес 45.12.8.20 в реестре РКН')).toBeVisible();
     expect(rkn).toHaveTextContent('вся подсеть 45.12.0.0/16');
+  });
+});
+
+describe('DPI Checker: проверка VPN по ключу из подписки (вариант A)', () => {
+  it('пользователь задан — ключ берётся сам: Host и ключ со скрытым идентификатором; в запуск ключ не уходит', async () => {
+    keyUser = { username: 'nodeservice-check', error: null, nodes: [] };
+    const user = userEvent.setup();
+    renderPage(Page, '/integrations/dpi');
+    const nodes = await screen.findByRole('region', { name: 'Ноды' });
+    await user.click(within(nodes).getByRole('button', { name: 'Проверить Турция - 1' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Новая проверка' });
+    await user.click(within(dialog).getByRole('radio', { name: /Подключение · VLESS/ }));
+    expect(await within(dialog).findByText('Ключ возьмётся из подписки «nodeservice-check»')).toBeVisible();
+    expect(dialog).toHaveTextContent('Для Host «🇹🇷 Турция» — tr.example.com:443.');
+    expect(dialog).toHaveTextContent('vless://3f9a…c21e@tr.example.com:443');
+    expect(within(dialog).queryByLabelText('Ключ подключения')).toBeNull();
+    await user.click(await within(dialog).findByRole('button', { name: 'Запустить за 0,04 $' }));
+    await waitFor(() => expect(started).toMatchObject({ nodeUuid: TR, kind: 'vpn' }));
+    expect(started).not.toHaveProperty('key');
+  });
+
+  it('ключа в подписке нет — причина словами и «Вставить свой ключ»', async () => {
+    keyUser = { username: 'nodeservice-check', error: null, nodes: [] };
+    const user = userEvent.setup();
+    renderPage(Page, '/integrations/dpi');
+    const nodes = await screen.findByRole('region', { name: 'Ноды' });
+    await user.click(within(nodes).getByRole('button', { name: 'Проверить США - 1' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Новая проверка' });
+    await user.click(within(dialog).getByRole('radio', { name: /Подключение · VLESS/ }));
+    expect(await within(dialog).findByText('Ключа в подписке «nodeservice-check» нет')).toBeVisible();
+    expect(dialog).toHaveTextContent('Host ноды нет в подписке «nodeservice-check»');
+    expect(within(dialog).getByRole('button', { name: 'Запустить' })).toBeDisabled();
+    await user.click(within(dialog).getByRole('button', { name: 'Вставить свой ключ' }));
+    expect(within(dialog).getByLabelText('Ключ подключения')).toBeVisible();
+    expect(
+      within(dialog).getByRole('button', { name: 'Взять ключ из подписки «nodeservice-check»' }),
+    ).toBeVisible();
+  });
+
+  it('пользователь не задан — поле ключа, как раньше, и подсказка, где задать', async () => {
+    const user = userEvent.setup();
+    renderPage(Page, '/integrations/dpi');
+    const nodes = await screen.findByRole('region', { name: 'Ноды' });
+    await user.click(within(nodes).getByRole('button', { name: 'Проверить Турция - 1' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Новая проверка' });
+    await user.click(within(dialog).getByRole('radio', { name: /Подключение · VLESS/ }));
+    expect(within(dialog).getByLabelText('Ключ подключения')).toBeVisible();
+    expect(dialog).toHaveTextContent(
+      'Чтобы панель брала ключ сама, укажите пользователя для ключей в «Подключении».',
+    );
+  });
+
+  it('настройка «Ключ для проверки VPN»: для каких нод ключа нет и почему; сохранение уходит на сервер', async () => {
+    keyUser = {
+      username: 'nodeservice-check',
+      error: null,
+      nodes: [
+        { uuid: TR, name: 'Турция - 1', host: '🇹🇷 Турция', reason: null },
+        {
+          uuid: US,
+          name: 'США - 1',
+          host: null,
+          reason: 'Host ноды нет в подписке «nodeservice-check» — дайте пользователю сквад с этой нодой.',
+        },
+      ],
+    };
+    const user = userEvent.setup();
+    renderPage(() => <DpiKeyUserCard />, '/integrations/dpi');
+    const card = await screen.findByRole('form', { name: 'Пользователь для ключей' });
+    expect(await within(card).findByText('Ключи для 1 из 2 нод')).toBeVisible();
+    expect(card).toHaveTextContent('Для этой ноды ключ придётся вставлять вручную');
+    expect(card).toHaveTextContent('США - 1 — Host ноды нет в подписке «nodeservice-check»');
+    const field = within(card).getByLabelText('Пользователь Remnawave для ключей');
+    expect(field).toHaveValue('nodeservice-check');
+    await user.clear(field);
+    await user.type(field, 'svc-check');
+    await user.click(within(card).getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(savedKeyUser).toEqual({ username: 'svc-check' }));
+    await user.click(within(card).getByRole('button', { name: 'Вставлять вручную' }));
+    await waitFor(() => expect(savedKeyUser).toEqual({ username: null }));
   });
 });

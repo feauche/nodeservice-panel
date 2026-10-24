@@ -58,6 +58,24 @@ export class IntegrationWorkspaceController {
   cancel(@Param('id') id: string) {
     return this.dpi.cancel(id);
   }
+  /** Служебный пользователь Remnawave для ключей проверки VPN и что с ключами по нодам. */
+  @Get('dpi/key-user') keyUser() {
+    return this.dpi.keyUser();
+  }
+  @Audit('integration.dpi.key_user_changed')
+  @Put('dpi/key-user')
+  async setKeyUser(@Body() body: unknown) {
+    const value = z.object({ username: z.string().trim().max(64).nullable() }).parse(body);
+    const { before, result } = await this.dpi.setKeyUser(value.username || null);
+    this.audit.extend({
+      metadata: { from: before ?? 'вставлять вручную', to: value.username || 'вставлять вручную' },
+    });
+    return result;
+  }
+  /** Какой ключ возьмётся для ноды: Host и ключ со скрытым идентификатором. */
+  @Get('dpi/key/:node') keyPreview(@Param('node') node: string) {
+    return this.dpi.keyPreview(z.uuid().parse(node));
+  }
   @Get('dpi/tools/rkn/:node') rkn(@Param('node') node: string) {
     return this.dpi.rkn(z.uuid().parse(node));
   }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { hostStep, renameHost, ScenariosJob, telegramStepLine } from './scenarios.job.js';
+import { dpiVerdict, hostStep, renameHost, ScenariosJob, telegramStepLine } from './scenarios.job.js';
 
 const node = {
   uuid: '11111111-1111-4111-8111-111111111111',
@@ -43,6 +43,8 @@ function fixture(
     maintained?: Set<string>;
     /** Ноды открытых волн: нода → волна (0.106.0). */
     inWave?: Map<string, string>;
+    /** DPI Checker для шага «Проверить VPN по ключу». */
+    dpi?: Record<string, unknown>;
   } = {},
 ) {
   const data = new Map<string, unknown>();
@@ -84,6 +86,7 @@ function fixture(
       data.delete(k);
     },
     addRun: vi.fn(async () => {}),
+    updateRunStep: vi.fn(async () => {}),
   };
   const permissions = {
     observe: vi.fn(async (_scope: string, _c: unknown, action: () => Promise<unknown>) => action()),
@@ -150,6 +153,7 @@ function fixture(
         } as never)
       : undefined,
     opts.inWave ? (wave as never) : undefined,
+    opts.dpi as never,
   );
   return {
     job,
@@ -1317,5 +1321,156 @@ describe('Host, отключённые сценарием: метка у нод�
     expect(result.failed[0]).toMatch(/^«Host»: .*Повторите позже\.$/);
     expect(f.data.get('scenarios.host.scope.host')).toMatchObject({ restored: false });
     expect((await f.job.disabledHosts()).items).toHaveLength(1);
+  });
+});
+
+describe('Шаг «Проверить VPN по ключу» (DPI Checker)', () => {
+  const START = Date.parse('2026-10-24T08:00:00Z');
+  const dpiRule = {
+    ...rule,
+    actions: ['check_dpi', 'hide_host', 'notify'],
+    dpiEveryMinutes: 120,
+    dpiDailyUsd: 1,
+  };
+  /** Пять минут устойчивого условия — одно срабатывание. */
+  async function fire(f: ReturnType<typeof fixture>) {
+    for (let i = 0; i <= 6; i++) {
+      vi.setSystemTime(START + i * 60000);
+      f.current.checkedAt = new Date().toISOString();
+      await f.job.run();
+    }
+  }
+  function dpiFixture(extra: Record<string, unknown> = {}) {
+    const order: string[] = [];
+    const dpi = {
+      estimate: vi.fn(async () => ({ cost: 0.1 })),
+      start: vi.fn(async () => {
+        order.push('dpi');
+        return { id: '9700', cost: 0.1, refunded: false };
+      }),
+      detail: vi.fn(),
+      ...extra,
+    };
+    const f = fixture(undefined, undefined, { dpi });
+    f.setRules([dpiRule as never]);
+    vi.useFakeTimers();
+    return { f, dpi, order };
+  }
+  const run = (f: ReturnType<typeof fixture>) =>
+    (
+      f.store.addRun.mock.calls[0] as unknown as [
+        string,
+        { id: string; steps: Array<Record<string, unknown>> },
+      ]
+    )[1];
+
+  it('запускается первой, пока Host ещё в подписке; номер запроса — номер срабатывания; итог ждёт в очереди', async () => {
+    const { f, dpi, order } = dpiFixture();
+    await fire(f);
+    expect(dpi.start).toHaveBeenCalledTimes(1);
+    expect(dpi.start).toHaveBeenCalledWith({
+      nodeUuid: node.uuid,
+      kind: 'vpn',
+      popIds: [],
+      requestId: run(f).id,
+    });
+    // PATCH Host — после запуска проверки.
+    expect(order).toEqual(['dpi']);
+    expect(f.calls).toHaveLength(1);
+    expect(run(f).steps[0]).toMatchObject({
+      action: 'check_dpi',
+      n: 1,
+      word: 'запущена',
+      detail: '0,10 $, итог — через 2–5 минут',
+      failed: false,
+    });
+    expect(f.data.get('scenarios.dpi.pending.scope')).toEqual([
+      expect.objectContaining({ checkId: '9700', runId: run(f).id, n: 1, notify: true }),
+    ]);
+    expect(f.notify.push.mock.calls[0]?.[0].body).toContain(
+      '⏳ VPN по ключу: проверка запущена, итог — отдельным сообщением',
+    );
+  });
+
+  it('не чаще раза в 2 часа на ноду — не запускает и говорит, когда проверяли', async () => {
+    const { f, dpi } = dpiFixture();
+    f.data.set(`scenarios.dpi.last.scope.${node.uuid}`, { at: START - 20 * 60000 });
+    await fire(f);
+    expect(dpi.start).not.toHaveBeenCalled();
+    expect(run(f).steps[0]).toMatchObject({
+      word: 'не запускали',
+      detail: 'проверяли 25 мин назад — не чаще раза в 2 ч на ноду',
+    });
+  });
+
+  it('предел денег в сутки на сценарий — не запускает; остальные шаги выполняются', async () => {
+    const { f, dpi } = dpiFixture();
+    f.data.set(`scenarios.dpi.spent.scope.${rule.id}`, [
+      { at: START - 3_600_000, cost: 0.95 },
+      { at: START - 2 * 86_400_000, cost: 5 },
+    ]);
+    await fire(f);
+    expect(dpi.start).not.toHaveBeenCalled();
+    expect(run(f).steps[0]).toMatchObject({
+      word: 'не запускали',
+      detail: 'предел 1,00 $ в сутки: потрачено 0,95 $, проверка стоит 0,10 $',
+    });
+    expect(f.calls).toHaveLength(1);
+  });
+
+  it('DPI Checker не ответил — замечание, а не «шаг не выполнен»; Host всё равно отключён', async () => {
+    const { f } = dpiFixture({
+      estimate: vi.fn(async () => {
+        throw new Error('Не задан пользователь для ключей');
+      }),
+    });
+    await fire(f);
+    expect(run(f).steps[0]).toMatchObject({ tone: 'warn', word: 'не запущена', failed: false });
+    expect(f.calls).toHaveLength(1);
+  });
+
+  it('итог пришёл — дописывается в ту же запись журнала и уходит в Telegram; идущая ждёт', async () => {
+    const { f, dpi } = dpiFixture();
+    await fire(f);
+    f.notify.push.mockClear();
+    dpi.detail.mockResolvedValueOnce({ status: 'active', success: null, total: 10, unknown: 0 });
+    await f.job.followDpi();
+    expect(f.store.updateRunStep).not.toHaveBeenCalled();
+    dpi.detail.mockResolvedValueOnce({ status: 'completed', success: 0, total: 10, unknown: 1 });
+    await f.job.followDpi();
+    expect(f.store.updateRunStep).toHaveBeenCalledWith(
+      'panel.test',
+      START + 5 * 60000,
+      run(f).id,
+      expect.objectContaining({
+        action: 'check_dpi',
+        tone: 'crit',
+        word: 'не открывается',
+        detail: 'ни одна из 9 точек в России не подключилась по ключу',
+      }),
+    );
+    expect(f.notify.push).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'crit',
+        body: '🔴 VPN по ключу не открывается: DPI Checker — ни одна из 9 точек в России не подключилась по ключу.',
+      }),
+    );
+    expect(f.data.get('scenarios.dpi.pending.scope')).toEqual([]);
+  });
+
+  it('итог словами: открывается, частично, точки без связи не в счёт', () => {
+    expect(dpiVerdict({ status: 'completed', success: 10, total: 10, unknown: 0 })).toMatchObject({
+      tone: 'ok',
+      detail: 'подключились все 10 точек в России',
+    });
+    expect(dpiVerdict({ status: 'completed', success: 3, total: 10, unknown: 2 })).toMatchObject({
+      tone: 'warn',
+      word: 'частично',
+      detail: 'подключились 3 из 8 точек в России',
+    });
+    expect(dpiVerdict({ status: 'completed', success: 0, total: 3, unknown: 3 })).toMatchObject({
+      word: 'не проверили',
+    });
+    expect(dpiVerdict({ status: 'pending', success: null, total: 10, unknown: 0 })).toBeNull();
   });
 });

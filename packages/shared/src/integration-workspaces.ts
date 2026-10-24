@@ -109,6 +109,34 @@ export const dpiEstimateSchema = z.object({
   minutes: z.number().nullable(),
   pops: z.number(),
 });
+/**
+ * Служебный пользователь Remnawave для проверки VPN по ключу (витрина reference-pack-2026-10, раздел 2 — A): панель
+ * берёт ключ ноды из его подписки. По каждой ноде — Host, ключ которого возьмётся, или причина, почему ключа нет.
+ */
+export const dpiKeyUserSchema = z.object({
+  username: z.string().nullable(),
+  /** Пользователь не найден, не активен или Remnawave не ответила — словами; иначе null. */
+  error: z.string().nullable(),
+  nodes: z.array(
+    z.object({
+      uuid: z.string(),
+      name: z.string(),
+      host: z.string().nullable(),
+      reason: z.string().nullable(),
+    }),
+  ),
+});
+export type DpiKeyUser = z.infer<typeof dpiKeyUserSchema>;
+/** Какой ключ возьмётся для ноды: пользователь, Host и ключ со скрытым идентификатором. */
+export const dpiKeyPreviewSchema = z.object({
+  username: z.string(),
+  host: z.string(),
+  address: z.string(),
+  port: z.number(),
+  shared: z.boolean(),
+  preview: z.string(),
+});
+export type DpiKeyPreview = z.infer<typeof dpiKeyPreviewSchema>;
 export const dnsRecordSchema = z.object({
   id: z.string(),
   provider: z.enum(['cloudflare', 'regru']),

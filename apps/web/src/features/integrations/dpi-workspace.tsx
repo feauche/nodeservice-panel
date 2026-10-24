@@ -38,6 +38,7 @@ import { Pill, Segmented, Toggle } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage } from '@/lib/api';
 import { plural } from '@/lib/plural';
 import { cn, randomId } from '@/lib/utils';
+import { KeySource, useDpiKeyPreview, useDpiKeyUser } from './dpi-key-user';
 import { DpiTools } from './dpi-tools';
 
 type Workspace = z.infer<typeof dpiWorkspaceSchema>;
@@ -503,10 +504,11 @@ function PointsPicker({
         label="Какие точки"
         value={mode}
         onChange={setMode}
+        // На телефоне подписи переносятся: иначе три варианта шире окна и растягивают его за край экрана.
         items={[
-          { key: 'optimal', label: `Оптимальные · ${data.optimal}` },
-          { key: 'all', label: `Все в России · ${data.pops.length}` },
-          { key: 'manual', label: 'Выбрать вручную' },
+          { key: 'optimal', label: <span className="whitespace-normal">Оптимальные · {data.optimal}</span> },
+          { key: 'all', label: <span className="whitespace-normal">Все в России · {data.pops.length}</span> },
+          { key: 'manual', label: <span className="whitespace-normal">Выбрать вручную</span> },
         ]}
       />
       <p className="mt-1.5 text-[12px] text-text-3">
@@ -595,15 +597,20 @@ function NewCheckDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [requestId] = useState(() => randomId());
+  // Ключ VPN — из подписки служебного пользователя, если он задан; «Вставить свой ключ» — как раньше, вручную.
+  const keyUser = useDpiKeyUser();
+  const [ownKey, setOwnKey] = useState(false);
+  const fromUser = keyUser.data?.username && !ownKey ? keyUser.data.username : null;
+  const preview = useDpiKeyPreview(node, kind === 'vpn' && Boolean(fromUser));
   const popIds = popsFor(data, mode, manual);
   const ready =
     Boolean(node) &&
-    (kind === 'ip' || key.startsWith('vless://')) &&
+    (kind === 'ip' || (fromUser ? preview.isSuccess : key.startsWith('vless://'))) &&
     (mode !== 'manual' || manual.length > 0);
-  const body = { nodeUuid: node, kind, key: kind === 'vpn' ? key : undefined, popIds };
+  const body = { nodeUuid: node, kind, key: kind === 'vpn' && !fromUser ? key : undefined, popIds };
   // Цена — у самого сервиса (бесплатная оценка): тарифы и «оптимальный» набор у него меняются.
   const estimate = useQuery({
-    queryKey: ['dpi-estimate', node, kind, kind === 'vpn' ? key : '', popIds.join(',')],
+    queryKey: ['dpi-estimate', node, kind, kind === 'vpn' ? (fromUser ?? key) : '', popIds.join(',')],
     queryFn: () => api.post('/integrations/dpi/estimate', body, dpiEstimateSchema),
     enabled: ready,
     staleTime: 60_000,
@@ -633,7 +640,7 @@ function NewCheckDialog({
         />
         <fieldset
           disabled={busy}
-          className="m-0 flex min-h-0 flex-col gap-4 overflow-y-auto border-0 px-6 py-5 max-sm:px-4"
+          className="m-0 flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto border-0 px-6 py-5 max-sm:px-4"
         >
           <div>
             <p className={label}>Нода</p>
@@ -686,21 +693,45 @@ function NewCheckDialog({
               ))}
             </div>
           </div>
-          {kind === 'vpn' && (
-            <div>
-              <label htmlFor="dpi-vless" className={label}>
-                Ключ подключения
-              </label>
-              <PasswordField
-                id="dpi-vless"
-                value={key}
-                onChange={(ev) => setKey(ev.target.value)}
-                autoComplete="off"
-                placeholder="vless://… ключ любого пользователя этой ноды"
-                className="h-10 w-full"
+          {kind === 'vpn' &&
+            (fromUser && node ? (
+              <KeySource
+                username={fromUser}
+                preview={preview.data}
+                pending={preview.isPending}
+                error={preview.isError ? apiErrorMessage(preview.error) : null}
+                onManual={() => setOwnKey(true)}
               />
-            </div>
-          )}
+            ) : (
+              <div>
+                <label htmlFor="dpi-vless" className={label}>
+                  Ключ подключения
+                </label>
+                <PasswordField
+                  id="dpi-vless"
+                  value={key}
+                  onChange={(ev) => setKey(ev.target.value)}
+                  autoComplete="off"
+                  placeholder="vless://… ключ любого пользователя этой ноды"
+                  className="h-10 w-full"
+                />
+                {ownKey && keyUser.data?.username ? (
+                  <button
+                    type="button"
+                    onClick={() => setOwnKey(false)}
+                    className="mt-1.5 cursor-pointer text-[12.5px] text-brand hover:underline"
+                  >
+                    Взять ключ из подписки «{keyUser.data.username}»
+                  </button>
+                ) : (
+                  !keyUser.data?.username && (
+                    <p className="mt-1.5 text-[12px] leading-snug text-text-3">
+                      Чтобы панель брала ключ сама, укажите пользователя для ключей в «Подключении».
+                    </p>
+                  )
+                )}
+              </div>
+            ))}
           <PointsPicker
             data={data}
             mode={mode}
@@ -726,7 +757,11 @@ function NewCheckDialog({
                 {!target
                   ? 'Выберите ноду — цена появится здесь.'
                   : kind === 'vpn'
-                    ? 'Вставьте ключ — цена появится здесь.'
+                    ? fromUser
+                      ? preview.isPending
+                        ? 'Беру ключ из подписки…'
+                        : 'Без ключа проверку не запустить.'
+                      : 'Вставьте ключ — цена появится здесь.'
                     : 'Выберите точки.'}
               </span>
             ) : estimate.isFetching && !e ? (
@@ -825,7 +860,7 @@ function ScheduleDialog({
         />
         <fieldset
           disabled={busy}
-          className="m-0 flex min-h-0 flex-col gap-4 overflow-y-auto border-0 px-6 py-5 max-sm:px-4"
+          className="m-0 flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto border-0 px-6 py-5 max-sm:px-4"
         >
           <div className="flex items-center gap-3 rounded-[12px] border border-border px-3.5 py-3">
             <div className="min-w-0 flex-1">

@@ -59,9 +59,13 @@ export function runOutcome({ run, backs }: JournalEntry, rule?: Pick<Scenario, '
   const tcp = run.steps.find(
     (s) => (s.action === 'check_tcp' || s.text.startsWith('TCP')) && s.tone === 'crit' && !stepFailed(s, run),
   );
+  // Проверка VPN по ключу показала, что VPN не открывается, — к фразе, как недоступный TCP.
+  const vpn = run.steps.find((s) => s.action === 'check_dpi' && s.tone === 'crit');
   const say = (o: RunOutcome): RunOutcome => ({
     ...o,
-    text: [tcp ? (tcp.word ? `TCP ${tcp.word}` : tcp.text) : '', o.text].filter(Boolean).join(' · '),
+    text: [tcp ? (tcp.word ? `TCP ${tcp.word}` : tcp.text) : '', vpn ? `VPN ${vpn.word}` : '', o.text]
+      .filter(Boolean)
+      .join(' · '),
   });
   const failed = run.steps.find((s) => stepFailed(s, run));
   if (failed)

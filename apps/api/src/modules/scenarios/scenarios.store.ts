@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
-import { type Scenario, type ScenarioRun, scenarioRunSchema, scenariosSchema } from '@nodeservice/shared';
+import {
+  type Scenario,
+  type ScenarioRun,
+  type ScenarioRunStep,
+  scenarioRunSchema,
+  scenariosSchema,
+} from '@nodeservice/shared';
 import { eq, sql } from 'drizzle-orm';
 import { DB, type Db } from '../../infra/db/db.module.js';
 import { appMeta } from '../../infra/db/schema/index.js';
@@ -70,6 +76,17 @@ export class ScenariosStore {
     await this.db.execute(
       sql`DELETE FROM app_meta WHERE key LIKE ${`${prefix}%`} AND key < ${prefix + cutoff}`,
     );
+  }
+  /**
+   * Дописывает итог шага в уже сохранённое срабатывание (проверка VPN приходит через минуты): шаг с тем же действием
+   * заменяется. Записи нет (старше 30 дней) — ничего не делает.
+   */
+  async updateRunStep(panel: string, t: number, runId: string, step: ScenarioRunStep) {
+    const key = `scenarios.run.${this.scope(panel)}.${String(t).padStart(15, '0')}.${runId}`;
+    const run = scenarioRunSchema.safeParse(await this.read(key));
+    if (!run.success) return;
+    const steps = run.data.steps.map((x) => (x.action === step.action ? step : x));
+    await this.write(key, { ...run.data, steps });
   }
   /** Сколько пар «сценарий + нода» сейчас держат Host изменённым и вернут его после восстановления ноды. */
   async markedHosts(panel: string | null): Promise<number> {

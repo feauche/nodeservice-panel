@@ -26,6 +26,7 @@ import { DB, type Db } from '../../infra/db/db.module.js';
 import { CheckHostService } from '../incidents/check-host.service.js';
 import { IncidentsService } from '../incidents/incidents.service.js';
 import { WaveService } from '../incidents/wave.service.js';
+import { DpiService } from '../integrations/dpi.service.js';
 import { NodeEventsStore } from '../node-events/node-events.store.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { NodeMaintenanceStore } from '../remnawave/node-maintenance.store.js';
@@ -269,6 +270,89 @@ export function tcpStep(
     text: `TCP ${word}${detail ? `: ${detail}` : ''}`,
   };
 }
+const usd = (n: number) =>
+  `${n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: n < 1 ? 3 : 2 })} $`;
+const ago = (ms: number) => {
+  const min = Math.max(1, Math.round(ms / 60_000));
+  return min < 60 ? `${min} мин назад` : `${Math.round(min / 60)} ч назад`;
+};
+/** «не чаще раза в 2 ч» — частота шага словами. */
+const every = (min: number) =>
+  min % 60
+    ? `раза в ${min} мин`
+    : min === 60
+      ? 'раза в час'
+      : min === 1440
+        ? 'раза в сутки'
+        : `раза в ${min / 60} ч`;
+/** Проверка DPI Checker, запущенная сценарием: итог дописывается в журнал, когда придёт (обычно через 2–5 минут). */
+interface PendingDpi {
+  checkId: string;
+  runId: string;
+  /** Время срабатывания — по нему ключ записи журнала. */
+  t: number;
+  n: number;
+  nodeUuid: string;
+  nodeName: string;
+  address: string;
+  ruleName: string;
+  notify: boolean;
+  at: number;
+}
+type DpiResult = Awaited<ReturnType<DpiService['detail']>>;
+/**
+ * Итог проверки VPN по ключу словами: открывается, частично или нет; точки без связи не в счёт. Ещё идёт — null.
+ */
+export function dpiVerdict(c: Pick<DpiResult, 'status' | 'success' | 'total' | 'unknown'>): {
+  tone: ScenarioRunStep['tone'];
+  word: string;
+  detail: string;
+} | null {
+  if (c.status === 'failed')
+    return { tone: 'warn', word: 'не проверили', detail: 'DPI Checker не смог проверить' };
+  if (c.status === 'cancelled') return { tone: 'warn', word: 'отменена', detail: 'проверку отменили' };
+  if (c.status !== 'completed' || c.success === null) return null;
+  const known = c.total - c.unknown;
+  if (known <= 0)
+    return { tone: 'warn', word: 'не проверили', detail: 'у всех точек не было связи — итога нет' };
+  if (c.success === 0)
+    return {
+      tone: 'crit',
+      word: 'не открывается',
+      detail: `ни одна из ${known} точек в России не подключилась по ключу`,
+    };
+  if (c.success < known)
+    return { tone: 'warn', word: 'частично', detail: `подключились ${c.success} из ${known} точек в России` };
+  return { tone: 'ok', word: 'открывается', detail: `подключились все ${known} точек в России` };
+}
+/** Шаг «Проверить VPN по ключу» в журнале: запущена, не запускали (пределы) или не запущена (причина). */
+function dpiLaunchStep(n: number, kind: 'started' | 'limit' | 'error', detail: string): ScenarioRunStep {
+  // Не «не выполнен»: проверка — сведения, как TCP; остальные шаги от неё не зависят.
+  const base = { action: 'check_dpi' as const, n, failed: false };
+  if (kind === 'started')
+    return {
+      ...base,
+      tone: 'info',
+      word: 'запущена',
+      detail,
+      text: `Проверка VPN по ключу запущена: ${detail}`,
+    };
+  if (kind === 'limit')
+    return {
+      ...base,
+      tone: 'info',
+      word: 'не запускали',
+      detail,
+      text: `Проверку VPN по ключу не запускали: ${detail}`,
+    };
+  return {
+    ...base,
+    tone: 'warn',
+    word: 'не запущена',
+    detail,
+    text: `Проверка VPN по ключу не запущена: ${detail}`,
+  };
+}
 /** Значок итога проверки порта в строке шага: доступен, частично, недоступен, нет данных. */
 const TCP_MARK: Record<TcpCheckReport['verdict'], string> = {
   reachable: '✅',
@@ -293,6 +377,11 @@ export function telegramStepLine(step: ScenarioRunStep, report: TcpCheckReport |
     return `❌ ${(step.action && FAILED_LABEL[step.action]) || 'Шаг не вышел'}: ${step.detail ?? step.text}`;
   if (step.action === 'check_tcp')
     return report ? `${TCP_MARK[report.verdict]} TCP: ${step.word}` : `🟠 ${step.text}`;
+  // Проверка VPN идёт минуты: здесь — что запущена (итог придёт отдельным сообщением) или почему нет.
+  if (step.action === 'check_dpi')
+    return step.word === 'запущена'
+      ? `⏳ VPN по ключу: проверка запущена, итог — отдельным сообщением`
+      : `${step.tone === 'warn' ? '🟠' : '⚪'} ${step.text}`;
   if (step.tone === 'change')
     return step.action === 'rename_host' ? `✅ Имя Host: ${step.detail}` : `✅ ${step.text}`;
   if (step.action === 'record_event' && step.incidentId) return `✅ ${step.text}`;
@@ -320,6 +409,7 @@ export class ScenariosJob {
     @Optional() private incidents?: IncidentsService,
     @Optional() private maintenance?: NodeMaintenanceStore,
     @Optional() private wave?: WaveService,
+    @Optional() private dpi?: DpiService,
   ) {}
   /** Ноды на обслуживании (0.106.0): сценарии их пропускают, сбой ловят заново после окончания. */
   private async maintained(panel: string | null): Promise<Set<string>> {
@@ -368,6 +458,137 @@ export class ScenariosJob {
   // Сценарии смотрят свежий снимок раз в 5 секунд: без нового снимка проход почти ничего не стоит.
   @Interval(5000) async tick() {
     if (process.env.NODE_ENV !== 'test') await this.run();
+  }
+  private following = false;
+  @Interval(30000) async followDpiTick() {
+    if (process.env.NODE_ENV === 'test' || this.following) return;
+    this.following = true;
+    try {
+      await this.followDpi();
+    } catch (e) {
+      this.log.warn(e instanceof Error ? e.message : 'Итог проверки VPN не получен');
+    } finally {
+      this.following = false;
+    }
+  }
+  /**
+   * Шаг «Проверить VPN по ключу»: платная проверка DPI Checker с пределами сценария — не чаще раза в N минут на ноду
+   * и не дороже M $ в сутки на сценарий. Номер запроса — номер срабатывания: перезапуск панели не повторит оплату.
+   */
+  private async launchDpi(
+    scope: string,
+    rule: Scenario,
+    node: RemnawaveNode,
+    runId: string,
+    firedAt: number,
+  ): Promise<ScenarioRunStep> {
+    const n = rule.actions.indexOf('check_dpi') + 1;
+    if (!this.dpi) return dpiLaunchStep(n, 'error', 'DPI Checker недоступен');
+    const lastKey = `scenarios.dpi.last.${scope}.${node.uuid}`,
+      spentKey = `scenarios.dpi.spent.${scope}.${rule.id}`;
+    const last = (await this.store.read<{ at: number }>(lastKey))?.at ?? 0;
+    if (Date.now() - last < rule.dpiEveryMinutes * 60_000)
+      return dpiLaunchStep(
+        n,
+        'limit',
+        `проверяли ${ago(Date.now() - last)} — не чаще ${every(rule.dpiEveryMinutes)} на ноду`,
+      );
+    const spent = ((await this.store.read<{ at: number; cost: number }[]>(spentKey)) ?? []).filter(
+      (x) => Date.now() - x.at < 86_400_000,
+    );
+    const today = spent.reduce((sum, x) => sum + x.cost, 0);
+    try {
+      const { cost } = await this.dpi.estimate({ nodeUuid: node.uuid, kind: 'vpn', popIds: [] });
+      if (today + cost > rule.dpiDailyUsd + 1e-9)
+        return dpiLaunchStep(
+          n,
+          'limit',
+          `предел ${usd(rule.dpiDailyUsd)} в сутки: потрачено ${usd(today)}, проверка стоит ${usd(cost)}`,
+        );
+      const check = await this.dpi.start({
+        nodeUuid: node.uuid,
+        kind: 'vpn',
+        popIds: [],
+        requestId: runId,
+      });
+      const paid = check.refunded ? 0 : (check.cost ?? cost);
+      await this.store.write(lastKey, { at: Date.now() });
+      await this.store.write(spentKey, [...spent, { at: Date.now(), cost: paid }]);
+      const pendingKey = `scenarios.dpi.pending.${scope}`;
+      const pending = (await this.store.read<PendingDpi[]>(pendingKey)) ?? [];
+      await this.store.write(pendingKey, [
+        ...pending.filter((p) => p.checkId !== check.id),
+        {
+          checkId: check.id,
+          runId,
+          t: firedAt,
+          n,
+          nodeUuid: node.uuid,
+          nodeName: node.name,
+          address: node.address,
+          ruleName: rule.name,
+          notify: rule.actions.includes('notify'),
+          at: Date.now(),
+        },
+      ]);
+      return dpiLaunchStep(n, 'started', `${usd(paid)}, итог — через 2–5 минут`);
+    } catch (e) {
+      return dpiLaunchStep(n, 'error', e instanceof Error ? e.message : 'DPI Checker не ответил');
+    }
+  }
+  /**
+   * Итоги проверок VPN, запущенных сценариями: пришёл — дописывается в ту же запись журнала (шаг «запущена» становится
+   * «открывается» / «не открывается») и, если в сценарии есть «Уведомить в Telegram», уходит отдельным сообщением.
+   * Событие ноды пишет сам DPI Checker. Не пришёл за 2 часа — так и записывается.
+   */
+  async followDpi() {
+    if (!this.dpi) return;
+    const status = await this.remna.status();
+    if (!status.domain) return;
+    const panel = status.domain,
+      scope = this.store.scope(panel),
+      pendingKey = `scenarios.dpi.pending.${scope}`;
+    const pending = (await this.store.read<PendingDpi[]>(pendingKey)) ?? [];
+    if (!pending.length) return;
+    const left: PendingDpi[] = [];
+    for (const p of pending) {
+      let verdict: ReturnType<typeof dpiVerdict> = null;
+      try {
+        verdict = dpiVerdict(await this.dpi.detail(p.checkId));
+      } catch {
+        // DPI Checker не ответил — спросим на следующем круге.
+      }
+      if (!verdict && Date.now() - p.at < 2 * 3_600_000) {
+        left.push(p);
+        continue;
+      }
+      const result = verdict ?? {
+        tone: 'warn' as const,
+        word: 'итога нет',
+        detail: 'DPI Checker не прислал итог за 2 часа',
+      };
+      const step: ScenarioRunStep = {
+        action: 'check_dpi',
+        n: p.n,
+        failed: false,
+        ...result,
+        text: `VPN по ключу ${result.word}: ${result.detail}`,
+      };
+      await this.store.updateRunStep(panel, p.t, p.runId, step);
+      if (p.notify && verdict)
+        await this.notify.push({
+          severity: verdict.tone === 'crit' ? 'crit' : verdict.tone === 'ok' ? 'info' : 'warn',
+          title: `Сценарий: ${p.ruleName}`,
+          body: `${verdict.tone === 'ok' ? '✅' : verdict.tone === 'crit' ? '🔴' : '🟠'} VPN по ключу ${verdict.word}: DPI Checker — ${verdict.detail}.`,
+          link: { to: '/integrations/dpi', label: 'Открыть DPI Checker' },
+          telegram: {
+            event: 'scenario',
+            serverKey: `node:${p.nodeUuid}`,
+            server: { name: p.nodeName, host: p.address },
+          },
+        });
+    }
+    await this.store.write(pendingKey, left);
   }
   private async hosts(domain: string, key: string) {
     const r = await getJson(`https://${domain}/api/hosts`, key);
@@ -581,6 +802,9 @@ export class ScenariosJob {
               (a): a is 'hide_host' | 'rename_host' => a === 'hide_host' || a === 'rename_host',
             );
             const firedAt = Date.now();
+            // Проверка VPN — первой: ключ берётся из подписки, пока Host ноды ещё не отключены этим же срабатыванием.
+            if (rule.actions.includes('check_dpi'))
+              steps.push(await this.launchDpi(scope, rule, node, runId, firedAt));
             // Проверка порта идёт параллельно и не задерживает смену Host; её итог встанет в журнал под своим номером.
             const tcpCheck = rule.actions.includes('check_tcp')
               ? this.tcpReport(panel, node, cfg, true, 60000).then(
@@ -589,7 +813,7 @@ export class ScenariosJob {
                 )
               : null;
             for (const action of rule.actions.filter(
-              (a) => a !== 'notify' && a !== 'check_tcp' && a !== hostActions[1],
+              (a) => a !== 'notify' && a !== 'check_tcp' && a !== 'check_dpi' && a !== hostActions[1],
             ))
               try {
                 const current = await this.remna.status();
@@ -640,6 +864,7 @@ export class ScenariosJob {
                   if (
                     rest !== 'notify' &&
                     rest !== 'check_tcp' &&
+                    rest !== 'check_dpi' &&
                     n(rest) > n(action) &&
                     !steps.some((x) => x.action === rest)
                   )

@@ -139,6 +139,10 @@ export const AUDIT_ACTIONS = {
   'integration.dns.autoreplace_changed': { category: 'settings', label: 'Автозамена DNS-записи переключена' },
   'integration.dpi.check_started': { category: 'settings', label: 'Платная проверка DPI Checker запущена' },
   'integration.dpi.check_cancelled': { category: 'settings', label: 'Проверка DPI Checker отменена' },
+  'integration.dpi.key_user_changed': {
+    category: 'settings',
+    label: 'Пользователь для ключей проверки VPN изменён',
+  },
   'integration.bs.check_started': { category: 'settings', label: 'Платная проверка BS Checker запущена' },
   'integration.bs.targets_changed': {
     category: 'settings',

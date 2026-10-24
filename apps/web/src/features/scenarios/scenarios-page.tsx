@@ -33,6 +33,8 @@ const make = (over: Partial<Scenario> = {}): Scenario => ({
   hostBindings: [],
   autoRestore: true,
   cooldownMinutes: 30,
+  dpiEveryMinutes: 120,
+  dpiDailyUsd: 1,
   except: [],
   ...over,
 });

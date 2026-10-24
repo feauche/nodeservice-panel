@@ -19,6 +19,7 @@ import { Pill, RowButton, SettingsCard } from '@/features/settings/settings-ui';
 import { api, apiErrorMessage, request } from '@/lib/api';
 import { BsBalanceSkeleton, BsCheckerWorkspace } from './bschecker-workspace';
 import { DnsWorkspace } from './dns-workspace';
+import { DpiKeyUserCard } from './dpi-key-user';
 import { DpiWorkspace, DpiWorkspaceSkeleton } from './dpi-workspace';
 
 const key = ['integrations'] as const;
@@ -305,7 +306,8 @@ export function IntegrationsPage({
               className={
                 kind === 'dns'
                   ? 'grid overflow-hidden rounded-[14px] border border-border bg-border gap-px lg:grid-cols-2'
-                  : ''
+                  : // Карточка доступа — «на всю высоту» для пары DNS; здесь под ней ещё «Ключ для проверки VPN».
+                    'space-y-4 [&>form]:h-auto'
               }
             >
               {providers.map((provider) => (
@@ -316,6 +318,7 @@ export function IntegrationsPage({
                   embedded={kind === 'dns'}
                 />
               ))}
+              {kind === 'dpi' && <DpiKeyUserCard />}
             </div>
           </DialogContent>
         </Dialog>

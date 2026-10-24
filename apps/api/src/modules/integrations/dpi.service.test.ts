@@ -258,3 +258,95 @@ describe('DPI Checker: список проверок — свежие первы
     expect(f.requests).toEqual([page(0)]);
   });
 });
+
+describe('DPI Checker: ключ VLESS из подписки служебного пользователя', () => {
+  const NODE = '11111111-1111-4111-8111-111111111111';
+  const LINK = 'vless://3f9a1b2c-0000-4000-8000-00000000c21e@de.example.com:443?type=tcp#Германия';
+  function fixture(username: string | null, sub: unknown = null) {
+    const sent: unknown[] = [];
+    const service = new DpiService(
+      {} as never,
+      {
+        providerRequest: async (_p: string, path: string, _m: string, body: unknown) => {
+          sent.push(body);
+          return path === '/checks/estimate' ? { estimated_cost: 0.1, balance: 5 } : {};
+        },
+        session: async () => ({ identity: 'id', credentials: {} }),
+        setBalance: async () => undefined,
+      } as never,
+      {
+        status: async () => ({
+          connected: true,
+          domain: 'panel.test',
+          nodes: [{ uuid: NODE, name: 'Германия - 1', address: '45.12.8.20', isDisabled: false }],
+        }),
+        subscriptionKeys: async () =>
+          sub ?? {
+            found: true,
+            user: { username, active: true, status: 'ACTIVE', expiresAt: null },
+            entries: [
+              {
+                hostUuid: 'h1',
+                address: 'de.example.com',
+                port: 443,
+                remark: 'Германия',
+                protocol: 'vless',
+                link: LINK,
+              },
+            ],
+          },
+      } as never,
+      undefined,
+      undefined,
+      {
+        get: async () => ({
+          hosts: [{ id: 'h1', name: 'Германия', nodeUuids: [NODE], protocol: 'vless', disabled: false }],
+        }),
+      } as never,
+    );
+    (service as unknown as { read: (k: string) => Promise<unknown> }).read = async (k) =>
+      k === 'dpi.key-user' && username ? { username } : null;
+    return { service, sent };
+  }
+  const vpn = { nodeUuid: NODE, kind: 'vpn' as const, popIds: [39] };
+
+  it('ключ не вставлен — берётся из подписки; в окно уходит только ключ со скрытым идентификатором', async () => {
+    const f = fixture('nodeservice-check');
+    await f.service.estimate(vpn);
+    expect(f.sent[0]).toMatchObject({ check_type: 'vpn', keys: [LINK] });
+    expect(await f.service.keyPreview(NODE)).toEqual({
+      username: 'nodeservice-check',
+      host: 'Германия',
+      address: 'de.example.com',
+      port: 443,
+      shared: false,
+      preview: 'vless://3f9a…c21e@de.example.com:443?type=tcp#Германия',
+    });
+  });
+
+  it('вставленный ключ важнее подписки', async () => {
+    const f = fixture('nodeservice-check');
+    await f.service.estimate({ ...vpn, key: 'vless://own@x.example.com:443#Свой' });
+    expect(f.sent[0]).toMatchObject({ keys: ['vless://own@x.example.com:443#Свой'] });
+  });
+
+  it('пользователь не задан, не найден или не активен — понятная причина, в DPI Checker ничего не уходит', async () => {
+    await expect(fixture(null).service.estimate(vpn)).rejects.toThrow(
+      'Вставьте ключ VLESS или укажите пользователя для ключей в «Подключении» DPI Checker.',
+    );
+    await expect(fixture('nobody', { found: false }).service.estimate(vpn)).rejects.toThrow(
+      'Пользователя «nobody» нет в Remnawave.',
+    );
+    const expired = fixture('old', { found: true, user: { username: 'old', active: false }, entries: [] });
+    await expect(expired.service.estimate(vpn)).rejects.toThrow(/не активен в Remnawave/);
+    expect(expired.sent).toEqual([]);
+  });
+
+  it('настройка: по каждой ноде — Host, ключ которого возьмётся', async () => {
+    expect(await fixture('nodeservice-check').service.keyUser()).toEqual({
+      username: 'nodeservice-check',
+      error: null,
+      nodes: [{ uuid: NODE, name: 'Германия - 1', host: 'Германия', reason: null }],
+    });
+  });
+});
